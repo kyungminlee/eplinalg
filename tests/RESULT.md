@@ -125,10 +125,10 @@ _662 of 1012 migrated entries have a dedicated test driver. 579 are user-facing 
 |  | dgehd2 | — | — | — |
 | ✓ | dgehrd | 17.33 | exact | 29.77 |
 | ✓ | dgejsv | 18.66 | exact | 30.88 |
-| ✓ | dgelq | 18.74 | exact | 31.46 |
+| ✓ | dgelq | 18.74 | exact | 31.28 |
 |  | dgelq2 | — | — | — |
 | ✓ | dgelqf | 18.92 | exact | 31.47 |
-| ✓ | dgelqt | 18.64 | exact | 31.46 |
+| ✓ | dgelqt | 17.33 | exact | 30.15 |
 |  | dgelqt3 | — | — | — |
 | ✓ | dgels | 18.49 | exact | 31.14 |
 | ✓ | dgelsd | 17.89 | exact | 30.72 |
@@ -143,12 +143,12 @@ _662 of 1012 migrated entries have a dedicated test driver. 579 are user-facing 
 | ✓ | dgeqlf | 18.18 | exact | 31.01 |
 | ✓ | dgeqp3 | 18.88 | exact | 31.45 |
 | ✓ | dgeqp3rk | 18.89 | exact | 31.51 |
-| ✓ | dgeqr | 18.97 | exact | 31.58 |
+| ✓ | dgeqr | 18.97 | exact | 31.36 |
 |  | dgeqr2 | — | — | — |
 | ✓ | dgeqr2p | 19.03 | exact | 31.61 |
 | ✓ | dgeqrf | 18.44 | exact | 31.32 |
 | ✓ | dgeqrfp | 18.85 | exact | 31.42 |
-| ✓ | dgeqrt | 18.81 | exact | 31.53 |
+| ✓ | dgeqrt | 17.30 | exact | 30.30 |
 |  | dgeqrt2 | — | — | — |
 |  | dgeqrt3 | — | — | — |
 | ✓ | dgerfs | 17.66 | exact | 30.48 |
@@ -629,10 +629,10 @@ _662 of 1012 migrated entries have a dedicated test driver. 579 are user-facing 
 |  | zgehd2 | — | — | — |
 | ✓ | zgehrd | 17.35 | exact | 30.31 |
 | ✓ | zgejsv | 18.48 | exact | 30.82 |
-| ✓ | zgelq | 18.79 | exact | 31.62 |
+| ✓ | zgelq | 18.79 | exact | 31.47 |
 |  | zgelq2 | — | — | — |
 | ✓ | zgelqf | 18.67 | exact | 31.43 |
-| ✓ | zgelqt | 18.69 | exact | 31.48 |
+| ✓ | zgelqt | 17.33 | exact | 30.63 |
 |  | zgelqt3 | — | — | — |
 | ✓ | zgels | 18.06 | exact | 31.01 |
 | ✓ | zgelsd | 18.10 | exact | 30.53 |
@@ -647,12 +647,12 @@ _662 of 1012 migrated entries have a dedicated test driver. 579 are user-facing 
 | ✓ | zgeqlf | 18.55 | exact | 31.05 |
 | ✓ | zgeqp3 | 18.93 | exact | 31.48 |
 | ✓ | zgeqp3rk | 18.87 | exact | 31.65 |
-| ✓ | zgeqr | 18.84 | exact | 31.52 |
+| ✓ | zgeqr | 18.77 | exact | 31.32 |
 |  | zgeqr2 | — | — | — |
 | ✓ | zgeqr2p | 18.96 | exact | 31.47 |
 | ✓ | zgeqrf | 18.76 | exact | 31.35 |
 | ✓ | zgeqrfp | 18.85 | exact | 31.50 |
-| ✓ | zgeqrt | 18.84 | exact | 31.42 |
+| ✓ | zgeqrt | 17.50 | exact | 30.26 |
 |  | zgeqrt2 | — | — | — |
 |  | zgeqrt3 | — | — | — |
 | ✓ | zgerfs | 18.08 | exact | 30.74 |
@@ -1295,7 +1295,7 @@ _177 of 301 migrated entries have a dedicated test driver. 166 are user-facing (
 |  | pdormr2 | — | — | — |
 |  | pdormr3 | — | — | — |
 | ✓ | pdormrq | 18.45 | 33.06 | 31.17 |
-| ✓ | pdormrz | 18.37 | 33.09 | 31.12 |
+| ✓ | pdormrz | 18.37 | 33.08 | 31.12 |
 | ✓ | pdormtr | 13.45 | 27.54 | 26.26 |
 | ✓ | pdpbsv | 18.70 | 33.27 | 31.29 |
 | ✓ | pdpbtrf | 18.70 | 33.25 | 31.05 |
@@ -1478,5 +1478,5 @@ _177 of 301 migrated entries have a dedicated test driver. 166 are user-facing (
 |  | pzunmr2 | — | — | — |
 |  | pzunmr3 | — | — | — |
 | ✓ | pzunmrq | 18.37 | 33.01 | 31.10 |
-| ✓ | pzunmrz | 18.46 | 32.97 | 31.22 |
+| ✓ | pzunmrz | 18.46 | 32.97 | 31.09 |
 | ✓ | pzunmtr | 17.06 | 31.34 | 29.60 |

@@ -8,19 +8,29 @@ reports via `scripts/precision_report.py`.
 
 | target       | tests run | tests passed | wall-clock |
 |--------------|----------:|-------------:|-----------:|
-| **kind10**       |     1 125 |    **1 125** |    667 sec |
-| **kind16**       |     1 125 |    **1 125** |    695 sec |
-| **multifloats**  |     1 125 |    **1 125** |    600 sec |
-| **total**        |     3 375 |    **3 375** |          — |
+| **kind10**       |     1 151 |    **1 151** |    553 sec |
+| **kind16**       |     1 151 |    **1 151** |    618 sec |
+| **multifloats**  |     1 151 |    **1 151** |    587 sec |
+| **total**        |     3 453 |    **3 453** |          — |
 
-Coverage: **1 125 tests per target** spanning every migrated library
-(BLAS + BLACS + LAPACK + PBLAS + PBBLAS + PTZBLAS + ScaLAPACK + MUMPS).
-Pass rate: **100% on all three targets** — the previously persistent
-`scalapack_test_pzdbtrsv` heap-corruption-at-`MPI_Finalize` failure
-(see Known regressions for history) was closed this cycle by
-extending the upstream PDDBTRS/PZDBTRS LWMIN override to the *trsv
-oracle call site (commit `eec88b3`). The previously open multifloats
-× MUMPS gap (26 → 6 → 0) closed in the prior cycle.
+Coverage: **1 151 tests per target** (xblas / mumps_c additions grew
+the count from 1 125 last cycle) spanning every migrated library
+(BLAS + xBLAS + BLACS + LAPACK + PBLAS + PBBLAS + PTZBLAS + ScaLAPACK
++ MUMPS). Pass rate: **100% on all three targets**. This cycle closed
+a target-independent class of 37 failures rooted in `ref_quad_*.f90`
+interface modules declaring `refblas_quad` / `reflapack_quad` symbols
+under their original (un-`*_quad`-suffixed) names: the
+`refquad_rename_archive.sh` post-process renames the archives'
+exports to `*_quad_`, so un-renamed call sites resolved against the
+migrated kind=8 libraries instead — bit-pattern garbage on
+`REAL(KIND=16)` inputs. Fixes landed in `tests/xblas/common/
+ref_quad_xblas.f90` (31 tests), `tests/lapack/common/
+ref_quad_lapack.f90` plus a `recursive`-prefix fix in
+`scripts/refquad_alias.py` (`dorcsd` / `zuncsd`, 1 test), and
+`tests/ptzblas/common/ref_quad_blas.f90` (5 tests). The previously
+persistent `scalapack_test_pzdbtrsv` heap-corruption and the
+multifloats × MUMPS gap (26 → 6 → 0) had already closed in earlier
+cycles.
 
 See **[Known regressions](#known-regressions)** below for the failing
 test list and references to the underlying issues. Per-routine
@@ -42,7 +52,7 @@ kind16 binaries pass under **AddressSanitizer** (RelWithDebInfo
 + `-fsanitize=address`) for the BLAS / LAPACK / PBLAS / ScaLAPACK
 subset that historically composed the 86-test baseline; the ASan
 configuration has not been re-run end-to-end against the expanded
-1 125-test set. See the "Reproducing this report" section for the
+1 151-test set. See the "Reproducing this report" section for the
 exact CMake invocation (multifloats requires `-DMULTIFLOATS_USE_LTO=OFF
 -DMULTIFLOATS_HIDDEN_VISIBILITY=OFF -DMULTIFLOATS_STRIP_SYMBOLS=OFF`
 to bypass the upstream's hidden-visibility post-link step that
@@ -51,7 +61,7 @@ otherwise breaks ASan link-time symbol resolution).
 
 ## Known regressions
 
-None. The latest end-to-end run is **1 125 / 1 125 PASS on every
+None. The latest end-to-end run is **1 151 / 1 151 PASS on every
 target**. The two long-running gaps tracked in this section in prior
 cycles are both closed; their root-cause notes are kept below for
 posterity.
@@ -116,14 +126,14 @@ All three targets now pass 26 / 26.
 | PBBLAS                 |             20 | `tests/pbblas/tests/test_*.f90`            |
 | PTZBLAS                |             34 | `tests/ptzblas/test_*.f90`                 |
 | ScaLAPACK              |            177 | `tests/scalapack/{linear_solve,factorization,eigenvalue,svd,auxiliary}/test_*.f90` |
-| MUMPS                  |             26 | `tests/mumps/fortran/test_*.f90` + `tests/mumps/c/test_*.c` (Fortran + C bridge drivers) |
-| **Total**              |      **1 125** |                                            |
+| MUMPS                  |             52 | `tests/mumps/fortran/test_*.f90` + `tests/mumps/c/test_*.c` (Fortran + C bridge drivers) |
+| **Total**              |      **1 151** |                                            |
 
 The MUMPS suite is no longer a placeholder: it covers basic /
 distributed-input / icntl I/O / iref err-check / job-sequence /
 nrhs / orderings / sym matrix / errors / infog20 drivers on both
 the real (`q/e/m`) and complex (`x/y/w`) sides, plus C-bridge
-parity / basic / sym tests. All three targets pass all 26.
+parity / basic / sym tests. All three targets pass all 52.
 
 
 ## Testing model
@@ -381,8 +391,8 @@ matrix:
 | PBBLAS      | ✓ 20   | ✓ 20   | ✓ 20        |
 | PTZBLAS     | ✓ 34   | ✓ 34   | ✓ 34        |
 | ScaLAPACK   | ✓ 177  | ✓ 177  | ✓ 177       |
-| MUMPS       | ✓ 26   | ✓ 26   | ✓ 26   |
-| **per-target total** | **1 125** | **1 125** | **1 125** |
+| MUMPS       | ✓ 52   | ✓ 52   | ✓ 52   |
+| **per-target total** | **1 151** | **1 151** | **1 151** |
 
 `✓ N` means N test drivers run on that target. All three targets
 now have full BLAS / LAPACK / PBLAS / ScaLAPACK coverage; the only
