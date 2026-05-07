@@ -83,6 +83,9 @@ contains
         write(unit_save, '(a,a,a)') '      "digits":      ', trim(adjustl(digbuf)), ','
         write(unit_save, '(a,a)')   '      "passed":      ', trim(passbuf)
         write(unit_save, '(a)')     '    }'
+        ! Flush after every case so a downstream crash leaves an
+        ! inspectable JSON tail rather than buffered nothingness.
+        flush(unit_save)
 
         write(*, '(a,a,a,a,a,es12.4,a,f6.2,a)') &
             '  ', trim(routine_save), ' [', trim(case_label), &
@@ -93,6 +96,7 @@ contains
     subroutine report_finalize()
         write(unit_save, '(a)') '  ]'
         write(unit_save, '(a)') '}'
+        flush(unit_save)
         close(unit_save)
         unit_save = -1
         if (any_failure) error stop 1

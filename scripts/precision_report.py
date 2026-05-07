@@ -42,6 +42,9 @@ def load_reports(reports_dir: Path) -> list[dict]:
         if 'routine' not in data or 'target' not in data:
             print(f'# WARNING: {p} missing routine/target keys')
             continue
+        if not isinstance(data.get('cases'), list):
+            print(f'# WARNING: {p} missing or non-list "cases" — skipping')
+            continue
         out.append(data)
     return out
 
@@ -105,7 +108,7 @@ def render_summary(reports: list[dict]) -> str:
                 continue
             worst_case = max(r['cases'], key=lambda c: c['max_rel_err'])
             mark = ' ✗' if not worst_case['passed'] else ''
-            cells.append(fmt_digits(worst_case['digits']) + mark)
+            cells.append(fmt_digits(worst_case.get('digits')) + mark)
         lines.append(f'| {routine} |' + ''.join(f' {c} |' for c in cells))
 
     lines.append('')
@@ -135,7 +138,7 @@ def render_detail(reports: list[dict]) -> str:
                 lines.append(
                     f'| {t} | {c["case"]} | {fmt_err(c["max_rel_err"])} '
                     f'| {fmt_err(c["tolerance"])} '
-                    f'| {fmt_digits(c["digits"])} | {pass_mark} |'
+                    f'| {fmt_digits(c.get("digits"))} | {pass_mark} |'
                 )
         lines.append('')
     return '\n'.join(lines)

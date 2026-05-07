@@ -36,8 +36,9 @@ program test_zunbdb6
         call gen_vector_complex(m1, X1r, seed = 24861 + 79 * i)
         call gen_vector_complex(m2, X2r, seed = 24871 + 79 * i)
         X1g = X1r; X2g = X2r
-        call zunbdb6(m1, m2, n, X1r, 1, X2r, 1, Q1, m1, Q2, m2, wopt, -1, info)
-        lwork = max(1, int(real(wopt(1), ep))); allocate(work(lwork))
+        ! zunbdb6 has no workspace query; LWORK >= N is the spec.
+        lwork = n
+        allocate(work(lwork))
         call zunbdb6(m1, m2, n, X1r, 1, X2r, 1, Q1, m1, Q2, m2, work, lwork, info)
         deallocate(work)
         call target_zunbdb6(m1, m2, n, X1g, 1, X2g, 1, Q1, m1, Q2, m2, info)

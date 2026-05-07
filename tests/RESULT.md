@@ -88,7 +88,7 @@ _75 of 75 migrated entries have a dedicated test driver. 75 are user-facing (✓
 
 ## LAPACK
 
-_662 of 1012 migrated entries have a dedicated test driver. 579 are user-facing (✓ in the first column); the rest are internal auxiliaries called only from user-facing drivers._
+_668 of 1012 migrated entries have a dedicated test driver. 579 are user-facing (✓ in the first column); the rest are internal auxiliaries called only from user-facing drivers._
 
 | user | entry | kind10 | kind16 | multifloats |
 |------|-------|--------|--------|--------|
@@ -171,7 +171,7 @@ _662 of 1012 migrated entries have a dedicated test driver. 579 are user-facing 
 | ✓ | dgetri | 18.21 | exact | 31.08 |
 | ✓ | dgetrs | 17.63 | exact | 30.21 |
 | ✓ | dgetsls | 18.23 | exact | 30.95 |
-| ✓ | dgetsqrhrt | — | — | — |
+| ✓ | dgetsqrhrt | 19.07 | exact | 31.62 |
 | ✓ | dggbak | exact | exact | exact |
 | ✓ | dggbal | exact | exact | exact |
 | ✓ | dgges | 17.07 | exact | 29.72 |
@@ -383,8 +383,8 @@ _662 of 1012 migrated entries have a dedicated test driver. 579 are user-facing 
 |  | dorbdb2 | 18.56 | exact | 31.29 |
 |  | dorbdb3 | 18.82 | exact | 31.37 |
 |  | dorbdb4 | 18.97 | exact | 31.07 |
-|  | dorbdb5 | — | — | — |
-|  | dorbdb6 | — | — | — |
+|  | dorbdb5 | 18.75 | exact | 31.86 |
+|  | dorbdb6 | 18.84 | exact | 31.65 |
 | ✓ | dorcsd | 18.78 | exact | 31.06 |
 |  | dorcsd2by1 | 18.87 | exact | 31.67 |
 | ✓ | dorg2l | 18.40 | exact | 30.94 |
@@ -675,7 +675,7 @@ _662 of 1012 migrated entries have a dedicated test driver. 579 are user-facing 
 | ✓ | zgetri | 18.30 | exact | 31.12 |
 | ✓ | zgetrs | 17.80 | exact | 30.44 |
 | ✓ | zgetsls | 18.32 | exact | 31.12 |
-| ✓ | zgetsqrhrt | — | — | — |
+| ✓ | zgetsqrhrt | 18.94 | exact | 31.57 |
 | ✓ | zggbak | exact | exact | exact |
 | ✓ | zggbal | exact | exact | exact |
 | ✓ | zgges | 17.84 | exact | 30.50 |
@@ -1070,8 +1070,8 @@ _662 of 1012 migrated entries have a dedicated test driver. 579 are user-facing 
 |  | zunbdb2 | 18.89 | exact | 31.46 |
 |  | zunbdb3 | 18.83 | exact | 30.90 |
 |  | zunbdb4 | 19.36 | exact | 31.62 |
-|  | zunbdb5 | — | — | — |
-|  | zunbdb6 | — | — | — |
+|  | zunbdb5 | 18.91 | exact | 31.68 |
+|  | zunbdb6 | 18.88 | exact | 31.77 |
 | ✓ | zuncsd | 18.60 | exact | 31.37 |
 |  | zuncsd2by1 | 18.73 | exact | 31.14 |
 | ✓ | zung2l | 18.31 | exact | 30.94 |
