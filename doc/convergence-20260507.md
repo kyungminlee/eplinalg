@@ -155,11 +155,27 @@ Two distinct sub-patterns:
    -PARAMETER(ZERO=0.0E0_16,ONE=1.0E0_16,FOUR=4.0E0_16,MINRGP=3.0E-3_16)
    +PARAMETER(ZERO=0.0E0_16,ONE=1.0E0_16,FOUR=4.0E0_16,MINRGP=1.0E-3_16)
    ```
-   The S half ships with `1.0E-3` and the D half with `3.0E-3` (or vice
-   versa) — upstream tuning difference inherited verbatim. The kind16
-   target preserves both literals faithfully; convergence flags the
-   numeric mismatch. Fix: `prefer_source` per family, or accept as
-   permanent expected divergence.
+   The S half ships with `3.0E-3` and the D half with `1.0E-3`.
+
+   **Audited 2026-05-08: not a bug, expected divergence.** This S/D
+   tuning split is canonical upstream LAPACK design, mirrored verbatim
+   from `external/lapack-3.12.1/SRC/sstemr.f:345` (`MINRGP=3.0E-3`) and
+   `dstemr.f:345` (`MINRGP=1.0D-3`). MINRGP is the minimum relative gap
+   threshold for cluster decomposition in the RRR (relatively robust
+   representations) eigenvalue algorithm: gaps below this fraction of
+   the eigenvalue magnitude are not trusted as real cluster boundaries.
+   The looser threshold at single precision reflects the larger noise
+   floor at ~7 decimal digits; double precision can trust gaps as
+   small as 0.1% with ~16 decimal digits.
+
+   The kind16 target preserves both literals faithfully (D=1.0E-3 wins
+   as canonical, so `qstegr2.f` ships with the tighter threshold).
+   Conservative-but-correct at quad precision — the threshold could in
+   principle be tightened further (1e-10 or smaller given ~32 decimal
+   digits), but algorithm-tuning constants are preserved verbatim by
+   migrator policy. Future enhancement, not a fix.
+
+   No prefer_source pin needed; the divergence is logged as expected.
 
 2. **Routine-level asymmetry** in `pclarzc/pzlarzc → pxlarzc` (51 lines),
    `pslarzb/pdlarzb → pqlarzb` (21 lines), `psstebz/pdstebz → pqstebz`
