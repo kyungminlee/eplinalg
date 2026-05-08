@@ -273,6 +273,62 @@ None of these has any observable runtime effect.
 
 ---
 
+## LAPACK 3.12.1 + ScaLAPACK 2.2.3: XERBLA routine-name string typos (sweep 2026-05-08)
+
+A mechanical XERBLA-string sweep across all four upstream Fortran
+trees (LAPACK SRC + INSTALL, ScaLAPACK SRC + TOOLS + REDIST + PBLAS,
+BLAS, MUMPS) found 21 `CALL XERBLA('NAME', -INFO)` / `PXERBLA(...)`
+sites where the reported routine name doesn't match the enclosing
+SUBROUTINE. After triaging out intentional forwarding patterns
+(`?sytrd_2stage` / `?hetrd_2stage` reporting their inner SY2SB / SB2ST
+sub-routines on inner-call errors; `?la_heamv` reporting the related
+`?HEMV` for documentation purposes), seven sites are real typos:
+
+**Patched in migrated archive (D/Z-canonical halves):**
+
+| File | Line | Bug | Fix |
+|------|-----:|-----|-----|
+| `dorbdb.f` | 385 | `'xORBDB'` (lowercase x — script-generation placeholder, never substituted) | `'DORBDB'` |
+| `zunbdb.f` | 388 | `'xORBDB'` | `'ZUNBDB'` |
+| `bdtrexc.f` (ScaLAPACK) | 173 | `'DTREXC'` — but eight *other* XERBLA calls in the same routine (lines 242–342) correctly report `'BDTREXC'`, so this one is internally inconsistent | `'BDTREXC'` |
+| `dpttrsv.f` (ScaLAPACK) | 100 | `'DPTTRS'` — routine name is `DPTTRSV`, doesn't call DPTTRS internally | `'DPTTRSV'` |
+| `zpttrsv.f` (ScaLAPACK) | 115 | `'ZPTTRS'` | `'ZPTTRSV'` |
+
+Carried in `recipes/lapack/source_overrides/{dorbdb,zunbdb}.f` and
+`recipes/scalapack/source_overrides/{bdtrexc,dpttrsv,zpttrsv}.f`,
+wired in the matching recipe files.
+
+**Documented but not patched (S/C-half non-canonical, never reaches
+migrated archive):**
+
+| File | Line | Bug |
+|------|-----:|-----|
+| `sorbdb.f` | 383 | `'xORBDB'` — should be `'SORBDB'` |
+| `cunbdb.f` | 386 | `'xORBDB'` — should be `'CUNBDB'` |
+| `bstrexc.f` (ScaLAPACK) | 173 | `'DTREXC'` — should be `'BSTREXC'`. Worse than the bdtrexc case because the precision letter is also wrong (D where the file is S). |
+| `spttrsv.f` (ScaLAPACK) | 100 | `'SPTTRS'` — should be `'SPTTRSV'` |
+| `cpttrsv.f` (ScaLAPACK) | 115 | `'CPTTRS'` — should be `'CPTTRSV'` |
+
+**Severity.** All diagnostic-only — XERBLA prints the supplied string
+and aborts; the routine still rejects the bad input. Users who
+encounter `XERBLA: 'xORBDB' Parameter -7 had an illegal value` will
+be confused (no LAPACK routine is called `xORBDB`); same with
+`'BSTREXC' → 'DTREXC'` (looking up DTREXC docs gets you the wrong
+arg-list reference). No memory-safety or numerical impact.
+
+**Why upstream's tests miss them.** Reference test drivers always
+pass valid arguments, so the XERBLA-error path never fires in CI.
+The strings are only seen by users who pass invalid arguments and
+read the diagnostic output.
+
+**Already documented separately:** `zla_syrfsx_extended.f:496` reports
+`'ZLA_HERFSX_EXTENDED'` (Hermitian) inside the symmetric routine —
+caught earlier and patched in `recipes/lapack/source_overrides/`.
+
+**Upstream report.** Not yet filed.
+
+---
+
 ## LAPACK 3.12.1: `dlaswlq.f` argument-validation accepts NB=0 where slaswlq rejects it
 
 **Symptom.** `DLASWLQ` fails to reject `NB=0` as an illegal block-size

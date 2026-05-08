@@ -301,6 +301,16 @@ source_overrides:
   # correctly lists PCHK2MAT) shows up in convergence reports. Override
   # corrects the EXTERNAL list on the Z half.
   pzunmbr.f: scalapack/source_overrides/pzunmbr.f
+  # XERBLA-string typos surfaced by the 2026-05-08 cross-half sweep:
+  # bdtrexc.f line 173 reports 'DTREXC' instead of 'BDTREXC' (the eight
+  # other XERBLA calls in the same routine correctly report 'BDTREXC'
+  # — copy-paste from the LAPACK forward-port). dpttrsv / zpttrsv
+  # report 'DPTTRS' / 'ZPTTRS' (the LAPACK serial routine name) where
+  # they should report 'DPTTRSV' / 'ZPTTRSV' (own routine names; they
+  # don't actually call PTTRS).
+  bdtrexc.f: scalapack/source_overrides/bdtrexc.f
+  dpttrsv.f: scalapack/source_overrides/dpttrsv.f
+  zpttrsv.f: scalapack/source_overrides/zpttrsv.f
 
 # local_renames: (reserved for non-precision local-variable drift like
 # CONJTOPH→TTOPH that isn't an S↔D / C↔Z prefix swap. Precision-prefix

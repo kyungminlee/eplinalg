@@ -170,6 +170,14 @@ source_overrides:
   # or infinite loop in the block-loop downstream. Patch tightens the
   # check to match slaswlq.
   dlaswlq.f: lapack/source_overrides/dlaswlq.f
+  # dorbdb / zunbdb XERBLA placeholder unsubstituted: all four halves
+  # (s/d/c/z) report 'xORBDB' (lowercase x — script-generation
+  # placeholder never replaced with the precision letter) instead of
+  # the actual routine name. Patch fixes the D/Z halves so the migrated
+  # archive's QORBDB / XUNBDB report 'DORBDB' / 'ZUNBDB' correctly.
+  # S/C halves remain buggy upstream (non-canonical, not patched here).
+  dorbdb.f: lapack/source_overrides/dorbdb.f
+  zunbdb.f: lapack/source_overrides/zunbdb.f
 
 # Files dropped from the migrated archive:
 #  - ZC*/DS* mixed-precision iterative-refinement drivers and
