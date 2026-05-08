@@ -24,14 +24,19 @@ depends:
 extra_symbol_dirs:
   - external/lapack-3.12.1/INSTALL
 
-# dlamch / droundup_lwork are called from dozens of LAPACK SRC routines
-# (dlascl, dsyev, dgesvd, dgetrf2, …). The files themselves live in
+# dlamch is called from dozens of LAPACK SRC routines
+# (dlascl, dsyev, dgesvd, dgetrf2, …). The file lives in
 # INSTALL/ alongside test programs, timer-routine variants, and an
-# already-in-BLAS copy of lsame.f — so we pull just these two into the
+# already-in-BLAS copy of lsame.f — so we pull just this one into the
 # migrated library instead of sweeping the whole directory.
+#
+# droundup_lwork.f is intentionally NOT migrated: at any kind ≥ 8 the
+# wrapper is dead code (the float→int round-trip bug it guards only
+# bites at kind4, where 32-bit LWORK can exceed the 24-bit mantissa).
+# The migrator's _strip_roundup_lwork post-pass elides every call
+# site, so no LAPACK routine references the symbol after retarget.
 extra_migrate_files:
   - external/lapack-3.12.1/INSTALL/dlamch.f
-  - external/lapack-3.12.1/INSTALL/droundup_lwork.f
   # ILAENV_EP / ILAENV2STAGE_EP / IPARAM2STAGE_EP — extended-precision-
   # aware variants of the LAPACK environmental-inquiry helpers. Lives
   # under recipes/lapack/extras/ rather than external/ because they
@@ -65,6 +70,65 @@ source_overrides:
   sorbdb3.f: lapack/source_overrides/sorbdb3.f
   zunbdb3.f: lapack/source_overrides/zunbdb3.f
   cunbdb3.f: lapack/source_overrides/cunbdb3.f
+  # Upstream typo: zupmtr.f declares EXTERNAL ZLARF1 but calls ZLARF1L.
+  # The dead ZLARF1 symbol slips through the family-prefix renamer and
+  # leaks into xupmtr.f as a stale Z-prefix, diverging from cupmtr's
+  # consistent CLARF1L. Patch fixes the EXTERNAL line.
+  zupmtr.f: lapack/source_overrides/zupmtr.f
+  # Dead ONE PARAMETER block: D/Z halves declare COMPLEX*16/DOUBLE PRECISION
+  # ONE but never reference it, while the matching C/S halves omit the
+  # declaration entirely. The kind16 retarget faithfully preserves the
+  # asymmetry, producing 19 cosmetic divergences. Overrides strip the dead
+  # block so D↔S and Z↔C halves converge structurally.
+  zgehd2.f: lapack/source_overrides/zgehd2.f
+  zgelq2.f: lapack/source_overrides/zgelq2.f
+  zgeql2.f: lapack/source_overrides/zgeql2.f
+  zgeqr2.f: lapack/source_overrides/zgeqr2.f
+  zgeqr2p.f: lapack/source_overrides/zgeqr2p.f
+  zgerq2.f: lapack/source_overrides/zgerq2.f
+  zunm2l.f: lapack/source_overrides/zunm2l.f
+  zunm2r.f: lapack/source_overrides/zunm2r.f
+  zunml2.f: lapack/source_overrides/zunml2.f
+  zunmr2.f: lapack/source_overrides/zunmr2.f
+  dgehd2.f: lapack/source_overrides/dgehd2.f
+  dgelq2.f: lapack/source_overrides/dgelq2.f
+  dgeql2.f: lapack/source_overrides/dgeql2.f
+  dgeqr2.f: lapack/source_overrides/dgeqr2.f
+  dgeqr2p.f: lapack/source_overrides/dgeqr2p.f
+  dgerq2.f: lapack/source_overrides/dgerq2.f
+  dorm2l.f: lapack/source_overrides/dorm2l.f
+  dorm2r.f: lapack/source_overrides/dorm2r.f
+  dorml2.f: lapack/source_overrides/dorml2.f
+  # Literal-style mismatch: D/Z write 1.0D+00, S/C write 1.0 (no exponent).
+  # The kind16 retarget produces 1.0E00_16 vs 1.0E0_16 — same value, diff
+  # text. Normalize D/Z to 1.0D+0.
+  dgeqrt2.f: lapack/source_overrides/dgeqrt2.f
+  dgeqrt3.f: lapack/source_overrides/dgeqrt3.f
+  zgeqrt2.f: lapack/source_overrides/zgeqrt2.f
+  zgeqrt3.f: lapack/source_overrides/zgeqrt3.f
+  # ggbak: D/Z list "INT, MAX" but C/S only "MAX" upstream. INT is a
+  # built-in (the INTRINSIC declaration is advisory), so strip it from
+  # D/Z to match C/S.
+  zggbak.f: lapack/source_overrides/zggbak.f
+  dggbak.f: lapack/source_overrides/dggbak.f
+  # lansf/lanht: D/Z list MAX in INTRINSIC but neither half uses it in
+  # body. Strip the dead MAX from D/Z to match S/C.
+  dlansf.f: lapack/source_overrides/dlansf.f
+  zlanht.f: lapack/source_overrides/zlanht.f
+  # *bevd_2stage / hgeqz: C halves wrap WORK(1)=CMPLX(LWMIN); Z halves
+  # write bare integer (auto-promoted on assignment to complex). Strip
+  # the redundant cast from C halves.
+  chbevd_2stage.f: lapack/source_overrides/chbevd_2stage.f
+  cheevd_2stage.f: lapack/source_overrides/cheevd_2stage.f
+  chgeqz.f: lapack/source_overrides/chgeqz.f
+  # larfx: D/Z write "410 CONTINUE \n RETURN", S/C use single-line form
+  # "410 RETURN". Collapse D/Z to one line.
+  dlarfx.f: lapack/source_overrides/dlarfx.f
+  zlarfx.f: lapack/source_overrides/zlarfx.f
+  # zla_syrfsx_extended: real upstream bug — XERBLA reports
+  # 'ZLA_HERFSX_EXTENDED' (Hermitian) inside the symmetric routine.
+  # Fix the routine-name string. cla_syrfsx_extended is correct upstream.
+  zla_syrfsx_extended.f: lapack/source_overrides/zla_syrfsx_extended.f
   # dgejsv: real upstream workspace bug. The "RSVEC && !LSVEC && !ALMORT"
   # branch calls DGESVJ with WORK(N+1) as the workspace start but passes
   # LWORK as the workspace size — overstating available space by N

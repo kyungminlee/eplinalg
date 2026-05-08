@@ -287,6 +287,51 @@ def _light_normalize(text: str) -> str:
     text = re.sub(r'[ \t]*\)', ')', text)
     text = re.sub(r'[ \t]*,[ \t]*', ',', text)
 
+    # Fold ``REAL(<expr>,KIND=N)`` and ``CMPLX(<expr>,KIND=N)`` casts to
+    # bare ``<expr>``. Co-family halves disagree cosmetically when one
+    # writes the explicit kind cast and the other relies on implicit
+    # promotion (e.g. D writes ``REAL(NZ,KIND=16)*SAFMIN`` while S
+    # writes ``NZ*SAFMIN``). Both expressions evaluate identically when
+    # the surrounding type is REAL(KIND=16) — the cast is a no-op. The
+    # fold runs on both halves before the diff so the cosmetic drift
+    # disappears. Only top-level ``,KIND=N`` matches; parameter-form
+    # ``REAL(KIND=N)`` declarations are left alone (no leading expr).
+    def _strip_kind_casts(s: str) -> str:
+        out: list[str] = []
+        pat = re.compile(r'\b(REAL|CMPLX)\(')
+        i = 0
+        while i < len(s):
+            m = pat.search(s, i)
+            if not m:
+                out.append(s[i:]); break
+            out.append(s[i:m.start()])
+            depth = 1
+            comma_pos = -1
+            j = m.end()
+            while j < len(s) and depth > 0:
+                c = s[j]
+                if c == '(':
+                    depth += 1
+                elif c == ')':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                elif c == ',' and depth == 1 and comma_pos == -1:
+                    comma_pos = j
+                j += 1
+            if depth != 0:
+                # Unbalanced — keep original prefix and stop folding.
+                out.append(s[m.start():])
+                return ''.join(out)
+            if comma_pos != -1 and re.match(
+                    r'KIND=\d+$', s[comma_pos + 1:j]):
+                out.append(s[m.end():comma_pos])  # the inner expression
+            else:
+                out.append(s[m.start():j + 1])
+            i = j + 1
+        return ''.join(out)
+    text = _strip_kind_casts(text)
+
     # Strip per-line whitespace *before* sorting declarations so the
     # ``^`` anchor sees the statement keyword at the line start.
     text = '\n'.join(ln.strip() for ln in text.split('\n'))
@@ -1020,10 +1065,16 @@ def run_convergence_report(recipe_path: Path, output_dir: Path,
     others_to_migrate = {other for _, other in pairs}
     texts: dict[Path, str] = {}
     workers = max(1, (os.cpu_count() or 4))
+    # Honor source_overrides during re-migration so that hand-edited
+    # upstream replacements normalize both halves of a co-family pair,
+    # not just the canonical D/Z half.
+    def _resolve(p: Path) -> Path:
+        ov = config.source_overrides.get(p.name)
+        return ov if ov is not None else p
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futures = {
-            ex.submit(migrate_file_to_string, p, rename_map, target_mode,
-                      parser, parser_cmd,
+            ex.submit(migrate_file_to_string, _resolve(p), rename_map,
+                      target_mode, parser, parser_cmd,
                       config.keep_kind_lines.get(p.name)): p
             for p in others_to_migrate
         }
