@@ -273,6 +273,39 @@ None of these has any observable runtime effect.
 
 ---
 
+## LAPACK 3.12.1: `dlaswlq.f` argument-validation accepts NB=0 where slaswlq rejects it
+
+**Symptom.** `DLASWLQ` fails to reject `NB=0` as an illegal block-size
+argument. The downstream block loop divides by `NB` and iterates as
+`I=1, N-K, NB`; with `NB=0` this is a divide-by-zero (or infinite
+loop, depending on compiler arithmetic).
+
+**Root cause.** `dlaswlq.f:220-221`:
+
+```fortran
+ELSE IF( NB.LT.0 ) THEN
+   INFO = -4
+```
+
+The float sibling `slaswlq.f:221` correctly tests `NB.LE.0`. NB=0
+isn't a valid block size — block algorithms require positive blocks.
+The single-precision validation is right; the double-precision
+validation lost the `=` somewhere during a sync.
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/dlaswlq.f` (line 220).
+
+**Fix.** `NB.LT.0 → NB.LE.0`. Carried in
+`recipes/lapack/source_overrides/dlaswlq.f`, wired in
+`recipes/lapack.yaml`.
+
+**Why upstream's tests miss it.** Reference test drivers always pass
+NB > 0; the NB=0 path is only reachable via a malformed user call.
+
+**Upstream report.** Not yet filed.
+
+---
+
 ## LAPACK 3.12.1: `sggev3.f` workspace-query gates on ILVL where real call gates on ILV
 
 **Symptom.** Workspace under-estimation when the caller requests

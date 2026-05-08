@@ -163,6 +163,13 @@ source_overrides:
   # other three rfsx siblings (sgbrfsx, dgbrfsx, cgbrfsx) all declare
   # ILATRANS correctly — Z-half-only typo. Advisory in Fortran.
   zgbrfsx.f: lapack/source_overrides/zgbrfsx.f
+  # dlaswlq: argument-validation gap. Line 221 tests NB.LT.0 (rejecting
+  # only negative block sizes) where slaswlq.f tests NB.LE.0 (also
+  # rejecting NB=0, which is invalid as a block size). With dlaswlq's
+  # weaker check, NB=0 passes validation and triggers a divide-by-zero
+  # or infinite loop in the block-loop downstream. Patch tightens the
+  # check to match slaswlq.
+  dlaswlq.f: lapack/source_overrides/dlaswlq.f
 
 # Files dropped from the migrated archive:
 #  - ZC*/DS* mixed-precision iterative-refinement drivers and
