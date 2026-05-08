@@ -111,6 +111,476 @@ doesn't exercise but a real CSD-driver call path does.
 
 ---
 
+## LAPACK 3.12.1: `dgejsv.f` workspace size argument off by N to inner DGESVJ
+
+**Symptom.** Silent stack/workspace overflow. In the
+`RSVEC && !LSVEC && !ALMORT` branch of DGEJSV (the "two-more-QR-
+factorizations" path used when neither left singular vectors nor an
+"almost-orthogonal" shortcut applies), DGEJSV calls DGESVJ with the
+workspace base offset by N elements but passes the *full* `LWORK` as
+the workspace-size argument. DGESVJ may then write up to N entries
+past the end of `WORK(LWORK)`. The float sibling `sgejsv.f` correctly
+passes `LWORK-N`.
+
+**Root cause.** `dgejsv.f:1174-1175`:
+
+```fortran
+CALL DGESVJ( 'Lower', 'U','N', NR, NR, V,LDV, SVA, NR, U,
+$            LDU, WORK(N+1), LWORK, INFO )
+```
+
+The 13th argument is `WORK(N+1)` (workspace base, N elements in)
+but the 14th argument (workspace size) is `LWORK`, not `LWORK-N`.
+DGESVJ trusts its 14th arg as the upper bound on writes. Compare
+`sgejsv.f:1174-1175`:
+
+```fortran
+CALL SGESVJ( 'Lower', 'U','N', NR, NR, V,LDV, SVA, NR, U,
+$            LDU, WORK(N+1), LWORK-N, INFO )
+```
+
+The same routine on the float side passes `LWORK-N`; the bug is in
+the D copy only.
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/dgejsv.f` (line 1175, 14th arg of the
+  inner DGESVJ call).
+
+**Fix.** Single-token change `LWORK → LWORK-N` on the 14th argument.
+Carried in `recipes/lapack/source_overrides/dgejsv.f`. Wired via
+`recipes/lapack.yaml`'s `source_overrides:` map. (No `prefer_source`
+pin needed: D-half is canonical for the migrated archive by default,
+and the S-half value is already correct, so converge folds.)
+
+**Why upstream's tests miss it.** The DGEJSV test driver
+(`TESTING/EIG/dchksvj.f`) calls DGEJSV with workspace generously
+sized — typically allocated as `LWORK = N*N + 5*N` or larger. The
+N-element overrun lands inside the spare margin and produces no
+detectable corruption on the test hosts. The bug surfaces when a
+caller follows the documented minimum-LWORK formula exactly: the
+overrun then hits whatever lives immediately after the WORK array on
+the stack.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## LAPACK 3.12.1: `?trsyl3.f` D/C/Z halves miss LIWORK / LDSWORK argument-validation
+
+**Symptom.** `STRSYL3` reports `INFO=-14` when the caller passes a
+too-small `LIWORK` and `INFO=-16` when `LDSWORK` is too small (when
+not querying). The D/C/Z halves omit those guards: a too-small
+`LIWORK` or `LDSWORK` slips past argument validation without an
+`XERBLA` callback. Functionally not catastrophic — the routine has a
+downstream "use unblocked code" fallback (`MIN(NBA,NBB).EQ.1 .OR.
+LDSWORK.LT.MAX(NBA,NBB) .OR. LIWORK.LT.IWORK(1)`) that drops to
+`?TRSYL` when workspace is insufficient — but the missing guard
+masks user errors, exactly the same class of bug as the
+`pssyevd.f` LQUERY gap below.
+
+**Root cause.** `dtrsyl3.f:286-288` ends the validation block at
+`LDC` without checking `LIWORK` or `LDSWORK`. Same omission in
+`ctrsyl3.f` and `ztrsyl3.f`. `strsyl3.f:286-290` correctly extends:
+
+```fortran
+ELSE IF( .NOT.LQUERY .AND. LIWORK.LT.IWORK(1) ) THEN
+   INFO = -14
+ELSE IF( .NOT.LQUERY .AND. LDSWORK.LT.MAX( NBA, NBB ) ) THEN
+   INFO = -16
+END IF
+```
+
+The `IWORK(1)` reference is well-defined here because the LQUERY-prep
+block earlier in the routine writes `IWORK(1) = NBA + NBB + 2`
+unconditionally before the test block runs. (Note: `ZTRSYL3` /
+`CTRSYL3` have no `IWORK` argument — only the `LDSWORK` guard
+applies, and `LDSWORK` is at parameter position 14, not 16.)
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/dtrsyl3.f` (after line 287, before
+  `END IF` at line 288).
+- `external/lapack-3.12.1/SRC/ztrsyl3.f` (after line 254, before
+  `END IF` at line 256).
+- `external/lapack-3.12.1/SRC/ctrsyl3.f` (analogous; no override
+  carried — C half is not canonical for the migrated archive).
+
+**Fix.** Insert the two `ELSE IF` branches into D's validation block;
+insert just the `LDSWORK` branch (at parameter position 14) into Z's.
+Carried in `recipes/lapack/source_overrides/dtrsyl3.f` and
+`ztrsyl3.f`.
+
+**Why upstream's tests miss it.** Reference LAPACK's `dchktz` /
+`zchktz` test drivers always size `IWORK` and `SWORK` by querying
+first, so the too-small-workspace path on the validation side is
+never exercised.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## LAPACK 3.12.1: stale / missing EXTERNAL declarations in 5+ routines
+
+**Symptom.** None at runtime — Fortran `EXTERNAL` is advisory and the
+linker resolves the actual call sites correctly via the global symbol
+table. The typos surface only as divergences against the matching
+S/C precision sibling in the migrator's convergence reports. Same
+flavor as the `zupmtr.f` `ZLARF1` / `ZLARF1L` typo (already patched
+at the top of this file) and the ScaLAPACK `pzunmbr.f`
+`PCHK1MAT` / `PCHK2MAT` typo.
+
+**Affected files / fixes.** All of these are single-line edits to the
+`EXTERNAL` declaration block; the body is correct in each case.
+
+| File | Issue | Fix |
+|------|-------|-----|
+| `dlaqp2.f:174` | declares `DLARF`, body calls `DLARF1F` (line 222). slaqp2 correctly declares `SLARF1F`. | replace `DLARF` with `DLARF1F` |
+| `zlarf1f.f:185` | missing `ZAXPY`. Body calls ZAXPY at lines 287, 293. clarf1f also missing CAXPY (not patched — C-half is non-canonical). | add `ZAXPY` |
+| `zhetrf_aa.f:168` | declares stale `ZGEMV` — body never calls ZGEMV (only ZGEMM). chetrf_aa correctly omits CGEMV. | drop `ZGEMV` |
+| `zlahef_aa.f:175` | declares stale `ZGEMM` — body never calls ZGEMM (only ZGEMV). clahef_aa correctly omits CGEMM. | drop `ZGEMM` |
+| `zgbrfsx.f:499` | missing `ILATRANS`. Body calls ILATRANS at lines 511 and 561 (`TRANS_TYPE = ILATRANS(TRANS)` and the `IF(TRANS_TYPE.EQ.-1)` test). The other three rfsx siblings (`sgbrfsx`, `dgbrfsx`, `cgbrfsx`) all declare ILATRANS in their EXTERNAL list. | add `ILATRANS` |
+
+**Carried in:** `recipes/lapack/source_overrides/{dlaqp2,zlarf1f,zhetrf_aa,zlahef_aa,zgbrfsx}.f`,
+wired in `recipes/lapack.yaml`.
+
+**Other instances surfaced by the same audit, NOT patched** because
+the migrator picks D/Z as canonical and the sibling S/C bug never
+rides into the migrated archive:
+
+- `clarf1f.f:154`: declares `CGER` (dead — body calls `CGERC`); also
+  missing `CAXPY`. Real upstream typo, but only the standalone single-
+  precision archive is affected, not the migrated extended-precision
+  one.
+- `slaqr2.f:313`: declares `SLARF1L` (dead — body calls `SLARF1F`).
+- `sgelqt.f:143`: declares stale `SGEQRT2` and `SGEQRT3` — body only
+  calls `SGELQT3` and `SLARFB`.
+- `ssysv_aa.f:227`: `XERBLA('SSYSV_AA', ...)` missing the trailing
+  space that D/C/Z all use (`'?SYSV_AA '`). Cosmetic.
+- `sgges.f:325-327`: declares `EXTERNAL SGEQRF, ..., STGSEN` —
+  missing `XERBLA`. Body calls XERBLA at line 420. dgges correctly
+  appends `XERBLA` to the EXTERNAL list.
+- `sormr2.f:131` / `sopmtr.f`: declares `SLARF1L` (dead — body calls
+  `SLARF` after manual `AII = A(...); A(...) = ONE`). dormr2 / dopmtr
+  use `DLARF` directly, with the same AII trick. The S halves carry
+  a stale `SLARF1L` that doesn't match the body.
+
+**Why upstream's tests miss them.** Fortran's `EXTERNAL` is a
+*declaration*, not an *invocation*. The linker resolves calls by
+symbol name regardless of what `EXTERNAL` advertises, and the
+upstream test drivers don't check declarations against call sites.
+None of these has any observable runtime effect.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## LAPACK 3.12.1: `sggev3.f` workspace-query gates on ILVL where real call gates on ILV
+
+**Symptom.** Workspace under-estimation when the caller requests
+**right eigenvectors only** (`JOBVL='N', JOBVR='V'` → `ILVL=false,
+ILVR=true, ILV=true`). The `LWORK=-1` query path returns a workspace
+size computed for `SLAQZ0('E', ...)` (eigenvalues only), but the real
+computation later issues `SLAQZ0('S', ...)` (full Schur), which needs
+*more* workspace. A caller who follows the standard "query, allocate
+exactly, then call" idiom runs out of workspace inside SLAQZ0 — likely
+SIGSEGV or a workspace overrun, depending on what's adjacent on the
+stack.
+
+**Root cause.** `sggev3.f:339-352` (workspace-query block):
+
+```fortran
+IF( ILVL ) THEN                                      ! ← wrong predicate
+   CALL SORGQR( N, N, N, VL, LDVL, WORK, WORK, -1, IERR )
+   LWKOPT = MAX( LWKOPT, 3*N+INT( WORK( 1 ) ) )
+   CALL SLAQZ0( 'S', JOBVL, JOBVR, N, 1, N, A, LDA, B, LDB,
+$                ALPHAR, ALPHAI, BETA, VL, LDVL, VR, LDVR,
+$                WORK, -1, 0, IERR )
+   LWKOPT = MAX( LWKOPT, 2*N+INT( WORK( 1 ) ) )
+ELSE
+   CALL SLAQZ0( 'E', ..., WORK, -1, 0, IERR )
+   LWKOPT = MAX( LWKOPT, 2*N+INT( WORK( 1 ) ) )
+END IF
+```
+
+vs `sggev3.f:471-477` (real-call CHTEMP setup):
+
+```fortran
+IF( ILV ) THEN
+   CHTEMP = 'S'
+ELSE
+   CHTEMP = 'E'
+END IF
+CALL SLAQZ0( CHTEMP, JOBVL, JOBVR, N, ILO, IHI, ..., WORK(IWRK),
+$            LWORK+1-IWRK, 0, IERR )
+```
+
+`dggev3.f`, `cggev3.f`, and `zggev3.f` all gate the query block on
+`IF(ILV)` (or split it into separate `IF(ILVL)` and `IF(ILV)` blocks
+the way `cggev3` does), matching the real call. Only `sggev3.f` uses
+`ILVL` where it should use `ILV`.
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/sggev3.f` (workspace-query block ~line
+  339).
+
+**Fix.** Restructure the query block to mirror `dggev3.f`:
+
+```fortran
+IF( ILVL ) THEN
+   CALL SORGQR( ..., -1, IERR )
+   LWKOPT = MAX( LWKOPT, 3*N+INT( WORK( 1 ) ) )
+END IF
+IF( ILV ) THEN
+   CALL SLAQZ0( 'S', ..., -1, 0, IERR )
+ELSE
+   CALL SLAQZ0( 'E', ..., -1, 0, IERR )
+END IF
+LWKOPT = MAX( LWKOPT, 2*N+INT( WORK( 1 ) ) )
+```
+
+**NOT patched** as a source override because S-half is non-canonical
+for the migrator. The migrated extended-precision archive uses the
+D-derived `QGGEV3`, which is correct. Standalone single-precision
+LAPACK builds inherit the bug.
+
+**Why upstream's tests miss it.** The `dchkgg`/`schkgg` test drivers
+allocate workspace generously above the queried minimum, so the query
+under-estimate doesn't manifest as a fault — the real call still has
+enough room. The bug is invisible unless a caller follows the
+documented minimum-workspace contract literally.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## LAPACK 3.12.1: `slarf1l.f` missing `LASTV.GT.0` guards around DSCAL paths
+
+**Symptom.** Out-of-bounds memory access in `SLARF1L` when the
+input matrix has degenerated to `LASTV=0` (no significant rows/columns
+left after the leading-zero scan). `dlarf1l.f` wraps the inner
+"apply Householder reflector" block in `IF(LASTV.GT.0) THEN`, so
+`LASTV=0` falls through to the `RETURN`. `slarf1l.f` lacks that
+outer guard: with `LASTV=0`, the code reaches
+`IF(LASTV.EQ.FIRSTV) THEN; CALL SSCAL( LASTC, ONE-TAU, C(LASTV,1), LDC )`
+where `C(LASTV,1) = C(0,1)` is an out-of-bounds Fortran array access.
+
+**Root cause.** Compare `dlarf1l.f:192` and `slarf1l.f:193`:
+
+```fortran
+* dlarf1l.f (correct)
+IF( LASTV.GT.0 ) THEN
+   IF( LASTV.EQ.FIRSTV ) THEN
+      CALL DSCAL(LASTC, ONE - TAU, C(FIRSTV, 1), LDC)
+   ELSE
+      ...
+   END IF
+END IF
+
+* slarf1l.f (missing outer guard)
+IF( LASTV.EQ.FIRSTV ) THEN
+   CALL SSCAL( LASTC, ONE - TAU, C(LASTV, 1), LDC )
+ELSE
+   ...
+END IF
+```
+
+Same omission appears at `slarf1l.f:223` (the `Form C * H` branch):
+the inner block lacks the `IF(LASTV.GT.0)` wrapper that
+`dlarf1l.f:222` has. Additionally, the corner-case SSCAL uses
+`C(LASTV, 1)` where `dlarf1l` uses `C(FIRSTV, 1)`; in the branch
+where `LASTV.EQ.FIRSTV` they're the same element so it doesn't
+matter, but the slarf1l form looks the wrong way around once the
+outer `LASTV.GT.0` guard is absent.
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/slarf1l.f` (lines 193, 197, 223, 227).
+
+**Fix.** Add `IF(LASTV.GT.0) THEN ... END IF` wrappers around both
+inner blocks; change `C(LASTV, 1)` and `C(1, LASTV)` to
+`C(FIRSTV, 1)` and `C` (consistent with dlarf1l).
+
+**NOT patched** as a source override because S-half is non-canonical
+for the migrator. The migrated extended-precision archive uses the
+D-derived `QLARF1L`, which has the guards. Standalone single-
+precision LAPACK builds inherit the OOB read.
+
+**Why upstream's tests miss it.** `LASTV=0` requires the input matrix
+to be effectively zero in the trailing rows/columns scanned by
+`ILASLR`/`ILASLC`. The reference LAPACK test drivers seed C with
+random data, so the leading-zero scan rarely returns 0. The bug
+surfaces when SLARF1L is fed degenerate input from a calling driver
+whose iteration has reduced C to zeros.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## LAPACK 3.12.1: `slarrf.f` shift-safety expansion uses TWO×EPS where DLARRF uses FOUR×EPS
+
+**Symptom.** Numerical correctness drift in single-precision
+eigenvalue refinement (`?STEMR` / RRR algorithm). The "make sure
+shift bounds are properly outside the cluster" expansion uses a
+narrower margin in the S half than in the D half:
+
+```fortran
+* slarrf.f:277-278
+LSIGMA = LSIGMA - ABS(LSIGMA) * TWO * EPS
+RSIGMA = RSIGMA + ABS(RSIGMA) * TWO * EPS
+
+* dlarrf.f:277-278
+LSIGMA = LSIGMA - ABS(LSIGMA) * FOUR * EPS
+RSIGMA = RSIGMA + ABS(RSIGMA) * FOUR * EPS
+```
+
+`TWO*EPS` is the natural lower bound for safe shift placement in
+single precision; `FOUR*EPS` (the D-half value) reflects a later
+robustness fix that doubled the margin. The S half didn't get the
+fix. With the narrower margin, SLARRF can occasionally place a
+shift right at a cluster boundary instead of safely outside it,
+causing the inner SSTEMR loop to stall or report convergence on a
+shifted-but-overlapping interval.
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/slarrf.f` (lines 277-278).
+
+**Fix.** Change `TWO * EPS` to `FOUR * EPS` on both lines. **NOT
+patched** — S-half non-canonical.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## LAPACK 3.12.1: `slasq2.f` hard-codes IEEE=.FALSE. instead of querying ILAENV
+
+**Symptom.** Loss of an IEEE-arithmetic optimization path in
+`SLASQ2` (the dqds eigenvalue iteration used by SBDSQR). The IEEE
+fast path runs without the explicit zero-test that the
+non-IEEE-safe path performs each iteration; on IEEE-compliant
+hardware (which is essentially all modern systems) the fast path
+should be selected.
+
+`dlasq2.f:275`:
+```fortran
+IEEE = ( ILAENV( 10, 'DLASQ2', 'N', 1, 2, 3, 4 ).EQ.1 )
+```
+
+`slasq2.f:274-279`:
+```fortran
+*     IEEE = ( ILAENV( 10, 'SLASQ2', 'N', 1, 2, 3, 4 ).EQ.1 )    ! commented out
+...
+IEEE = .FALSE.    ! hard-coded
+```
+
+The S half has the proper ILAENV query commented out and forces
+`IEEE = .FALSE.`. Performance regression only — the result is the
+same, just slower (every divisor is checked for zero). Most likely
+a leftover from an upstream debugging session; the comment placement
+suggests it was meant to be temporary.
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/slasq2.f` (lines 274-279).
+
+**Fix.** Uncomment the ILAENV call and remove the `IEEE = .FALSE.`
+override. **NOT patched** — S-half non-canonical and the migrator
+already replaces ILAENV with ILAENV_EP at all call sites in the
+migrated archive, so the D-derived QLASQ2 picks the proper path
+regardless.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## LAPACK 3.12.1: `sgelss.f` uses ILAENV-estimated workspace where DGELSS queries directly
+
+**Symptom.** Workspace size estimate returned by `SGELSS` for the
+`M < N` path uses `ILAENV(1, 'SGELQF', ...)` to look up the optimal
+block size and then computes `MAXWRK = M + M*NB`. `DGELSS`
+instead queries DGELQF directly with `LWORK=-1` and uses the
+returned value:
+
+```fortran
+* sgelss.f:324
+MAXWRK = M + M*ILAENV( 1, 'SGELQF', ' ', M, N, -1, -1 )
+
+* dgelss.f:308-310, 328
+CALL DGELQF( ..., DUM, -1, INFO )
+LWORK_DGELQF = INT( DUM(1) )
+...
+MAXWRK = M + LWORK_DGELQF
+```
+
+The query form is more accurate when the optimal LWORK includes
+overhead beyond `M*NB` (e.g. when DGELQF needs space for triangular
+factor T or for a workspace lookahead block). For modest M,N the
+two formulas coincide, but for large problems the ILAENV-estimated
+form can under-state the required workspace by a small constant.
+
+**Severity.** Borderline. The reference DGELQF/SGELQF
+implementations don't currently use significantly more than `M*NB`
+overhead, so the under-estimate doesn't typically bite. But it's
+inconsistent with the D-half pattern and could break if a vendor
+LAPACK substitutes a different SGELQF whose workspace overhead is
+higher.
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/sgelss.f` (line 324).
+
+**Fix.** Replace the `M*ILAENV(...)` formula with a proper SGELQF
+query, mirroring `dgelss.f:308-310, 328`. **NOT patched** — S-half
+non-canonical.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## LAPACK 3.12.1: `sgejsv.f` JOBA='L' should be 'G' in LSVEC && RSVEC branch
+
+**Symptom.** Numerical-correctness drift in the float SVD path
+when both left and right singular vectors are requested and the
+`U` matrix has just been *populated* (not zeroed) in its strict
+upper triangle. The ELSE branch immediately above the call uses
+`SLASET('U', NR-1, NR-1, ZERO, ZERO, U(1,2), LDU)` to zero the
+strict upper, but the corresponding IF branch *fills* it with
+`U(p,q) = -SIGN(TEMP1, U(q,p))`. After either branch, the same
+SGESVJ call processes U:
+
+```fortran
+CALL SGESVJ( 'L', 'U', 'V', NR, NR, U, LDU, SVA, ...)   ! sgejsv:1711
+```
+
+`'L'` tells SGESVJ that `U` is lower triangular and the strict
+upper is zero. After the IF branch, that's not true — SGESVJ
+silently drops the upper-triangular data the IF branch just
+deposited. DGEJSV correctly uses `'G'` (general):
+
+```fortran
+CALL DGESVJ( 'G', 'U', 'V', NR, NR, U, LDU, SVA, ...)   ! dgejsv:1711
+```
+
+Mathematically: `'G'` is correct for both branches; `'L'` is only
+correct for the ELSE (zeroed) branch. The IF branch produces a
+biased SVD result.
+
+**Root cause.** `sgejsv.f:1711`. Likely lost during a sync between
+the D and S copies: D got the `'L' → 'G'` fix, S didn't.
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/sgejsv.f` (line 1711, 1st arg of
+  SGESVJ).
+
+**Fix.** Single-token `'L' → 'G'`. **NOT patched** as a source
+override because S-half is non-canonical for the migrator. The
+extended-precision archive uses the D-derived QGEJSV, which is
+correct. Standalone single-precision LAPACK builds inherit the bug.
+
+**Why upstream's tests miss it.** `dchksvj` shape coverage probably
+doesn't trigger the IF branch frequently enough for the biased
+result to fall outside the test's tolerance bound, or the tolerance
+is loose enough to absorb the bias.
+
+**Upstream report.** Not yet filed.
+
+---
+
 ## ScaLAPACK 2.2.3: `p{d,z}atrmv_.c` ALPHA hardcoded to one in (UPLO=L, TRANS=T/C)
 
 **Symptom.** `PDATRMV` / `PZATRMV` (the absolute-value triangular
@@ -1034,6 +1504,180 @@ Reproducing requires calling `PZUNGQL` (or `PZUNML2`), then
 inspecting `PB_TOPGET` results, then calling another routine that
 relies on default broadcast topology — a usage pattern the upstream
 test cycle doesn't exercise.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## ScaLAPACK 2.2.3: `pzheevd.f` PCHK2MAT parameter index 11 should be 12
+
+**Symptom.** Calling `PZHEEVD` with an illegal `DESCZ` (e.g. invalid
+`MB_`/`NB_`, mismatched `CTXT_`) produces a `PXERBLA` diagnostic that
+reports parameter number 11 — but `DESCZ` sits at position 12 in
+PZHEEVD's signature (`JOBZ, UPLO, N, A, IA, JA, DESCA, W, Z, IZ, JZ,
+DESCZ, ...`); position 11 is `JZ`. The error path *does* fire, just
+mislabels which argument the caller got wrong, surfacing as a
+confusing diagnostic during the parameter-validation stage.
+`PCHEEVD` is correct (passes 12). The bug doesn't affect numerics.
+
+**Root cause.** Copy-paste during the Z-half adaptation of
+`PCHEEVD`. `pzheevd.f:299-300`:
+
+```fortran
+CALL PCHK2MAT( N, 3, N, 3, IA, JA, DESCA, 7, N, 3, N, 3, IZ,
+$              JZ, DESCZ, 11, 2, IDUM1, IDUM2, INFO )
+```
+
+The 16th argument of `PCHK2MAT` is `DESCBPOS0` — the parameter-number
+to forward to `PXERBLA` if `DESCB` (= `DESCZ` here) is invalid.
+`PCHEEVD` (line 299) passes `12`, which is the actual position of
+`DESCZ`. `PZHEEVD` passes `11`.
+
+**Affected files.**
+- `external/scalapack-2.2.3/SRC/pzheevd.f` (line 300, 16th arg of
+  `PCHK2MAT`).
+
+**Fix.** Single-token change `11 → 12` on the 16th argument of the
+`PCHK2MAT` call. Carried in
+`recipes/scalapack/source_overrides/pzheevd.f`. Wired via
+`recipes/scalapack.yaml`'s `source_overrides:` map plus a matching
+`prefer_source: PZHEEVD` pin so the patched Z half wins convergence
+over the un-fixed `PCHEEVD` sibling (which carries the *correct* 12,
+but the migrator's canonical-rank picker doesn't know that and would
+otherwise sort `pcheevd.f` alphabetically first).
+
+**Why upstream's tests miss it.** The shipped test driver feeds
+valid descriptors and never exercises the parameter-error path on
+`DESCZ` specifically; the misreported parameter number is invisible
+unless a caller deliberately passes an invalid `DESCZ` and inspects
+PXERBLA output.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## ScaLAPACK 2.2.3: `pzunmbr.f` EXTERNAL declares PCHK1MAT but body calls PCHK2MAT
+
+**Symptom.** None at runtime — Fortran `EXTERNAL` is advisory and the
+linker resolves `PCHK2MAT` correctly via the global symbol table. The
+typo surfaces only as a divergence against `pcunmbr.f` in the
+convergence reports (the C half lists `PCHK2MAT` correctly).
+
+**Root cause.** `pzunmbr.f:302`:
+
+```fortran
+EXTERNAL           BLACS_GRIDINFO, CHK1MAT, PCHK1MAT, PXERBLA,
+$                   PZUNMLQ, PZUNMQR
+```
+
+The body calls `PCHK2MAT` four times (lines 511, 515, 521, 525) and
+never calls `PCHK1MAT`. `PCHK1MAT` in the EXTERNAL list is dead — and
+it's the wrong name: the C half's `pcunmbr.f:302` correctly lists
+`PCHK2MAT`. Pure copy-paste error in upstream's Z-half edit.
+
+**Affected files.**
+- `external/scalapack-2.2.3/SRC/pzunmbr.f` (line 302).
+
+**Fix.** Replace `PCHK1MAT` with `PCHK2MAT` in the EXTERNAL list.
+Carried in `recipes/scalapack/source_overrides/pzunmbr.f`. Wired via
+`recipes/scalapack.yaml`'s `source_overrides:` map plus a matching
+`prefer_source: PZUNMBR` pin so the patched Z half wins convergence
+over the (already-correct) C half (canonical-rank picker would
+otherwise sort `pcunmbr.f` first).
+
+**Why upstream's tests miss it.** The bug has no observable effect.
+Only a textual diff between the two precision halves surfaces it.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## ScaLAPACK 2.2.3: `pssyevd.f` LQUERY misses LIWORK=-1
+
+**Symptom.** Calling `PSSYEVD` with `LWORK >= 1` and `LIWORK = -1`
+(querying just the integer workspace) is rejected as if the caller
+supplied real values: the routine treats `LWORK >= 1` as a real call
+and proceeds, but then fails to populate `IWORK(1)` with `LIWMIN`
+because the LQUERY branch never fires. `PDSYEVD` (and the migrated
+extended-precision `P{Q,E,M}SYEVD` halves derived from it) handle
+the asymmetric query correctly — `LQUERY` triggers when *either*
+`LWORK == -1` or `LIWORK == -1`.
+
+**Root cause.** `pssyevd.f` defines
+
+```fortran
+LQUERY = ( LWORK.EQ.-1 )
+```
+
+`pdsyevd.f` (and the migrated D-derived halves) correctly defines
+
+```fortran
+LQUERY = ( LWORK.EQ.-1 .OR. LIWORK.EQ.-1 )
+```
+
+A caller asking only for `LIWMIN` via `LIWORK = -1` therefore gets
+treated as a real call on the S half.
+
+**Affected files.**
+- `external/scalapack-2.2.3/SRC/pssyevd.f` (LQUERY definition).
+- `external/scalapack-2.2.3/SRC/pcheevd.f` not affected (its LQUERY
+  guard is correct — only the real S-precision half drifts).
+
+**Fix.** None wired in-tree. The migrator picks `PDSYEVD` as canonical
+for the real family (D-half over S-half by precision-rank policy), so
+every migrated extended-precision build (`PQSYEVD`/`PESYEVD`/
+`PMSYEVD`) gets the correct LQUERY guard automatically. The bug
+remains in the standard-precision archive built directly from
+`external/`. Documented here for completeness; no `source_override`
+needed.
+
+**Why upstream's tests miss it.** Their test driver always passes
+both `LWORK = -1` and `LIWORK = -1` together, which the broken guard
+catches via the `LWORK == -1` clause; the `LIWORK == -1` -only path
+isn't exercised.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## ScaLAPACK 2.2.3: `pslaed3.f` clobbers user INFO and skips bounds guard
+
+**Symptom.** Two distinct upstream-bug shapes in the S half of the
+divide-and-conquer eigenvalue sub-step `PSLAED3`, both absent in
+`PDLAED3`:
+
+1. The S half writes `INFO = 0` inside an internal helper loop —
+   clobbering the user-visible output `INFO` with a stale zero, so a
+   non-zero error set earlier in the routine is silently overwritten
+   before return. The D half correctly uses a local `IINFO` for the
+   internal loop's status and leaves the public `INFO` untouched.
+
+2. The S half's main loop indexes `D(I+J)` without first checking
+   `I + J <= N`, so for large enough `I` the loop reads past the end
+   of the eigenvalue array `D(1:N)`. The D half wraps the loop body
+   in `IF (I+J <= N) THEN ... ENDIF`. The OOB read on the S path is
+   typically a small step into adjacent stack/heap and doesn't
+   crash; it either returns a slightly wrong updated eigenvalue or
+   nothing observable depending on what sat past `D(N)`.
+
+**Affected files.**
+- `external/scalapack-2.2.3/SRC/pslaed3.f` — both bugs.
+- `external/scalapack-2.2.3/SRC/pdlaed3.f` — clean (canonical for our
+  migrated builds).
+
+**Fix.** None wired. The migrator picks `PDLAED3` as canonical for
+the real family, so every migrated extended-precision derivative
+inherits the correct `IINFO=0` and `IF(I+J.LE.N)` guard. The S-half
+bugs persist in the standard-precision archive built from
+`external/` unchanged. Documented here for completeness.
+
+**Why upstream's tests miss it.** The eigenvalue test drivers report
+correctness via residuals computed against shipped reference
+matrices, not against an alternate decomposition; the OOB read at
+`D(I+J)` for `I+J > N` happens to fall in zero-initialized stack
+padding on the test build hosts and produces no detectable numerical
+shift. A driver running on a host where the trailing memory holds
+non-zero data reproduces the disagreement.
 
 **Upstream report.** Not yet filed.
 

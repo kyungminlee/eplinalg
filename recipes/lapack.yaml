@@ -65,6 +65,40 @@ source_overrides:
   sorbdb3.f: lapack/source_overrides/sorbdb3.f
   zunbdb3.f: lapack/source_overrides/zunbdb3.f
   cunbdb3.f: lapack/source_overrides/cunbdb3.f
+  # dgejsv: real upstream workspace bug. The "RSVEC && !LSVEC && !ALMORT"
+  # branch calls DGESVJ with WORK(N+1) as the workspace start but passes
+  # LWORK as the workspace size — overstating available space by N
+  # elements. DGESVJ may write past WORK(LWORK). SGEJSV correctly passes
+  # LWORK-N. Patch fixes the size argument. See doc/UPSTREAM_BUGS.md.
+  dgejsv.f: lapack/source_overrides/dgejsv.f
+  # dtrsyl3 / ztrsyl3: real upstream argument-validation gap. STRSYL3
+  # checks LIWORK and LDSWORK against required workspace before XERBLA;
+  # D/C/Z halves omit those checks. Patches add the guards (LIWORK only
+  # exists on the real-precision halves; Z gets only the LDSWORK guard).
+  # Diagnostic-only — both routines have a downstream "use unblocked
+  # code" fallback when workspace is too small, so the absence of the
+  # guard doesn't corrupt memory, just suppresses the INFO error.
+  dtrsyl3.f: lapack/source_overrides/dtrsyl3.f
+  ztrsyl3.f: lapack/source_overrides/ztrsyl3.f
+  # zlarf1f: real upstream EXTERNAL omission. Body calls ZAXPY at lines
+  # 287/293 but the EXTERNAL list omits it (D-half DLARF1F lists DAXPY
+  # correctly). Advisory in Fortran (linker still resolves), but causes
+  # convergence to flag the migrated x-half against the c-half sibling.
+  zlarf1f.f: lapack/source_overrides/zlarf1f.f
+  # dlaqp2: real upstream EXTERNAL typo. Declares DLARF but body calls
+  # DLARF1F (line 222). slaqp2.f is correct (declares SLARF1F).
+  dlaqp2.f: lapack/source_overrides/dlaqp2.f
+  # zlahef_aa: stale ZGEMM in EXTERNAL. Body never calls ZGEMM (only
+  # ZGEMV). clahef_aa.f correctly omits CGEMM.
+  zlahef_aa.f: lapack/source_overrides/zlahef_aa.f
+  # zhetrf_aa: stale ZGEMV in EXTERNAL. Body never calls ZGEMV (only
+  # ZGEMM). chetrf_aa.f correctly omits CGEMV.
+  zhetrf_aa.f: lapack/source_overrides/zhetrf_aa.f
+  # zgbrfsx: missing ILATRANS in EXTERNAL. Body calls ILATRANS at
+  # lines 511 and 561, but EXTERNAL only lists LSAME, ILAPREC. The
+  # other three rfsx siblings (sgbrfsx, dgbrfsx, cgbrfsx) all declare
+  # ILATRANS correctly — Z-half-only typo. Advisory in Fortran.
+  zgbrfsx.f: lapack/source_overrides/zgbrfsx.f
 
 # Files dropped from the migrated archive:
 #  - ZC*/DS* mixed-precision iterative-refinement drivers and

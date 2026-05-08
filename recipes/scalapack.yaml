@@ -191,6 +191,11 @@ prefer_source:
   # Same pin reason: source_overrides for PZLARZC patch the same
   # buffer/stride bugs in the Q**H variant. Pin to dominate PCLARZC.
   - PZLARZC
+  # Pin the Z halves so the source_overrides for PZHEEVD (PCHK2MAT
+  # parameter-index 11→12) and PZUNMBR (EXTERNAL list PCHK1MAT→
+  # PCHK2MAT) win convergence over the un-patched PCHEEVD/PCUNMBR.
+  - PZHEEVD
+  - PZUNMBR
 
 # Mirror the scalapack_c.yaml rename for pdlaiectb_/pdlaiectl_: the
 # Fortran callers PDSTEBZ / PDSYEVX / PDSYGVX / PZHEEVX / PZHEGVX
@@ -283,6 +288,19 @@ source_overrides:
   # override because the prefer_source pin below routes through
   # PZLARZC.
   pzlarzc.f: scalapack/source_overrides/pzlarzc.f
+  # PZHEEVD's PCHK2MAT call passes 11 as the parameter index for DESCZ,
+  # but DESCZ sits at position 12 in PZHEEVD's signature (11 is JZ). On
+  # an illegal DESCZ the dispatched PXERBLA reports the wrong parameter
+  # number to the caller. PCHEEVD is correct (passes 12). Override fixes
+  # the index on the Z half so the migrated PXHEEVD matches.
+  pzheevd.f: scalapack/source_overrides/pzheevd.f
+  # PZUNMBR's EXTERNAL declaration lists PCHK1MAT, but the body calls
+  # PCHK2MAT four times (lines 511/515/521/525). Pure typo — Fortran
+  # EXTERNAL is advisory so the linker resolves PCHK2MAT correctly via
+  # the global symbol table, but the divergence against PCUNMBR (which
+  # correctly lists PCHK2MAT) shows up in convergence reports. Override
+  # corrects the EXTERNAL list on the Z half.
+  pzunmbr.f: scalapack/source_overrides/pzunmbr.f
 
 # local_renames: (reserved for non-precision local-variable drift like
 # CONJTOPH→TTOPH that isn't an S↔D / C↔Z prefix swap. Precision-prefix
