@@ -35,6 +35,21 @@ Bugs surfaced via five distinct audit passes:
    PCHK1MAT/PCHK2MAT match actual position of M/N/DESC in caller's
    signature. 316 sites, 53 mismatches in 11 routines (4 distinct
    bug families). **17 % bug rate — highest yield audit run.**
+6. **INFO=-N param-position mechanical sweep** (LAPACK SRC) — for
+   each `IF (test) THEN; INFO = -N` arg-validation block, identify
+   the single signature arg referenced in the test and verify N
+   matches its position. 11 352 sites, 9 distinct bugs found
+   (single-arg LWORK / LRWORK validations whose INFO points to a
+   different argument). Uncovered the striking `?ggsvd3` case where
+   `INFO = -24` references INFO itself (an OUT-only argument the
+   user can never pass illegally).
+7. **Doc-header `\brief \b NAME` consistency** (LAPACK) — verify
+   each `\brief \b NAME` matches the file's first SUBROUTINE/FUNCTION
+   declaration. 1 847 files, 1 real bug (`zrscl.f` documents itself
+   as `ZDRSCL`, the helper it calls).
+8. **XERBLA-string trailing-space asymmetry** — verify halves agree
+   on whether the routine name in `XERBLA('NAME', ...)` carries the
+   trailing-space pad. 1 confirming hit (already-known `SSYSV_AA`).
 
 ## Bug summary
 
@@ -61,6 +76,13 @@ Bugs surfaced via five distinct audit passes:
 | **P02** | `?hegvx/?sygvx` N POS0 4 vs 5 (all 4 halves) | Diag | ✓ D, Z | pchk |
 | **P03** | `pdtrord/pstrord` all POS0 off by +1 | Diag | ✓ D | pchk |
 | **P04** | `pzheevd.f` DESCZ POS0 11 vs 12 | Diag | ✓ Z | pchk |
+| **I01** | `?orbdb4`/`?unbdb4` INFO=-14 (WORK) for LWORK test, should be -15 | Diag | ✓ D, Z | info-n |
+| **I02** | `?ggsvd3` INFO=-24 (INFO itself!) for LWORK test, should be -22 | Diag | ✓ D, Z | info-n |
+| **I03** | `?orcsd`/`?uncsd` INFO=-22 (LDU2) for LWORK test, should be -28 | Diag | ✓ D, Z | info-n |
+| **I04** | `zuncsd` INFO=-24 (LDV1T) for LRWORK test, should be -30 | Diag | ✓ Z | info-n |
+| **I05** | `?laqz0` INFO=-19 (RWORK) for LWORK test, should be -18 | Diag | ✓ Z | info-n |
+| **I06** | `?laqz2` INFO=-26 (RWORK) for LWORK test, should be -25 | Diag | ✓ Z | info-n |
+| **D01** | `zrscl.f` doc header `\brief \b ZDRSCL` should be ZRSCL | Doc | ✓ Z | brief |
 | S01 | `pzunmbr.f` EXTERNAL declares PCHK1MAT, body calls PCHK2MAT | Adv | ✓ Z | conv |
 | S02 | `pssyevd.f` LQUERY misses LIWORK=-1 | Validation | — (S) | conv |
 | S03 | `pslaed3.f` clobbers user INFO | Validation | — (S) | conv |
