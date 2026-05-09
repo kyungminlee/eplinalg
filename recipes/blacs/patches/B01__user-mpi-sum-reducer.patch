@@ -1,0 +1,104 @@
+diff -urN work/BI_dMPI_sum.c /tmp/tmp.JL4TCVjgBQ/work/BI_dMPI_sum.c
+--- a/BI_dMPI_sum.c	1969-12-31 16:00:00.000000000 -0800
++++ b/BI_dMPI_sum.c	2026-05-09 10:54:10.731600268 -0700
+@@ -0,0 +1,21 @@
++/*
++ * BI_dMPI_sum -- user-defined MPI reduction op for the real-precision
++ * BLACS gsum2d combine. Mirrors the upstream ``BI_zMPI_sum.c`` pattern,
++ * which the complex ``zgsum2d_`` already uses, but for the real path.
++ *
++ * The d-prefix BLACS gsum2d_ default-topology branch was historically
++ * the only BLACS reduction that called the stock ``MPI_SUM``. On
++ * extended-precision targets that resolves against ``MPI_REAL16`` /
++ * ``MPI_LONG_DOUBLE``, neither of which Intel MPI 2021.17 implements
++ * ``MPI_SUM`` for. Switching to a user-op closes the gap by performing
++ * the per-element addition in user code (native ``+=`` on the target
++ * real type after migration), bypassing the broken builtin entirely.
++ *
++ * Audit task #24, ``doc/AUDIT-20260430.md`` Addendum 4.
++ */
++#include "Bdef.h"
++void BI_dMPI_sum(void *in, void *inout, MpiInt *N, MPI_Datatype *dtype)
++{
++   void BI_dvvsum(Int, char *, char *);
++   BI_dvvsum(*N, inout, in);
++}
+diff -urN work/dgsum2d_.c /tmp/tmp.JL4TCVjgBQ/work/dgsum2d_.c
+--- a/dgsum2d_.c	2026-05-09 10:54:10.723198752 -0700
++++ b/dgsum2d_.c	2026-05-09 10:54:10.730036031 -0700
+@@ -1,3 +1,34 @@
++/*
++ * Migrator-side override of upstream BLACS ``dgsum2d_.c``.
++ *
++ * Differs from upstream in the default-topology (``ttop == ' '``) path
++ * only: the original calls ``MPI_Reduce`` / ``MPI_Allreduce`` with the
++ * stock ``MPI_SUM`` op on whatever ``bp->dtype`` happens to be — which
++ * the migrator rewrites to ``MPI_REAL16`` (kind16) or
++ * ``MPI_LONG_DOUBLE`` (kind10). Intel MPI 2021.17 does not implement
++ * ``MPI_SUM`` correctly on either of those datatypes (segfaults inside
++ * ``MPIR_SUM`` on REAL16; returns nonsense on LONG_DOUBLE). MPICH's
++ * ``mpiexec`` instead deadlocks rank 0 at 100% CPU — different failure
++ * mode, same gap.
++ *
++ * The fix mirrors upstream ``zgsum2d_.c``: register a user-defined
++ * combine op via ``MPI_Op_create(BI_dMPI_sum, ...)`` that calls
++ * ``BI_dvvsum`` (the same vector-sum kernel used by every other
++ * topology branch in this routine). After migration the q/e/m clones
++ * call ``BI_qMPI_sum``/``BI_eMPI_sum``/``BI_mMPI_sum`` which dispatch
++ * to ``BI_qvvsum``/``BI_evvsum``/``BI_mvvsum`` — those are already
++ * generated correctly by the BLACS C migrator from ``BI_dvvsum.c`` and
++ * use the target's native ``+=`` operator on the precision-promoted
++ * scalar type.
++ *
++ * No quad-MPI helper or runtime registration is needed — the user-op
++ * is created and freed per call, exactly like the existing complex
++ * ``zgsum2d_`` path. The companion ``BI_dMPI_sum.c`` ships alongside
++ * this file via the same ``source_overrides`` recipe entry.
++ *
++ * Audit task #24, ``doc/AUDIT-20260430.md`` Addendum 4.
++ */
++
+ #include "Bdef.h"
+ 
+ 
+@@ -73,6 +104,7 @@
+                     Int, Int);
+    void BI_BeComb(BLACSCONTEXT *, BLACBUFF *, BLACBUFF *, Int, VVFUNPTR);
+    void BI_dvvsum(Int, char *, char *);
++   void BI_dMPI_sum(void *, void *, MpiInt *, MPI_Datatype *);
+ /*
+  *  Variable Declarations
+  */
+@@ -80,6 +112,7 @@
+    BLACSCONTEXT *ctxt;
+    char ttop, tscope;
+    Int N, length, dest, tlda, trdest, ierr;
++   MPI_Op BlacComb;
+    extern BLACBUFF *BI_ActiveQ;
+    extern BLACBUFF BI_AuxBuff;
+ 
+@@ -159,19 +192,22 @@
+    switch(ttop)
+    {
+    case ' ':         /* use MPI's reduction by default */
++      length = 1;
++      ierr=MPI_Op_create(BI_dMPI_sum, length, &BlacComb);
+       if (dest != -1)
+       {
+-         ierr=MPI_Reduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, MPI_SUM,
++         ierr=MPI_Reduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, BlacComb,
+                        dest, ctxt->scp->comm);
+          if (ctxt->scp->Iam == dest)
+ 	    BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp2->Buff);
+       }
+       else
+       {
+-         ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, MPI_SUM,
++         ierr=MPI_Allreduce(bp->Buff, bp2->Buff, bp->N, bp->dtype, BlacComb,
+ 		          ctxt->scp->comm);
+ 	 BI_dvmcopy(Mpval(m), Mpval(n), A, tlda, (double*)bp2->Buff);
+       }
++      ierr=MPI_Op_free(&BlacComb);
+       if (BI_ActiveQ) BI_UpdateBuffs(NULL);
+       return;
+       break;
