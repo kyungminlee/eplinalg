@@ -1,0 +1,11 @@
+--- a/sorbdb.f
++++ b/sorbdb.f
+@@ -382,7 +382,7 @@
+          END IF
+       END IF
+       IF( INFO .NE. 0 ) THEN
+-         CALL XERBLA( 'xORBDB', -INFO )
++         CALL XERBLA( 'SORBDB', -INFO )
+          RETURN
+       ELSE IF( LQUERY ) THEN
+          RETURN

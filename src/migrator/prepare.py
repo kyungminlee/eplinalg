@@ -118,37 +118,56 @@ def run_prepare(recipe_path: Path,
     return staged_root
 
 
-_PRECISION_PREFIXES: tuple[str, ...] = (
-    'ps', 'pd', 'pc', 'pz',  # ScaLAPACK 2-letter (P + S/D/C/Z)
-    's',  'd',  'c',  'z',   # LAPACK / BLAS 1-letter
-)
+def _precision_sibling_set(filename: str,
+                           upstream_root: Path | None = None) -> set[str] | None:
+    """Return the co-family for ``filename`` (existing upstream files only).
 
+    Generates candidate sibling names by precision-prefix swap, with the
+    LAPACK orthogonal/unitary aliasing (``or`` ↔ ``un``) folded in:
 
-def _precision_sibling_set(filename: str) -> set[str] | None:
-    """Return the four-element co-family for ``filename``, or None.
+      ``dorbdb3.f``  →  {``sorbdb3.f``, ``dorbdb3.f``, ``cunbdb3.f``, ``zunbdb3.f``}
+      ``pdormrz.f``  →  {``psormrz.f``, ``pdormrz.f``, ``pcunmrz.f``, ``pzunmrz.f``}
+      ``pdgeequ.f``  →  {``psgeequ.f``, ``pdgeequ.f``, ``pcgeequ.f``, ``pzgeequ.f``}
 
-    For ``dgemm.f`` returns ``{'sgemm.f', 'dgemm.f', 'cgemm.f', 'zgemm.f'}``.
-    For ``pdgemm.f`` returns the P-prefixed siblings. For files whose
-    stem doesn't begin with a known precision prefix (e.g. ``utils.f``),
-    returns None.
+    When ``upstream_root`` is provided, candidates that don't correspond
+    to a real upstream file are filtered out — so a candidate like
+    ``dunbdb3.f`` (which doesn't exist; D-half is ``dorbdb3.f``) won't
+    show up as a missing sibling.
+
+    Returns ``None`` for files whose stem doesn't begin with a known
+    precision prefix (e.g. ``utils.f``).
     """
     p = Path(filename)
     stem = p.stem.lower()
     suf = p.suffix
-    for prefix_set in (('ps', 'pd', 'pc', 'pz'), ('s', 'd', 'c', 'z')):
-        for pfx in prefix_set:
-            if stem.startswith(pfx) and len(stem) > len(pfx):
-                # Confirm next char isn't part of a longer prefix
-                tail = stem[len(pfx):]
-                # Avoid matching 's' against 'scalapack' helpers etc:
-                # require the tail to start with a letter not extending
-                # the prefix into a 2-letter form when we matched a
-                # 1-letter form first.
-                if pfx in ('s', 'd', 'c', 'z'):
-                    # Skip if the actual prefix is 2-letter
-                    if 'p' + pfx in prefix_set and stem.startswith('p' + pfx):
-                        continue
-                return {f'{q}{tail}{suf}' for q in prefix_set}
+
+    # Detect prefix style. Try 2-letter (PS/PD/PC/PZ) first.
+    for prefix_set, pfx_len in ((('ps', 'pd', 'pc', 'pz'), 2),
+                                 (('s',  'd',  'c',  'z'),  1)):
+        pfx = stem[:pfx_len]
+        if pfx not in prefix_set or len(stem) <= pfx_len:
+            continue
+        tail = stem[pfx_len:]
+        precision = pfx[-1]  # 's','d','c','z'
+        is_real = precision in ('s', 'd')
+
+        candidates: set[str] = set()
+        for q in prefix_set:
+            q_precision = q[-1]
+            q_is_real = q_precision in ('s', 'd')
+            # Apply or/un aliasing when crossing the real/complex boundary.
+            new_tail = tail
+            if is_real and not q_is_real and tail.startswith('or'):
+                new_tail = 'un' + tail[2:]
+            elif not is_real and q_is_real and tail.startswith('un'):
+                new_tail = 'or' + tail[2:]
+            candidates.add(f'{q}{new_tail}{suf}')
+
+        if upstream_root is not None and upstream_root.is_dir():
+            existing = {n for n in candidates
+                        if (upstream_root / n).is_file()}
+            return existing if existing else None
+        return candidates
     return None
 
 
@@ -200,8 +219,9 @@ def verify_patches(recipe_path: Path,
             aggregate.add(f)
             file_to_patches.setdefault(f, []).append(patch_name)
 
+    upstream_root = config.source_dir
     for f in sorted(aggregate):
-        sibs = _precision_sibling_set(f)
+        sibs = _precision_sibling_set(f, upstream_root)
         if sibs is None:
             continue
         missing = sibs - aggregate

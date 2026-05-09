@@ -114,6 +114,7 @@ patches:
   # L03: ?trsyl3 LIWORK / LDSWORK validation gap
   - dtrsyl3.f.patch
   - ztrsyl3.f.patch
+  - ctrsyl3.f.patch
   # L04: stale/missing EXTERNAL declarations
   - zlarf1f.f.patch
   - dlaqp2.f.patch
@@ -122,9 +123,11 @@ patches:
   - zgbrfsx.f.patch
   # L05: dlaswlq accepts NB=0 (slaswlq rejects)
   - dlaswlq.f.patch
-  # X01: ?orbdb / ?unbdb XERBLA placeholder 'xORBDB' unsubstituted
+  # X01: ?orbdb / ?unbdb XERBLA placeholder 'xORBDB' unsubstituted (all 4 halves)
   - dorbdb.f.patch
+  - sorbdb.f.patch
   - zunbdb.f.patch
+  - cunbdb.f.patch
   # E01: 8 EXTERNAL-vs-CALL drifts (D/Z canonical)
   - dlarf1l.f.patch       # +DAXPY,DSCAL
   - zlarf1l.f.patch       # +ZAXPY
@@ -136,12 +139,15 @@ patches:
   - zrscl.f.patch         # +ZSCAL, D01 \brief ZDRSCL→ZRSCL
   # I01: ?unbdb4 LWORK INFO -14 → -15
   - zunbdb4.f.patch
-  # I02: ?ggsvd3 LWORK INFO -24 → -22
+  # I02: ?ggsvd3 LWORK INFO -24 → -22 (all 4 halves)
   - dggsvd3.f.patch
+  - sggsvd3.f.patch
   - zggsvd3.f.patch
+  - cggsvd3.f.patch
   # I03: ?orcsd / ?uncsd LWORK INFO -22 → -28; I04: zuncsd LRWORK -24 → -30
   - dorcsd.f.patch
   - zuncsd.f.patch
+  - cuncsd.f.patch
   # I05: zlaqz0 LWORK INFO -19 → -18
   - zlaqz0.f.patch
   # I06: zlaqz2 LWORK INFO -26 → -25
@@ -256,7 +262,6 @@ expected_divergences:
   - DGGHD3
   - DGGQRF
   - DGGRQF
-  - DGGSVD3
   - DISNAN
   - DLAEXC
   - DLAISNAN
@@ -335,7 +340,6 @@ expected_divergences:
   - ZGETSLS
   - ZGGBAL
   - ZGGEV3
-  - ZGGSVD3
   - ZGSVJ1
   - ZHEEQUB
   - ZHEEVX
@@ -402,7 +406,8 @@ asymmetric_patches:
   - chbevd_2stage.f.patch
   - cheevd_2stage.f.patch
   - chgeqz.f.patch
-  - cunbdb3.f.patch
+  - ctrsyl3.f.patch
+  - cuncsd.f.patch
   - dgehd2.f.patch
   - dgejsv.f.patch
   - dgelq2.f.patch
@@ -413,23 +418,19 @@ asymmetric_patches:
   - dgeqrt3.f.patch
   - dgerq2.f.patch
   - dggbak.f.patch
-  - dggsvd3.f.patch
   - dlansf.f.patch
   - dlaqp2.f.patch
   - dlarf1l.f.patch
   - dlarfx.f.patch
   - dlaswlq.f.patch
   - dlatrs3.f.patch
-  - dorbdb3.f.patch
   - dorbdb4.f.patch
-  - dorbdb.f.patch
   - dorcsd.f.patch
   - dorgr2.f.patch
   - dorm2l.f.patch
   - dorm2r.f.patch
   - dorml2.f.patch
   - dtrsyl3.f.patch
-  - sorbdb3.f.patch
   - zgbrfsx.f.patch
   - zgehd2.f.patch
   - zgelq2.f.patch
@@ -441,7 +442,6 @@ asymmetric_patches:
   - zgeqrt3.f.patch
   - zgerq2.f.patch
   - zggbak.f.patch
-  - zggsvd3.f.patch
   - zhetrf_aa.f.patch
   - zlahef_aa.f.patch
   - zlanht.f.patch
@@ -454,9 +454,7 @@ asymmetric_patches:
   - zlatrs3.f.patch
   - zrscl.f.patch
   - ztrsyl3.f.patch
-  - zunbdb3.f.patch
   - zunbdb4.f.patch
-  - zunbdb.f.patch
   - zuncsd.f.patch
   - zunm2l.f.patch
   - zunm2r.f.patch

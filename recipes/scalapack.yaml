@@ -255,7 +255,9 @@ extra_renames:
 #   I08     {lascl} CFROM/CTO INFO codes inherited from LAPACK
 patches:
   - pdlanhs.f.patch
+  - pslanhs.f.patch
   - pzlanhs.f.patch
+  - pclanhs.f.patch
   - pdgeequ.f.patch
   - pzgeequ.f.patch
   - pdposvx.f.patch
@@ -263,7 +265,9 @@ patches:
   - pdlarzb.f.patch
   - pzlarzb.f.patch
   - pdormrz.f.patch
+  - psormrz.f.patch
   - pzunmrz.f.patch
+  - pcunmrz.f.patch
   - pdlarz.f.patch
   - pzlarz.f.patch
   - pzlarzc.f.patch
@@ -273,10 +277,15 @@ patches:
   - dpttrsv.f.patch
   - zpttrsv.f.patch
   - pdsyevr.f.patch
+  - pssyevr.f.patch
   - pzheevr.f.patch
+  - pcheevr.f.patch
   - pdsygvx.f.patch
+  - pssygvx.f.patch
   - pzhegvx.f.patch
+  - pchegvx.f.patch
   - pdtrord.f.patch
+  - pstrord.f.patch
   - pdpttrs.f.patch
   - pzpttrs.f.patch
   - pdpbtrsv.f.patch
@@ -317,28 +326,20 @@ expected_divergences:
   - PDGEEQU
   - PDLACON
   - PDLAED3
-  - PDLANHS
   - PDLAQR3
   - PDLARZ
   - PDLARZB
   - PDLASCL
   - PDLAWIL
-  - PDORMRZ
   - PDPBTRSV
   - PDPOSVX
   - PDPTTRS
   - PDSTEBZ
   - PDSYEVD
-  - PDSYEVR
-  - PDSYGVX
   - PDSYTTRD
-  - PDTRORD
   - PDTRSEN
   - PZGEEQU
   - PZHEEVD
-  - PZHEEVR
-  - PZHEGVX
-  - PZLANHS
   - PZLARZ
   - PZLARZB
   - PZLARZC
@@ -346,7 +347,6 @@ expected_divergences:
   - PZPBTRSV
   - PZPOSVX
   - PZPTTRS
-  - PZUNMRZ
   - ZPTTRSV
 
 # Symmetric-patch CI escape hatch (Phase D). All current ScaLAPACK
@@ -354,25 +354,16 @@ expected_divergences:
 # the verify-patches heuristic learns to treat orthogonal/unitary
 # tails as siblings), entries will be removed from this list.
 asymmetric_patches:
-  - bdtrexc.f.patch
   - dpttrsv.f.patch
   - pdgeequ.f.patch
-  - pdlanhs.f.patch
   - pdlarzb.f.patch
   - pdlarz.f.patch
   - pdlascl.f.patch
-  - pdormrz.f.patch
   - pdpbtrsv.f.patch
   - pdposvx.f.patch
   - pdpttrs.f.patch
-  - pdsyevr.f.patch
-  - pdsygvx.f.patch
-  - pdtrord.f.patch
   - pzgeequ.f.patch
   - pzheevd.f.patch
-  - pzheevr.f.patch
-  - pzhegvx.f.patch
-  - pzlanhs.f.patch
   - pzlarzb.f.patch
   - pzlarzc.f.patch
   - pzlarz.f.patch
@@ -381,5 +372,4 @@ asymmetric_patches:
   - pzposvx.f.patch
   - pzpttrs.f.patch
   - pzunmbr.f.patch
-  - pzunmrz.f.patch
   - zpttrsv.f.patch
