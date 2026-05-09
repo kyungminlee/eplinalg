@@ -29,7 +29,8 @@ _KNOWN_RECIPE_KEYS: frozenset[str] = frozenset({
     'keep_kind_manifest',
     'c_return_types', 'c_type_aliases', 'c_pointer_cast_aliases',
     'header_patches', 'overrides',
-    'expected_divergences', 'defer_all_divergences', 'asymmetric_patches',
+    'expected_divergences', 'defer_all_divergences',
+    'asymmetric_patches', 'one_sided_cleanup',
 })
 
 
@@ -190,12 +191,22 @@ class RecipeConfig:
     # ``expected_divergences``.
     defer_all_divergences: bool = False
     # Patches under ``recipes/<lib>/patches/`` that touch only one half
-    # of a co-family pair by design (e.g. fixing a Z-half-only bug whose
-    # C sibling is correct upstream). Listed here, the symmetric-patch
-    # CI check (``migrator verify-patches``) skips them; otherwise it
-    # fails when a precision-prefixed file is touched without its
-    # siblings.
+    # of a co-family pair because the upstream sibling carries a
+    # genuinely different bug shape (or no analogous bug). Listed here,
+    # the symmetric-patch CI check (``migrator verify-patches``) skips
+    # them; otherwise it fails when a precision-prefixed file is touched
+    # without its siblings. Use this field for "real bug, S/C may need
+    # its own future patch with a different fix" — periodically review
+    # entries to see whether the sibling situation has changed.
     asymmetric_patches: list[str] = field(default_factory=list)
+    # Patches that close a D↔S or Z↔C *cosmetic* asymmetry by stripping
+    # upstream dead code (unused PARAMETER blocks, redundant CMPLX
+    # casts, dead INTRINSIC entries, literal-style mismatches). The
+    # sibling half is already in the post-patch shape — no S/C patch
+    # is or will be needed. Same CI semantics as ``asymmetric_patches``
+    # (skipped by symmetric check), but the separate field communicates
+    # intent so reviewers don't waste time hunting for missing siblings.
+    one_sided_cleanup: list[str] = field(default_factory=list)
 
 
 def load_recipe(recipe_path: Path,
@@ -323,4 +334,5 @@ def load_recipe(recipe_path: Path,
         },
         defer_all_divergences=bool(data.get('defer_all_divergences', False)),
         asymmetric_patches=list(data.get('asymmetric_patches') or []),
+        one_sided_cleanup=list(data.get('one_sided_cleanup') or []),
     )

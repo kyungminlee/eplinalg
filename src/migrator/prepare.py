@@ -203,13 +203,13 @@ def verify_patches(recipe_path: Path,
     if not pdir.is_dir():
         return []
 
-    asymmetric = set(config.asymmetric_patches)
+    skip = set(config.asymmetric_patches) | set(config.one_sided_cleanup)
     aggregate: set[str] = set()
     file_to_patches: dict[str, list[str]] = {}
     errors: list[str] = []
 
     for patch_name in config.patches:
-        if patch_name in asymmetric:
+        if patch_name in skip:
             continue
         patch_path = pdir / patch_name
         if not patch_path.exists():

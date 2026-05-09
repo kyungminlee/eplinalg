@@ -349,10 +349,12 @@ expected_divergences:
   - PZPTTRS
   - ZPTTRSV
 
-# Symmetric-patch CI escape hatch (Phase D). All current ScaLAPACK
-# patches touch only the D/Z halves. As S/C patches are added (or as
-# the verify-patches heuristic learns to treat orthogonal/unitary
-# tails as siblings), entries will be removed from this list.
+# Patches whose sibling half upstream carries the same bug but the
+# auto-translator (sed-based prefix swap) couldn't generate the
+# sibling diff cleanly — needs hand-translation in a future pass.
+# All entries are real upstream bugs, not cosmetic cleanup. (See
+# ``one_sided_cleanup`` in lapack.yaml for the cosmetic-asymmetry
+# field; ScaLAPACK has no entries in that category today.)
 asymmetric_patches:
   - dpttrsv.f.patch
   - pdgeequ.f.patch

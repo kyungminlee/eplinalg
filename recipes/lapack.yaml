@@ -394,70 +394,90 @@ expected_divergences:
   - ZUNMLQ
   - ZUNMRZ
 
-# Symmetric-patch CI escape hatch (Phase D). All current LAPACK patches
-# touch only the D/Z halves of their co-family. Some real upstream
-# bugs (L01 ?orbdb3, X01 ?orbdb / ?unbdb) DO have S/C patches in this
-# list — but the verify-patches sibling-set heuristic doesn't yet
-# understand the orthogonal/unitary tail aliasing (dorbdb3 ↔ cunbdb3),
-# so it flags them as missing. As that heuristic improves, the truly
-# symmetric ones will be removed from this list automatically; the
-# remainder represents work to add S/C patches in a future pass.
+# Patches whose sibling half upstream is genuinely correct or has a
+# different bug shape — periodically review whether a sibling patch
+# could be added. See doc/refactor-20260509.md.
 asymmetric_patches:
-  - chbevd_2stage.f.patch
-  - cheevd_2stage.f.patch
-  - chgeqz.f.patch
-  - ctrsyl3.f.patch
-  - cuncsd.f.patch
-  - dgehd2.f.patch
+  # L02: dgejsv DGESVJ workspace overflow — D-half only
   - dgejsv.f.patch
+  # L03: ?trsyl3 LIWORK / LDSWORK validation gap — strsyl3 sibling missing
+  - dtrsyl3.f.patch
+  - ztrsyl3.f.patch
+  - ctrsyl3.f.patch
+  # L04: stale/missing EXTERNAL declarations — D/Z-half-only typos
+  - dlaqp2.f.patch
+  - zlarf1f.f.patch
+  - zhetrf_aa.f.patch
+  - zlahef_aa.f.patch
+  - zgbrfsx.f.patch
+  # L05: dlaswlq accepts NB=0 — D-half only (slaswlq already correct)
+  - dlaswlq.f.patch
+  # L12: zla_syrfsx_extended XERBLA reports HERFSX — Z-half only
+  - zla_syrfsx_extended.f.patch
+  # E01: 8 EXTERNAL-vs-CALL drifts (D/Z canonical)
+  - dlarf1l.f.patch
+  - zlarf1l.f.patch
+  - dlatrs3.f.patch
+  - zlatrs3.f.patch
+  - zgelss.f.patch
+  - dorbdb4.f.patch
+  - dorgr2.f.patch
+  - zrscl.f.patch
+  # I01: zunbdb4 LWORK INFO -14 → -15 (dorbdb4 in E01 above)
+  - zunbdb4.f.patch
+  # I03: dorcsd / cuncsd — sorcsd sibling missing
+  - dorcsd.f.patch
+  - zuncsd.f.patch
+  - cuncsd.f.patch
+  # I05: zlaqz0 LWORK INFO -19 → -18 — Z-half only
+  - zlaqz0.f.patch
+  # I06: zlaqz2 LWORK INFO -26 → -25 — Z-half only
+  - zlaqz2.f.patch
+
+# Patches that close a D↔S or Z↔C cosmetic asymmetry (dead PARAMETER
+# blocks, redundant CMPLX casts, dead INTRINSIC entries, literal-style
+# differences) where the sibling half is already in the post-patch
+# shape upstream. No S/C sibling is or will be needed. CI semantics
+# match asymmetric_patches: (skipped by symmetric check) but the
+# separate field communicates intent.
+one_sided_cleanup:
+  # Dead PARAMETER ONE block strip (D/Z have it, S/C omit)
+  - dgehd2.f.patch
   - dgelq2.f.patch
   - dgeql2.f.patch
   - dgeqr2.f.patch
   - dgeqr2p.f.patch
-  - dgeqrt2.f.patch
-  - dgeqrt3.f.patch
   - dgerq2.f.patch
-  - dggbak.f.patch
-  - dlansf.f.patch
-  - dlaqp2.f.patch
-  - dlarf1l.f.patch
-  - dlarfx.f.patch
-  - dlaswlq.f.patch
-  - dlatrs3.f.patch
-  - dorbdb4.f.patch
-  - dorcsd.f.patch
-  - dorgr2.f.patch
   - dorm2l.f.patch
   - dorm2r.f.patch
   - dorml2.f.patch
-  - dtrsyl3.f.patch
-  - zgbrfsx.f.patch
   - zgehd2.f.patch
   - zgelq2.f.patch
-  - zgelss.f.patch
   - zgeql2.f.patch
   - zgeqr2.f.patch
   - zgeqr2p.f.patch
-  - zgeqrt2.f.patch
-  - zgeqrt3.f.patch
   - zgerq2.f.patch
-  - zggbak.f.patch
-  - zhetrf_aa.f.patch
-  - zlahef_aa.f.patch
-  - zlanht.f.patch
-  - zlaqz0.f.patch
-  - zlaqz2.f.patch
-  - zlarf1f.f.patch
-  - zlarf1l.f.patch
-  - zlarfx.f.patch
-  - zla_syrfsx_extended.f.patch
-  - zlatrs3.f.patch
-  - zrscl.f.patch
-  - ztrsyl3.f.patch
-  - zunbdb4.f.patch
-  - zuncsd.f.patch
   - zunm2l.f.patch
   - zunm2r.f.patch
   - zunml2.f.patch
   - zunmr2.f.patch
+  # Literal-style mismatch (D/Z write 1.0D+00, S/C use 1.0)
+  - dgeqrt2.f.patch
+  - dgeqrt3.f.patch
+  - zgeqrt2.f.patch
+  - zgeqrt3.f.patch
+  # Strip dead INT from INTRINSIC list
+  - dggbak.f.patch
+  - zggbak.f.patch
+  # Strip dead MAX from INTRINSIC list
+  - dlansf.f.patch
+  - zlanht.f.patch
+  # Strip redundant CMPLX cast on C halves (Z writes bare integer)
+  - chbevd_2stage.f.patch
+  - cheevd_2stage.f.patch
+  - chgeqz.f.patch
+  # Collapse "410 CONTINUE / RETURN" to single-line "410 RETURN"
+  - dlarfx.f.patch
+  - zlarfx.f.patch
+  # Fix EXTERNAL ZLARF1 typo (call site is ZLARF1L) — Z-only typo
   - zupmtr.f.patch
