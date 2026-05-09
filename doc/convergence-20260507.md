@@ -228,24 +228,44 @@ to keep S and D in lock-step. The remaining 162 are accepted: the
 guarantee that matters for MUMPS is differential precision parity at
 the test level (currently 26 / 26 passing), not source-text identity.
 
-## Where to focus next
+## Audit status (2026-05-08)
 
-Ordered by leverage:
+**All libraries audited.** Convergence-driven sweeps plus three
+mechanical sweeps (XERBLA-string, EXTERNAL-vs-CALL, PCHK?MAT
+parameter-position) ran across the entire vendored tree. Findings
+catalogued in `doc/UPSTREAM_BUGS.md`. Summary:
 
-1. **PBLAS C K&R-stripper bug** (61 pairs in one fix). Highest ROI.
-2. **ScaLAPACK MINRGP families** — decide policy: pin one literal via
-   `prefer_source`, or move to the expected-divergence list.
-3. **MUMPS** — leave as-is; document that converge is not the right
-   metric for MUMPS and rely on the test-level parity gate.
+- **BLAS 7**: all cosmetic/structural drift; left as known-divergent.
+- **LAPACK 161**: 12 bugs documented (8 patched, 4 S-half-only). Plus
+  8 EXTERNAL-vs-CALL drifts (8 patched) and 5 XERBLA-string typos
+  (5 patched). Remaining divergences are migrator-side noise +
+  upstream label-numbering drift.
+- **ScaLAPACK 33**: 4 PCHK?MAT param-position bugs (5 routines patched
+  spanning all 4 family clusters) + pre-existing patches. MINRGP
+  family confirmed not-a-bug (canonical upstream tuning).
+- **PBLAS 61**: characterized as migrator re-migration K&R-stripper
+  gap (~all 61) + cosmetic Mptr() refactoring drift; PDATRMV ALPHA
+  bug surviving in non-canonical S/C halves (already known).
+- **scalapack_c 1**: migrator C-pass `complex` rename gap; cosmetic.
+- **MUMPS 162**: S/D/C/Z halves verified algorithmically consistent
+  via call-set + INFOG-set sweeps. Divergence is migrator-side
+  declaration-style noise. The 5.8.2 SIGSEGV-on-bad-input bug
+  (M01) is unrelated to convergence.
+- **BLACS 1**, **pbblas/ptzblas/xblas/scalapack_tools 0**: trivial.
 
-BLAS is now fully audited (2026-05-08): all seven divergences are
-upstream cosmetic / structural drift or deliberate D/Z override
-asymmetry. Closing them only silences the report without changing the
-shipped archive, so they're left as known-divergent. The earlier
-"`_filter_precision_drift` regression" hypothesis was disproven — the
-`sdot` case is an upstream `STEMP=…; SDOT=…` vs `DDOT=…; DTEMP=…` line
-swap, which is a `delete+insert` pair the filter intentionally does not
-fold.
+The earlier "`_filter_precision_drift` regression" hypothesis was
+disproven — the `sdot` case is an upstream `STEMP=…; SDOT=…` vs
+`DDOT=…; DTEMP=…` line swap, which is a `delete+insert` pair the
+filter intentionally does not fold.
+
+**Remaining open work**, all migrator-side improvements (not upstream
+bugs):
+
+1. PBLAS K&R-stripper gap in convergence re-migration path (~61 cosmetic
+   diffs would close).
+2. MUMPS kind-promotion asymmetry between canonical and re-migration
+   paths (~162 cosmetic diffs would close).
+3. scalapack_c C-pass `#define TYPE complex` rename gap (1 diff).
 
 ## Reproducing
 

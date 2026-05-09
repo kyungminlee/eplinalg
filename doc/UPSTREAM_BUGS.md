@@ -1,12 +1,95 @@
 # Upstream bugs in vendored Netlib sources
 
-*Last catalogued: 2026-05-06*
+*Last catalogued: 2026-05-08*
 
 This document catalogues bugs found in the vendored upstream sources
-(`external/lapack-3.12.1/`, `external/scalapack-2.2.3/`, etc.) that
-the migrator works around without editing `external/`. Each entry
-records the symptom, root cause, and the in-tree workaround. Entries
-that have been reported to upstream link the tracking issue.
+(`external/lapack-3.12.1/`, `external/scalapack-2.2.3/`,
+`external/MUMPS_5.8.2/`) that the migrator works around without
+editing `external/`. Each entry records the symptom, root cause, and
+the in-tree workaround.
+
+## Audit methodology
+
+Bugs surfaced via five distinct audit passes:
+
+1. **Convergence-diff audit** — for every co-family pair (S/D and
+   C/Z), light-normalize both halves and report textual divergences.
+   Catches single-precision-letter typos and one-half-only fixes.
+   Yield: 11 bugs across BLAS/LAPACK/ScaLAPACK/MUMPS/PBLAS.
+2. **Differential-precision tests** — runtime kind16-vs-Netlib-quad
+   reference comparison. Catches numerical-correctness bugs that
+   convergence misses (both halves wrong same way). Yield: pre-existing
+   ScaLAPACK bugs (orbdb3 stride, lanhs underestimate, geequ axis,
+   posvx LWMIN, syevx LQUERY, larz family, ungql/unml2 topology, etc.)
+   plus the MUMPS bad-input SIGSEGV.
+3. **XERBLA-string mechanical sweep** — verify each `CALL XERBLA('NAME', ...)`
+   matches the enclosing SUBROUTINE name. 1 888 sites, 7 distinct typos
+   (`'xORBDB'` placeholder unsubstituted in 4 halves; `bdtrexc`/`bstrexc`
+   `'DTREXC'` instead of `'B?TREXC'`; `?pttrsv` reports `'?PTTRS'` not
+   `'?PTTRSV'`).
+4. **EXTERNAL-vs-CALL mechanical sweep** — verify every CALL target
+   appears in EXTERNAL and vice versa. 462 routines flagged; 18 real
+   bugs (8 patched, 10 S/C-only documented).
+5. **PCHK?MAT param-position mechanical sweep** (ScaLAPACK only) —
+   verify literal `MAPOS0`/`NAPOS0`/`DESCAPOS0` arguments to
+   PCHK1MAT/PCHK2MAT match actual position of M/N/DESC in caller's
+   signature. 316 sites, 53 mismatches in 11 routines (4 distinct
+   bug families). **17 % bug rate — highest yield audit run.**
+
+## Bug summary
+
+| ID | Bug | Severity | Patched? | Audit |
+|----|-----|---------:|:---:|-------|
+| L01 | `?orbdb3.f` `?ROT` stride bug (LDX11 vs LDX21) | Memory | ✓ all 4 halves | runtime |
+| L02 | `dgejsv.f` LWORK overflow in inner DGESVJ | Memory | ✓ D | conv |
+| L03 | `?trsyl3.f` D/C/Z miss LIWORK / LDSWORK validation | Diag | ✓ D, Z | conv |
+| L04 | Stale/missing EXTERNAL (5+ routines, 1st batch) | Adv | ✓ 4 D/Z | conv |
+| L05 | `dlaswlq.f` accepts NB=0 | Validation | ✓ D | conv |
+| L06 | `sggev3.f` query gates on ILVL not ILV | Workspace | — (S) | conv |
+| L07 | `slarf1l.f` missing LASTV.GT.0 guards | Memory (OOB) | — (S) | conv |
+| L08 | `slarrf.f` 2×eps shift safety vs dlarrf 4×eps | Numerical | — (S) | conv |
+| L09 | `slasq2.f` IEEE hard-coded false | Performance | — (S) | conv |
+| L10 | `sgelss.f` ILAENV-estimated workspace | Workspace | — (S) | conv |
+| L11 | `sgejsv.f` JOBA='L' should be 'G' | Numerical | — (S) | conv |
+| L12 | `zla_syrfsx_extended.f` reports 'ZLA_HERFSX_EXTENDED' | Diag | ✓ Z | conv |
+| **X01** | `?orbdb.f`/`?unbdb.f` `'xORBDB'` placeholder (all 4 halves) | Diag | ✓ D, Z | xerbla |
+| **X02** | `bdtrexc.f`/`bstrexc.f` line 173 `'DTREXC'` typo | Diag | ✓ D | xerbla |
+| **X03** | `?pttrsv.f` reports `'?PTTRS'` not `'?PTTRSV'` (all 4) | Diag | ✓ D, Z | xerbla |
+| **E01** | 8 D/Z EXTERNAL drifts (dlarf1l, zlarf1l, dlatrs3, zlatrs3, zgelss, dorbdb4, dorgr2, zrscl) | Adv | ✓ 8 | extern |
+| **E02** | 10 S/C-half EXTERNAL drifts (clarf1l, slarf1l, slatrs3, clatrs3, cgelss, sorbdb4, sorgr2, crscl, dopmtr, clarf1f) | Adv | — | extern |
+| **P01** | `?heevr/?syevr` DESCZ POS0 21 vs 19 (all 4 halves) | Diag | ✓ D, Z | pchk |
+| **P02** | `?hegvx/?sygvx` N POS0 4 vs 5 (all 4 halves) | Diag | ✓ D, Z | pchk |
+| **P03** | `pdtrord/pstrord` all POS0 off by +1 | Diag | ✓ D | pchk |
+| **P04** | `pzheevd.f` DESCZ POS0 11 vs 12 | Diag | ✓ Z | pchk |
+| S01 | `pzunmbr.f` EXTERNAL declares PCHK1MAT, body calls PCHK2MAT | Adv | ✓ Z | conv |
+| S02 | `pssyevd.f` LQUERY misses LIWORK=-1 | Validation | — (S) | conv |
+| S03 | `pslaed3.f` clobbers user INFO | Validation | — (S) | conv |
+| S04 | `p{d,z}atrmv_.c` ALPHA hardcoded one (UPLO=L, TRANS=T/C) | Numerical | ✓ D, Z | runtime |
+| S05 | `p?lanhs.f` NPROW=1 underestimate | Numerical | ✓ D, Z | runtime |
+| S06 | `p?lanhs.f` IAROW double-advance | Numerical | ✓ D, Z | runtime |
+| S07 | `p?geequ.f` column-scale wrong axis | Numerical | ✓ D, Z | runtime |
+| S08 | `p?posvx.f` LWMIN too small | Validation | ✓ D, Z | runtime |
+| S09 | `pdsyevx.f`/`pzheevx.f` LQUERY-path early-write | Memory | ✓ D, Z | runtime |
+| S10 | `pdtrsen.f` IWORK early-write during LQUERY | Memory | ✓ D | runtime |
+| S11 | `pdlarzb.f` PBDTRAN N-arg vs LV-buffer mismatch | Numerical | ✓ D | runtime |
+| S12 | `p?ormrz.f` post-loop condition copy-paste | Numerical | ✓ all | runtime |
+| S13 | `p?larz.f` MPV/NQV undersizing (heap overrun) | Memory | ✓ all | runtime |
+| S14 | `p?larz.f` ZAXPY stride bug | Numerical | ✓ all | runtime |
+| S15 | `pzlarz.f`/`pzlarzc.f` SIDE='L' missing ZLACGV; ZGERC vs ZGERU | Numerical | ✓ Z | runtime |
+| S16 | `p?larz.f`/`p?larzc.f` PBxTRNV reads M where L stored | Memory | ✓ all | runtime |
+| S17 | `pzungql.f`/`pzunml2.f` PB_TOPGET should be PB_TOPSET | Restore | ✓ Z | runtime |
+| M01 | MUMPS 5.8.2 SIGSEGV on bad-input cases | Robustness | — | runtime |
+
+**Severity legend:**
+- *Memory*: out-of-bounds read/write, possible corruption.
+- *Numerical*: wrong result returned for valid input.
+- *Validation*: invalid input not rejected (silent bad behavior).
+- *Workspace*: under-allocation in size queries; overflow possible.
+- *Diag*: only the diagnostic message is wrong; rejection still works.
+- *Adv*: advisory only (Fortran linker resolves regardless).
+- *Performance*: correct result but slower than necessary.
+- *Restore*: incorrect post-call cleanup of communicator state.
+- *Robustness*: graceful error reporting required by spec, but routine SIGSEGVs.
 
 ## How fixes are carried
 
