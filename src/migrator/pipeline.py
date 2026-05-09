@@ -698,17 +698,6 @@ def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
     src_files = sorted(set(src_files).union(
         p for p in extra_migrate if p.is_file()
     ))
-    # Swap any upstream source whose filename matches a recipe-level
-    # override. The override file is in upstream shape (DOUBLE PRECISION,
-    # pd*/dz* naming, etc.) and goes through the normal migration
-    # pipeline so it produces correctly-renamed output for every target.
-    if config.source_overrides:
-        src_files = [
-            (config.source_overrides[p.name]
-             if p.name in config.source_overrides else p)
-            for p in src_files
-        ]
-
     # Convergence buffer: first writer of each output name stores its
     # text; subsequent writers must agree or we record a divergence.
     # D/Z sources are preferred as the canonical text: when a pair
@@ -1066,15 +1055,9 @@ def run_convergence_report(recipe_path: Path, output_dir: Path,
     others_to_migrate = {other for _, other in pairs}
     texts: dict[Path, str] = {}
     workers = max(1, (os.cpu_count() or 4))
-    # Honor source_overrides during re-migration so that hand-edited
-    # upstream replacements normalize both halves of a co-family pair,
-    # not just the canonical D/Z half.
-    def _resolve(p: Path) -> Path:
-        ov = config.source_overrides.get(p.name)
-        return ov if ov is not None else p
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futures = {
-            ex.submit(migrate_file_to_string, _resolve(p), rename_map,
+            ex.submit(migrate_file_to_string, p, rename_map,
                       target_mode, parser, parser_cmd,
                       config.keep_kind_lines.get(p.name)): p
             for p in others_to_migrate
@@ -1279,7 +1262,6 @@ def run_c_migration(config: RecipeConfig, output_dir: Path,
         extra_c_dirs=config.extra_c_dirs,
         skip_files=config.skip_files,
         copy_files=config.copy_files,
-        source_overrides=config.source_overrides,
     )
     return result
 
