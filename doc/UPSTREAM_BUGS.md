@@ -356,6 +356,74 @@ None of these has any observable runtime effect.
 
 ---
 
+## LAPACK 3.12.1: INFO=-N parameter-position drift (mechanical sweep 2026-05-08)
+
+A mechanical sweep parsed every `IF (test) THEN; INFO = -N` arg-
+validation block in LAPACK SRC, identified the single signature arg
+referenced in the test, and verified the literal `N` matches the
+actual position of that arg in the SUBROUTINE signature. **128
+mismatches out of 11 352 sites; after filtering the multi-arg-test
+false positives and the LAPACK `INFO = -100*PARAM - INDEX` element-
+validation convention (slasq2 et al. with `INFO = -201/202/203` for
+`Z(1)/Z(2)/Z(3)` failures), 9 real bugs remain.**
+
+### Patched in migrated archive (D/Z canonical)
+
+| File | Test | Old INFO | Fixed INFO | Position of tested arg |
+|------|------|---------:|-----------:|----------------------:|
+| `dorbdb4.f` | `LWORK.LT.LWORKMIN` | -14 (WORK) | -15 | 15 (LWORK) |
+| `zunbdb4.f` | `LWORK.LT.LWORKMIN` | -14 (WORK) | -15 | 15 (LWORK) |
+| `dggsvd3.f` | `LWORK.LT.1` | -24 (INFO itself!) | -22 | 22 (LWORK) |
+| `zggsvd3.f` | `LWORK.LT.1` | -24 (INFO itself!) | -22 | 22 (LWORK) |
+| `dorcsd.f` | `LWORK.LT.LWORKMIN` | -22 (LDU2) | -28 | 28 (LWORK) |
+| `zuncsd.f` | `LWORK.LT.LWORKMIN` | -22 (LDU2) | -28 | 28 (LWORK) |
+| `zuncsd.f` | `LRWORK.LT.LRWORKMIN` | -24 (LDV1T) | -30 | 30 (LRWORK) |
+| `zlaqz0.f` | `LWORK.LT.LWORKREQ` | -19 (RWORK) | -18 | 18 (LWORK) |
+| `zlaqz2.f` | `LWORK.LT.LWORKREQ` | -26 (RWORK) | -25 | 25 (LWORK) |
+
+### Documented but not patched (S/C non-canonical, same bugs)
+
+- `sorbdb4.f` -14 (should be -15)
+- `cunbdb4.f` -14 (should be -15)
+- `sggsvd3.f`, `cggsvd3.f` -24 (should be -22)
+- `sorcsd.f`, `cuncsd.f` -22 LWORK (should be -28); cuncsd -24 LRWORK (should be -30)
+- `slaqz0.f`, `claqz0.f` -19 (should be -18)
+- `claqz2.f` -26 (should be -25)
+
+### Notable: dggsvd3 / zggsvd3 `INFO = -24` references INFO itself
+
+The most striking bug in this batch: `?ggsvd3.f` on illegal LWORK
+returns `INFO = -24` — but in those routines, position 24 *is* INFO.
+So XERBLA reports "argument INFO had an illegal value", which is
+nonsensical (the user can't pass an illegal INFO since it's an OUT
+parameter).
+
+### Severity
+
+All diagnostic-only. The routines correctly reject the bad input;
+they just print the wrong parameter number in the XERBLA message.
+Same severity class as the PCHK?MAT param-position bugs and XERBLA-
+string typos.
+
+### Why upstream's tests miss them
+
+Test drivers always pass valid LWORK (or query-then-allocate); the
+INFO=-N path for too-small workspace never fires.
+
+### `zrscl.f` doc-header references wrong routine
+
+While auditing, also caught `zrscl.f:1` `\brief \b ZDRSCL` (and line
+9, "Download ZDRSCL + dependencies") — the doc header refers to a
+different routine, ZDRSCL, which zrscl.f *calls* internally (line
+139). The actual routine in zrscl.f is ZRSCL. Auto-generated HTML
+docs at netlib.org would label ZRSCL's docs page as "ZDRSCL" or fail
+to find ZRSCL entirely. Fixed in
+`recipes/lapack/source_overrides/zrscl.f`.
+
+**Upstream report.** Not yet filed.
+
+---
+
 ## ScaLAPACK 2.2.3: PCHK?MAT parameter-position drift (mechanical sweep 2026-05-08)
 
 A mechanical sweep parsed every `CALL PCHK1MAT(...)` /

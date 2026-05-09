@@ -192,7 +192,26 @@ source_overrides:
   zgelss.f: lapack/source_overrides/zgelss.f         # +ZUNMQR
   dorbdb4.f: lapack/source_overrides/dorbdb4.f       # DLARF→DLARF1F
   dorgr2.f: lapack/source_overrides/dorgr2.f         # DLARF→DLARF1L
-  zrscl.f: lapack/source_overrides/zrscl.f           # +ZSCAL
+  zrscl.f: lapack/source_overrides/zrscl.f           # +ZSCAL, brief ZDRSCL→ZRSCL
+  # INFO=-N parameter-position drift surfaced by 2026-05-08 mechanical
+  # sweep. For each `IF (LWORK.LT.LWMIN) INFO = -N` style validation,
+  # verified the literal N matches the actual position of LWORK in the
+  # caller's signature. Off-by-N bugs found in 8 D/Z routines + already-
+  # patched dorbdb4.
+  #
+  # zunbdb4: LWORK pos 15, INFO was -14
+  zunbdb4.f: lapack/source_overrides/zunbdb4.f
+  # dggsvd3 / zggsvd3: LWORK pos 22, INFO was -24 (referenced INFO arg)
+  dggsvd3.f: lapack/source_overrides/dggsvd3.f
+  zggsvd3.f: lapack/source_overrides/zggsvd3.f
+  # dorcsd / zuncsd: LWORK pos 28, INFO was -22 (referenced LDU2). Plus
+  # zuncsd LRWORK pos 30, INFO was -24 (referenced LDV1T).
+  dorcsd.f: lapack/source_overrides/dorcsd.f
+  zuncsd.f: lapack/source_overrides/zuncsd.f
+  # zlaqz0: LWORK pos 18, INFO was -19 (referenced RWORK)
+  zlaqz0.f: lapack/source_overrides/zlaqz0.f
+  # zlaqz2: LWORK pos 25, INFO was -26 (referenced RWORK)
+  zlaqz2.f: lapack/source_overrides/zlaqz2.f
 
 # Files dropped from the migrated archive:
 #  - ZC*/DS* mixed-precision iterative-refinement drivers and

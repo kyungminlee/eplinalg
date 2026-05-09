@@ -1,4 +1,4 @@
-*> \brief \b DORBDB4
+*> \brief \b ZUNBDB4
 *
 *  =========== DOCUMENTATION ===========
 *
@@ -6,19 +6,19 @@
 *            http://www.netlib.org/lapack/explore-html/
 *
 *> \htmlonly
-*> Download DORBDB4 + dependencies
-*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.tgz?format=tgz&filename=/lapack/lapack_routine/dorbdb4.f">
+*> Download ZUNBDB4 + dependencies
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.tgz?format=tgz&filename=/lapack/lapack_routine/zunbdb4.f">
 *> [TGZ]</a>
-*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.zip?format=zip&filename=/lapack/lapack_routine/dorbdb4.f">
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.zip?format=zip&filename=/lapack/lapack_routine/zunbdb4.f">
 *> [ZIP]</a>
-*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.txt?format=txt&filename=/lapack/lapack_routine/dorbdb4.f">
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.txt?format=txt&filename=/lapack/lapack_routine/zunbdb4.f">
 *> [TXT]</a>
 *> \endhtmlonly
 *
 *  Definition:
 *  ===========
 *
-*       SUBROUTINE DORBDB4( M, P, Q, X11, LDX11, X21, LDX21, THETA, PHI,
+*       SUBROUTINE ZUNBDB4( M, P, Q, X11, LDX11, X21, LDX21, THETA, PHI,
 *                           TAUP1, TAUP2, TAUQ1, PHANTOM, WORK, LWORK,
 *                           INFO )
 *
@@ -27,7 +27,7 @@
 *       ..
 *       .. Array Arguments ..
 *       DOUBLE PRECISION   PHI(*), THETA(*)
-*       DOUBLE PRECISION   PHANTOM(*), TAUP1(*), TAUP2(*), TAUQ1(*),
+*       COMPLEX*16         PHANTOM(*), TAUP1(*), TAUP2(*), TAUQ1(*),
 *      $                   WORK(*), X11(LDX11,*), X21(LDX21,*)
 *       ..
 *
@@ -37,7 +37,7 @@
 *>
 *>\verbatim
 *>
-*> DORBDB4 simultaneously bidiagonalizes the blocks of a tall and skinny
+*> ZUNBDB4 simultaneously bidiagonalizes the blocks of a tall and skinny
 *> matrix X with orthonormal columns:
 *>
 *>                            [ B11 ]
@@ -47,10 +47,10 @@
 *>                            [  0  ]
 *>
 *> X11 is P-by-Q, and X21 is (M-P)-by-Q. M-Q must be no larger than P,
-*> M-P, or Q. Routines DORBDB1, DORBDB2, and DORBDB3 handle cases in
+*> M-P, or Q. Routines ZUNBDB1, ZUNBDB2, and ZUNBDB3 handle cases in
 *> which M-Q is not the minimum dimension.
 *>
-*> The orthogonal matrices P1, P2, and Q1 are P-by-P, (M-P)-by-(M-P),
+*> The unitary matrices P1, P2, and Q1 are P-by-P, (M-P)-by-(M-P),
 *> and (M-Q)-by-(M-Q), respectively. They are represented implicitly by
 *> Householder vectors.
 *>
@@ -83,7 +83,7 @@
 *>
 *> \param[in,out] X11
 *> \verbatim
-*>          X11 is DOUBLE PRECISION array, dimension (LDX11,Q)
+*>          X11 is COMPLEX*16 array, dimension (LDX11,Q)
 *>           On entry, the top block of the matrix X to be reduced. On
 *>           exit, the columns of tril(X11) specify reflectors for P1 and
 *>           the rows of triu(X11,1) specify reflectors for Q1.
@@ -97,7 +97,7 @@
 *>
 *> \param[in,out] X21
 *> \verbatim
-*>          X21 is DOUBLE PRECISION array, dimension (LDX21,Q)
+*>          X21 is COMPLEX*16 array, dimension (LDX21,Q)
 *>           On entry, the bottom block of the matrix X to be reduced. On
 *>           exit, the columns of tril(X21) specify reflectors for P2.
 *> \endverbatim
@@ -124,28 +124,28 @@
 *>
 *> \param[out] TAUP1
 *> \verbatim
-*>          TAUP1 is DOUBLE PRECISION array, dimension (M-Q)
+*>          TAUP1 is COMPLEX*16 array, dimension (M-Q)
 *>           The scalar factors of the elementary reflectors that define
 *>           P1.
 *> \endverbatim
 *>
 *> \param[out] TAUP2
 *> \verbatim
-*>          TAUP2 is DOUBLE PRECISION array, dimension (M-Q)
+*>          TAUP2 is COMPLEX*16 array, dimension (M-Q)
 *>           The scalar factors of the elementary reflectors that define
 *>           P2.
 *> \endverbatim
 *>
 *> \param[out] TAUQ1
 *> \verbatim
-*>          TAUQ1 is DOUBLE PRECISION array, dimension (Q)
+*>          TAUQ1 is COMPLEX*16 array, dimension (Q)
 *>           The scalar factors of the elementary reflectors that define
 *>           Q1.
 *> \endverbatim
 *>
 *> \param[out] PHANTOM
 *> \verbatim
-*>          PHANTOM is DOUBLE PRECISION array, dimension (M)
+*>          PHANTOM is COMPLEX*16 array, dimension (M)
 *>           The routine computes an M-by-1 column vector Y that is
 *>           orthogonal to the columns of [ X11; X21 ]. PHANTOM(1:P) and
 *>           PHANTOM(P+1:M) contain Householder vectors for Y(1:P) and
@@ -154,7 +154,7 @@
 *>
 *> \param[out] WORK
 *> \verbatim
-*>          WORK is DOUBLE PRECISION array, dimension (LWORK)
+*>          WORK is COMPLEX*16 array, dimension (LWORK)
 *> \endverbatim
 *>
 *> \param[in] LWORK
@@ -193,11 +193,11 @@
 *>  The upper-bidiagonal blocks B11, B21 are represented implicitly by
 *>  angles THETA(1), ..., THETA(Q) and PHI(1), ..., PHI(Q-1). Every entry
 *>  in each bidiagonal band is a product of a sine or cosine of a THETA
-*>  with a sine or cosine of a PHI. See [1] or DORCSD for details.
+*>  with a sine or cosine of a PHI. See [1] or ZUNCSD for details.
 *>
 *>  P1, P2, and Q1 are represented as products of elementary reflectors.
-*>  See DORCSD2BY1 for details on generating P1, P2, and Q1 using DORGQR
-*>  and DORGLQ.
+*>  See ZUNCSD2BY1 for details on generating P1, P2, and Q1 using ZUNGQR
+*>  and ZUNGLQ.
 *> \endverbatim
 *
 *> \par References:
@@ -207,7 +207,7 @@
 *>      Algorithms, 50(1):33-65, 2009.
 *>
 *  =====================================================================
-      SUBROUTINE DORBDB4( M, P, Q, X11, LDX11, X21, LDX21, THETA,
+      SUBROUTINE ZUNBDB4( M, P, Q, X11, LDX11, X21, LDX21, THETA,
      $                    PHI,
      $                    TAUP1, TAUP2, TAUQ1, PHANTOM, WORK, LWORK,
      $                    INFO )
@@ -221,15 +221,16 @@
 *     ..
 *     .. Array Arguments ..
       DOUBLE PRECISION   PHI(*), THETA(*)
-      DOUBLE PRECISION   PHANTOM(*), TAUP1(*), TAUP2(*), TAUQ1(*),
+      COMPLEX*16         PHANTOM(*), TAUP1(*), TAUP2(*), TAUQ1(*),
      $                   WORK(*), X11(LDX11,*), X21(LDX21,*)
 *     ..
 *
 *  ====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   NEGONE, ONE, ZERO
-      PARAMETER          ( NEGONE = -1.0D0, ONE = 1.0D0, ZERO = 0.0D0 )
+      COMPLEX*16         NEGONE, ONE, ZERO
+      PARAMETER          ( NEGONE = (-1.0D0,0.0D0), ONE = (1.0D0,0.0D0),
+     $                     ZERO = (0.0D0,0.0D0) )
 *     ..
 *     .. Local Scalars ..
       DOUBLE PRECISION   C, S
@@ -238,12 +239,13 @@
       LOGICAL            LQUERY
 *     ..
 *     .. External Subroutines ..
-      EXTERNAL           DLARF1F, DLARFGP, DORBDB5, DROT, DSCAL,
+      EXTERNAL           ZLARF1F, ZLARFGP, ZUNBDB5, ZDROT, ZSCAL,
+     $                   ZLACGV,
      $                   XERBLA
 *     ..
 *     .. External Functions ..
-      DOUBLE PRECISION   DNRM2
-      EXTERNAL           DNRM2
+      DOUBLE PRECISION   DZNRM2
+      EXTERNAL           DZNRM2
 *     ..
 *     .. Intrinsic Function ..
       INTRINSIC          ATAN2, COS, MAX, SIN, SQRT
@@ -283,7 +285,7 @@
          END IF
       END IF
       IF( INFO .NE. 0 ) THEN
-         CALL XERBLA( 'DORBDB4', -INFO )
+         CALL XERBLA( 'ZUNBDB4', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
          RETURN
@@ -297,48 +299,54 @@
             DO J = 1, M
                PHANTOM(J) = ZERO
             END DO
-            CALL DORBDB5( P, M-P, Q, PHANTOM(1), 1, PHANTOM(P+1), 1,
+            CALL ZUNBDB5( P, M-P, Q, PHANTOM(1), 1, PHANTOM(P+1), 1,
      $                    X11, LDX11, X21, LDX21, WORK(IORBDB5),
      $                    LORBDB5, CHILDINFO )
-            CALL DSCAL( P, NEGONE, PHANTOM(1), 1 )
-            CALL DLARFGP( P, PHANTOM(1), PHANTOM(2), 1, TAUP1(1) )
-            CALL DLARFGP( M-P, PHANTOM(P+1), PHANTOM(P+2), 1,
+            CALL ZSCAL( P, NEGONE, PHANTOM(1), 1 )
+            CALL ZLARFGP( P, PHANTOM(1), PHANTOM(2), 1, TAUP1(1) )
+            CALL ZLARFGP( M-P, PHANTOM(P+1), PHANTOM(P+2), 1,
      $                    TAUP2(1) )
-            THETA(I) = ATAN2( PHANTOM(1), PHANTOM(P+1) )
+            THETA(I) = ATAN2( DBLE( PHANTOM(1) ), DBLE( PHANTOM(P+1) ) )
             C = COS( THETA(I) )
             S = SIN( THETA(I) )
-            CALL DLARF1F( 'L', P, Q, PHANTOM(1), 1, TAUP1(1), X11,
+            CALL ZLARF1F( 'L', P, Q, PHANTOM(1), 1, CONJG(TAUP1(1)),
+     $                    X11,
      $                    LDX11, WORK(ILARF) )
-            CALL DLARF1F( 'L', M-P, Q, PHANTOM(P+1), 1, TAUP2(1),
+            CALL ZLARF1F( 'L', M-P, Q, PHANTOM(P+1), 1,
+     $                    CONJG(TAUP2(1)),
      $                    X21, LDX21, WORK(ILARF) )
          ELSE
-            CALL DORBDB5( P-I+1, M-P-I+1, Q-I+1, X11(I,I-1), 1,
+            CALL ZUNBDB5( P-I+1, M-P-I+1, Q-I+1, X11(I,I-1), 1,
      $                    X21(I,I-1), 1, X11(I,I), LDX11, X21(I,I),
      $                    LDX21, WORK(IORBDB5), LORBDB5, CHILDINFO )
-            CALL DSCAL( P-I+1, NEGONE, X11(I,I-1), 1 )
-            CALL DLARFGP( P-I+1, X11(I,I-1), X11(I+1,I-1), 1,
+            CALL ZSCAL( P-I+1, NEGONE, X11(I,I-1), 1 )
+            CALL ZLARFGP( P-I+1, X11(I,I-1), X11(I+1,I-1), 1,
      $                    TAUP1(I) )
-            CALL DLARFGP( M-P-I+1, X21(I,I-1), X21(I+1,I-1), 1,
+            CALL ZLARFGP( M-P-I+1, X21(I,I-1), X21(I+1,I-1), 1,
      $                    TAUP2(I) )
-            THETA(I) = ATAN2( X11(I,I-1), X21(I,I-1) )
+            THETA(I) = ATAN2( DBLE( X11(I,I-1) ), DBLE( X21(I,I-1) ) )
             C = COS( THETA(I) )
             S = SIN( THETA(I) )
-            CALL DLARF1F( 'L', P-I+1, Q-I+1, X11(I,I-1), 1, TAUP1(I),
-     $                    X11(I,I), LDX11, WORK(ILARF) )
-            CALL DLARF1F( 'L', M-P-I+1, Q-I+1, X21(I,I-1), 1,
-     $                    TAUP2(I), X21(I,I), LDX21, WORK(ILARF) )
+            CALL ZLARF1F( 'L', P-I+1, Q-I+1, X11(I,I-1), 1,
+     $                    CONJG(TAUP1(I)), X11(I,I), LDX11,
+     $                    WORK(ILARF) )
+            CALL ZLARF1F( 'L', M-P-I+1, Q-I+1, X21(I,I-1), 1,
+     $                    CONJG(TAUP2(I)), X21(I,I), LDX21,
+     $                    WORK(ILARF) )
          END IF
 *
-         CALL DROT( Q-I+1, X11(I,I), LDX11, X21(I,I), LDX21, S, -C )
-         CALL DLARFGP( Q-I+1, X21(I,I), X21(I,I+1), LDX21, TAUQ1(I) )
-         C = X21(I,I)
-         CALL DLARF1F( 'R', P-I, Q-I+1, X21(I,I), LDX21, TAUQ1(I),
-     $               X11(I+1,I), LDX11, WORK(ILARF) )
-         CALL DLARF1F( 'R', M-P-I, Q-I+1, X21(I,I), LDX21, TAUQ1(I),
-     $               X21(I+1,I), LDX21, WORK(ILARF) )
+         CALL ZDROT( Q-I+1, X11(I,I), LDX11, X21(I,I), LDX21, S, -C )
+         CALL ZLACGV( Q-I+1, X21(I,I), LDX21 )
+         CALL ZLARFGP( Q-I+1, X21(I,I), X21(I,I+1), LDX21, TAUQ1(I) )
+         C = DBLE( X21(I,I) )
+         CALL ZLARF1F( 'R', P-I, Q-I+1, X21(I,I), LDX21, TAUQ1(I),
+     $                 X11(I+1,I), LDX11, WORK(ILARF) )
+         CALL ZLARF1F( 'R', M-P-I, Q-I+1, X21(I,I), LDX21, TAUQ1(I),
+     $                 X21(I+1,I), LDX21, WORK(ILARF) )
+         CALL ZLACGV( Q-I+1, X21(I,I), LDX21 )
          IF( I .LT. M-Q ) THEN
-            S = SQRT( DNRM2( P-I, X11(I+1,I), 1 )**2
-     $              + DNRM2( M-P-I, X21(I+1,I), 1 )**2 )
+            S = SQRT( DZNRM2( P-I, X11(I+1,I), 1 )**2
+     $              + DZNRM2( M-P-I, X21(I+1,I), 1 )**2 )
             PHI(I) = ATAN2( S, C )
          END IF
 *
@@ -347,27 +355,31 @@
 *     Reduce the bottom-right portion of X11 to [ I 0 ]
 *
       DO I = M - Q + 1, P
-         CALL DLARFGP( Q-I+1, X11(I,I), X11(I,I+1), LDX11, TAUQ1(I) )
-         CALL DLARF1F( 'R', P-I, Q-I+1, X11(I,I), LDX11, TAUQ1(I),
-     $               X11(I+1,I), LDX11, WORK(ILARF) )
-         CALL DLARF1F( 'R', Q-P, Q-I+1, X11(I,I), LDX11, TAUQ1(I),
-     $               X21(M-Q+1,I), LDX21, WORK(ILARF) )
+         CALL ZLACGV( Q-I+1, X11(I,I), LDX11 )
+         CALL ZLARFGP( Q-I+1, X11(I,I), X11(I,I+1), LDX11, TAUQ1(I) )
+         CALL ZLARF1F( 'R', P-I, Q-I+1, X11(I,I), LDX11, TAUQ1(I),
+     $                 X11(I+1,I), LDX11, WORK(ILARF) )
+         CALL ZLARF1F( 'R', Q-P, Q-I+1, X11(I,I), LDX11, TAUQ1(I),
+     $                 X21(M-Q+1,I), LDX21, WORK(ILARF) )
+         CALL ZLACGV( Q-I+1, X11(I,I), LDX11 )
       END DO
 *
 *     Reduce the bottom-right portion of X21 to [ 0 I ]
 *
       DO I = P + 1, Q
-         CALL DLARFGP( Q-I+1, X21(M-Q+I-P,I), X21(M-Q+I-P,I+1),
+         CALL ZLACGV( Q-I+1, X21(M-Q+I-P,I), LDX21 )
+         CALL ZLARFGP( Q-I+1, X21(M-Q+I-P,I), X21(M-Q+I-P,I+1),
      $                 LDX21,
      $                 TAUQ1(I) )
-         CALL DLARF1F( 'R', Q-I, Q-I+1, X21(M-Q+I-P,I), LDX21,
-     $               TAUQ1(I),
-     $               X21(M-Q+I-P+1,I), LDX21, WORK(ILARF) )
+         CALL ZLARF1F( 'R', Q-I, Q-I+1, X21(M-Q+I-P,I), LDX21,
+     $                 TAUQ1(I),
+     $                 X21(M-Q+I-P+1,I), LDX21, WORK(ILARF) )
+         CALL ZLACGV( Q-I+1, X21(M-Q+I-P,I), LDX21 )
       END DO
 *
       RETURN
 *
-*     End of DORBDB4
+*     End of ZUNBDB4
 *
       END
 
