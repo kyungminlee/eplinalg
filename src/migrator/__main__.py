@@ -20,6 +20,7 @@ from .config import load_recipe
 from .pipeline import (
     run_convergence_report, run_divergence_report, run_migration,
 )
+from .prepare import run_prepare
 from .prefix_classifier import classify_symbols
 from .symbol_scanner import scan_symbols
 from .target_mode import load_target
@@ -34,6 +35,22 @@ def _parser_args(args):
     parser = getattr(args, 'parser', None)
     parser_cmd = getattr(args, 'parser_cmd', None)
     return parser, parser_cmd
+
+
+def cmd_prepare(args):
+    """Stage upstream sources and apply the recipe's patch list.
+
+    Output goes to ``<project_root>/build/staged-sources/<library>/`` and
+    is idempotent: a ``.prepared.stamp`` file inside the staged tree
+    short-circuits when no listed patch is newer than the stamp. Pass
+    ``--rebuild`` to wipe and re-stage.
+    """
+    staged_root = run_prepare(
+        recipe_path=args.recipe,
+        project_root=args.project_root,
+        rebuild=args.rebuild,
+    )
+    print(f'Staged: {staged_root}')
 
 
 def cmd_migrate(args):
@@ -1362,6 +1379,17 @@ def main():
         description='General-purpose type migration for numerical libraries'
     )
     sub = parser.add_subparsers(dest='command', required=True)
+
+    # --- prepare ---
+    p = sub.add_parser(
+        'prepare',
+        help='Stage upstream sources for a recipe and apply its patch list',
+    )
+    p.add_argument('recipe', type=Path, help='Recipe YAML file')
+    p.add_argument('--project-root', type=Path, default=None)
+    p.add_argument('--rebuild', action='store_true',
+                   help='Wipe and re-stage even if the cache stamp is fresh')
+    p.set_defaults(func=cmd_prepare)
 
     # --- migrate ---
     p = sub.add_parser('migrate', help='Migrate source files')
