@@ -1,0 +1,11 @@
+--- a/zgbrfsx.f
++++ b/zgbrfsx.f
+@@ -496,7 +496,7 @@
+       INTRINSIC          MAX, SQRT, TRANSFER
+ *     ..
+ *     .. External Functions ..
+-      EXTERNAL           LSAME, ILAPREC
++      EXTERNAL           LSAME, ILAPREC, ILATRANS
+       EXTERNAL           DLAMCH, ZLANGB, ZLA_GBRCOND_X,
+      $                   ZLA_GBRCOND_C
+       DOUBLE PRECISION   DLAMCH, ZLANGB, ZLA_GBRCOND_X, ZLA_GBRCOND_C

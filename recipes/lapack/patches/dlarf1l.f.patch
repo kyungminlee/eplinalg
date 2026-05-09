@@ -1,0 +1,11 @@
+--- a/dlarf1l.f
++++ b/dlarf1l.f
+@@ -148,7 +148,7 @@
+       INTEGER            I, FIRSTV, LASTV, LASTC
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL           DGEMV, DGER
++      EXTERNAL           DAXPY, DGEMV, DGER, DSCAL
+ *     ..
+ *     .. External Functions ..
+       LOGICAL            LSAME

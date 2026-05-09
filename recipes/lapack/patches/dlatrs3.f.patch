@@ -1,0 +1,11 @@
+--- a/dlatrs3.f
++++ b/dlatrs3.f
+@@ -270,7 +270,7 @@
+      $                   LSAME
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL           DLATRS, DSCAL, XERBLA
++      EXTERNAL           DGEMM, DLATRS, DSCAL, XERBLA
+ *     ..
+ *     .. Intrinsic Functions ..
+       INTRINSIC          ABS, MAX, MIN

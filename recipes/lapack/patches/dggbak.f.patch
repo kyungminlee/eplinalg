@@ -1,0 +1,11 @@
+--- a/dggbak.f
++++ b/dggbak.f
+@@ -172,7 +172,7 @@
+       EXTERNAL           DSCAL, DSWAP, XERBLA
+ *     ..
+ *     .. Intrinsic Functions ..
+-      INTRINSIC          MAX, INT
++      INTRINSIC          MAX
+ *     ..
+ *     .. Executable Statements ..
+ *

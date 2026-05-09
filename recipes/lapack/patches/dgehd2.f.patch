@@ -1,0 +1,13 @@
+--- a/dgehd2.f
++++ b/dgehd2.f
+@@ -160,10 +160,6 @@
+ *
+ *  =====================================================================
+ *
+-*     .. Parameters ..
+-      DOUBLE PRECISION   ONE
+-      PARAMETER          ( ONE = 1.0D+0 )
+-*     ..
+ *     .. Local Scalars ..
+       INTEGER            I
+ *     ..

@@ -1,0 +1,15 @@
+--- a/zunbdb3.f
++++ b/zunbdb3.f
+@@ -281,7 +281,11 @@
+       DO I = 1, M-P
+ *
+          IF( I .GT. 1 ) THEN
+-            CALL ZDROT( Q-I+1, X11(I-1,I), LDX11, X21(I,I), LDX11, C,
++*           Upstream LAPACK 3.12.1 passes LDX11 as INCY here. The
++*           rotated row sits in X21, so INCY must be LDX21. When
++*           LDX11 /= LDX21 (typical when M-P < P) the upstream form
++*           strides past X21 and corrupts heap.
++            CALL ZDROT( Q-I+1, X11(I-1,I), LDX11, X21(I,I), LDX21, C,
+      $                  S )
+          END IF
+ *

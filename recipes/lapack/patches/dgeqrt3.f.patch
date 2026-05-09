@@ -1,0 +1,11 @@
+--- a/dgeqrt3.f
++++ b/dgeqrt3.f
+@@ -145,7 +145,7 @@
+ *
+ *     .. Parameters ..
+       DOUBLE PRECISION   ONE
+-      PARAMETER ( ONE = 1.0D+00 )
++      PARAMETER ( ONE = 1.0D+0 )
+ *     ..
+ *     .. Local Scalars ..
+       INTEGER   I, I1, J, J1, N1, N2, IINFO

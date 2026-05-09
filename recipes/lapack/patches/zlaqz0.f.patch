@@ -1,0 +1,11 @@
+--- a/zlaqz0.f
++++ b/zlaqz0.f
+@@ -450,7 +450,7 @@
+          WORK( 1 ) = DBLE( LWORKREQ )
+          RETURN
+       ELSE IF ( LWORK .LT. LWORKREQ ) THEN
+-         INFO = -19
++         INFO = -18
+       END IF
+       IF( INFO.NE.0 ) THEN
+          CALL XERBLA( 'ZLAQZ0', INFO )

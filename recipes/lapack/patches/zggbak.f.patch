@@ -1,0 +1,11 @@
+--- a/zggbak.f
++++ b/zggbak.f
+@@ -174,7 +174,7 @@
+       EXTERNAL           XERBLA, ZDSCAL, ZSWAP
+ *     ..
+ *     .. Intrinsic Functions ..
+-      INTRINSIC          MAX, INT
++      INTRINSIC          MAX
+ *     ..
+ *     .. Executable Statements ..
+ *

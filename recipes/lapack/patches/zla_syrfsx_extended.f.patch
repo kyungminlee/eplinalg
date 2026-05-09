@@ -1,0 +1,11 @@
+--- a/zla_syrfsx_extended.f
++++ b/zla_syrfsx_extended.f
+@@ -493,7 +493,7 @@
+          INFO = -15
+       END IF
+       IF( INFO.NE.0 ) THEN
+-         CALL XERBLA( 'ZLA_HERFSX_EXTENDED', -INFO )
++         CALL XERBLA( 'ZLA_SYRFSX_EXTENDED', -INFO )
+          RETURN
+       END IF
+       EPS = DLAMCH( 'Epsilon' )

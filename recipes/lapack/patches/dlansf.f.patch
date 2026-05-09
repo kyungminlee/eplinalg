@@ -1,0 +1,11 @@
+--- a/dlansf.f
++++ b/dlansf.f
+@@ -238,7 +238,7 @@
+       EXTERNAL           DLASSQ
+ *     ..
+ *     .. Intrinsic Functions ..
+-      INTRINSIC          ABS, MAX, SQRT
++      INTRINSIC          ABS, SQRT
+ *     ..
+ *     .. Executable Statements ..
+ *
