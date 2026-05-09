@@ -43,9 +43,8 @@ skip_files: []
 #                     user-op kernel — analogous to upstream
 #                     ``BI_zMPI_sum.c``. Cloned into ``BI_qMPI_sum.c`` /
 #                     ``BI_eMPI_sum.c`` / ``BI_mMPI_sum.c`` automatically.
-source_overrides:
-  dgsum2d_.c: blacs/source_overrides/dgsum2d_.c
-  BI_dMPI_sum.c: blacs/source_overrides/BI_dMPI_sum.c
+patches:
+  - B01__user-mpi-sum-reducer.patch
 
 # Multifloats target: patch blacs_pinfo_.c to call multifloats_mpi_init()
 # so the custom MPI datatypes and ops are registered before any BLACS

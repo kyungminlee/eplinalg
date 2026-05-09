@@ -232,148 +232,57 @@ extra_renames:
   PJLAENV: PJLAENV_EP
   PILAENVX: PILAENVX_EP
 
-# Override upstream ScaLAPACK 2.2.3 sources whose contents we patch
-# locally (without editing external/). The replacement file is in
-# upstream shape (DOUBLE PRECISION names, dgemm-style call sites) and
-# goes through the normal migration pipeline, so a single override
-# produces correctly-renamed/promoted output for every target.
-source_overrides:
-  pdlanhs.f: scalapack/source_overrides/pdlanhs.f
-  pzlanhs.f: scalapack/source_overrides/pzlanhs.f
-  # PDGEEQU / PZGEEQU column-scale RCMAX/RCMIN/INFO reductions used the
-  # 'Columnwise' axis where 'Rowwise' is needed; under multi-MYCOL grids
-  # COLCND was computed from each grid column's local block instead of
-  # the global. Extends the override pattern; see the body comment.
-  pdgeequ.f: scalapack/source_overrides/pdgeequ.f
-  pzgeequ.f: scalapack/source_overrides/pzgeequ.f
-  # PDPOSVX / PZPOSVX upstream LWMIN = 3*DESCA(LLD_) is insufficient
-  # for the internal PDPOCON/PZPOCON + PDPORFS/PZPORFS workspace
-  # contracts (see commented prologue at line 311 of either file).
-  # The internal PDPOCON / PZPOCON call then aborts with INFO=-10
-  # ("LWORK too small") on every grid above the smallest. The override
-  # restores the documented MAX(PDPOCON,PDPORFS) formula.
-  pdposvx.f: scalapack/source_overrides/pdposvx.f
-  pzposvx.f: scalapack/source_overrides/pzposvx.f
-  # PDLARZB / PZLARZB SIDE='L' branch passed M+ICOFFV (the C-row count)
-  # as PBDTRAN/PBZTRAN's N argument while sizing the destination buffer
-  # WORK( IPV ) / LV from MPC20 = local rows of L. Whenever M > L
-  # (typical: M = K+L from PDORMRZ/PZUNMRZ), PBDTRAN's LDC contract
-  # `LDC >= NUMROC( N_arg, NBV, MYROW, ICROW2, NPROW )` fails — the
-  # transpose silently no-ops via PXERBLA(INFO=11) and the trailing
-  # GEMM multiplies uninitialised data into C, surfacing as a ~1.3x
-  # numerical-corruption error in PDORMRZ/PZUNMRZ. The override changes
-  # M+ICOFFV to L+ICOFFV in the PBDTRAN call (and matching MQV0
-  # computation), which matches the only-K×L-meaningful row-stored RZ
-  # convention.
-  pdlarzb.f: scalapack/source_overrides/pdlarzb.f
-  pzlarzb.f: scalapack/source_overrides/pzlarzb.f
-  # PDORMRZ / PZUNMRZ post-loop condition is a copy-paste of the pre-
-  # loop condition (line 458 vs 416 in pdormrz.f, line 459 vs 417 in
-  # pzunmrz.f). For SIDE/TRANS combinations (LEFT,NOTRAN) and
-  # (RIGHT,TRANS), the leftover-block PDORMR3/PZUNMR3 call never fires
-  # — neither pre nor post — leaving the trailing partial-MB block of
-  # reflectors unapplied. The mainline DO loop also misses the missing
-  # block due to its asymmetric I1/I2 bounds. The override fixes the
-  # post-loop condition to be the complement of the pre-loop, matching
-  # the correct structure in PDORMRQ/PZUNMRQ.
-  pdormrz.f: scalapack/source_overrides/pdormrz.f
-  pzunmrz.f: scalapack/source_overrides/pzunmrz.f
-  # PDLARZ / PZLARZ carry two upstream bugs.
-  # (a) Buffer undersizing: MPV (SIDE='L') / NQV (SIDE='R') were
-  #     computed from V's distribution (IVROW/IROFFV/MB_V or
-  #     IVCOL/ICOFFV/NB_V), but the row-V/col-V P?TRNV calls transpose
-  #     V into sub(C2)'s procrow/proccol and write sub(C2)'s local
-  #     count. When PDORMR3/PZUNMR3 iterates IV/JV across blocks the
-  #     P?LARZ alignment restriction is violated and the receiver is
-  #     undersized by 1-3 elements — observed as glibc
-  #     'corrupted size vs. prev_size' aborts on NPROW>1 grids with
-  #     non-uniform A row distribution. Override redefines MPV/NQV
-  #     from sub(C2)'s distribution.
-  # (b) DAXPY stride: six DAXPY/ZAXPY calls into WORK/WORK(IPW) used
-  #     INCY = MAX(1,NQC2) (a leading dimension) where WORK is a
-  #     contiguous vector — correct stride is 1, matching LAPACK's
-  #     DLARZ/ZLARZ. With NQC2>1 the previous stride could skip past
-  #     the buffer.
-  pdlarz.f: scalapack/source_overrides/pdlarz.f
-  pzlarz.f: scalapack/source_overrides/pzlarz.f
-  # PZLARZC carries the same MPV/NQV undersizing and ZAXPY-stride bugs
-  # as PZLARZ (byte-identical formulas; PZLARZC is just the Q**H
-  # variant called from PZUNMR3 when TRANS='C'). Without this fix
-  # PZUNMRZ SIDE='L' for the conjugate-transpose path produces
-  # numerically corrupted output (~factor of 2-2.5 off). PCLARZC has
-  # the same bug; the migrator does not need a separate pclarzc
-  # override because the prefer_source pin below routes through
-  # PZLARZC.
-  pzlarzc.f: scalapack/source_overrides/pzlarzc.f
-  # PZHEEVD's PCHK2MAT call passes 11 as the parameter index for DESCZ,
-  # but DESCZ sits at position 12 in PZHEEVD's signature (11 is JZ). On
-  # an illegal DESCZ the dispatched PXERBLA reports the wrong parameter
-  # number to the caller. PCHEEVD is correct (passes 12). Override fixes
-  # the index on the Z half so the migrated PXHEEVD matches.
-  pzheevd.f: scalapack/source_overrides/pzheevd.f
-  # PZUNMBR's EXTERNAL declaration lists PCHK1MAT, but the body calls
-  # PCHK2MAT four times (lines 511/515/521/525). Pure typo — Fortran
-  # EXTERNAL is advisory so the linker resolves PCHK2MAT correctly via
-  # the global symbol table, but the divergence against PCUNMBR (which
-  # correctly lists PCHK2MAT) shows up in convergence reports. Override
-  # corrects the EXTERNAL list on the Z half.
-  pzunmbr.f: scalapack/source_overrides/pzunmbr.f
-  # XERBLA-string typos surfaced by the 2026-05-08 cross-half sweep:
-  # bdtrexc.f line 173 reports 'DTREXC' instead of 'BDTREXC' (the eight
-  # other XERBLA calls in the same routine correctly report 'BDTREXC'
-  # — copy-paste from the LAPACK forward-port). dpttrsv / zpttrsv
-  # report 'DPTTRS' / 'ZPTTRS' (the LAPACK serial routine name) where
-  # they should report 'DPTTRSV' / 'ZPTTRSV' (own routine names; they
-  # don't actually call PTTRS).
-  bdtrexc.f: scalapack/source_overrides/bdtrexc.f
-  dpttrsv.f: scalapack/source_overrides/dpttrsv.f
-  zpttrsv.f: scalapack/source_overrides/zpttrsv.f
-  # PCHK?MAT parameter-position drift surfaced by the 2026-05-08
-  # mechanical sweep (53 mismatches in 11 routines, 4 distinct
-  # families). Each PCHK1MAT/PCHK2MAT call passes parameter-position
-  # arguments (MAPOS0, NAPOS0, DESCAPOS0, etc.) that should match the
-  # actual position of the corresponding M/N/DESC arg in the calling
-  # routine's signature; mismatches mean PXERBLA reports the wrong
-  # parameter number on illegal input. Diagnostic-only — the routine
-  # still rejects the bad input.
-  #
-  # pdsyevr / pzheevr: DESCB=DESCZ POS0=21 should be 19. Off by 2.
-  # pdsygvx / pzhegvx: M/N args POS0=4 should be 5 (caller forgot
-  #   IBTYPE prepended to signature, shifting N from position 4→5).
-  # pdtrord: every POS0 off by +1 (5/9/13 vs actual 4/8/12) — likely
-  #   a renamed-arg shift that wasn't propagated.
-  pdsyevr.f: scalapack/source_overrides/pdsyevr.f
-  pzheevr.f: scalapack/source_overrides/pzheevr.f
-  pdsygvx.f: scalapack/source_overrides/pdsygvx.f
-  pzhegvx.f: scalapack/source_overrides/pzhegvx.f
-  pdtrord.f: scalapack/source_overrides/pdtrord.f
-  # 2026-05-09 ScaLAPACK-aware INFO=-N sweep findings:
-  #
-  # ?pttrs / ?pbtrsv LWORK sentinel-check off-by-one. The
-  # `IF(LWORK.LT.-1)` and `IF(LWORK.NE.-1)` validation blocks set
-  # INFO to one less than LWORK's actual signature position. Fixes
-  # report the LWORK arg correctly. All 4 halves of each routine
-  # have the same bug; D/Z patched here, S/C documented for upstream.
-  pdpttrs.f: scalapack/source_overrides/pdpttrs.f       # -12 → -13
-  pzpttrs.f: scalapack/source_overrides/pzpttrs.f       # -13 → -14
-  pdpbtrsv.f: scalapack/source_overrides/pdpbtrsv.f     # -14 → -15
-  pzpbtrsv.f: scalapack/source_overrides/pzpbtrsv.f     # -14 → -15
-  # ?lascl CFROM/CTO INFO codes inherited from LAPACK ?lascl signature
-  # which had KL/KU at positions 2/3. ScaLAPACK ?lascl drops KL/KU
-  # but kept INFO=-4 / INFO=-5. Should be -2 / -3 in ScaLAPACK
-  # (CFROM at 2, CTO at 3). Auxiliary routine but used internally;
-  # bad CFROM/CTO would report wrong arg. All 4 halves affected.
-  pdlascl.f: scalapack/source_overrides/pdlascl.f       # -4 → -2, -5 → -3
-  pzlascl.f: scalapack/source_overrides/pzlascl.f       # -4 → -2, -5 → -3
-  # ?ormrz / ?unmrz duplicate-K-validation bug surfaced 2026-05-09:
-  # the argument-validation block has TWO consecutive `IF(K.LT.0 .OR.
-  # K.GT.NQ)` checks (INFO=-5 then INFO=-6); the second was meant to
-  # validate L (parameter 6) but the check was copy-pasted from K.
-  # L was never validated — caller passing illegal L slipped past
-  # argument checks. All 4 halves affected (psormrz, pdormrz, pcunmrz,
-  # pzunmrz). The pdormrz/pzunmrz entries above (line ~279) already
-  # cover the source_overrides registration; the L-validation patch is
-  # added on top of the existing post-loop-condition fix.
+# Patches applied to staged sources before migration (one per upstream
+# bug). See doc/UPSTREAM_BUGS.md for the bug catalogue and
+# doc/refactor-20260509.md for the patch convention.
+#
+# Each patch corresponds to a bug ID:
+#   S05+S06 lanhs (NPROW=1 underestimate + IAROW double-advance)
+#   S07     geequ column-scale wrong axis
+#   S08     posvx LWMIN too small
+#   S11     pdlarzb PBDTRAN N-arg vs LV-buffer mismatch
+#   S12+I09 ormrz/unmrz post-loop condition + L-validation bug
+#   S13/S14/S16 larz buffer undersizing + DAXPY stride
+#   S15     pzlarzc SIDE='L' missing ZLACGV; ZGERC vs ZGERU
+#   P04+W01 pzheevd PCHK2MAT index + LIWORK validation
+#   S01     pzunmbr EXTERNAL declares PCHK1MAT body calls PCHK2MAT
+#   X02     bdtrexc XERBLA reports 'DTREXC' typo
+#   X03     {d,z}pttrsv XERBLA reports '?PTTRS' instead of '?PTTRSV'
+#   P01     {syevr,heevr} DESCZ POS0 21 → 19
+#   P02     {sygvx,hegvx} N POS0 4 → 5
+#   P03     pdtrord POS0 off by +1
+#   I07     {pttrs,pbtrsv} LWORK sentinel INFO off-by-one
+#   I08     {lascl} CFROM/CTO INFO codes inherited from LAPACK
+patches:
+  - pdlanhs.f.patch
+  - pzlanhs.f.patch
+  - pdgeequ.f.patch
+  - pzgeequ.f.patch
+  - pdposvx.f.patch
+  - pzposvx.f.patch
+  - pdlarzb.f.patch
+  - pzlarzb.f.patch
+  - pdormrz.f.patch
+  - pzunmrz.f.patch
+  - pdlarz.f.patch
+  - pzlarz.f.patch
+  - pzlarzc.f.patch
+  - pzheevd.f.patch
+  - pzunmbr.f.patch
+  - bdtrexc.f.patch
+  - dpttrsv.f.patch
+  - zpttrsv.f.patch
+  - pdsyevr.f.patch
+  - pzheevr.f.patch
+  - pdsygvx.f.patch
+  - pzhegvx.f.patch
+  - pdtrord.f.patch
+  - pdpttrs.f.patch
+  - pzpttrs.f.patch
+  - pdpbtrsv.f.patch
+  - pzpbtrsv.f.patch
+  - pdlascl.f.patch
+  - pzlascl.f.patch
 
 # local_renames: (reserved for non-precision local-variable drift like
 # CONJTOPH→TTOPH that isn't an S↔D / C↔Z prefix swap. Precision-prefix

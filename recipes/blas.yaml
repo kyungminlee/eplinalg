@@ -24,27 +24,24 @@ skip_files:
   - XERBLA
   - XERBLA_ARRAY
 
-# Source overrides — patched upstream bodies that go through the normal
-# migration pipeline. dnrm2.f90 / dznrm2.f90 originally embed Blue's
-# scaling constants (tsml/tbig/ssml/sbig) as inline parameter
-# declarations. On the multifloats target the migrator's nuke-rename
-# turns those references into imports of upstream multifloats's
-# DD_TSML/DD_TBIG/DD_SSML/DD_SBIG, which use 1e±100 / 1e±50 magnitudes.
-# Those values cause `(ax * sbig)^2` to overflow at fp64 once
-# ax exceeds ~1e+104, breaking dgesvj's protect-from-underflow
-# up-scaling pass. The overrides re-route the imports through
-# LA_CONSTANTS so the migrator dispatches to LA_CONSTANTS_MF
-# (corrected) / LA_CONSTANTS_EP (already correct) per target.
-source_overrides:
-  dnrm2.f90:  blas/source_overrides/dnrm2.f90
-  dznrm2.f90: blas/source_overrides/dznrm2.f90
-  # drotg/zrotg PARAMETER initializers use `radix(0._wp)**max(...)`
-  # and `sqrt(safmin)`. ** and sqrt are user-defined for the
-  # multifloats target's real64x2 / cmplx64x2 types, so gfortran
-  # rejects them in PARAMETER context. Override moves the constants
-  # to SAVE-then-init-at-first-call. kind10/kind16 are unaffected
-  # (they still get the same numerical values; the PARAMETER vs
-  # SAVE choice only matters for gfortran's PARAMETER-expression
-  # validator).
-  drotg.f90:  blas/source_overrides/drotg.f90
-  zrotg.f90:  blas/source_overrides/zrotg.f90
+# Patches applied to the staged source tree (build/staged-sources/blas/)
+# before migration. Each patch is a unified diff against the upstream
+# source. See doc/refactor-20260509.md.
+#
+# B01: dnrm2/dznrm2 originally embed Blue's scaling constants
+# (tsml/tbig/ssml/sbig) as inline parameter declarations. On the
+# multifloats target the migrator's nuke-rename turns those references
+# into imports of upstream multifloats's DD_TSML/DD_TBIG/DD_SSML/
+# DD_SBIG, which use 1e±100 / 1e±50 magnitudes. Those values cause
+# `(ax * sbig)^2` to overflow at fp64 once ax exceeds ~1e+104,
+# breaking dgesvj's protect-from-underflow up-scaling pass. The
+# rewrite re-routes the imports through LA_CONSTANTS so the migrator
+# dispatches to LA_CONSTANTS_MF (corrected) / LA_CONSTANTS_EP (already
+# correct) per target. drotg/zrotg PARAMETER initializers use
+# `radix(0._wp)**max(...)` and `sqrt(safmin)`; ** and sqrt are
+# user-defined for the multifloats target's real64x2 / cmplx64x2
+# types, so gfortran rejects them in PARAMETER context. The rewrite
+# moves the constants to SAVE-then-init-at-first-call. kind10/kind16
+# unaffected.
+patches:
+  - B01__nrm2-rotg-lazy-init.patch

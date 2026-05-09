@@ -57,161 +57,95 @@ prefix:
 # migration pipeline. Overrides displace the same-named upstream files
 # in source_dir before the migrator scans them.
 #
-# {s,d,c,z}orbdb3 / unbdb3: upstream LAPACK 3.12.1 passes LDX11 as the
-# INCY argument to the early DROT/SROT/CSROT/ZDROT call inside the
-# I=2..M-P main loop. The rotated row sits in X21, so INCY must be
-# LDX21. When LDX11 /= LDX21 (typical when M-P < P, the actual orbdb3
-# regime) the upstream form strides past the X21 buffer and corrupts
-# heap — manifests as munmap_chunk: invalid pointer on the next free.
-# Identical bug across all four precision variants. Patches change
-# only that single argument.
-source_overrides:
-  dorbdb3.f: lapack/source_overrides/dorbdb3.f
-  sorbdb3.f: lapack/source_overrides/sorbdb3.f
-  zunbdb3.f: lapack/source_overrides/zunbdb3.f
-  cunbdb3.f: lapack/source_overrides/cunbdb3.f
-  # Upstream typo: zupmtr.f declares EXTERNAL ZLARF1 but calls ZLARF1L.
-  # The dead ZLARF1 symbol slips through the family-prefix renamer and
-  # leaks into xupmtr.f as a stale Z-prefix, diverging from cupmtr's
-  # consistent CLARF1L. Patch fixes the EXTERNAL line.
-  zupmtr.f: lapack/source_overrides/zupmtr.f
-  # Dead ONE PARAMETER block: D/Z halves declare COMPLEX*16/DOUBLE PRECISION
-  # ONE but never reference it, while the matching C/S halves omit the
-  # declaration entirely. The kind16 retarget faithfully preserves the
-  # asymmetry, producing 19 cosmetic divergences. Overrides strip the dead
-  # block so D↔S and Z↔C halves converge structurally.
-  zgehd2.f: lapack/source_overrides/zgehd2.f
-  zgelq2.f: lapack/source_overrides/zgelq2.f
-  zgeql2.f: lapack/source_overrides/zgeql2.f
-  zgeqr2.f: lapack/source_overrides/zgeqr2.f
-  zgeqr2p.f: lapack/source_overrides/zgeqr2p.f
-  zgerq2.f: lapack/source_overrides/zgerq2.f
-  zunm2l.f: lapack/source_overrides/zunm2l.f
-  zunm2r.f: lapack/source_overrides/zunm2r.f
-  zunml2.f: lapack/source_overrides/zunml2.f
-  zunmr2.f: lapack/source_overrides/zunmr2.f
-  dgehd2.f: lapack/source_overrides/dgehd2.f
-  dgelq2.f: lapack/source_overrides/dgelq2.f
-  dgeql2.f: lapack/source_overrides/dgeql2.f
-  dgeqr2.f: lapack/source_overrides/dgeqr2.f
-  dgeqr2p.f: lapack/source_overrides/dgeqr2p.f
-  dgerq2.f: lapack/source_overrides/dgerq2.f
-  dorm2l.f: lapack/source_overrides/dorm2l.f
-  dorm2r.f: lapack/source_overrides/dorm2r.f
-  dorml2.f: lapack/source_overrides/dorml2.f
-  # Literal-style mismatch: D/Z write 1.0D+00, S/C write 1.0 (no exponent).
-  # The kind16 retarget produces 1.0E00_16 vs 1.0E0_16 — same value, diff
-  # text. Normalize D/Z to 1.0D+0.
-  dgeqrt2.f: lapack/source_overrides/dgeqrt2.f
-  dgeqrt3.f: lapack/source_overrides/dgeqrt3.f
-  zgeqrt2.f: lapack/source_overrides/zgeqrt2.f
-  zgeqrt3.f: lapack/source_overrides/zgeqrt3.f
-  # ggbak: D/Z list "INT, MAX" but C/S only "MAX" upstream. INT is a
-  # built-in (the INTRINSIC declaration is advisory), so strip it from
-  # D/Z to match C/S.
-  zggbak.f: lapack/source_overrides/zggbak.f
-  dggbak.f: lapack/source_overrides/dggbak.f
-  # lansf/lanht: D/Z list MAX in INTRINSIC but neither half uses it in
-  # body. Strip the dead MAX from D/Z to match S/C.
-  dlansf.f: lapack/source_overrides/dlansf.f
-  zlanht.f: lapack/source_overrides/zlanht.f
-  # *bevd_2stage / hgeqz: C halves wrap WORK(1)=CMPLX(LWMIN); Z halves
-  # write bare integer (auto-promoted on assignment to complex). Strip
-  # the redundant cast from C halves.
-  chbevd_2stage.f: lapack/source_overrides/chbevd_2stage.f
-  cheevd_2stage.f: lapack/source_overrides/cheevd_2stage.f
-  chgeqz.f: lapack/source_overrides/chgeqz.f
-  # larfx: D/Z write "410 CONTINUE \n RETURN", S/C use single-line form
-  # "410 RETURN". Collapse D/Z to one line.
-  dlarfx.f: lapack/source_overrides/dlarfx.f
-  zlarfx.f: lapack/source_overrides/zlarfx.f
-  # zla_syrfsx_extended: real upstream bug — XERBLA reports
-  # 'ZLA_HERFSX_EXTENDED' (Hermitian) inside the symmetric routine.
-  # Fix the routine-name string. cla_syrfsx_extended is correct upstream.
-  zla_syrfsx_extended.f: lapack/source_overrides/zla_syrfsx_extended.f
-  # dgejsv: real upstream workspace bug. The "RSVEC && !LSVEC && !ALMORT"
-  # branch calls DGESVJ with WORK(N+1) as the workspace start but passes
-  # LWORK as the workspace size — overstating available space by N
-  # elements. DGESVJ may write past WORK(LWORK). SGEJSV correctly passes
-  # LWORK-N. Patch fixes the size argument. See doc/UPSTREAM_BUGS.md.
-  dgejsv.f: lapack/source_overrides/dgejsv.f
-  # dtrsyl3 / ztrsyl3: real upstream argument-validation gap. STRSYL3
-  # checks LIWORK and LDSWORK against required workspace before XERBLA;
-  # D/C/Z halves omit those checks. Patches add the guards (LIWORK only
-  # exists on the real-precision halves; Z gets only the LDSWORK guard).
-  # Diagnostic-only — both routines have a downstream "use unblocked
-  # code" fallback when workspace is too small, so the absence of the
-  # guard doesn't corrupt memory, just suppresses the INFO error.
-  dtrsyl3.f: lapack/source_overrides/dtrsyl3.f
-  ztrsyl3.f: lapack/source_overrides/ztrsyl3.f
-  # zlarf1f: real upstream EXTERNAL omission. Body calls ZAXPY at lines
-  # 287/293 but the EXTERNAL list omits it (D-half DLARF1F lists DAXPY
-  # correctly). Advisory in Fortran (linker still resolves), but causes
-  # convergence to flag the migrated x-half against the c-half sibling.
-  zlarf1f.f: lapack/source_overrides/zlarf1f.f
-  # dlaqp2: real upstream EXTERNAL typo. Declares DLARF but body calls
-  # DLARF1F (line 222). slaqp2.f is correct (declares SLARF1F).
-  dlaqp2.f: lapack/source_overrides/dlaqp2.f
-  # zlahef_aa: stale ZGEMM in EXTERNAL. Body never calls ZGEMM (only
-  # ZGEMV). clahef_aa.f correctly omits CGEMM.
-  zlahef_aa.f: lapack/source_overrides/zlahef_aa.f
-  # zhetrf_aa: stale ZGEMV in EXTERNAL. Body never calls ZGEMV (only
-  # ZGEMM). chetrf_aa.f correctly omits CGEMV.
-  zhetrf_aa.f: lapack/source_overrides/zhetrf_aa.f
-  # zgbrfsx: missing ILATRANS in EXTERNAL. Body calls ILATRANS at
-  # lines 511 and 561, but EXTERNAL only lists LSAME, ILAPREC. The
-  # other three rfsx siblings (sgbrfsx, dgbrfsx, cgbrfsx) all declare
-  # ILATRANS correctly — Z-half-only typo. Advisory in Fortran.
-  zgbrfsx.f: lapack/source_overrides/zgbrfsx.f
-  # dlaswlq: argument-validation gap. Line 221 tests NB.LT.0 (rejecting
-  # only negative block sizes) where slaswlq.f tests NB.LE.0 (also
-  # rejecting NB=0, which is invalid as a block size). With dlaswlq's
-  # weaker check, NB=0 passes validation and triggers a divide-by-zero
-  # or infinite loop in the block-loop downstream. Patch tightens the
-  # check to match slaswlq.
-  dlaswlq.f: lapack/source_overrides/dlaswlq.f
-  # dorbdb / zunbdb XERBLA placeholder unsubstituted: all four halves
-  # (s/d/c/z) report 'xORBDB' (lowercase x — script-generation
-  # placeholder never replaced with the precision letter) instead of
-  # the actual routine name. Patch fixes the D/Z halves so the migrated
-  # archive's QORBDB / XUNBDB report 'DORBDB' / 'ZUNBDB' correctly.
-  # S/C halves remain buggy upstream (non-canonical, not patched here).
-  dorbdb.f: lapack/source_overrides/dorbdb.f
-  zunbdb.f: lapack/source_overrides/zunbdb.f
-  # EXTERNAL-vs-CALL drift surfaced by 2026-05-08 mechanical sweep.
-  # Each routine declares EXTERNAL routines it doesn't call AND/OR
-  # calls routines it doesn't declare. Advisory in Fortran (linker
-  # resolves), but inconsistent with the body and trips up static
-  # analyzers. All eight are D/Z-canonical so they ride into the
-  # migrated archive; the matching S/C-half typos are documented
-  # but not patched.
-  dlarf1l.f: lapack/source_overrides/dlarf1l.f       # +DAXPY,DSCAL
-  zlarf1l.f: lapack/source_overrides/zlarf1l.f       # +ZAXPY
-  dlatrs3.f: lapack/source_overrides/dlatrs3.f       # +DGEMM
-  zlatrs3.f: lapack/source_overrides/zlatrs3.f       # +ZGEMM
-  zgelss.f: lapack/source_overrides/zgelss.f         # +ZUNMQR
-  dorbdb4.f: lapack/source_overrides/dorbdb4.f       # DLARF→DLARF1F
-  dorgr2.f: lapack/source_overrides/dorgr2.f         # DLARF→DLARF1L
-  zrscl.f: lapack/source_overrides/zrscl.f           # +ZSCAL, brief ZDRSCL→ZRSCL
-  # INFO=-N parameter-position drift surfaced by 2026-05-08 mechanical
-  # sweep. For each `IF (LWORK.LT.LWMIN) INFO = -N` style validation,
-  # verified the literal N matches the actual position of LWORK in the
-  # caller's signature. Off-by-N bugs found in 8 D/Z routines + already-
-  # patched dorbdb4.
-  #
-  # zunbdb4: LWORK pos 15, INFO was -14
-  zunbdb4.f: lapack/source_overrides/zunbdb4.f
-  # dggsvd3 / zggsvd3: LWORK pos 22, INFO was -24 (referenced INFO arg)
-  dggsvd3.f: lapack/source_overrides/dggsvd3.f
-  zggsvd3.f: lapack/source_overrides/zggsvd3.f
-  # dorcsd / zuncsd: LWORK pos 28, INFO was -22 (referenced LDU2). Plus
-  # zuncsd LRWORK pos 30, INFO was -24 (referenced LDV1T).
-  dorcsd.f: lapack/source_overrides/dorcsd.f
-  zuncsd.f: lapack/source_overrides/zuncsd.f
-  # zlaqz0: LWORK pos 18, INFO was -19 (referenced RWORK)
-  zlaqz0.f: lapack/source_overrides/zlaqz0.f
-  # zlaqz2: LWORK pos 25, INFO was -26 (referenced RWORK)
-  zlaqz2.f: lapack/source_overrides/zlaqz2.f
+# Patches applied to staged sources before migration. Unified diffs
+# vs upstream Netlib LAPACK 3.12.1. See doc/UPSTREAM_BUGS.md for the
+# bug catalogue (each patch corresponds to a bug ID L01-L12 / X01-X03 /
+# E01 / I01-I06 / D01) and doc/refactor-20260509.md for the convention.
+patches:
+  # L01: ?orbdb3 ?ROT INCY uses LDX11 where it should be LDX21
+  - dorbdb3.f.patch
+  - sorbdb3.f.patch
+  - zunbdb3.f.patch
+  - cunbdb3.f.patch
+  # Upstream typo: zupmtr declares EXTERNAL ZLARF1 but calls ZLARF1L
+  - zupmtr.f.patch
+  # Dead ONE PARAMETER block on D/Z halves (cosmetic D/Z↔S/C convergence)
+  - zgehd2.f.patch
+  - zgelq2.f.patch
+  - zgeql2.f.patch
+  - zgeqr2.f.patch
+  - zgeqr2p.f.patch
+  - zgerq2.f.patch
+  - zunm2l.f.patch
+  - zunm2r.f.patch
+  - zunml2.f.patch
+  - zunmr2.f.patch
+  - dgehd2.f.patch
+  - dgelq2.f.patch
+  - dgeql2.f.patch
+  - dgeqr2.f.patch
+  - dgeqr2p.f.patch
+  - dgerq2.f.patch
+  - dorm2l.f.patch
+  - dorm2r.f.patch
+  - dorml2.f.patch
+  # Literal-style mismatch in geqrt2/geqrt3 (1.0D+00 vs 1.0)
+  - dgeqrt2.f.patch
+  - dgeqrt3.f.patch
+  - zgeqrt2.f.patch
+  - zgeqrt3.f.patch
+  # ggbak: strip dead INT from INTRINSIC list
+  - zggbak.f.patch
+  - dggbak.f.patch
+  # lansf/lanht: strip dead MAX from INTRINSIC
+  - dlansf.f.patch
+  - zlanht.f.patch
+  # *bevd_2stage / hgeqz: strip redundant CMPLX cast (C halves)
+  - chbevd_2stage.f.patch
+  - cheevd_2stage.f.patch
+  - chgeqz.f.patch
+  # larfx: collapse "410 CONTINUE / RETURN" to single-line form
+  - dlarfx.f.patch
+  - zlarfx.f.patch
+  # L12: zla_syrfsx_extended XERBLA reports ZLA_HERFSX_EXTENDED
+  - zla_syrfsx_extended.f.patch
+  # L02: dgejsv inner DGESVJ workspace size off by N
+  - dgejsv.f.patch
+  # L03: ?trsyl3 LIWORK / LDSWORK validation gap
+  - dtrsyl3.f.patch
+  - ztrsyl3.f.patch
+  # L04: stale/missing EXTERNAL declarations
+  - zlarf1f.f.patch
+  - dlaqp2.f.patch
+  - zlahef_aa.f.patch
+  - zhetrf_aa.f.patch
+  - zgbrfsx.f.patch
+  # L05: dlaswlq accepts NB=0 (slaswlq rejects)
+  - dlaswlq.f.patch
+  # X01: ?orbdb / ?unbdb XERBLA placeholder 'xORBDB' unsubstituted
+  - dorbdb.f.patch
+  - zunbdb.f.patch
+  # E01: 8 EXTERNAL-vs-CALL drifts (D/Z canonical)
+  - dlarf1l.f.patch       # +DAXPY,DSCAL
+  - zlarf1l.f.patch       # +ZAXPY
+  - dlatrs3.f.patch       # +DGEMM
+  - zlatrs3.f.patch       # +ZGEMM
+  - zgelss.f.patch        # +ZUNMQR
+  - dorbdb4.f.patch       # DLARF→DLARF1F (also I01 LWORK INFO)
+  - dorgr2.f.patch        # DLARF→DLARF1L
+  - zrscl.f.patch         # +ZSCAL, D01 \brief ZDRSCL→ZRSCL
+  # I01: ?unbdb4 LWORK INFO -14 → -15
+  - zunbdb4.f.patch
+  # I02: ?ggsvd3 LWORK INFO -24 → -22
+  - dggsvd3.f.patch
+  - zggsvd3.f.patch
+  # I03: ?orcsd / ?uncsd LWORK INFO -22 → -28; I04: zuncsd LRWORK -24 → -30
+  - dorcsd.f.patch
+  - zuncsd.f.patch
+  # I05: zlaqz0 LWORK INFO -19 → -18
+  - zlaqz0.f.patch
+  # I06: zlaqz2 LWORK INFO -26 → -25
+  - zlaqz2.f.patch
 
 # Files dropped from the migrated archive:
 #  - ZC*/DS* mixed-precision iterative-refinement drivers and

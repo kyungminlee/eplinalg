@@ -272,13 +272,11 @@ copy_files:
 
 skip_files: []
 
-# Source overrides for upstream-bug-class issues. The override file
-# is in upstream-shape (it gets renamed for each migration target via
-# the normal pipeline). Each entry is `<upstream basename>: <path
-# under recipe_dir>`.
-source_overrides:
-  pdatrmv_.c: pblas/source_overrides/pdatrmv_.c
-  pzatrmv_.c: pblas/source_overrides/pzatrmv_.c
+# Patches applied to staged sources before migration. Unified diffs
+# vs upstream Netlib; one patch per UPSTREAM_BUGS.md ID. See
+# doc/refactor-20260509.md.
+patches:
+  - S04__atrmv-alpha-hardcoded-one.patch
 
 # Hand-written replacements for the PB_C[dz]typeset typeset functions.
 # The migrated-by-regex versions try to assign the macro ZERO (= 0.0)
