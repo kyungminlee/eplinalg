@@ -83,6 +83,7 @@ Bugs surfaced via five distinct audit passes:
 | **I05** | `?laqz0` INFO=-19 (RWORK) for LWORK test, should be -18 | Diag | ✓ Z | info-n |
 | **I06** | `?laqz2` INFO=-26 (RWORK) for LWORK test, should be -25 | Diag | ✓ Z | info-n |
 | **D01** | `zrscl.f` doc header `\brief \b ZDRSCL` should be ZRSCL | Doc | ✓ Z | brief |
+| **X04** | `psgebal.f:386` PXERBLA reports `'PDGEBAL'` (line 225 correct) | Diag | — (S) | pxerbla |
 | S01 | `pzunmbr.f` EXTERNAL declares PCHK1MAT, body calls PCHK2MAT | Adv | ✓ Z | conv |
 | S02 | `pssyevd.f` LQUERY misses LIWORK=-1 | Validation | — (S) | conv |
 | S03 | `pslaed3.f` clobbers user INFO | Validation | — (S) | conv |
@@ -584,6 +585,20 @@ read the diagnostic output.
 **Already documented separately:** `zla_syrfsx_extended.f:496` reports
 `'ZLA_HERFSX_EXTENDED'` (Hermitian) inside the symmetric routine —
 caught earlier and patched in `recipes/lapack/source_overrides/`.
+
+**Re-sweep with PXERBLA-aware regex (2026-05-09):** The earlier sweep
+matched `XERBLA('NAME', ...)` form only, missing ScaLAPACK's
+`PXERBLA(ICTXT, 'NAME', INFO)` form (where the name is the *second*
+argument). Re-running with `\bXERBLA\s*\(\s*'…'` and
+`\bPXERBLA\s*\(\s*\w+\s*,\s*'…'` regexes surfaced one additional
+mismatch:
+
+- `psgebal.f:386` reports `'PDGEBAL'` (double-precision) inside the
+  single-precision routine `PSGEBAL`. Same flavor as `bstrexc.f`
+  reporting `'DTREXC'`. The other PXERBLA call in psgebal at line
+  225 correctly reports `'PSGEBAL'`, so this is a copy-paste typo
+  from `pdgebal.f` (which has `'PDGEBAL'` correctly at both lines).
+  S-half-only; not patched (non-canonical). Documented for upstream.
 
 **Upstream report.** Not yet filed.
 
