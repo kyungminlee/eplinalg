@@ -196,6 +196,14 @@ prefer_source:
   # PCHK2MAT) win convergence over the un-patched PCHEEVD/PCUNMBR.
   - PZHEEVD
   - PZUNMBR
+  # PCHK?MAT parameter-position fixes (2026-05-08 sweep) — pin the
+  # patched D/Z halves so they win convergence against the still-buggy
+  # S/C halves.
+  - PDSYEVR
+  - PZHEEVR
+  - PDSYGVX
+  - PZHEGVX
+  - PDTRORD
 
 # Mirror the scalapack_c.yaml rename for pdlaiectb_/pdlaiectl_: the
 # Fortran callers PDSTEBZ / PDSYEVX / PDSYGVX / PZHEEVX / PZHEGVX
@@ -311,6 +319,25 @@ source_overrides:
   bdtrexc.f: scalapack/source_overrides/bdtrexc.f
   dpttrsv.f: scalapack/source_overrides/dpttrsv.f
   zpttrsv.f: scalapack/source_overrides/zpttrsv.f
+  # PCHK?MAT parameter-position drift surfaced by the 2026-05-08
+  # mechanical sweep (53 mismatches in 11 routines, 4 distinct
+  # families). Each PCHK1MAT/PCHK2MAT call passes parameter-position
+  # arguments (MAPOS0, NAPOS0, DESCAPOS0, etc.) that should match the
+  # actual position of the corresponding M/N/DESC arg in the calling
+  # routine's signature; mismatches mean PXERBLA reports the wrong
+  # parameter number on illegal input. Diagnostic-only — the routine
+  # still rejects the bad input.
+  #
+  # pdsyevr / pzheevr: DESCB=DESCZ POS0=21 should be 19. Off by 2.
+  # pdsygvx / pzhegvx: M/N args POS0=4 should be 5 (caller forgot
+  #   IBTYPE prepended to signature, shifting N from position 4→5).
+  # pdtrord: every POS0 off by +1 (5/9/13 vs actual 4/8/12) — likely
+  #   a renamed-arg shift that wasn't propagated.
+  pdsyevr.f: scalapack/source_overrides/pdsyevr.f
+  pzheevr.f: scalapack/source_overrides/pzheevr.f
+  pdsygvx.f: scalapack/source_overrides/pdsygvx.f
+  pzhegvx.f: scalapack/source_overrides/pzhegvx.f
+  pdtrord.f: scalapack/source_overrides/pdtrord.f
 
 # local_renames: (reserved for non-precision local-variable drift like
 # CONJTOPH→TTOPH that isn't an S↔D / C↔Z prefix swap. Precision-prefix

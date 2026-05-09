@@ -273,6 +273,93 @@ None of these has any observable runtime effect.
 
 ---
 
+## ScaLAPACK 2.2.3: PCHK?MAT parameter-position drift (mechanical sweep 2026-05-08)
+
+A mechanical sweep parsed every `CALL PCHK1MAT(...)` /
+`CALL PCHK2MAT(...)` site (316 total in `scalapack-2.2.3/SRC/`),
+extracted the `MAPOS0` / `NAPOS0` / `DESCAPOS0` / `MBPOS0` / `NBPOS0` /
+`DESCBPOS0` literal arguments, and verified each one matches the
+actual position of the corresponding M / N / DESC arg in the calling
+routine's signature.
+
+**53 mismatches in 11 routines, in 4 distinct upstream bug families:**
+
+### Family 1: `?heevr` / `?syevr` — DESCB POS0 21 should be 19
+
+Files: `pcheevr.f`, `pdsyevr.f`, `pssyevr.f`, `pzheevr.f` (all four
+halves). Signature ends `..., Z, IZ, JZ, DESCZ, WORK, ...`, putting
+DESCZ at position 19. The `PCHK2MAT(..., DESCZ, 21, ...)` call uses
+21 — likely lifted from a sibling routine that has additional args
+before DESCZ. On illegal DESCZ, PXERBLA reports parameter 21
+(WORK or LWORK depending on signature) instead of 19 (DESCZ).
+
+### Family 2: `?hegvx` / `?sygvx` — M/N POS0 4 should be 5
+
+Files: `pchegvx.f`, `pdsygvx.f`, `pssygvx.f`, `pzhegvx.f` (all four).
+Signature is `(IBTYPE, JOBZ, RANGE, UPLO, N, ...)` — N at position 5.
+Caller forgot to count `IBTYPE` (it's a generalized eigenvalue problem
+and IBTYPE selects A·x=λBx vs A·Bx=λx), and used 4 (which is UPLO).
+Both PCHK2MAT and PCHK1MAT calls in each routine have the same off-by-1
+on every M/N parameter index. On illegal N, PXERBLA misreports as
+parameter 4 (UPLO).
+
+### Family 3: `pdtrord` / `pstrord` — every POS0 off by +1
+
+Signature is `(COMPQ, SELECT, PARA, N, T, IT, JT, DESCT, Q, IQ, JQ, DESCQ, ...)`
+putting N at 4, DESCT at 8, DESCQ at 12. The PCHK?MAT calls use
+5, 9, 13. Looks like a renamed-arg shift that wasn't propagated —
+maybe an older signature with an extra leading parameter that was
+later removed. Three call sites per routine.
+
+### Family 4: `pzheevd` — DESCB POS0 11 should be 12
+
+Already documented separately as the first PCHK2MAT bug found via
+convergence audit (caught earlier this session, patched at
+`recipes/scalapack/source_overrides/pzheevd.f`).
+
+### Patches in migrated archive
+
+D/Z-canonical halves patched at `recipes/scalapack/source_overrides/`:
+- `pdsyevr.f` (DESCZ POS0 21→19)
+- `pzheevr.f` (DESCZ POS0 21→19)
+- `pdsygvx.f` (N POS0 4→5 in both calls; B/Z param indices left
+  unchanged since they were already correct at 9 and 13)
+- `pzhegvx.f` (same)
+- `pdtrord.f` (N POS0 5→4, DESCT POS0 9→8, DESCQ POS0 13→12 in all
+  three calls)
+
+Wired in `recipes/scalapack.yaml` with matching `prefer_source` pins
+(`PDSYEVR`, `PZHEEVR`, `PDSYGVX`, `PZHEGVX`, `PDTRORD`) so the
+patched halves win convergence over the still-buggy C/S siblings.
+
+### Documented but not patched (S/C non-canonical)
+
+- `pssyevr.f`, `pcheevr.f` (DESCZ POS0 21→19)
+- `pssygvx.f`, `pchegvx.f` (N POS0 4→5)
+- `pstrord.f` (off-by-+1 across the board)
+
+### Severity
+
+All diagnostic-only. PXERBLA still aborts and rejects bad input;
+users just see the wrong parameter number in the error message
+("parameter -19 had an illegal value" instead of "parameter -21",
+or the inverse). No memory or numerical impact. Same severity class
+as the XERBLA-string typos and the original `pzheevd` bug.
+
+### Why upstream's tests miss it
+
+PCHK?MAT parameter-position correctness is invisible unless a caller
+deliberately passes an invalid DESC/M/N argument and inspects PXERBLA
+output. Test drivers always pass valid args.
+
+### Upstream report
+
+Not yet filed. The `?heevr/?syevr` and `?hegvx/?sygvx` families are
+self-contained: 8 file edits cover both bug clusters in single typo
+form, making this an attractive low-effort upstream PR.
+
+---
+
 ## LAPACK 3.12.1 + ScaLAPACK 2.2.3: XERBLA routine-name string typos (sweep 2026-05-08)
 
 A mechanical XERBLA-string sweep across all four upstream Fortran
@@ -324,6 +411,62 @@ read the diagnostic output.
 **Already documented separately:** `zla_syrfsx_extended.f:496` reports
 `'ZLA_HERFSX_EXTENDED'` (Hermitian) inside the symmetric routine —
 caught earlier and patched in `recipes/lapack/source_overrides/`.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## LAPACK 3.12.1: 8 more EXTERNAL-vs-CALL drifts (mechanical sweep 2026-05-08)
+
+A second mechanical sweep — this one matching every CALL target in
+each subprogram against the routine's EXTERNAL declaration — found
+462 routines with both stale (declared, never called) and missing
+(called, not declared) entries. After filtering keyword false
+positives, 8 of these affect the migrated archive's D/Z-canonical
+files:
+
+| File | Bug |
+|------|-----|
+| `dlarf1l.f` | EXTERNAL declares `DGEMV, DGER`. Body also calls `DAXPY` (3×) and `DSCAL` (2×). Fix: add `DAXPY, DSCAL`. |
+| `zlarf1l.f` | EXTERNAL declares `ZGEMV, ZGERC, ZSCAL`. Body also calls `ZAXPY` (2×). Fix: add `ZAXPY`. |
+| `dlatrs3.f` | EXTERNAL omits `DGEMM`. Body calls `DGEMM` 2×. Fix: add `DGEMM`. |
+| `zlatrs3.f` | EXTERNAL omits `ZGEMM`. Body calls `ZGEMM` 3×. Fix: add `ZGEMM`. |
+| `zgelss.f` | EXTERNAL omits `ZUNMQR`. Body calls `ZUNMQR` 2×. Fix: add `ZUNMQR`. |
+| `dorbdb4.f` | EXTERNAL declares `DLARF` (dead). Body calls `DLARF1F` 4×, never `DLARF`. Fix: replace `DLARF` with `DLARF1F`. |
+| `dorgr2.f` | EXTERNAL declares `DLARF` (dead). Body calls `DLARF1L`. Fix: replace `DLARF` with `DLARF1L`. |
+| `zrscl.f` | EXTERNAL omits `ZSCAL`. Body calls `ZSCAL` 4×. Fix: add `ZSCAL`. |
+
+Carried as source overrides in `recipes/lapack/source_overrides/`,
+wired in `recipes/lapack.yaml`.
+
+**Sibling halves with similar drift, NOT patched** (S/C non-canonical;
+documenting for upstream report only):
+
+- `slarf1l.f` missing `SAXPY`, `SSCAL`
+- `clarf1l.f` missing `CAXPY`
+- `slatrs3.f` missing `SGEMM`
+- `clatrs3.f` missing `CGEMM`
+- `cgelss.f` missing `CUNMQR`
+- `sorbdb4.f` declares dead `SLARF` (calls `SLARF1F`)
+- `sorgr2.f` declares dead `SLARF` (calls `SLARF1L`)
+- `crscl.f` missing `CSCAL`
+- `clarf1f.f` missing `CAXPY`, `CGERC` (already documented separately)
+- `dopmtr.f` declares dead `DLARF`, calls `DLARF1L`
+
+Plus four entries in `external/lapack-3.12.1/SRC/VARIANTS/lu/REC/` —
+`{c,d,s,z}getrf.f` all missing `?GEMM`. The VARIANTS subdirectory is
+not in the migrator's `source_dir` scan path, so these are out of
+scope for the migrated archive but worth filing upstream.
+
+**Severity.** All advisory — Fortran linker resolves CALL targets
+by symbol name regardless of EXTERNAL. The fixes correct the
+declaration to match the body so static analyzers, pretty-printers,
+and downstream tooling see consistent metadata.
+
+**Why upstream's tests miss them.** Reference test drivers compile
+and link the routines unchanged from upstream — the linker resolves
+the symbols, the tests pass. EXTERNAL-vs-CALL consistency is
+checkable only by reading source.
 
 **Upstream report.** Not yet filed.
 

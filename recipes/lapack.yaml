@@ -178,6 +178,21 @@ source_overrides:
   # S/C halves remain buggy upstream (non-canonical, not patched here).
   dorbdb.f: lapack/source_overrides/dorbdb.f
   zunbdb.f: lapack/source_overrides/zunbdb.f
+  # EXTERNAL-vs-CALL drift surfaced by 2026-05-08 mechanical sweep.
+  # Each routine declares EXTERNAL routines it doesn't call AND/OR
+  # calls routines it doesn't declare. Advisory in Fortran (linker
+  # resolves), but inconsistent with the body and trips up static
+  # analyzers. All eight are D/Z-canonical so they ride into the
+  # migrated archive; the matching S/C-half typos are documented
+  # but not patched.
+  dlarf1l.f: lapack/source_overrides/dlarf1l.f       # +DAXPY,DSCAL
+  zlarf1l.f: lapack/source_overrides/zlarf1l.f       # +ZAXPY
+  dlatrs3.f: lapack/source_overrides/dlatrs3.f       # +DGEMM
+  zlatrs3.f: lapack/source_overrides/zlatrs3.f       # +ZGEMM
+  zgelss.f: lapack/source_overrides/zgelss.f         # +ZUNMQR
+  dorbdb4.f: lapack/source_overrides/dorbdb4.f       # DLARF→DLARF1F
+  dorgr2.f: lapack/source_overrides/dorgr2.f         # DLARF→DLARF1L
+  zrscl.f: lapack/source_overrides/zrscl.f           # +ZSCAL
 
 # Files dropped from the migrated archive:
 #  - ZC*/DS* mixed-precision iterative-refinement drivers and
