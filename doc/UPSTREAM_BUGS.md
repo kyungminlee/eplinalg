@@ -50,6 +50,27 @@ Bugs surfaced via five distinct audit passes:
 8. **XERBLA-string trailing-space asymmetry** — verify halves agree
    on whether the routine name in `XERBLA('NAME', ...)` carries the
    trailing-space pad. 1 confirming hit (already-known `SSYSV_AA`).
+9. **PXERBLA pattern audit** — categorize all 522 PXERBLA call sites
+   in ScaLAPACK by third-argument shape (`-INFO`, `-IINFO`, descriptive
+   suffixes, literal integer). Re-run SRNAME-vs-enclosing check with a
+   PXERBLA-aware regex (the original sweep missed PXERBLA's
+   `(ICTXT, 'NAME', ...)` form). 1 new bug: `psgebal.f:386` reports
+   `'PDGEBAL'` (S-half typo). Verified `?laconsb` family's literal-
+   integer calls (`PXERBLA(..., 10)`) correctly index LWORK at
+   parameter position 10.
+10. **LWORK-validation-gap mechanical sweep** — find routines with
+    `LWORK`/`LIWORK`/`LRWORK` in signature that lack a matching
+    `.LT.` validation. Most hits are LAPACK auxiliary routines (whose
+    callers validate). 1 real bug in public-facing code:
+    `pzheevd`/`pcheevd` miss LIWORK validation while all 14 sibling
+    eigensolvers in the heev*/syev* family validate it correctly
+    (complex-half asymmetry).
+11. **Doc-header `\brief \b NAME` consistency** (already covered in #7
+    above). 1 bug.
+12. **Build-system registration drift** — verify CMakeLists.txt
+    listings match the actual file set in SRC. LAPACK 2 055 SRC files
+    + 56 in DEPRECATED, all registered correctly. ScaLAPACK 678/678
+    perfect match. **No drift, no bugs.**
 
 ## Bug summary
 
@@ -84,6 +105,7 @@ Bugs surfaced via five distinct audit passes:
 | **I06** | `?laqz2` INFO=-26 (RWORK) for LWORK test, should be -25 | Diag | ✓ Z | info-n |
 | **D01** | `zrscl.f` doc header `\brief \b ZDRSCL` should be ZRSCL | Doc | ✓ Z | brief |
 | **X04** | `psgebal.f:386` PXERBLA reports `'PDGEBAL'` (line 225 correct) | Diag | — (S) | pxerbla |
+| **W01** | `pzheevd`/`pcheevd` miss LIWORK validation (memory bug; complex-half-only asymmetry vs heevd/syevd siblings) | Memory | ✓ Z, — C | lwork-gap |
 | S01 | `pzunmbr.f` EXTERNAL declares PCHK1MAT, body calls PCHK2MAT | Adv | ✓ Z | conv |
 | S02 | `pssyevd.f` LQUERY misses LIWORK=-1 | Validation | — (S) | conv |
 | S03 | `pslaed3.f` clobbers user INFO | Validation | — (S) | conv |
@@ -442,6 +464,63 @@ different routine, ZDRSCL, which zrscl.f *calls* internally (line
 docs at netlib.org would label ZRSCL's docs page as "ZDRSCL" or fail
 to find ZRSCL entirely. Fixed in
 `recipes/lapack/source_overrides/zrscl.f`.
+
+**Upstream report.** Not yet filed.
+
+---
+
+## ScaLAPACK 2.2.3: `pzheevd.f` / `pcheevd.f` miss LIWORK validation (sweep 2026-05-09)
+
+**Symptom.** Caller passing too-small `LIWORK` (positive value, not
+the `-1` query sentinel) bypasses argument validation. The routine
+proceeds to the body, where `IWORK(1:LIWMIN)` is written — overrunning
+the user's IWORK buffer.
+
+**Root cause.** Argument-validation block in `pzheevd.f:255-289` and
+`pcheevd.f:251-285` validates `LWORK` and `LRWORK` but lacks a
+matching `LIWORK.LT.LIWMIN` check:
+
+```fortran
+ELSE IF( LWORK.LT.LWMIN .AND. LWORK.NE.-1 ) THEN
+   INFO = -14
+ELSE IF( LRWORK.LT.LRWMIN .AND. LRWORK.NE.-1 ) THEN
+   INFO = -16
+* No LIWORK check — should be:
+* ELSE IF( LIWORK.LT.LIWMIN .AND. LIWORK.NE.-1 ) THEN
+*    INFO = -18
+ELSE IF( IROFFA.NE.0 ) THEN
+   ...
+```
+
+**Discovered by** the 2026-05-09 LWORK-validation-gap mechanical sweep,
+which audited every routine in LAPACK + ScaLAPACK SRC for `LWORK` /
+`LIWORK` / `LRWORK` arguments without matching `.LT.` validation. Of
+the 16 routines in the heev/syev/heevd/syevd/heevr/syevr/heevx/syevx
+family, **only `pcheevd` and `pzheevd` are missing the LIWORK check**.
+All real-precision halves (`pdsyevd`, `pssyevd`) and all eigensolver
+variants in the family validate LIWORK correctly. This is a complex-
+half-only asymmetry.
+
+**Affected files.**
+- `external/scalapack-2.2.3/SRC/pzheevd.f` (line 263 area).
+- `external/scalapack-2.2.3/SRC/pcheevd.f` (line 263 area, same bug).
+
+**Fix.** Insert the missing `ELSE IF (LIWORK.LT.LIWMIN .AND.
+LIWORK.NE.-1) INFO = -18` branch between the LWORK and LRWORK
+validations and `IROFFA.NE.0`. (LIWORK is at parameter position 18 in
+both routines' signatures.)
+
+**Patched on Z half**: `recipes/scalapack/source_overrides/pzheevd.f`
+(extends the existing PCHK2MAT 11→12 fix). The migrator's
+`prefer_source: PZHEEVD` pin ensures the patched Z half wins
+convergence. **C half not patched** (non-canonical for the migrated
+archive) but flagged here for upstream report.
+
+**Severity.** Argument-validation gap. Calling pzheevd with a too-
+small LIWORK silently corrupts memory rather than returning
+INFO=-18. Same severity class as the documented `pssyevd` LIWORK=-1
+LQUERY gap (S03), which is a different aspect of the same upstream
+weakness in the heevd / syevd family's workspace handling.
 
 **Upstream report.** Not yet filed.
 
