@@ -20,6 +20,34 @@ def _stem_upper(filename: str) -> str:
     return Path(filename).stem.upper()
 
 
+def _build_module_rename_pairs(
+    config: RecipeConfig,
+) -> list[tuple[re.Pattern[str], str]]:
+    """Compile the recipe's ``module_renames:`` map into regex pairs.
+
+    The pattern matches ``USE <OLD_MODULE>`` (case-insensitive, both
+    bare ``USE`` and ``USE …, ONLY: …`` forms) and rewrites the module
+    name to the new one. Same shape used by ``run_fortran_migration``
+    when emitting the canonical text — surfacing this helper lets
+    convergence re-migration apply the identical rule, keeping the
+    on-disk canonical and the re-migrated sibling on equal footing.
+    """
+    pairs: list[tuple[re.Pattern[str], str]] = []
+    for old_mod, new_mod in (config.module_renames or {}).items():
+        pat = re.compile(r'(?i)(\bUSE\s+)' + re.escape(old_mod) + r'\b')
+        pairs.append((pat, r'\g<1>' + new_mod))
+    return pairs
+
+
+def _apply_module_renames(
+    text: str,
+    pairs: list[tuple[re.Pattern[str], str]],
+) -> str:
+    for pat, repl in pairs:
+        text = pat.sub(repl, text)
+    return text
+
+
 def _filter_expected_divergences(report: list[dict],
                                   config: RecipeConfig) -> list[dict]:
     """Drop entries whose canonical stem is whitelisted as expected.
@@ -751,15 +779,7 @@ def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
     # Build module-rename regex pairs once. Applied post-migration to
     # every migrated file (copy_files are deliberately untouched so the
     # verbatim upstream module keeps its original name).
-    module_rename_pairs: list[tuple[re.Pattern[str], str]] = []
-    for old_mod, new_mod in (config.module_renames or {}).items():
-        pat = re.compile(r'(?i)(\bUSE\s+)' + re.escape(old_mod) + r'\b')
-        module_rename_pairs.append((pat, r'\g<1>' + new_mod))
-
-    def _apply_module_renames(text: str) -> str:
-        for pat, repl in module_rename_pairs:
-            text = pat.sub(repl, text)
-        return text
+    module_rename_pairs = _build_module_rename_pairs(config)
 
     # Partition: copy/skip/dry-run decisions stay in the main process;
     # only the Flang-bound migration is dispatched to workers.
@@ -821,7 +841,7 @@ def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
             skipped.append(src_path.name)
             continue
         out_name, migrated = result
-        migrated = _apply_module_renames(migrated)
+        migrated = _apply_module_renames(migrated, module_rename_pairs)
         normalized = _canonicalize_for_compare(
             _strip_fortran_comments(migrated, src_path.suffix)
         )
@@ -962,6 +982,7 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
     all_paths = {p for pair in pairs for p in pair}
     texts: dict[Path, str] = {}
     workers = max(1, (os.cpu_count() or 4))
+    module_rename_pairs = _build_module_rename_pairs(config)
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futures = {
             ex.submit(migrate_file_to_string, p, rename_map, target_mode,
@@ -978,7 +999,7 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
                 if res is None:
                     continue
                 _, migrated = res
-                texts[p] = migrated
+                texts[p] = _apply_module_renames(migrated, module_rename_pairs)
             except Exception as exc:
                 print(f'  warning: migration crashed on {p.name}: '
                       f'{type(exc).__name__}: {exc}', file=sys.stderr)
@@ -1079,6 +1100,7 @@ def run_convergence_report(recipe_path: Path, output_dir: Path,
     others_to_migrate = {other for _, other in pairs}
     texts: dict[Path, str] = {}
     workers = max(1, (os.cpu_count() or 4))
+    module_rename_pairs = _build_module_rename_pairs(config)
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futures = {
             ex.submit(migrate_file_to_string, p, rename_map,
@@ -1095,7 +1117,11 @@ def run_convergence_report(recipe_path: Path, output_dir: Path,
                 if res is None:
                     continue
                 _, migrated = res
-                texts[p] = migrated
+                # Match the on-disk canonical: run_fortran_migration
+                # applies module_renames before writing, so the
+                # re-migrated sibling has to receive the same rewrite
+                # before the comparison below.
+                texts[p] = _apply_module_renames(migrated, module_rename_pairs)
             except Exception as exc:
                 print(f'  warning: re-migration crashed on {p.name}: '
                       f'{type(exc).__name__}: {exc}', file=sys.stderr)
