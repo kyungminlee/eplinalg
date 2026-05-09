@@ -1,0 +1,73 @@
+--- a/pzlarzb.f
++++ b/pzlarzb.f
+@@ -237,7 +237,7 @@
+      $                   IPT, IPV, IPW, IROFFC1, IROFFC2, ITOP, IVCOL,
+      $                   IVROW, J, JJBEG, JJEND, JJNXT, JJC1, JJC2, JJV,
+      $                   LDC, LDV, LV, LW, MBC, MBV, MPC1, MPC2, MPC20,
+-     $                   MQV, MQV0, MYCOL, MYDIST, MYROW, NBC, NBV,
++     $                   MQV0, MYCOL, MYDIST, MYROW, NBC, NBV,
+      $                   NPCOL, NPROW, NQC1, NQC2, NQCALL, NQV
+ *     ..
+ *     .. External Subroutines ..
+@@ -356,19 +356,32 @@
+ *        IROFFC2 = ICOFFV is required by the current transposition
+ *        routine PBZTRAN
+ *
+-         MQV0 = NUMROC( M+ICOFFV, NBV, MYCOL, IVCOL, NPCOL )
+-         IF( MYCOL.EQ.IVCOL ) THEN
+-            MQV = MQV0 - ICOFFV
+-         ELSE
+-            MQV = MQV0
+-         END IF
++*        UPSTREAM BUG FIX (vs ScaLAPACK 2.2.3): the original code passed
++*        M+ICOFFV as PBZTRAN's N argument while sizing WORK( IPV ) / LV
++*        from MPC20 = local rows of L. Whenever M > L (the typical case
++*        — M = K+L from PZUNMRZ's caller), PBZTRAN's LDC contract
++*        `LDC >= NUMROC( N_arg, NBV, MYROW, ICROW2, NPROW )` fails
++*        because LV was sized for L rows, not M+ICOFFV rows. The
++*        transpose then exits via PXERBLA with INFO=11 ("LDC illegal
++*        value") *without* writing WORK( IPV ), and the outer ZGEMM at
++*        the bottom of this branch multiplies uninitialised data into C
++*        — surfacing as a numerically corrupt result (typically a
++*        ~1.3x scaling error). Only the trailing K x L portion of V is
++*        meaningful per RZ's row-stored Householder convention, so the
++*        correct fix is to conjugate-transpose the K x (L+ICOFFV) block
++*        instead of the K x (M+ICOFFV) block. The MPC20-sized IPV
++*        buffer then matches PBZTRAN's NP requirement under the
++*        alignment hypothesis IROFFC2 = ICOFFV (NB_V = MB_C). Documented
++*        in doc/UPSTREAM_BUGS.md.
++*
++         MQV0 = NUMROC( L+ICOFFV, NBV, MYCOL, IVCOL, NPCOL )
+          IF( MYROW.EQ.ICROW2 ) THEN
+             MPC20 = MPC2 + IROFFC2
+          ELSE
+             MPC20 = MPC2
+          END IF
+ *
+-*        Locally V( IOFFV ) is K x MQV, C( IOFFC2 ) is MPC2 x NQC2
++*        Locally V( IOFFV ) is K x NQV, C( IOFFC2 ) is MPC2 x NQC2
+ *        WORK( IPV ) is MPC20 x K = [ . V( IOFFV ) ]'
+ *        WORK( IPW ) is K x MQV0  = [ . V( IOFFV ) ]
+ *        WORK( IPT ) is the workspace for PBZTRAN
+@@ -381,10 +394,10 @@
+ *
+          IF( MYROW.EQ.IVROW ) THEN
+             IF( MYCOL.EQ.IVCOL ) THEN
+-               CALL ZLAMOV( 'All', K, MQV, V( IOFFV ), LDV,
++               CALL ZLAMOV( 'All', K, NQV, V( IOFFV ), LDV,
+      $                      WORK( IPW+ICOFFV*LW ), LW )
+             ELSE
+-               CALL ZLAMOV( 'All', K, MQV, V( IOFFV ), LDV,
++               CALL ZLAMOV( 'All', K, NQV, V( IOFFV ), LDV,
+      $                      WORK( IPW ), LW )
+             END IF
+          END IF
+@@ -392,7 +405,7 @@
+ *        WORK( IPV ) = WORK( IPW )' (replicated) is MPC20 x K
+ *
+          CALL PBZTRAN( ICTXT, 'Rowwise', 'Conjugate transpose', K,
+-     $                 M+ICOFFV, DESCV( NB_ ), WORK( IPW ), LW, ZERO,
++     $                 L+ICOFFV, DESCV( NB_ ), WORK( IPW ), LW, ZERO,
+      $                 WORK( IPV ), LV, IVROW, IVCOL, ICROW2, -1,
+      $                 WORK( IPT ) )
+ *

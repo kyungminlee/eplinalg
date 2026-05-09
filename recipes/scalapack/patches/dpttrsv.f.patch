@@ -1,0 +1,11 @@
+--- a/dpttrsv.f
++++ b/dpttrsv.f
+@@ -97,7 +97,7 @@
+          INFO = -7
+       END IF
+       IF( INFO.NE.0 ) THEN
+-         CALL XERBLA( 'DPTTRS', -INFO )
++         CALL XERBLA( 'DPTTRSV', -INFO )
+          RETURN
+       END IF
+ *

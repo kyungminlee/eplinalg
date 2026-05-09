@@ -1,0 +1,23 @@
+--- a/pdtrord.f
++++ b/pdtrord.f
+@@ -433,16 +433,16 @@
+ *     Test input parameters for global sanity.
+ *
+       IF( INFO.EQ.0 ) THEN
+-         CALL PCHK1MAT( N, 5, N, 5, IT, JT, DESCT, 9, 0, IDUM1,
++         CALL PCHK1MAT( N, 4, N, 4, IT, JT, DESCT, 8, 0, IDUM1,
+      $        IDUM2, INFO )
+       END IF
+       IF( INFO.EQ.0 ) THEN
+-         CALL PCHK1MAT( N, 5, N, 5, IQ, JQ, DESCQ, 13, 0, IDUM1,
++         CALL PCHK1MAT( N, 4, N, 4, IQ, JQ, DESCQ, 12, 0, IDUM1,
+      $        IDUM2, INFO )
+       END IF
+       IF( INFO.EQ.0 ) THEN
+-         CALL PCHK2MAT( N, 5, N, 5, IT, JT, DESCT, 9, N, 5, N, 5,
+-     $        IQ, JQ, DESCQ, 13, 0, IDUM1, IDUM2, INFO )
++         CALL PCHK2MAT( N, 4, N, 4, IT, JT, DESCT, 8, N, 4, N, 4,
++     $        IQ, JQ, DESCQ, 12, 0, IDUM1, IDUM2, INFO )
+       END IF
+ *
+ *     Decode and test the input parameters.

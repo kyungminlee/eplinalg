@@ -1,0 +1,11 @@
+--- a/pzunmbr.f
++++ b/pzunmbr.f
+@@ -299,7 +299,7 @@
+       INTEGER            IDUM1( 5 ), IDUM2( 5 )
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL           BLACS_GRIDINFO, CHK1MAT, PCHK1MAT, PXERBLA,
++      EXTERNAL           BLACS_GRIDINFO, CHK1MAT, PCHK2MAT, PXERBLA,
+      $                   PZUNMLQ, PZUNMQR
+ *     ..
+ *     .. External Functions ..
