@@ -1305,50 +1305,61 @@ def _stage_baseline(args, target_name: str):
             shutil.rmtree(tests_dst)
         shutil.copytree(tests_src, tests_dst)
 
-    # Upstream BLAS / LAPACK source (also used by the kind16 quad
-    # reference, but here serving as the *primary* library under test).
-    netlib_blas_src = proj_root / 'external' / 'lapack-3.12.1' / 'BLAS' / 'SRC'
-    if netlib_blas_src.is_dir():
-        refblas_dst = staging_dir / '_refblas_src'
-        if refblas_dst.exists():
-            shutil.rmtree(refblas_dst)
-        shutil.copytree(netlib_blas_src, refblas_dst)
+    # Upstream BLAS / LAPACK / ScaLAPACK / PBLAS / BLACS / MUMPS sources.
+    # For libraries with a recipe we stage from build/staged-sources/<lib>/
+    # so the baseline column links against the patched archives (closing
+    # the gap the kind4/kind8 column previously had — patched in migrated
+    # archive but broken in baseline). Libraries without a recipe
+    # (TOOLS / REDIST / libseq / MUMPS include/) come straight from
+    # external/.
+    recipes_dir = proj_root / 'recipes'
 
-    netlib_lapack_src = proj_root / 'external' / 'lapack-3.12.1' / 'SRC'
-    if netlib_lapack_src.is_dir():
-        reflapack_dst = staging_dir / '_reflapack_src'
-        if reflapack_dst.exists():
-            shutil.rmtree(reflapack_dst)
-        shutil.copytree(netlib_lapack_src, reflapack_dst)
+    def _staged_or_external(rel_src: str, recipe_name: str | None) -> Path:
+        if recipe_name:
+            recipe_path = recipes_dir / f'{recipe_name}.yaml'
+            if recipe_path.exists():
+                return run_prepare(recipe_path, project_root=proj_root)
+        return proj_root / 'external' / rel_src
+
+    def _stage_dst(dst_name: str, src: Path) -> None:
+        if not src.is_dir():
+            return
+        dst = staging_dir / dst_name
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns('.prepared.stamp'))
+
+    _stage_dst('_refblas_src',
+               _staged_or_external('lapack-3.12.1/BLAS/SRC', 'blas'))
+
+    reflapack_src = _staged_or_external('lapack-3.12.1/SRC', 'lapack')
+    _stage_dst('_reflapack_src', reflapack_src)
+    if reflapack_src.is_dir():
+        # Pull dlamch / slamch / droundup_lwork / sroundup_lwork from
+        # external/INSTALL (these aren't in any recipe's source_dir, so
+        # they don't get staged; baseline needs them alongside SRC).
         install_src = proj_root / 'external' / 'lapack-3.12.1' / 'INSTALL'
+        reflapack_dst = staging_dir / '_reflapack_src'
         for fname in ('dlamch.f', 'droundup_lwork.f', 'slamch.f',
                       'sroundup_lwork.f'):
             src = install_src / fname
             if src.is_file():
                 shutil.copy2(src, reflapack_dst / fname)
 
-    # ScaLAPACK / PBLAS / BLACS / MUMPS upstream — same _std_dirs list
-    # cmd_stage uses, so the std archives can build identically.
-    _std_dirs = [
-        ('_blacs_src',     'scalapack-2.2.3/BLACS/SRC'),
-        ('_pblas_src',     'scalapack-2.2.3/PBLAS/SRC'),
-        ('_ptzblas_src',   'scalapack-2.2.3/PBLAS/SRC/PTZBLAS'),
-        ('_pbblas_src',    'scalapack-2.2.3/PBLAS/SRC/PBBLAS'),
-        ('_scalapack_src', 'scalapack-2.2.3/SRC'),
-        ('_scalapack_tools_src', 'scalapack-2.2.3/TOOLS'),
-        ('_scalapack_redist_src', 'scalapack-2.2.3/REDIST/SRC'),
-        ('_mpiseq_src',    'MUMPS_5.8.2/libseq'),
-        ('_mumps_upstream_src',     'MUMPS_5.8.2/src'),
-        ('_mumps_upstream_include', 'MUMPS_5.8.2/include'),
+    _std_dirs: list[tuple[str, str, str | None]] = [
+        ('_blacs_src',            'scalapack-2.2.3/BLACS/SRC',         'blacs'),
+        ('_pblas_src',            'scalapack-2.2.3/PBLAS/SRC',         'pblas'),
+        ('_ptzblas_src',          'scalapack-2.2.3/PBLAS/SRC/PTZBLAS', 'ptzblas'),
+        ('_pbblas_src',           'scalapack-2.2.3/PBLAS/SRC/PBBLAS',  'pbblas'),
+        ('_scalapack_src',        'scalapack-2.2.3/SRC',               'scalapack'),
+        ('_scalapack_tools_src',  'scalapack-2.2.3/TOOLS',             None),
+        ('_scalapack_redist_src', 'scalapack-2.2.3/REDIST/SRC',        None),
+        ('_mpiseq_src',           'MUMPS_5.8.2/libseq',                None),
+        ('_mumps_upstream_src',   'MUMPS_5.8.2/src',                   'mumps'),
+        ('_mumps_upstream_include', 'MUMPS_5.8.2/include',             None),
     ]
-    for dst_name, rel_src in _std_dirs:
-        src = proj_root / 'external' / rel_src
-        if not src.is_dir():
-            continue
-        dst = staging_dir / dst_name
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst)
+    for dst_name, rel_src, recipe_name in _std_dirs:
+        _stage_dst(dst_name, _staged_or_external(rel_src, recipe_name))
 
     print(f'  Output:  {staging_dir}')
     print(f'\nTo build:')
