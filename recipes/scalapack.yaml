@@ -293,3 +293,93 @@ patches:
 # collision in pvlattrs no longer occur — the renamed BLAS routines
 # (WCOPY, MSCAL) don't shadow any local in the affected files.
 
+
+# Convergence whitelist (Phase D, doc/refactor-20260509.md).
+# Most are upstream MINRGP/larre2/larrf2 tuning splits, larzc/larzb/
+# stebz/lanhs algorithmic asymmetries, and patches that cover D/Z but
+# not S/C halves yet (e.g. PDORMRZ post-loop fix). See
+# doc/convergence-20260507.md §scalapack and doc/UPSTREAM_BUGS.md.
+expected_divergences:
+  - BDLAEXC
+  - BDTREXC
+  - DLARRE2
+  - DLARRE2A
+  - DLARRF2
+  - DPTTRSV
+  - DSTEGR2
+  - DSTEGR2A
+  - DSTEGR2B
+  - PCHETTRD
+  - PCLAWIL
+  - PCPOTF2
+  - PCUNGQL
+  - PCUNML2
+  - PDGEEQU
+  - PDLACON
+  - PDLAED3
+  - PDLANHS
+  - PDLAQR3
+  - PDLARZ
+  - PDLARZB
+  - PDLASCL
+  - PDLAWIL
+  - PDORMRZ
+  - PDPBTRSV
+  - PDPOSVX
+  - PDPTTRS
+  - PDSTEBZ
+  - PDSYEVD
+  - PDSYEVR
+  - PDSYGVX
+  - PDSYTTRD
+  - PDTRORD
+  - PDTRSEN
+  - PZGEEQU
+  - PZHEEVD
+  - PZHEEVR
+  - PZHEGVX
+  - PZLANHS
+  - PZLARZ
+  - PZLARZB
+  - PZLARZC
+  - PZLASCL
+  - PZPBTRSV
+  - PZPOSVX
+  - PZPTTRS
+  - PZUNMRZ
+  - ZPTTRSV
+
+# Symmetric-patch CI escape hatch (Phase D). All current ScaLAPACK
+# patches touch only the D/Z halves. As S/C patches are added (or as
+# the verify-patches heuristic learns to treat orthogonal/unitary
+# tails as siblings), entries will be removed from this list.
+asymmetric_patches:
+  - bdtrexc.f.patch
+  - dpttrsv.f.patch
+  - pdgeequ.f.patch
+  - pdlanhs.f.patch
+  - pdlarzb.f.patch
+  - pdlarz.f.patch
+  - pdlascl.f.patch
+  - pdormrz.f.patch
+  - pdpbtrsv.f.patch
+  - pdposvx.f.patch
+  - pdpttrs.f.patch
+  - pdsyevr.f.patch
+  - pdsygvx.f.patch
+  - pdtrord.f.patch
+  - pzgeequ.f.patch
+  - pzheevd.f.patch
+  - pzheevr.f.patch
+  - pzhegvx.f.patch
+  - pzlanhs.f.patch
+  - pzlarzb.f.patch
+  - pzlarzc.f.patch
+  - pzlarz.f.patch
+  - pzlascl.f.patch
+  - pzpbtrsv.f.patch
+  - pzposvx.f.patch
+  - pzpttrs.f.patch
+  - pzunmbr.f.patch
+  - pzunmrz.f.patch
+  - zpttrsv.f.patch

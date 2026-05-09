@@ -118,6 +118,104 @@ def run_prepare(recipe_path: Path,
     return staged_root
 
 
+_PRECISION_PREFIXES: tuple[str, ...] = (
+    'ps', 'pd', 'pc', 'pz',  # ScaLAPACK 2-letter (P + S/D/C/Z)
+    's',  'd',  'c',  'z',   # LAPACK / BLAS 1-letter
+)
+
+
+def _precision_sibling_set(filename: str) -> set[str] | None:
+    """Return the four-element co-family for ``filename``, or None.
+
+    For ``dgemm.f`` returns ``{'sgemm.f', 'dgemm.f', 'cgemm.f', 'zgemm.f'}``.
+    For ``pdgemm.f`` returns the P-prefixed siblings. For files whose
+    stem doesn't begin with a known precision prefix (e.g. ``utils.f``),
+    returns None.
+    """
+    p = Path(filename)
+    stem = p.stem.lower()
+    suf = p.suffix
+    for prefix_set in (('ps', 'pd', 'pc', 'pz'), ('s', 'd', 'c', 'z')):
+        for pfx in prefix_set:
+            if stem.startswith(pfx) and len(stem) > len(pfx):
+                # Confirm next char isn't part of a longer prefix
+                tail = stem[len(pfx):]
+                # Avoid matching 's' against 'scalapack' helpers etc:
+                # require the tail to start with a letter not extending
+                # the prefix into a 2-letter form when we matched a
+                # 1-letter form first.
+                if pfx in ('s', 'd', 'c', 'z'):
+                    # Skip if the actual prefix is 2-letter
+                    if 'p' + pfx in prefix_set and stem.startswith('p' + pfx):
+                        continue
+                return {f'{q}{tail}{suf}' for q in prefix_set}
+    return None
+
+
+def _patch_touched_files(patch_path: Path) -> set[str]:
+    """Return the set of filenames the patch's hunks add or modify."""
+    touched: set[str] = set()
+    for line in patch_path.read_text().splitlines():
+        if line.startswith('+++ b/'):
+            rel = line[len('+++ b/'):].strip().split('\t', 1)[0]
+            touched.add(Path(rel).name)
+    return touched
+
+
+def verify_patches(recipe_path: Path,
+                   project_root: Path | None = None) -> list[str]:
+    """Symmetric-patch CI check.
+
+    Aggregates every file touched by any patch in the recipe (excluding
+    those whose patch is listed under ``asymmetric_patches:``). For
+    each precision-prefixed file in the aggregate, requires all four
+    co-family siblings to be touched by SOME patch — otherwise a fix
+    in the D/Z half doesn't propagate to the S/C re-migration path.
+
+    Sibling hunks may live in different patches; they often do
+    (per-stem patches keep diffs reviewable).
+
+    Returns a list of error strings; empty list means clean.
+    """
+    if project_root is None:
+        project_root = recipe_path.parent.parent
+    config = load_recipe(recipe_path, project_root)
+    pdir = patch_dir_for(recipe_path, config.library)
+    if not pdir.is_dir():
+        return []
+
+    asymmetric = set(config.asymmetric_patches)
+    aggregate: set[str] = set()
+    file_to_patches: dict[str, list[str]] = {}
+    errors: list[str] = []
+
+    for patch_name in config.patches:
+        if patch_name in asymmetric:
+            continue
+        patch_path = pdir / patch_name
+        if not patch_path.exists():
+            errors.append(f'{patch_name}: not found in {pdir}')
+            continue
+        for f in _patch_touched_files(patch_path):
+            aggregate.add(f)
+            file_to_patches.setdefault(f, []).append(patch_name)
+
+    for f in sorted(aggregate):
+        sibs = _precision_sibling_set(f)
+        if sibs is None:
+            continue
+        missing = sibs - aggregate
+        if missing:
+            errors.append(
+                f'{f} (in {file_to_patches[f]}): precision-asymmetric — '
+                f'co-family siblings {sorted(missing)} are not touched '
+                f'by any patch. Add a patch that touches them, or list '
+                f'the patch under asymmetric_patches: in the recipe.'
+            )
+
+    return errors
+
+
 def prepare_recipe(recipe_path: Path,
                    project_root: Path | None = None,
                    *,

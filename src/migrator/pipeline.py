@@ -13,6 +13,30 @@ from pathlib import Path
 
 from .config import RecipeConfig, load_recipe
 from .prepare import prepare_recipe
+
+
+def _stem_upper(filename: str) -> str:
+    """Uppercase stem with extension stripped (handles .f, .f90, .c, etc.)."""
+    return Path(filename).stem.upper()
+
+
+def _filter_expected_divergences(report: list[dict],
+                                  config: RecipeConfig) -> list[dict]:
+    """Drop entries whose canonical stem is whitelisted as expected.
+
+    Two whitelist forms (Phase D, ``doc/refactor-20260509.md``):
+    - ``defer_all_divergences: true`` — drop every entry.
+    - ``expected_divergences: [STEM, ...]`` — drop entries whose
+      canonical stem (case-insensitive, no extension) matches.
+    """
+    if config.defer_all_divergences:
+        return []
+    if not config.expected_divergences:
+        return report
+    return [
+        r for r in report
+        if _stem_upper(r['canonical']) not in config.expected_divergences
+    ]
 from .symbol_scanner import scan_symbols
 from .prefix_classifier import classify_symbols, build_rename_map
 from .fortran_migrator import (
@@ -984,7 +1008,7 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
             'diff': diff,
         })
     report.sort(key=lambda r: (r['other'], r['canonical']))
-    return report
+    return _filter_expected_divergences(report, config)
 
 
 def run_convergence_report(recipe_path: Path, output_dir: Path,
@@ -1121,7 +1145,7 @@ def run_convergence_report(recipe_path: Path, output_dir: Path,
             'status': 'diverged',
         })
     report.sort(key=lambda r: (r['status'], r['other'], r['canonical']))
-    return report
+    return _filter_expected_divergences(report, config)
 
 
 def run_c_convergence_report(recipe_path: Path, output_dir: Path,
@@ -1231,7 +1255,7 @@ def run_c_convergence_report(recipe_path: Path, output_dir: Path,
                 'status': 'diverged',
             })
     report.sort(key=lambda r: (r['status'], r['other'], r['canonical']))
-    return report
+    return _filter_expected_divergences(report, config)
 
 
 def run_c_migration(config: RecipeConfig, output_dir: Path,

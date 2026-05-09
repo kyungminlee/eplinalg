@@ -20,7 +20,7 @@ from .config import load_recipe
 from .pipeline import (
     run_convergence_report, run_divergence_report, run_migration,
 )
-from .prepare import prepare_recipe, run_prepare
+from .prepare import prepare_recipe, run_prepare, verify_patches
 from .prefix_classifier import classify_symbols
 from .symbol_scanner import scan_symbols
 from .target_mode import load_target
@@ -35,6 +35,23 @@ def _parser_args(args):
     parser = getattr(args, 'parser', None)
     parser_cmd = getattr(args, 'parser_cmd', None)
     return parser, parser_cmd
+
+
+def cmd_verify_patches(args):
+    """Symmetric-patch CI check.
+
+    Exits non-zero with one error per patch whose hunks touch a
+    precision-prefixed file without touching all four siblings.
+    Allow-list patches that should stay asymmetric in the recipe's
+    ``asymmetric_patches:`` field.
+    """
+    errors = verify_patches(args.recipe, project_root=args.project_root)
+    if errors:
+        for e in errors:
+            print(e, file=sys.stderr)
+        return 1
+    print(f'{args.recipe.name}: all patches symmetric')
+    return 0
 
 
 def cmd_prepare(args):
@@ -1401,6 +1418,17 @@ def main():
     p.add_argument('--rebuild', action='store_true',
                    help='Wipe and re-stage even if the cache stamp is fresh')
     p.set_defaults(func=cmd_prepare)
+
+    # --- verify-patches ---
+    p = sub.add_parser(
+        'verify-patches',
+        help='CI check: every patch that touches a precision-prefixed file '
+             'must touch all four siblings (or be listed in '
+             'asymmetric_patches:)',
+    )
+    p.add_argument('recipe', type=Path, help='Recipe YAML file')
+    p.add_argument('--project-root', type=Path, default=None)
+    p.set_defaults(func=cmd_verify_patches)
 
     # --- migrate ---
     p = sub.add_parser('migrate', help='Migrate source files')

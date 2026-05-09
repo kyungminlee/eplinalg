@@ -45,3 +45,34 @@ skip_files:
 # unaffected.
 patches:
   - B01__nrm2-rotg-lazy-init.patch
+
+# Convergence whitelist (Phase D, doc/refactor-20260509.md).
+# Stems where divergence is expected and not a regression. Audit
+# documented in doc/convergence-20260507.md §blas:
+#   DNRM2/DZNRM2/DROTG/ZROTG: B01 patches D/Z only; S/C halves
+#     re-migrate without the lazy-init form (no S/C override exists,
+#     since the workaround is multifloats-target-only).
+#   DDOT: upstream STEMP/SDOT vs DDOT/DTEMP line-swap (delete+insert
+#     reordering that _filter_precision_drift intentionally doesn't
+#     fold).
+#   DROTMG: upstream constants drift (different DATA GAM/GAMSQ/RGAMSQ
+#     and conditional structure between S and D halves).
+#   DZASUM: upstream code-shape drift (D delegates to DCABS1, S
+#     inlines ABS+AIMAG).
+expected_divergences:
+  - DDOT
+  - DNRM2
+  - DROTG
+  - DROTMG
+  - DZASUM
+  - DZNRM2
+  - ZROTG
+
+# Symmetric-patch CI escape hatch (Phase D). Every B01 hunk touches
+# the D/Z file only — the S/C halves don't have an equivalent
+# multifloats workaround (the build issue is target-specific to
+# kind16/multifloats which always picks the D/Z half as canonical).
+# When/if S/C overrides are added, remove their patches from this
+# list so verify-patches enforces co-family symmetry.
+asymmetric_patches:
+  - B01__nrm2-rotg-lazy-init.patch

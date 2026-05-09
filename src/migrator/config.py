@@ -29,6 +29,7 @@ _KNOWN_RECIPE_KEYS: frozenset[str] = frozenset({
     'keep_kind_manifest',
     'c_return_types', 'c_type_aliases', 'c_pointer_cast_aliases',
     'header_patches', 'overrides',
+    'expected_divergences', 'defer_all_divergences', 'asymmetric_patches',
 })
 
 
@@ -171,6 +172,30 @@ class RecipeConfig:
     # the upstream (un-migrated) entry points keep their original
     # symbol names and link cleanly alongside the renamed clones.
     extra_renames: dict[str, str] = field(default_factory=dict)
+    # Convergence-report whitelist. Each stem (uppercased, no extension)
+    # names the canonical (D/Z) member of a co-family pair whose
+    # divergence is expected — typically because the two upstream halves
+    # genuinely differ (BLAS sdot line-swap, srotmg constants, MINRGP
+    # tuning split between S and D, etc.) or because a patch covers only
+    # one half by design. Pairs whose canonical stem appears here are
+    # filtered out of the convergence report and do NOT cause CI to fail.
+    # See doc/UPSTREAM_BUGS.md for individual entries.
+    expected_divergences: set[str] = field(default_factory=set)
+    # Coarse-grained whitelist: when True, every divergence in this
+    # library is filtered out. Used for libraries where convergence is
+    # currently dominated by migrator-internal asymmetries (PBLAS K&R
+    # re-emergence, MUMPS kind-promotion, scalapack_c TYPE rename gap)
+    # tracked separately. The fix is migrator-side; once the migrator
+    # gap closes, switch the recipe back to enumerated
+    # ``expected_divergences``.
+    defer_all_divergences: bool = False
+    # Patches under ``recipes/<lib>/patches/`` that touch only one half
+    # of a co-family pair by design (e.g. fixing a Z-half-only bug whose
+    # C sibling is correct upstream). Listed here, the symmetric-patch
+    # CI check (``migrator verify-patches``) skips them; otherwise it
+    # fails when a precision-prefixed file is touched without its
+    # siblings.
+    asymmetric_patches: list[str] = field(default_factory=list)
 
 
 def load_recipe(recipe_path: Path,
@@ -293,4 +318,9 @@ def load_recipe(recipe_path: Path,
             str(k).upper(): str(v)
             for k, v in (data.get('extra_renames') or {}).items()
         },
+        expected_divergences={
+            str(s).upper() for s in (data.get('expected_divergences') or [])
+        },
+        defer_all_divergences=bool(data.get('defer_all_divergences', False)),
+        asymmetric_patches=list(data.get('asymmetric_patches') or []),
     )

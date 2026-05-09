@@ -213,3 +213,253 @@ extra_renames:
   ILAENV: ILAENV_EP
   ILAENV2STAGE: ILAENV2STAGE_EP
   IPARAM2STAGE: IPARAM2STAGE_EP
+
+# Convergence whitelist (Phase D, doc/refactor-20260509.md).
+# Co-family pairs whose normalized texts disagree post-patch. Most
+# are upstream S/D drift the migrator cannot reconcile (header doc
+# paraphrasing, INTRINSIC list ordering, workspace-formula choices,
+# label numbering, dead-code asymmetry) — listed in
+# doc/convergence-20260507.md §lapack as the known cosmetic cohort.
+# The L01-L12, X01-X03, E01, I01-I06, D01 patches address the bug
+# subset; remaining drift is upstream design.
+#
+# When a patch is added that closes one of these stems, REMOVE the
+# stem from this list and re-run ``migrator converge`` to confirm.
+expected_divergences:
+  - DBDSDC
+  - DGBRFSX
+  - DGBSVXX
+  - DGEBAK
+  - DGEBD2
+  - DGEBRD
+  - DGEDMD
+  - DGEDMDQ
+  - DGEESX
+  - DGEJSV
+  - DGELQT
+  - DGELS
+  - DGELSD
+  - DGELSS
+  - DGELST
+  - DGEQRFP
+  - DGERFSX
+  - DGESVD
+  - DGESVDQ
+  - DGESVX
+  - DGETSLS
+  - DGETSQRHRT
+  - DGGES
+  - DGGES3
+  - DGGESX
+  - DGGEV3
+  - DGGEVX
+  - DGGHD3
+  - DGGQRF
+  - DGGRQF
+  - DGGSVD3
+  - DISNAN
+  - DLAEXC
+  - DLAISNAN
+  - DLALN2
+  - DLAMSWLQ
+  - DLAMTSQR
+  - DLANV2
+  - DLAPMT
+  - DLAQR2
+  - DLAQR3
+  - DLAQR4
+  - DLAQR5
+  - DLAQZ0
+  - DLAQZ1
+  - DLAQZ2
+  - DLAQZ3
+  - DLAQZ4
+  - DLARF1F
+  - DLARF1L
+  - DLARRE
+  - DLARRF
+  - DLASQ2
+  - DLASWLQ
+  - DLASYF_RK
+  - DLATBS
+  - DLATPS
+  - DLATRS
+  - DLATRS3
+  - DOPMTR
+  - DORBDB
+  - DORBDB1
+  - DORBDB2
+  - DORBDB3
+  - DORBDB4
+  - DORCSD
+  - DORG2L
+  - DORGR2
+  - DORGTSQR
+  - DORGTSQR_ROW
+  - DORM22
+  - DORMR2
+  - DORMRZ
+  - DPORFSX
+  - DSTEMR
+  - DSTERF
+  - DSTEVR
+  - DSYEQUB
+  - DSYEVR
+  - DSYEVR_2STAGE
+  - DSYRFSX
+  - DSYSV_AA
+  - DSYTRD_SY2SB
+  - DSYTRF_AA_2STAGE
+  - DSYTRI2
+  - DSYTRS_3
+  - DSYTRS_AA
+  - DTGEX2
+  - DTGSEN
+  - DTGSYL
+  - DTRSYL
+  - DTRSYL3
+  - ILADLR
+  - ZGBRFSX
+  - ZGEDMD
+  - ZGEDMDQ
+  - ZGEJSV
+  - ZGELST
+  - ZGELSY
+  - ZGEMLQ
+  - ZGEMQR
+  - ZGERFSX
+  - ZGESVD
+  - ZGESVDX
+  - ZGESVJ
+  - ZGETF2
+  - ZGETSLS
+  - ZGGBAL
+  - ZGGEV3
+  - ZGGSVD3
+  - ZGSVJ1
+  - ZHEEQUB
+  - ZHEEVX
+  - ZHERFSX
+  - ZHESV_AA_2STAGE
+  - ZHETRF_AA_2STAGE
+  - ZHETRI_3
+  - ZHETRS_AA
+  - ZHSEIN
+  - ZLAHEF
+  - ZLAHEF_RK
+  - ZLAMSWLQ
+  - ZLAPMT
+  - ZLAQP2
+  - ZLAQP2RK
+  - ZLAQZ0
+  - ZLAQZ1
+  - ZLAQZ2
+  - ZLAQZ3
+  - ZLARF1F
+  - ZLARF1L
+  - ZLARTG
+  - ZLASWLQ
+  - ZLATBS
+  - ZLATPS
+  - ZLATRS
+  - ZLATRS3
+  - ZPFTRI
+  - ZPOEQUB
+  - ZPORFSX
+  - ZPOTF2
+  - ZPPTRF
+  - ZPTTRF
+  - ZPTTS2
+  - ZRSCL
+  - ZSTEMR
+  - ZSYEQUB
+  - ZSYRFSX
+  - ZSYSV_AA_2STAGE
+  - ZSYSWAPR
+  - ZSYTRF_AA_2STAGE
+  - ZTGSEN
+  - ZTRSYL3
+  - ZUNBDB
+  - ZUNBDB1
+  - ZUNBDB2
+  - ZUNBDB3
+  - ZUNBDB4
+  - ZUNCSD
+  - ZUNCSD2BY1
+  - ZUNGR2
+  - ZUNMLQ
+  - ZUNMRZ
+
+# Symmetric-patch CI escape hatch (Phase D). All current LAPACK patches
+# touch only the D/Z halves of their co-family. Some real upstream
+# bugs (L01 ?orbdb3, X01 ?orbdb / ?unbdb) DO have S/C patches in this
+# list — but the verify-patches sibling-set heuristic doesn't yet
+# understand the orthogonal/unitary tail aliasing (dorbdb3 ↔ cunbdb3),
+# so it flags them as missing. As that heuristic improves, the truly
+# symmetric ones will be removed from this list automatically; the
+# remainder represents work to add S/C patches in a future pass.
+asymmetric_patches:
+  - chbevd_2stage.f.patch
+  - cheevd_2stage.f.patch
+  - chgeqz.f.patch
+  - cunbdb3.f.patch
+  - dgehd2.f.patch
+  - dgejsv.f.patch
+  - dgelq2.f.patch
+  - dgeql2.f.patch
+  - dgeqr2.f.patch
+  - dgeqr2p.f.patch
+  - dgeqrt2.f.patch
+  - dgeqrt3.f.patch
+  - dgerq2.f.patch
+  - dggbak.f.patch
+  - dggsvd3.f.patch
+  - dlansf.f.patch
+  - dlaqp2.f.patch
+  - dlarf1l.f.patch
+  - dlarfx.f.patch
+  - dlaswlq.f.patch
+  - dlatrs3.f.patch
+  - dorbdb3.f.patch
+  - dorbdb4.f.patch
+  - dorbdb.f.patch
+  - dorcsd.f.patch
+  - dorgr2.f.patch
+  - dorm2l.f.patch
+  - dorm2r.f.patch
+  - dorml2.f.patch
+  - dtrsyl3.f.patch
+  - sorbdb3.f.patch
+  - zgbrfsx.f.patch
+  - zgehd2.f.patch
+  - zgelq2.f.patch
+  - zgelss.f.patch
+  - zgeql2.f.patch
+  - zgeqr2.f.patch
+  - zgeqr2p.f.patch
+  - zgeqrt2.f.patch
+  - zgeqrt3.f.patch
+  - zgerq2.f.patch
+  - zggbak.f.patch
+  - zggsvd3.f.patch
+  - zhetrf_aa.f.patch
+  - zlahef_aa.f.patch
+  - zlanht.f.patch
+  - zlaqz0.f.patch
+  - zlaqz2.f.patch
+  - zlarf1f.f.patch
+  - zlarf1l.f.patch
+  - zlarfx.f.patch
+  - zla_syrfsx_extended.f.patch
+  - zlatrs3.f.patch
+  - zrscl.f.patch
+  - ztrsyl3.f.patch
+  - zunbdb3.f.patch
+  - zunbdb4.f.patch
+  - zunbdb.f.patch
+  - zuncsd.f.patch
+  - zunm2l.f.patch
+  - zunm2r.f.patch
+  - zunml2.f.patch
+  - zunmr2.f.patch
+  - zupmtr.f.patch

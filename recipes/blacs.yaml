@@ -46,6 +46,13 @@ skip_files: []
 patches:
   - B01__user-mpi-sum-reducer.patch
 
+# Convergence whitelist (Phase D). DGSUM2D_'s S sibling lacks the
+# user-MPI-op patch by design (the kind16 retarget triggers the
+# MPI_REAL16 path only on the migrated D-derived archive); the diff
+# is cosmetic and accepted.
+expected_divergences:
+  - DGSUM2D_
+
 # Multifloats target: patch blacs_pinfo_.c to call multifloats_mpi_init()
 # so the custom MPI datatypes and ops are registered before any BLACS
 # communication.  The BI_*vv* reduction kernels no longer need overrides:
@@ -69,3 +76,9 @@ overrides:
       - BI_EmergencyBuff.c
       - BI_GetBuff.c
       - BI_Pack.c
+
+# Symmetric-patch CI escape hatch (Phase D). The D-half-only
+# user-MPI-op patch is a workaround triggered by the kind16
+# retarget; the S half is unaffected. See B01 description above.
+asymmetric_patches:
+  - B01__user-mpi-sum-reducer.patch
