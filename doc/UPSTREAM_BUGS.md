@@ -106,6 +106,9 @@ Bugs surfaced via five distinct audit passes:
 | **D01** | `zrscl.f` doc header `\brief \b ZDRSCL` should be ZRSCL | Doc | ✓ Z | brief |
 | **X04** | `psgebal.f:386` PXERBLA reports `'PDGEBAL'` (line 225 correct) | Diag | — (S) | pxerbla |
 | **W01** | `pzheevd`/`pcheevd` miss LIWORK validation (memory bug; complex-half-only asymmetry vs heevd/syevd siblings) | Memory | ✓ Z, — C | lwork-gap |
+| **I07** | `?pttrs` / `?pbtrsv` LWORK sentinel-check INFO off by 1 (8 routines, all 4 halves) | Diag | ✓ D, Z (4 routines) | info-n |
+| **I08** | `?lascl` CFROM/CTO INFO codes -4/-5 inherited from LAPACK signature; should be -2/-3 (4 halves) | Diag | ✓ D, Z | info-n |
+| **I09** | `?ormrz` / `?unmrz` duplicate K-validation (L never checked; 4 halves) | Validation | ✓ D, Z | info-n |
 | S01 | `pzunmbr.f` EXTERNAL declares PCHK1MAT, body calls PCHK2MAT | Adv | ✓ Z | conv |
 | S02 | `pssyevd.f` LQUERY misses LIWORK=-1 | Validation | — (S) | conv |
 | S03 | `pslaed3.f` clobbers user INFO | Validation | — (S) | conv |
@@ -466,6 +469,93 @@ to find ZRSCL entirely. Fixed in
 `recipes/lapack/source_overrides/zrscl.f`.
 
 **Upstream report.** Not yet filed.
+
+---
+
+## ScaLAPACK 2.2.3: more INFO=-N param-position bugs (extended sweep 2026-05-09)
+
+A second pass on the ScaLAPACK INFO=-N sweep (using a stricter
+ScaLAPACK-aware filter that ignores LAPACK's `INFO = -100*PARAM - INDEX`
+descriptor convention and multi-arg tests) surfaced three additional
+families of real bugs.
+
+### Family A: `?pttrs` / `?pbtrsv` LWORK sentinel-check off-by-one
+
+8 routines × 2 occurrences each = 16 INFO assignments where the LWORK
+sentinel-validation `IF(LWORK.LT.-1)` and post-validation
+`IF(LWORK.LT.WORK_SIZE_MIN) IF(LWORK.NE.-1)` set INFO to one less than
+LWORK's actual signature position.
+
+| Routine | LWORK pos | Old INFO | Fix |
+|---------|----------:|---------:|---:|
+| `pdpttrs.f`, `pspttrs.f` | 13 | -12 | -13 |
+| `pcpttrs.f`, `pzpttrs.f` | 14 | -13 | -14 |
+| `pdpbtrsv.f`, `pspbtrsv.f` | 15 | -14 | -15 |
+| `pcpbtrsv.f`, `pzpbtrsv.f` | 15 | -14 | -15 |
+
+INFO points to WORK (one before LWORK in the signature) instead of
+LWORK itself. **Patched on D/Z** halves; S/C documented (non-canonical).
+
+### Family B: `?lascl` CFROM/CTO INFO codes inherited from LAPACK
+
+`pslascl.f`, `pdlascl.f`, `pclascl.f`, `pzlascl.f` all set:
+- `INFO = -4` for bad CFROM (CFROM is at position **2**)
+- `INFO = -5` for bad CTO (CTO is at position **3**)
+
+The values -4, -5 are correct in LAPACK's `dlascl.f` because the
+LAPACK signature is `(TYPE, KL, KU, CFROM, CTO, M, N, A, LDA, INFO)` —
+KL/KU at 2/3 push CFROM to 4 and CTO to 5. ScaLAPACK's `pdlascl`
+*drops* KL and KU, making the signature `(TYPE, CFROM, CTO, M, N, A,
+IA, JA, DESCA, INFO)` — but kept the LAPACK INFO codes without
+re-numbering. **Patched on D/Z** halves with `INFO=-4 → -2` and
+`INFO=-5 → -3`. `?lascl` is auxiliary but used internally; bad
+CFROM/CTO would report wrong arg.
+
+### Family C: `?ormrz` / `?unmrz` duplicate K-validation (L unchecked)
+
+All 4 halves (`psormrz`, `pdormrz`, `pcunmrz`, `pzunmrz`) have:
+
+```fortran
+ELSE IF( K.LT.0 .OR. K.GT.NQ ) THEN
+   INFO = -5
+ELSE IF( K.LT.0 .OR. K.GT.NQ ) THEN          ! ← duplicate, copy-paste bug
+   INFO = -6                                  ! claims to validate L (param 6)
+```
+
+The second `IF` was meant to validate L (parameter 6) but the test was
+copy-pasted from K (parameter 5). Result: **L is never validated** —
+caller passing illegal L (e.g. negative, or larger than M/N depending
+on SIDE) slips past argument validation.
+
+Compare LAPACK's `dormrz.f:253-255` which has the correct test:
+```fortran
+ELSE IF( L.LT.0 .OR. ( LEFT .AND. L.GT.M ) .OR.
+$         ( .NOT.LEFT .AND. L.GT.N ) ) THEN
+   INFO = -6
+```
+
+**Patched on D/Z** halves; restores the LAPACK-style L test. S/C
+documented (non-canonical). `pdormrz` and `pzunmrz` already had source
+overrides for the post-loop-condition bug from earlier work; the
+L-validation fix is added on top.
+
+### Severity
+
+All three families: argument-validation gaps. Family A is purely
+diagnostic (LWORK is still validated, just the wrong INFO is reported).
+Family B is also diagnostic. **Family C is a real validation gap**:
+illegal L values are accepted and the routine proceeds, potentially
+performing operations on invalid data.
+
+### Documented but not patched (S/C non-canonical)
+
+- `pspttrs`, `pcpttrs`, `pspbtrsv`, `pcpbtrsv` (LWORK INFO off-by-one)
+- `pslascl`, `pclascl` (CFROM/CTO INFO -4/-5 → -2/-3)
+- `psormrz`, `pcunmrz` (L never validated)
+
+### Upstream report
+
+Not yet filed.
 
 ---
 

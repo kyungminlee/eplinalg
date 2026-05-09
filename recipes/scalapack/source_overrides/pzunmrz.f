@@ -315,7 +315,8 @@
                INFO = -2
             ELSE IF( K.LT.0 .OR. K.GT.NQ ) THEN
                INFO = -5
-            ELSE IF( K.LT.0 .OR. K.GT.NQ ) THEN
+            ELSE IF( L.LT.0 .OR.( LEFT .AND. L.GT.M ) .OR.
+     $              ( .NOT.LEFT .AND. L.GT.N ) ) THEN
                INFO = -6
             ELSE IF( LEFT .AND. DESCA( NB_ ).NE.DESCC( MB_ ) ) THEN
                INFO = -(1000+NB_)

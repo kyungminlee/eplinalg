@@ -204,6 +204,15 @@ prefer_source:
   - PDSYGVX
   - PZHEGVX
   - PDTRORD
+  # LWORK sentinel-check + lascl CFROM/CTO param-position fixes (2026-05-09)
+  - PDPTTRS
+  - PZPTTRS
+  - PDPBTRSV
+  - PZPBTRSV
+  - PDLASCL
+  - PZLASCL
+  # PDORMRZ / PZUNMRZ already pinned above (line ~185) for the larz
+  # buffer-sizing fixes.
 
 # Mirror the scalapack_c.yaml rename for pdlaiectb_/pdlaiectl_: the
 # Fortran callers PDSTEBZ / PDSYEVX / PDSYGVX / PZHEEVX / PZHEGVX
@@ -338,6 +347,33 @@ source_overrides:
   pdsygvx.f: scalapack/source_overrides/pdsygvx.f
   pzhegvx.f: scalapack/source_overrides/pzhegvx.f
   pdtrord.f: scalapack/source_overrides/pdtrord.f
+  # 2026-05-09 ScaLAPACK-aware INFO=-N sweep findings:
+  #
+  # ?pttrs / ?pbtrsv LWORK sentinel-check off-by-one. The
+  # `IF(LWORK.LT.-1)` and `IF(LWORK.NE.-1)` validation blocks set
+  # INFO to one less than LWORK's actual signature position. Fixes
+  # report the LWORK arg correctly. All 4 halves of each routine
+  # have the same bug; D/Z patched here, S/C documented for upstream.
+  pdpttrs.f: scalapack/source_overrides/pdpttrs.f       # -12 → -13
+  pzpttrs.f: scalapack/source_overrides/pzpttrs.f       # -13 → -14
+  pdpbtrsv.f: scalapack/source_overrides/pdpbtrsv.f     # -14 → -15
+  pzpbtrsv.f: scalapack/source_overrides/pzpbtrsv.f     # -14 → -15
+  # ?lascl CFROM/CTO INFO codes inherited from LAPACK ?lascl signature
+  # which had KL/KU at positions 2/3. ScaLAPACK ?lascl drops KL/KU
+  # but kept INFO=-4 / INFO=-5. Should be -2 / -3 in ScaLAPACK
+  # (CFROM at 2, CTO at 3). Auxiliary routine but used internally;
+  # bad CFROM/CTO would report wrong arg. All 4 halves affected.
+  pdlascl.f: scalapack/source_overrides/pdlascl.f       # -4 → -2, -5 → -3
+  pzlascl.f: scalapack/source_overrides/pzlascl.f       # -4 → -2, -5 → -3
+  # ?ormrz / ?unmrz duplicate-K-validation bug surfaced 2026-05-09:
+  # the argument-validation block has TWO consecutive `IF(K.LT.0 .OR.
+  # K.GT.NQ)` checks (INFO=-5 then INFO=-6); the second was meant to
+  # validate L (parameter 6) but the check was copy-pasted from K.
+  # L was never validated — caller passing illegal L slipped past
+  # argument checks. All 4 halves affected (psormrz, pdormrz, pcunmrz,
+  # pzunmrz). The pdormrz/pzunmrz entries above (line ~279) already
+  # cover the source_overrides registration; the L-validation patch is
+  # added on top of the existing post-loop-condition fix.
 
 # local_renames: (reserved for non-precision local-variable drift like
 # CONJTOPH→TTOPH that isn't an S↔D / C↔Z prefix swap. Precision-prefix
