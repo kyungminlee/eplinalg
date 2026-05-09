@@ -96,15 +96,21 @@ def run_prepare(recipe_path: Path,
     shutil.copytree(config.source_dir, staged_root)
 
     for patch in patches:
+        # ``git apply`` is run from inside the staged tree so a patch
+        # whose hunks reference top-level filenames (``a/dnrm2.f90``)
+        # resolves directly. The patch path is made absolute first
+        # because git apply re-resolves it against ``cwd=staged_root``,
+        # not the caller's CWD.
+        patch_abs = str(patch.resolve())
         # ``--check`` first: refusing on apply-conflict surfaces upstream
         # drift loud (vendor bumped a file the patch covers) instead of
         # silently producing a half-applied tree.
         subprocess.run(
-            ['git', 'apply', '--whitespace=nowarn', '--check', str(patch)],
+            ['git', 'apply', '--whitespace=nowarn', '--check', patch_abs],
             cwd=staged_root, check=True,
         )
         subprocess.run(
-            ['git', 'apply', '--whitespace=nowarn', str(patch)],
+            ['git', 'apply', '--whitespace=nowarn', patch_abs],
             cwd=staged_root, check=True,
         )
 
