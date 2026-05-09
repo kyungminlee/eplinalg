@@ -1,0 +1,39 @@
+--- a/pdatrmv_.c
++++ b/pdatrmv_.c
+@@ -570,7 +570,17 @@
+                Anq0 = PB_Cnumroc( kb,   k, Ainb1, Anb, mycol, Acol, npcol );
+                if( Amp0 > 0 && Anq0 > 0 )
+                {
+-                  dagemv_( TRANS, &Amp0, &Anq0, one,
++                  /* Upstream bug: passed `one` for ALPHA in this branch
++                   * (uplo=L, trans=T) only — every other (uplo,trans)
++                   * combination uses the user-supplied ALPHA. The
++                   * off-diagonal contribution to row-i thus skipped the
++                   * alpha scaling, while the diagonal block was scaled
++                   * correctly via PB_Cptrm. Result: y_got = y_ref +
++                   * (1 - alpha) * |L_below^T * x_below|, which the
++                   * differential-precision suite catches at n=80
++                   * (10 block-rows of mb=8) with alpha=0.6.
++                   * Fixed by swapping `one` -> `((char *) ALPHA)`. */
++                  dagemv_( TRANS, &Amp0, &Anq0, ((char *) ALPHA),
+                            Mptr( Aptr, Akp, Akq,  Ald, size ), &Ald,
+                            Mptr( XA,   Akp,   0, XAld, size ), &ione, one,
+                            Mptr( YA,     0, Akq, YAld, usiz ), &YAld );
+--- a/pzatrmv_.c
++++ b/pzatrmv_.c
+@@ -574,7 +574,14 @@
+                Anq0 = PB_Cnumroc( kb,   k, Ainb1, Anb, mycol, Acol, npcol );
+                if( Amp0 > 0 && Anq0 > 0 )
+                {
+-                  zagemv_( TRANS, &Amp0, &Anq0, one,
++                  /* Upstream bug: passed `one` for ALPHA in this branch
++                   * (uplo=L, trans=T or C) only — every other
++                   * (uplo,trans) combination uses the user-supplied
++                   * ALPHA. The off-diagonal contribution skipped alpha
++                   * scaling. Same bug as pdatrmv_.c L,T; see the
++                   * comment in that file. Fixed by swapping
++                   * `one` -> `((char *) ALPHA)`. */
++                  zagemv_( TRANS, &Amp0, &Anq0, ((char *) ALPHA),
+                            Mptr( Aptr, Akp, Akq,  Ald, size ), &Ald,
+                            Mptr( XA,   Akp,   0, XAld, size ), &ione, one,
+                            Mptr( YA,     0, Akq, YAld, usiz ), &YAld );
