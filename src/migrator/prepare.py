@@ -110,3 +110,24 @@ def run_prepare(recipe_path: Path,
 
     stamp.touch()
     return staged_root
+
+
+def prepare_recipe(recipe_path: Path,
+                   project_root: Path | None = None,
+                   *,
+                   rebuild: bool = False) -> RecipeConfig:
+    """Load a recipe with ``source_dir`` rewritten to its staged tree.
+
+    Runs :func:`run_prepare` to ensure ``build/staged-sources/<library>/``
+    exists and reflects the recipe's patch list, then loads the recipe
+    and swaps ``config.source_dir`` to point at the staged tree. All
+    downstream pipeline code (`scan_symbols`, `run_fortran_migration`,
+    `run_c_migration`, …) reads through ``config.source_dir``, so this
+    one swap routes the entire migration through the staged tree.
+    """
+    if project_root is None:
+        project_root = recipe_path.parent.parent
+    staged_root = run_prepare(recipe_path, project_root, rebuild=rebuild)
+    config = load_recipe(recipe_path, project_root)
+    config.source_dir = staged_root
+    return config

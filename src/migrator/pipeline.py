@@ -12,6 +12,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from .config import RecipeConfig, load_recipe
+from .prepare import prepare_recipe
 from .symbol_scanner import scan_symbols
 from .prefix_classifier import classify_symbols, build_rename_map
 from .fortran_migrator import (
@@ -910,7 +911,7 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
     canonicalized texts.
     """
     import difflib
-    config = load_recipe(recipe_path, project_root)
+    config = prepare_recipe(recipe_path, project_root)
 
     symbols = _collect_all_symbols(config, project_root)
     classification = classify_symbols(symbols)
@@ -1018,7 +1019,7 @@ def run_convergence_report(recipe_path: Path, output_dir: Path,
     ``'missing'`` for pairs whose on-disk canonical is absent.
     """
     import difflib
-    config = load_recipe(recipe_path, project_root)
+    config = prepare_recipe(recipe_path, project_root)
 
     if config.language == 'c':
         return run_c_convergence_report(
@@ -1158,7 +1159,7 @@ def run_c_convergence_report(recipe_path: Path, output_dir: Path,
     PBLAS) and direct-style recipes (prefix driven, e.g. BLACS).
     """
     import difflib
-    config = load_recipe(recipe_path, project_root)
+    config = prepare_recipe(recipe_path, project_root)
 
     if config.language != 'c':
         print(f'  (run_c_convergence_report called on non-C recipe '
@@ -1339,7 +1340,7 @@ def run_migration(recipe_path: Path, output_dir: Path,
     Returns:
         Summary dict with migration statistics.
     """
-    config = load_recipe(recipe_path, project_root)
+    config = prepare_recipe(recipe_path, project_root)
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 

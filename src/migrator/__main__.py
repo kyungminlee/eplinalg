@@ -20,7 +20,7 @@ from .config import load_recipe
 from .pipeline import (
     run_convergence_report, run_divergence_report, run_migration,
 )
-from .prepare import run_prepare
+from .prepare import prepare_recipe, run_prepare
 from .prefix_classifier import classify_symbols
 from .symbol_scanner import scan_symbols
 from .target_mode import load_target
@@ -698,7 +698,7 @@ def cmd_build(args):
     if not src_dir.is_dir():
         src_dir = output_dir
 
-    config = load_recipe(args.recipe, args.project_root)
+    config = prepare_recipe(args.recipe, args.project_root)
     lib_name = config.library
 
     # Classify source files into common vs precision-specific
@@ -946,7 +946,7 @@ def cmd_stage(args):
         )
 
         # Classify files into common vs precision-specific
-        config = load_recipe(recipe_path, proj_root)
+        config = prepare_recipe(recipe_path, proj_root)
         symbols = scan_symbols(config.source_dir, config.language,
                                config.extensions, config.library_path,
                                extra_c_return_types=tuple(config.c_return_types))
