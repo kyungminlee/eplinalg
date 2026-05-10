@@ -478,7 +478,8 @@ def replace_standalone_real_complex(line: str, target_mode: TargetMode,
 # Literal constant replacement
 # ---------------------------------------------------------------------------
 
-def replace_literals(line: str, target_mode: TargetMode) -> str:
+def replace_literals(line: str, target_mode: TargetMode,
+                     source_kind: int | None = None) -> str:
     """Replace floating-point literals with target form.
 
     KIND mode: 1.0D+0 → 1.0E+0_k, 0.0E+0 → 0.0E+0_k, 0.0 → 0.0E0_k.
@@ -487,6 +488,14 @@ def replace_literals(line: str, target_mode: TargetMode) -> str:
     Bare unsuffixed literals (no D/E exponent, no ``_kind``) are also
     promoted so that complex constants like ``(0.0,0.0)`` in C sources
     converge with ``(0.0d0,0.0d0)`` in Z sources after migration.
+
+    Rule (a) gating by ``source_kind`` (mirrors :func:`replace_type_decls`):
+    a kind4 source half (S/C) only promotes kind4-shaped literals
+    (``1.0E0``, bare ``1.0``); a kind8 source half (D/Z) only promotes
+    kind8-shaped literals (``1.0D0``). Cross-kind literals inside a
+    half are intentional explicit-kind references and must survive
+    migration. ``None`` falls back to the legacy promote-everything
+    behavior.
     """
     # Keep-kind preserves the LHS type (DOUBLE PRECISION) or call-site
     # wrapper (dble/dcmplx) on this line. In constructor mode, wrapping
@@ -516,9 +525,17 @@ def replace_literals(line: str, target_mode: TargetMode) -> str:
 
     def literal_sub(m):
         mantissa = m.group(1)
+        suffix = m.group(2)
         exp_rest = m.group(3)
         if exp_rest.startswith('+'):
             exp_rest = exp_rest[1:]
+
+        # Rule (a): the suffix encodes the literal's source kind
+        # (E = kind4, D = kind8). Skip the rewrite if the source half
+        # doesn't own that kind.
+        suffix_kind = 8 if suffix.upper() == 'D' else 4
+        if source_kind is not None and source_kind != suffix_kind:
+            return m.group(0)
 
         if target_mode.literal_mode == 'kind_suffix':
             return f'{mantissa}E{exp_rest}_{target_mode.kind_suffix}'
@@ -583,25 +600,29 @@ def replace_literals(line: str, target_mode: TargetMode) -> str:
             r'(?<![\[\d])(\d+\.\d*|\d*\.\d+)([DEde])([+-]?\d+)',
             literal_sub, masked,
         )
-        if target_mode.literal_mode == 'kind_suffix':
-            masked = re.sub(
-                r'(?<![.\w])(\d+\.\d*|\d*\.\d+)(?![DdEe\w]|_\d)',
-                rf'\1E0_{target_mode.kind_suffix}', masked,
-            )
-        else:
-            def bare_sub(m):
-                val = m.group(1)
-                return (
-                    f"{target_mode.real_constructor}"
-                    f"(limbs=[{val}D0, 0.0_8])"
+        # Bare unsuffixed literals (e.g. ``1.0``, ``0.5``) are kind4
+        # by Fortran default. Skip when ``source_kind == 8`` so a
+        # kind8 source half preserves them as kind4 (rule a).
+        if source_kind != 8:
+            if target_mode.literal_mode == 'kind_suffix':
+                masked = re.sub(
+                    r'(?<![.\w])(\d+\.\d*|\d*\.\d+)(?![DdEe\w]|_\d)',
+                    rf'\1E0_{target_mode.kind_suffix}', masked,
                 )
-            # The negative lookbehind on ``[`` skips literals that
-            # already live inside a previously-wrapped
-            # ``float64x2(limbs=[...])`` form.
-            masked = re.sub(
-                r'(?<![.\w\[])(\d+\.\d*|\d*\.\d+)(?![DdEe\w]|_\d)',
-                bare_sub, masked,
-            )
+            else:
+                def bare_sub(m):
+                    val = m.group(1)
+                    return (
+                        f"{target_mode.real_constructor}"
+                        f"(limbs=[{val}D0, 0.0_8])"
+                    )
+                # The negative lookbehind on ``[`` skips literals that
+                # already live inside a previously-wrapped
+                # ``float64x2(limbs=[...])`` form.
+                masked = re.sub(
+                    r'(?<![.\w\[])(\d+\.\d*|\d*\.\d+)(?![DdEe\w]|_\d)',
+                    bare_sub, masked,
+                )
             
         if target_mode.literal_mode == 'constructor':
             # Wrap complex constants (float64x2(...), float64x2(...)) in complex128x2(...).
@@ -2933,7 +2954,7 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
         if not s:
             continue
         s = replace_standalone_real_complex(s, target_mode, source_kind=source_kind)
-        s = replace_literals(s, target_mode)
+        s = replace_literals(s, target_mode, source_kind=source_kind)
         s = replace_intrinsic_calls(
             s, target_mode, real_names=real_names, complex_names=complex_names,
         )
@@ -3185,7 +3206,7 @@ def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: Targ
             # would be left untouched and gfortran would reject the
             # KIND parameter once ``wp`` itself has been stripped.
             if not target_mode.is_kind_based:
-                stripped = replace_literals(stripped, target_mode)
+                stripped = replace_literals(stripped, target_mode, source_kind=source_kind)
             stripped = replace_known_constants(stripped, target_mode, renames=removed_known)
             stripped = _rewrite_int_of_complex(stripped, complex_names)
             stripped = _rewrite_int_kind_on_real64x2(stripped, target_mode, real_names=real_names)
@@ -3880,7 +3901,7 @@ def _migrate_fixed_form_flang(source: str, rename_map: dict[str, str], target_mo
             if not s:
                 continue
             s = replace_standalone_real_complex(s, target_mode, source_kind=source_kind)
-        if has_real_literals: s = replace_literals(s, target_mode)
+        if has_real_literals: s = replace_literals(s, target_mode, source_kind=source_kind)
         s = replace_intrinsic_calls(
             s, target_mode, real_names=real_names, complex_names=complex_names,
         )
@@ -3957,7 +3978,7 @@ def _migrate_free_form_flang(source: str, rename_map: dict[str, str], target_mod
             # would be left untouched and gfortran would reject the
             # KIND parameter once ``wp`` itself has been stripped.
             if not target_mode.is_kind_based:
-                stripped = replace_literals(stripped, target_mode)
+                stripped = replace_literals(stripped, target_mode, source_kind=source_kind)
             stripped = replace_known_constants(stripped, target_mode, renames=removed_known)
             stripped = _rewrite_int_of_complex(stripped, complex_names)
             stripped = _rewrite_int_kind_on_real64x2(stripped, target_mode, real_names=real_names)

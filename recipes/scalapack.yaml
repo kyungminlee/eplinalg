@@ -311,6 +311,7 @@ patches:
 expected_divergences:
   - BDLAEXC
   - BDTREXC
+  - DLAMSH
   - DLARRE2
   - DLARRE2A
   - DLARRF2
@@ -318,12 +319,15 @@ expected_divergences:
   - DSTEGR2
   - DSTEGR2A
   - DSTEGR2B
+  - PCDBTRSV
+  - PCGESVD
   - PCHETTRD
   - PCLAWIL
   - PCPOTF2
   - PCTREVC
   - PCUNGQL
   - PCUNML2
+  - PDDBTRSV
   - PDGEEQU
   - PDLACON
   - PDLAED3

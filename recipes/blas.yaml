@@ -61,6 +61,7 @@ patches:
 #     inlines ABS+AIMAG).
 expected_divergences:
   - DDOT
+  - DGEMMTR
   - DNRM2
   - DROTG
   - DROTMG
