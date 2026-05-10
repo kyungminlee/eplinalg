@@ -232,7 +232,6 @@ extra_renames:
 # When a patch is added that closes one of these stems, REMOVE the
 # stem from this list and re-run ``migrator converge`` to confirm.
 expected_divergences:
-  - DBBCSD
   - DBDSDC
   - DGBRFSX
   - DGBSVXX
@@ -285,7 +284,6 @@ expected_divergences:
   - DLARRE
   - DLARRF
   - DLASQ2
-  - DLASQ5
   - DLASWLQ
   - DLASYF_RK
   - DLATBS
@@ -323,13 +321,9 @@ expected_divergences:
   - DTGEX2
   - DTGSEN
   - DTGSYL
-  - DTPLQT2
-  - DTPQRT2
-  - DTPRFB
   - DTRSYL
   - DTRSYL3
   - ILADLR
-  - ZBBCSD
   - ZGBRFSX
   - ZGEDMD
   - ZGEDMDQ
@@ -388,10 +382,7 @@ expected_divergences:
   - ZSYSV_AA_2STAGE
   - ZSYSWAPR
   - ZSYTRF_AA_2STAGE
-  - ZSYTRS_AA_2STAGE
   - ZTGSEN
-  - ZTPQRT2
-  - ZTPRFB
   - ZTRSYL3
   - ZUNBDB
   - ZUNBDB1

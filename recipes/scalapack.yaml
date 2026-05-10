@@ -319,7 +319,6 @@ expected_divergences:
   - DSTEGR2
   - DSTEGR2A
   - DSTEGR2B
-  - PCDBTRSV
   - PCGESVD
   - PCHETTRD
   - PCLAWIL
@@ -327,7 +326,6 @@ expected_divergences:
   - PCTREVC
   - PCUNGQL
   - PCUNML2
-  - PDDBTRSV
   - PDGEEQU
   - PDLACON
   - PDLAED3

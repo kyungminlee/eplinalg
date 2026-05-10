@@ -16,6 +16,7 @@ command; subsequent phases route migration to read from the staged tree.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,6 +30,163 @@ STAMP_NAME = '.prepared.stamp'
 def staged_root_for(project_root: Path, library: str) -> Path:
     """Where ``library``'s staged sources live."""
     return project_root / 'build' / 'staged-sources' / library
+
+
+# ---------------------------------------------------------------------------
+# Kind-normalization (post-patch, pre-migrate)
+# ---------------------------------------------------------------------------
+
+# Match floating-point literals with explicit E exponent (e.g. ``1.0E+0``)
+# OR bare unsuffixed (``1.0``) OR with explicit kind4/8 trailers we don't
+# rewrite (``1.0_8`` / ``1.0_wp``). The regex captures the mantissa and
+# exponent groups so the substitution can rewrite to D-suffix form.
+_E_LITERAL_RE = re.compile(r'(?<![\w.])(\d+\.\d*|\d*\.\d+)([Ee])([+-]?\d+)')
+_BARE_LITERAL_RE = re.compile(
+    r'(?<![\w.\[])(\d+\.\d*|\d*\.\d+)(?![DdEe\w]|_\d|_[A-Za-z])'
+)
+_INTEGER_PARAM_DECL_RE = re.compile(
+    r'^\s*INTEGER\b.*\bPARAMETER\b.*::', re.IGNORECASE
+)
+_FORTRAN_OP_RE = re.compile(
+    r'\.\s*(EQ|NE|LT|GT|LE|GE|AND|OR|NOT|TRUE|FALSE|EQV|NEQV)\s*\.',
+    re.IGNORECASE,
+)
+_STRING_SPLIT_RE = re.compile(r"('(?:[^']|'')*'|\"(?:[^\"]|\"\")*\")")
+
+
+def _normalize_kind8_literals_in_segment(seg: str) -> str:
+    """Rewrite kind4-shaped literals to kind8 (D-suffix) form in
+    ``seg``, which is a non-string-literal slice of one source line.
+    Operator markers like ``.AND.`` are masked first so the dot-loose
+    bare-literal regex doesn't consume their leading dot.
+    """
+    masked = _FORTRAN_OP_RE.sub(
+        lambda m: '\x00' + m.group(1) + '\x00', seg,
+    )
+    # E-suffix → D-suffix, preserving sign.
+    masked = _E_LITERAL_RE.sub(r'\1D\3', masked)
+    # Bare → explicit D+0.
+    masked = _BARE_LITERAL_RE.sub(r'\1D+0', masked)
+    # Restore operator markers.
+    return re.sub(r'\x00([A-Za-z]+)\x00', r'.\1.', masked)
+
+
+def normalize_d_half_kinds(source: str, suffix: str) -> str:
+    """Promote kind4-shaped literals to kind8 (D-suffix) form.
+
+    Targeted at D/Z-half source files in the staged tree as a post-
+    patch normalization step. The migrator's per-half rule (a) gate
+    only promotes kind8 in D/Z halves — but upstream D/Z files routinely
+    use bare ``1.0`` or `1.0E+0` for default-precision constants that
+    Fortran auto-promotes via mixed-kind expression rules. After
+    migration with rule (a), those tokens stay kind4 in the canonical
+    D/Z output, while the corresponding S/C re-migration promotes them
+    (because kind4 IS the source kind on the kind4 half), producing a
+    spurious textual divergence.
+
+    Normalizing kind4 literals to kind8 on the D/Z input *before*
+    migration makes both halves' migrated output land on kind16/whatever
+    target form uniformly. Comments and string literals are left alone.
+
+    ``suffix`` is the source extension (``.f``, ``.F``, ``.f90``, etc.).
+    Fixed-form (``.f`` / ``.F``) recognizes a comment marker (``C`` /
+    ``*`` / ``!`` / ``c``) in column 1; free-form recognizes ``!``
+    anywhere outside string literals.
+    """
+    is_free = suffix.lower() in ('.f90', '.f95')
+    out: list[str] = []
+    for line in source.splitlines(keepends=True):
+        # Comment lines pass through unchanged.
+        if not is_free and line[:1] in ('C', 'c', '*', '!'):
+            out.append(line)
+            continue
+        if is_free and line.lstrip().startswith('!'):
+            out.append(line)
+            continue
+        # Skip ``INTEGER, PARAMETER :: name = <fp_literal>`` — gfortran
+        # tolerates the FP literal via integer coercion; rewriting to
+        # D-suffix preserves that behavior but the migrator's
+        # downstream literal-handler skips these too, so leaving them
+        # untouched here keeps the round-trip clean.
+        if _INTEGER_PARAM_DECL_RE.match(line):
+            out.append(line)
+            continue
+        # Free-form: strip a trailing ``! …`` comment before normalizing
+        # the code part, then reattach.
+        if is_free:
+            # Honor strings: only treat ``!`` outside strings as comment.
+            parts = _STRING_SPLIT_RE.split(line)
+            comment_started_at: int | None = None
+            for idx in range(0, len(parts), 2):
+                bang = parts[idx].find('!')
+                if bang != -1:
+                    parts[idx] = parts[idx][:bang]
+                    comment_started_at = idx
+                    break
+            if comment_started_at is not None:
+                # Discard everything after the comment marker on this line
+                head = ''.join(parts[: comment_started_at + 1])
+                # Find the original tail (including the ``!`` and trailing newline)
+                head_len = len(head)
+                tail = line[head_len:]
+                code = head
+            else:
+                code = line
+                tail = ''
+        else:
+            # Fixed-form: process whole line; inline ``!`` comments are
+            # rare and the string-split below leaves them inside any
+            # quoted region. Continuation char in column 6 is a single
+            # non-blank char; the regex won't match it.
+            code = line
+            tail = ''
+        parts = _STRING_SPLIT_RE.split(code)
+        for idx in range(0, len(parts), 2):
+            parts[idx] = _normalize_kind8_literals_in_segment(parts[idx])
+        out.append(''.join(parts) + tail)
+    return ''.join(out)
+
+
+def _is_kind8_half_filename(name: str) -> bool:
+    """Return True if the file's stem starts with d/z (single-letter)
+    or pd/pz (ScaLAPACK two-letter). These are the kind8 half files
+    whose literals should be normalized.
+    """
+    stem = Path(name).stem.lower()
+    if not stem:
+        return False
+    if stem[0] == 'p' and len(stem) > 1 and stem[1] in 'dz':
+        return True
+    return stem[0] in 'dz'
+
+
+def _normalize_staged_kinds(staged_root: Path) -> int:
+    """Walk the staged tree and rewrite kind4 literals on D/Z-half
+    files. Returns the number of files modified.
+    """
+    if not staged_root.is_dir():
+        return 0
+    modified = 0
+    for path in staged_root.rglob('*'):
+        if not path.is_file():
+            continue
+        suf = path.suffix.lower()
+        if suf not in ('.f', '.f90', '.f95', '.for', '.h'):
+            continue
+        # Special-case .h: only Fortran-content headers (e.g. MUMPS
+        # ``dmumps_struc.h``) — same as migrator policy for fortran
+        # source dirs.
+        if not _is_kind8_half_filename(path.name):
+            continue
+        try:
+            text = path.read_text(errors='replace')
+        except OSError:
+            continue
+        new_text = normalize_d_half_kinds(text, suf)
+        if new_text != text:
+            path.write_text(new_text)
+            modified += 1
+    return modified
 
 
 def patch_dir_for(recipe_path: Path, library: str) -> Path:
@@ -113,6 +271,16 @@ def run_prepare(recipe_path: Path,
             ['git', 'apply', '--whitespace=nowarn', patch_abs],
             cwd=staged_root, check=True,
         )
+
+    # Post-patch kind normalization (rule (a) preconditioning). Rewrites
+    # bare and E-suffix floating-point literals to D-suffix form on
+    # every D/Z-half file in the staged tree, so that downstream
+    # migration with rule (a) sees uniform kind8 literals on those
+    # halves and the migrated output converges with the kind4 half's
+    # re-migrated text. See ``normalize_d_half_kinds`` docstring for
+    # the rationale and edge cases (string literals, INTEGER PARAMETER
+    # idiom, comment markers).
+    _normalize_staged_kinds(staged_root)
 
     stamp.touch()
     return staged_root
