@@ -451,8 +451,18 @@ def replace_standalone_real_complex(line: str, target_mode: TargetMode,
                                      source_kind: int | None = None) -> str:
     """Replace standalone REAL/COMPLEX keywords in declaration context.
 
-    Only replaces when followed by space+letter (declaration pattern),
-    not when followed by ( which would be a function call like REAL(x).
+    Matches both classic F77 syntax (``REAL X, Y``) and modern F90
+    attribute-list syntax (``REAL :: X``, ``REAL, POINTER :: X``,
+    ``REAL, DIMENSION(:) :: X``). The trailing lookahead requires
+    one of:
+      ``\\s+[A-Za-z]``  — space + letter (F77 ``REAL X``)
+      ``\\s*::``        — F90 ``REAL :: X``
+      ``\\s*,``         — F90 ``REAL, attr :: X``
+
+    The leading negative lookahead rejects:
+      ``\\s*\\(KIND``   — explicit kind spec like ``REAL(KIND=8)``
+      (for COMPLEX, also ``\\*`` and ``\\(`` — ``COMPLEX*16`` and
+      ``COMPLEX(KIND=...)`` / ``COMPLEX(x)`` function call).
 
     Bare REAL / COMPLEX are kind4 by Fortran default. Skip the rewrite
     when ``source_kind == 8`` so a kind8 source half preserves its
@@ -463,12 +473,17 @@ def replace_standalone_real_complex(line: str, target_mode: TargetMode,
     real_target = target_mode.real_type
     complex_target = target_mode.complex_type
 
+    # The ``\s*,`` alternative for F90 attribute-list syntax
+    # (``REAL, POINTER :: X``) requires ``::`` to appear later on the
+    # line to distinguish a type declaration from an intrinsic list
+    # like ``INTRINSIC REAL, AIMAG`` (no ``::`` on those).
+    _decl_tail = r'(?=\s+[A-Za-z]|\s*::|\s*,[^\n]*::)'
     line = re.sub(
-        r'\bREAL\b(?!\s*\(KIND)(?=\s+[A-Za-z])',
+        r'\bREAL\b(?!\s*\(KIND)' + _decl_tail,
         real_target, line, flags=re.IGNORECASE
     )
     line = re.sub(
-        r'\bCOMPLEX\b(?!\s*[\*(])(?=\s+[A-Za-z])',
+        r'\bCOMPLEX\b(?!\s*[\*(])' + _decl_tail,
         complex_target, line, flags=re.IGNORECASE
     )
     return line

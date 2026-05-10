@@ -262,9 +262,7 @@ expected_divergences:
   - DGGHD3
   - DGGQRF
   - DGGRQF
-  - DISNAN
   - DLAEXC
-  - DLAISNAN
   - DLALN2
   - DLAMSWLQ
   - DLAMTSQR
@@ -275,8 +273,6 @@ expected_divergences:
   - DLAQR4
   - DLAQR5
   - DLAQZ0
-  - DLAQZ1
-  - DLAQZ2
   - DLAQZ3
   - DLAQZ4
   - DLARF1F
@@ -356,9 +352,7 @@ expected_divergences:
   - ZLAQP2
   - ZLAQP2RK
   - ZLAQZ0
-  - ZLAQZ1
   - ZLAQZ2
-  - ZLAQZ3
   - ZLARF1F
   - ZLARF1L
   - ZLARTG
