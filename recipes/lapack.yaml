@@ -367,6 +367,7 @@ expected_divergences:
   - ZLATPS
   - ZLATRS
   - ZLATRS3
+  - ZLAUNHR_COL_GETRFNP2
   - ZPFTRI
   - ZPOEQUB
   - ZPORFSX

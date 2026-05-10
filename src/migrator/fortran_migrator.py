@@ -38,8 +38,20 @@ def replace_type_decls(
     line: str,
     target_mode: TargetMode,
     complex_names: set[str] | None = None,
+    source_kind: int | None = None,
 ) -> str:
     """Replace precision type keywords with target form.
+
+    ``source_kind`` (4 / 8 / None) gates which patterns get promoted
+    so a kind4 source half (S/C) only promotes kind4 type tokens and
+    a kind8 source half (D/Z) only promotes kind8 type tokens. ``None``
+    promotes every pattern (precision-independent files / cases where
+    half is unknown). The split mirrors the LAPACK / ScaLAPACK / MUMPS
+    convention: each precision half declares its working-precision
+    variables in the half's native kind; cross-kind references inside
+    a half (notably MUMPS S-half ``DOUBLE PRECISION`` for timing
+    statistics that should remain kind8 even at kind16 retarget) are
+    intentionally NOT working precision and must survive migration.
 
     In multifloats mode, also filters out variable names that are
     supplied as named constants by the multifloats module (e.g. ZERO,
@@ -57,31 +69,47 @@ def replace_type_decls(
     real_target = target_mode.real_type
     complex_target = target_mode.complex_type
 
-    # Longest patterns first to avoid partial matches
-    line = re.sub(r'DOUBLE\s+PRECISION', real_target, line, flags=re.IGNORECASE)
-    line = re.sub(r'DOUBLE\s+COMPLEX', complex_target, line, flags=re.IGNORECASE)
-    line = re.sub(r'COMPLEX\*16', complex_target, line, flags=re.IGNORECASE)
-    line = re.sub(r'COMPLEX\*8', complex_target, line, flags=re.IGNORECASE)
-    line = re.sub(r'REAL\*8', real_target, line, flags=re.IGNORECASE)
-    line = re.sub(r'REAL\*4', real_target, line, flags=re.IGNORECASE)
-    # ``REAL(kind(0.E0))`` (single) / ``REAL(kind(0.D0))`` (double) — an
-    # older idiom that predates F90's REAL*N form. MUMPS's dmumps_struc.h
-    # uses ``REAL(kind(0.E0))`` for single-precision fields. Must be
-    # handled BEFORE replace_literals rewrites the inner 0.E0 literal to
-    # a multifloats constructor that breaks the KIND intrinsic.
-    line = re.sub(
-        r'REAL\s*\(\s*kind\s*\(\s*0\.[DdEe]0\s*\)\s*\)',
-        real_target, line, flags=re.IGNORECASE,
-    )
-    line = re.sub(
-        r'COMPLEX\s*\(\s*kind\s*\(\s*0\.[DdEe]0\s*\)\s*\)',
-        complex_target, line, flags=re.IGNORECASE,
-    )
+    promote_k8 = source_kind in (None, 8)
+    promote_k4 = source_kind in (None, 4)
+
+    # Longest patterns first to avoid partial matches.
+    if promote_k8:
+        line = re.sub(r'DOUBLE\s+PRECISION', real_target, line, flags=re.IGNORECASE)
+        line = re.sub(r'DOUBLE\s+COMPLEX', complex_target, line, flags=re.IGNORECASE)
+        line = re.sub(r'COMPLEX\*16', complex_target, line, flags=re.IGNORECASE)
+        line = re.sub(r'REAL\*8', real_target, line, flags=re.IGNORECASE)
+    if promote_k4:
+        line = re.sub(r'COMPLEX\*8', complex_target, line, flags=re.IGNORECASE)
+        line = re.sub(r'REAL\*4', real_target, line, flags=re.IGNORECASE)
+    # ``REAL(kind(0.E0))`` (single, kind4) / ``REAL(kind(0.D0))`` (double, kind8)
+    # — an older idiom that predates F90's REAL*N form. MUMPS's
+    # dmumps_struc.h uses ``REAL(kind(0.E0))`` for single-precision
+    # fields. Gate by source kind so a kind4 source half preserves
+    # ``REAL(kind(0.D0))`` references and vice versa.
+    if promote_k4:
+        line = re.sub(
+            r'REAL\s*\(\s*kind\s*\(\s*0\.[Ee]0\s*\)\s*\)',
+            real_target, line, flags=re.IGNORECASE,
+        )
+        line = re.sub(
+            r'COMPLEX\s*\(\s*kind\s*\(\s*0\.[Ee]0\s*\)\s*\)',
+            complex_target, line, flags=re.IGNORECASE,
+        )
+    if promote_k8:
+        line = re.sub(
+            r'REAL\s*\(\s*kind\s*\(\s*0\.[Dd]0\s*\)\s*\)',
+            real_target, line, flags=re.IGNORECASE,
+        )
+        line = re.sub(
+            r'COMPLEX\s*\(\s*kind\s*\(\s*0\.[Dd]0\s*\)\s*\)',
+            complex_target, line, flags=re.IGNORECASE,
+        )
     # ``REAL(KIND=WP)`` / ``REAL(WP)`` / ``COMPLEX(KIND=WP)`` etc.
     # appear in newer-style LAPACK files (e.g. DGEDMD, DGEDMDQ). The
     # ``wp`` parameter declaration is independently stripped earlier
     # in the pipeline, so the bare ``KIND=WP`` reference would dangle.
-    # Rewrite both real and complex forms to the multifloats type.
+    # WP is by convention the half's working precision, so always
+    # promote regardless of source_kind.
     line = re.sub(
         r'REAL\s*\(\s*(?:KIND\s*=\s*)?WP\s*\)',
         real_target, line, flags=re.IGNORECASE,
@@ -102,14 +130,24 @@ def replace_type_decls(
     # intrinsic calls (e.g. ``real(4)*real(KMAX)``) which have the same
     # token shape but take the integer as an argument, not a kind.
     _decl_tail = r'(?=\s+[A-Za-z_]|\s*::|\s*,)'
-    line = re.sub(
-        r'REAL\s*\(\s*(?:KIND\s*=\s*)?[48]\s*\)' + _decl_tail,
-        real_target, line, flags=re.IGNORECASE,
-    )
-    line = re.sub(
-        r'COMPLEX\s*\(\s*(?:KIND\s*=\s*)?[48]\s*\)' + _decl_tail,
-        complex_target, line, flags=re.IGNORECASE,
-    )
+    if promote_k4:
+        line = re.sub(
+            r'REAL\s*\(\s*(?:KIND\s*=\s*)?4\s*\)' + _decl_tail,
+            real_target, line, flags=re.IGNORECASE,
+        )
+        line = re.sub(
+            r'COMPLEX\s*\(\s*(?:KIND\s*=\s*)?4\s*\)' + _decl_tail,
+            complex_target, line, flags=re.IGNORECASE,
+        )
+    if promote_k8:
+        line = re.sub(
+            r'REAL\s*\(\s*(?:KIND\s*=\s*)?8\s*\)' + _decl_tail,
+            real_target, line, flags=re.IGNORECASE,
+        )
+        line = re.sub(
+            r'COMPLEX\s*\(\s*(?:KIND\s*=\s*)?8\s*\)' + _decl_tail,
+            complex_target, line, flags=re.IGNORECASE,
+        )
 
     if not target_mode.is_kind_based:
         line = _filter_known_constants_from_decl(
@@ -135,7 +173,8 @@ _DECL_START_RE = re.compile(
 )
 
 
-def fix_misdeclared_statement_functions(source: str) -> str:
+def fix_misdeclared_statement_functions(source: str,
+                                          source_kind: int | None = None) -> str:
     """Correct the declared type of statement functions whose body is
     a real-valued expression.
 
@@ -182,13 +221,18 @@ def fix_misdeclared_statement_functions(source: str) -> str:
         r'(\s+)([A-Za-z_]\w*)\s*$',
         re.IGNORECASE,
     )
+    # Pick a real kind that matches the source half so the rewrite
+    # doesn't introduce a kind8 reference into a kind4 source (or
+    # vice versa) — see rule (a) discussion in
+    # ``replace_type_decls``'s docstring.
+    new_decl = 'REAL            ' if source_kind == 4 else 'DOUBLE PRECISION'
     out: list[str] = []
     for raw in lines:
         if raw and raw[0] not in ('C', 'c', '*', '!'):
             m = cplx_decl_re.match(raw.rstrip())
             if m and m.group(4).upper() in real_names:
                 nl = '\n' if raw.endswith('\n') else ''
-                out.append(f'{m.group(1)}DOUBLE PRECISION{m.group(3)}{m.group(4)}{nl}')
+                out.append(f'{m.group(1)}{new_decl}{m.group(3)}{m.group(4)}{nl}')
                 continue
         out.append(raw)
     return ''.join(out)
@@ -403,12 +447,19 @@ def _filter_known_constants_from_decl(
     return f'{indent}{type_text}{sep}{",".join(kept)}{trailer}'
 
 
-def replace_standalone_real_complex(line: str, target_mode: TargetMode) -> str:
+def replace_standalone_real_complex(line: str, target_mode: TargetMode,
+                                     source_kind: int | None = None) -> str:
     """Replace standalone REAL/COMPLEX keywords in declaration context.
 
     Only replaces when followed by space+letter (declaration pattern),
     not when followed by ( which would be a function call like REAL(x).
+
+    Bare REAL / COMPLEX are kind4 by Fortran default. Skip the rewrite
+    when ``source_kind == 8`` so a kind8 source half preserves its
+    rare bare-REAL declarations as kind4 (rule a).
     """
+    if source_kind == 8:
+        return line
     real_target = target_mode.real_type
     complex_target = target_mode.complex_type
 
@@ -2844,10 +2895,11 @@ def _segment_fixed_form_statements(
     return out
 
 
-def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: TargetMode) -> str:
+def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: TargetMode,
+                        source_kind: int | None = None) -> str:
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
-    source = fix_misdeclared_statement_functions(source)
+    source = fix_misdeclared_statement_functions(source, source_kind=source_kind)
     source, removed_known = strip_known_constants_from_decls(source, target_mode)
     source, param_assignments, dropped_p = convert_parameter_stmts(source, target_mode)
     source, data_assignments, dropped_d = convert_data_stmts(source, target_mode)
@@ -2867,7 +2919,8 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
             continue
         if kind == 'comment':
             s = replace_routine_names(lines[0], rename_map)
-            s = replace_type_decls(s, target_mode, complex_names=complex_names)
+            s = replace_type_decls(s, target_mode, complex_names=complex_names,
+                                    source_kind=source_kind)
             result.append(s + terms[0])
             continue
         # 'code' — apply all per-line transforms to the joined logical
@@ -2875,10 +2928,11 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
         # can match calls that span fixed-form continuations. Single-
         # physical-line statements have ``joined == lines[0]`` and pass
         # through identically.
-        s = replace_type_decls(joined, target_mode, complex_names=complex_names)
+        s = replace_type_decls(joined, target_mode, complex_names=complex_names,
+                                source_kind=source_kind)
         if not s:
             continue
-        s = replace_standalone_real_complex(s, target_mode)
+        s = replace_standalone_real_complex(s, target_mode, source_kind=source_kind)
         s = replace_literals(s, target_mode)
         s = replace_intrinsic_calls(
             s, target_mode, real_names=real_names, complex_names=complex_names,
@@ -3037,11 +3091,12 @@ def _la_constants_rename_map(target_mode: TargetMode) -> dict[str, str]:
     return renames
 
 
-def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: TargetMode) -> str:
+def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: TargetMode,
+                       source_kind: int | None = None) -> str:
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
     source = rewrite_la_constants_use(source, target_mode)
-    source = fix_misdeclared_statement_functions(source)
+    source = fix_misdeclared_statement_functions(source, source_kind=source_kind)
     source, removed_known = strip_known_constants_from_decls(source, target_mode)
     if not target_mode.is_kind_based:
         lines_tmp = source.splitlines()
@@ -3118,7 +3173,8 @@ def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: Targ
         stripped = replace_routine_names(stripped, rename_map)
         stripped = replace_include_filenames(stripped, rename_map)
         if stripped.lstrip().startswith('!'):
-            stripped = replace_type_decls(stripped, target_mode, complex_names=complex_names)
+            stripped = replace_type_decls(stripped, target_mode, complex_names=complex_names,
+                                           source_kind=source_kind)
         else:
             if not target_mode.is_kind_based:
                 stripped = re.sub(r'REAL\s*\(\s*(?:KIND\s*=\s*)?' + _KIND_PARAM_NAMES + r'\s*\)', target_mode.real_type, stripped, flags=re.IGNORECASE)
@@ -3603,6 +3659,33 @@ def insert_use_multifloats_mpi_f(source: str, target_mode: TargetMode) -> str:
     return ''.join(result)
 
 
+def _source_kind_from_filename(name: str) -> int | None:
+    """Return the source half's native kind (4 or 8) or None.
+
+    Strips an optional ScaLAPACK ``p`` prefix; the next character
+    determines the precision letter:
+      ``s``/``c`` (single, single-complex) → kind 4
+      ``d``/``z`` (double, double-complex) → kind 8
+    Other prefixes (precision-independent files like ``lsame.f``,
+    ``mumps_*.F``) return None — promote every kind, current default.
+
+    Used by :func:`migrate_file_to_string` to scope ``replace_type_decls``
+    so a kind4 source half preserves kind8 references and vice versa
+    (rule (a) of the per-half promotion convention).
+    """
+    stem = Path(name).stem.lower()
+    if not stem:
+        return None
+    # ScaLAPACK 2-letter (P + S/D/C/Z)
+    if stem[0] == 'p' and len(stem) > 1 and stem[1] in 'sdcz':
+        letter = stem[1]
+    elif stem[0] in 'sdcz':
+        letter = stem[0]
+    else:
+        return None
+    return 4 if letter in ('s', 'c') else 8
+
+
 def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mode: TargetMode, parser: str | None = None, parser_cmd: str | None = None, keep_kind_lines: frozenset[int] | None = None) -> tuple[str, str] | None:
     ext, source = src_path.suffix.lower(), src_path.read_text(errors='replace')
     facts = None
@@ -3618,9 +3701,11 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
     if keep_kind_lines:
         source = _apply_keep_kind_sentinel(source, keep_kind_lines)
 
-    if facts is not None: migrated = _migrate_with_flang(source, ext, rename_map, target_mode, facts)
-    elif ext in ('.f', '.for', '.h'): migrated = migrate_fixed_form(source, rename_map, target_mode)
-    elif ext in ('.f90', '.f95', '.F90'): migrated = migrate_free_form(source, rename_map, target_mode)
+    source_kind = _source_kind_from_filename(src_path.name)
+
+    if facts is not None: migrated = _migrate_with_flang(source, ext, rename_map, target_mode, facts, source_kind=source_kind)
+    elif ext in ('.f', '.for', '.h'): migrated = migrate_fixed_form(source, rename_map, target_mode, source_kind=source_kind)
+    elif ext in ('.f90', '.f95', '.F90'): migrated = migrate_free_form(source, rename_map, target_mode, source_kind=source_kind)
     else: return None
 
     if keep_kind_lines:
@@ -3680,7 +3765,8 @@ def migrate_file(src_path: Path, output_dir: Path, rename_map: dict[str, str], t
     return out_name
 
 
-def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], target_mode: TargetMode, facts) -> str:
+def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], target_mode: TargetMode, facts,
+                         source_kind: int | None = None) -> str:
     # Also include USE-statement module names + every variable's type
     # spec (where the type is precision-prefixed, e.g.
     # ``TYPE(DMUMPS_INTR_STRUC)``). The gfortran parser doesn't surface
@@ -3752,7 +3838,7 @@ def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], targe
 def _migrate_fixed_form_flang(source: str, rename_map: dict[str, str], target_mode: TargetMode, has_float_types: bool, has_real_literals: bool) -> str:
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
-    source = fix_misdeclared_statement_functions(source)
+    source = fix_misdeclared_statement_functions(source, source_kind=source_kind)
     source, removed_known = strip_known_constants_from_decls(source, target_mode)
     source, param_assignments, dropped_p = convert_parameter_stmts(source, target_mode)
     source, data_assignments, dropped_d = convert_data_stmts(source, target_mode)
@@ -3782,15 +3868,18 @@ def _migrate_fixed_form_flang(source: str, rename_map: dict[str, str], target_mo
             continue
         if kind == 'comment':
             s = replace_routine_names(lines[0], rename_map)
-            if has_float_types: s = replace_type_decls(s, target_mode, complex_names=complex_names)
+            if has_float_types:
+                s = replace_type_decls(s, target_mode, complex_names=complex_names,
+                                        source_kind=source_kind)
             result.append(s + terms[0])
             continue
         s = joined
         if has_float_types:
-            s = replace_type_decls(s, target_mode, complex_names=complex_names)
+            s = replace_type_decls(s, target_mode, complex_names=complex_names,
+                                    source_kind=source_kind)
             if not s:
                 continue
-            s = replace_standalone_real_complex(s, target_mode)
+            s = replace_standalone_real_complex(s, target_mode, source_kind=source_kind)
         if has_real_literals: s = replace_literals(s, target_mode)
         s = replace_intrinsic_calls(
             s, target_mode, real_names=real_names, complex_names=complex_names,
@@ -3828,7 +3917,7 @@ def _migrate_free_form_flang(source: str, rename_map: dict[str, str], target_mod
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
     source = rewrite_la_constants_use(source, target_mode)
-    source = fix_misdeclared_statement_functions(source)
+    source = fix_misdeclared_statement_functions(source, source_kind=source_kind)
     source, removed_known = strip_known_constants_from_decls(source, target_mode)
     source, param_assignments, dropped_p = convert_parameter_stmts(source, target_mode)
     source, data_assignments, dropped_d = convert_data_stmts(source, target_mode)
@@ -3856,7 +3945,8 @@ def _migrate_free_form_flang(source: str, rename_map: dict[str, str], target_mod
         stripped = replace_routine_names(stripped, rename_map)
         stripped = replace_include_filenames(stripped, rename_map)
         if stripped.lstrip().startswith('!'):
-            stripped = replace_type_decls(stripped, target_mode, complex_names=complex_names)
+            stripped = replace_type_decls(stripped, target_mode, complex_names=complex_names,
+                                           source_kind=source_kind)
         else:
             if not target_mode.is_kind_based:
                 stripped = re.sub(r'REAL\s*\(\s*(?:KIND\s*=\s*)?' + _KIND_PARAM_NAMES + r'\s*\)', target_mode.real_type, stripped, flags=re.IGNORECASE)

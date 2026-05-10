@@ -321,6 +321,7 @@ expected_divergences:
   - PCHETTRD
   - PCLAWIL
   - PCPOTF2
+  - PCTREVC
   - PCUNGQL
   - PCUNML2
   - PDGEEQU
