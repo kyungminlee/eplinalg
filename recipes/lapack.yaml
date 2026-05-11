@@ -198,6 +198,12 @@ patches:
   # (3 times). dlaqr2 declares the right one. slaqr3 already
   # correct upstream. (audit 2026-05-11)
   - slaqr2.f.patch
+  # L24: slaqr5 line 604 uses T2*VT(3) where every other site (slaqr5
+  # and dlaqr5 both) and dlaqr5's line 604 use T1*VT(3). T1 is the
+  # tau from SLARFG; T2 = T1*VT(2), T3 should be T1*VT(3). The S
+  # half's T3 = T2*VT(3) = T1*VT(2)*VT(3) introduces a stray VT(2)
+  # factor that affects the bulge-start tolerance test at line 608.
+  - slaqr5.f.patch
   # I06: ?laqz2 LWORK INFO -26 → -25
   - zlaqz2.f.patch
   - claqz2.f.patch        # sibling: same fix

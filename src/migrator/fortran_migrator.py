@@ -3431,10 +3431,20 @@ def _strip_roundup_lwork(source: str, target_mode) -> str:
             joined, _re.IGNORECASE)
         m_ext = _re.match(r'^(\s*EXTERNAL\s+)(.*)$',
                           joined, _re.IGNORECASE)
-        is_real = m_real and not m_ext  # EXTERNAL takes precedence
-        is_ext  = bool(m_ext)
-        if is_ext or is_real:
-            m = m_ext if is_ext else m_real
+        # Modern F90 attribute-list form: ``REAL, EXTERNAL :: NAME``
+        # and ``DOUBLE PRECISION, EXTERNAL :: NAME``. Migrator-level
+        # strip needs to handle both to drop the orphan ROUNDUP_LWORK
+        # declaration after the call sites are stripped.
+        m_attr = _re.match(
+            r'^(\s*(?:REAL|DOUBLE\s+PRECISION)'
+            r'(?:\s*\(\s*KIND\s*=\s*\d+\s*\))?'
+            r'\s*,\s*EXTERNAL\s*::\s*)(.*)$',
+            joined, _re.IGNORECASE)
+        is_attr = bool(m_attr)
+        is_real = m_real and not m_ext and not is_attr
+        is_ext  = bool(m_ext) and not is_attr
+        if is_ext or is_real or is_attr:
+            m = m_attr if is_attr else (m_ext if is_ext else m_real)
             head, names = m.group(1), m.group(2)
             tokens = [t.strip() for t in names.split(',')]
             keep = [t for t in tokens
