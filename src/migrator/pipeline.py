@@ -303,6 +303,59 @@ def _split_top_level_comma(s: str) -> list[str]:
     return out
 
 
+_LABEL_PATTERN = re.compile(
+    # Statement-label definition at line start (followed by space + non-digit).
+    r'(?m)^[ \t]*(\d+)(?=[ \t]+\S)|'
+    # DO label reference.
+    r'\bDO[ \t]*(\d+)\b|'
+    # GO TO single-label reference.
+    r'\bGO[ \t]*TO[ \t]*(\d+)\b|'
+    # I/O specifier (END=, ERR=, EOR=).
+    r'\b(?:END|ERR|EOR)[ \t]*=[ \t]*(\d+)\b|'
+    # ASSIGN <label> TO <var> (legacy F77).
+    r'\bASSIGN[ \t]+(\d+)[ \t]+TO\b|'
+    # Computed GO TO list (a body of comma-separated label numbers).
+    r'\bGO[ \t]*TO[ \t]*\(([\d,\s]+)\)'
+)
+
+
+def _canonicalize_labels(text: str) -> str:
+    """Re-number all Fortran statement labels in canonical order.
+
+    Walks every label position (statement-label definitions and
+    references via ``DO``, ``GO TO``, computed ``GO TO``, I/O
+    ``END=``/``ERR=``/``EOR=``, and legacy ``ASSIGN``). Each distinct
+    label is mapped to ``1, 2, 3, ...`` in order of first appearance,
+    then all occurrences are rewritten.
+
+    Both halves of a co-family pair encounter labels in the same
+    source order if they share the same logical structure (the
+    typical case for upstream label-number drift between LAPACK S/D
+    or C/Z halves), so the renumbering produces identical canonical
+    text. A two-pass placeholder strategy avoids in-place rename
+    collisions: first map each label to ``\\x01L<canonical>\\x01``,
+    then replace placeholders with bare digits.
+    """
+    label_map: dict[str, str] = {}
+
+    def assign(n: str) -> str:
+        if n not in label_map:
+            label_map[n] = f'\x01L{len(label_map) + 1}\x01'
+        return label_map[n]
+
+    def replace(m: re.Match[str]) -> str:
+        for gi in (1, 2, 3, 4, 5):
+            if m.group(gi) is not None:
+                return m.group(0).replace(m.group(gi), assign(m.group(gi)), 1)
+        # Computed GO TO body — renumber each digit literal in the list.
+        body = m.group(6)
+        new = re.sub(r'\d+', lambda dm: assign(dm.group()), body)
+        return m.group(0).replace(body, new, 1)
+
+    text = _LABEL_PATTERN.sub(replace, text)
+    return re.sub(r'\x01L(\d+)\x01', r'\1', text)
+
+
 def _light_normalize(text: str) -> str:
     """Minimal normalization for post-migration convergence checking.
 
@@ -349,6 +402,14 @@ def _light_normalize(text: str) -> str:
         r'[ \t]*\.[ \t]*',
         r'.\1.', text,
     )
+
+    # Canonicalize numeric labels. Upstream LAPACK halves routinely
+    # drift on label numbering — same DO/CONTINUE structure, different
+    # numbers (e.g. D uses 70/60/50/40 where S uses 60/50/30/40).
+    # Re-assign every distinct label in order of first appearance to
+    # 1, 2, 3, ... so identical loop structures produce identical
+    # canonical text on both halves.
+    text = _canonicalize_labels(text)
 
     # Fold ``REAL(<expr>,KIND=N)`` and ``CMPLX(<expr>,KIND=N)`` casts to
     # bare ``<expr>``. Co-family halves disagree cosmetically when one
