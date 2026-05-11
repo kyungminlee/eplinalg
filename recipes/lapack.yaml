@@ -174,6 +174,19 @@ patches:
   # site. (audit 2026-05-11)
   - dopmtr.f.patch
   - dormr2.f.patch
+  # L17: cgesvj uses ONE/SFMIN for BIG instead of SLAMCH('Overflow')
+  # (audit 2026-05-11; sgesvj / dgesvj / zgesvj all use LAMCH form)
+  - cgesvj.f.patch
+  # L18: sgeesx IWORK(1) = SDIM*(N-SDIM) can be 0; dgeesx wraps in
+  # MAX(1, ...) which is the convention per LAPACK API.
+  - sgeesx.f.patch
+  # L19: zgemlq stores LW in WORK(1) instead of LWMIN
+  # (audit 2026-05-11; sgemlq / cgemlq / dgemlq all use LWMIN)
+  - zgemlq.f.patch
+  # L20: stgex2 LWORK check and WORK(1) report missing the MAX(1,...)
+  # guard that dtgex2 has. Without it, LWORK<0 prints INFO=-16 only
+  # when N*M>0, and WORK(1) can be 0 for empty subblocks.
+  - stgex2.f.patch
   # I06: ?laqz2 LWORK INFO -26 → -25
   - zlaqz2.f.patch
   - claqz2.f.patch        # sibling: same fix
