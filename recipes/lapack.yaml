@@ -204,6 +204,10 @@ patches:
   # half's T3 = T2*VT(3) = T1*VT(2)*VT(3) introduces a stray VT(2)
   # factor that affects the bulge-start tolerance test at line 608.
   - slaqr5.f.patch
+  # L25: sgges EXTERNAL list missing XERBLA (mirror of L22 / sggev3
+  # fix). sgges calls XERBLA at error path but doesn't declare it.
+  # (audit 2026-05-11)
+  - sgges.f.patch
   # I06: ?laqz2 LWORK INFO -26 → -25
   - zlaqz2.f.patch
   - claqz2.f.patch        # sibling: same fix

@@ -1,0 +1,10 @@
+--- a/sgges.f
++++ b/sgges.f
+@@ -323,6 +323,6 @@
+ *     .. External Subroutines ..
+       EXTERNAL           SGEQRF, SGGBAK, SGGBAL, SGGHRD, SHGEQZ,
+      $                   SLACPY,
+-     $                   SLASCL, SLASET, SORGQR, SORMQR, STGSEN
++     $                   SLASCL, SLASET, SORGQR, SORMQR, STGSEN, XERBLA
+ *     ..
+ *     .. External Functions ..
