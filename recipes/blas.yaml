@@ -57,10 +57,8 @@ patches:
 #     5.9604645E-8).
 #   DZASUM: upstream code-shape drift (D delegates to DCABS1, S
 #     inlines ABS+AIMAG).
-#   DGEMMTR: upstream design split.
 expected_divergences:
   - DDOT
-  - DGEMMTR
   - DROTMG
   - DZASUM
 
