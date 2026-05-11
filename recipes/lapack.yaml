@@ -117,6 +117,7 @@ patches:
   - ctrsyl3.f.patch
   # L04: stale/missing EXTERNAL declarations
   - zlarf1f.f.patch
+  - clarf1f.f.patch       # sibling (C half also missing CAXPY, plus CGER → CGERC typo)
   - dlaqp2.f.patch
   - zlahef_aa.f.patch
   - zhetrf_aa.f.patch
@@ -128,17 +129,23 @@ patches:
   - sorbdb.f.patch
   - zunbdb.f.patch
   - cunbdb.f.patch
-  # E01: 8 EXTERNAL-vs-CALL drifts (D/Z canonical)
+  # E01: 8 EXTERNAL-vs-CALL drifts (D/Z + symmetric S/C siblings)
   - dlarf1l.f.patch       # +DAXPY,DSCAL
   - zlarf1l.f.patch       # +ZAXPY
+  - clarf1l.f.patch       # sibling: +CAXPY
   - dlatrs3.f.patch       # +DGEMM
   - zlatrs3.f.patch       # +ZGEMM
-  - zgelss.f.patch        # +ZUNMQR
+  - clatrs3.f.patch       # sibling: +CGEMM
+  - slatrs3.f.patch       # sibling: +SGEMM
+  - zgelss.f.patch        # +ZUNMQR (cgelss already correct upstream)
   - dorbdb4.f.patch       # DLARF→DLARF1F (also I01 LWORK INFO)
-  - dorgr2.f.patch        # DLARF→DLARF1L
+  - sorbdb4.f.patch       # sibling: same fix
+  - dorgr2.f.patch        # DLARF→DLARF1L (sorgr2 already correct upstream)
   - zrscl.f.patch         # +ZSCAL, D01 \brief ZDRSCL→ZRSCL
+  - crscl.f.patch         # sibling: doc-header "real" → "complex"
   # I01: ?unbdb4 LWORK INFO -14 → -15
   - zunbdb4.f.patch
+  - cunbdb4.f.patch       # sibling: same fix
   # I02: ?ggsvd3 LWORK INFO -24 → -22 (all 4 halves)
   - dggsvd3.f.patch
   - sggsvd3.f.patch
@@ -146,12 +153,15 @@ patches:
   - cggsvd3.f.patch
   # I03: ?orcsd / ?uncsd LWORK INFO -22 → -28; I04: zuncsd LRWORK -24 → -30
   - dorcsd.f.patch
+  - sorcsd.f.patch        # sibling: same fix (no LRWORK)
   - zuncsd.f.patch
   - cuncsd.f.patch
-  # I05: zlaqz0 LWORK INFO -19 → -18
+  # I05: ?laqz0 LWORK INFO -19 → -18
   - zlaqz0.f.patch
-  # I06: zlaqz2 LWORK INFO -26 → -25
+  - claqz0.f.patch        # sibling: same fix
+  # I06: ?laqz2 LWORK INFO -26 → -25
   - zlaqz2.f.patch
+  - claqz2.f.patch        # sibling: same fix
 
 # Files dropped from the migrated archive:
 #  - ZC*/DS* mixed-precision iterative-refinement drivers and
@@ -266,7 +276,7 @@ expected_divergences:
   - DLAQZ3
   - DLAQZ4
   - DLARF1F
-  - DLARF1L
+  - DLARF1L           # upstream algorithmic asymmetry (FIRSTV / LASTV guards on D, not S)
   - DLARRE
   - DLARRF
   - DLASQ2
@@ -329,7 +339,6 @@ expected_divergences:
   - ZLAMSWLQ
   - ZLAQP2
   - ZLAQP2RK
-  - ZLAQZ0
   - ZLAQZ2
   - ZLARF1F
   - ZLARF1L
@@ -364,41 +373,21 @@ expected_divergences:
 # different bug shape — periodically review whether a sibling patch
 # could be added. See doc/refactor-20260509.md.
 asymmetric_patches:
-  # L02: dgejsv DGESVJ workspace overflow — D-half only
-  - dgejsv.f.patch
-  # L03: ?trsyl3 LIWORK / LDSWORK validation gap — strsyl3 sibling missing
-  - dtrsyl3.f.patch
-  - ztrsyl3.f.patch
-  - ctrsyl3.f.patch
-  # L04: stale/missing EXTERNAL declarations — D/Z-half-only typos
-  - dlaqp2.f.patch
-  - zlarf1f.f.patch
-  - zhetrf_aa.f.patch
-  - zlahef_aa.f.patch
-  - zgbrfsx.f.patch
-  # L05: dlaswlq accepts NB=0 — D-half only (slaswlq already correct)
-  - dlaswlq.f.patch
-  # L12: zla_syrfsx_extended XERBLA reports HERFSX — Z-half only
-  - zla_syrfsx_extended.f.patch
-  # E01: 8 EXTERNAL-vs-CALL drifts (D/Z canonical)
-  - dlarf1l.f.patch
-  - zlarf1l.f.patch
-  - dlatrs3.f.patch
-  - zlatrs3.f.patch
-  - zgelss.f.patch
-  - dorbdb4.f.patch
-  - dorgr2.f.patch
-  - zrscl.f.patch
-  # I01: zunbdb4 LWORK INFO -14 → -15 (dorbdb4 in E01 above)
-  - zunbdb4.f.patch
-  # I03: dorcsd / cuncsd — sorcsd sibling missing
-  - dorcsd.f.patch
-  - zuncsd.f.patch
-  - cuncsd.f.patch
-  # I05: zlaqz0 LWORK INFO -19 → -18 — Z-half only
-  - zlaqz0.f.patch
-  # I06: zlaqz2 LWORK INFO -26 → -25 — Z-half only
-  - zlaqz2.f.patch
+  # Patches whose S/C sibling is already correct upstream (bug only
+  # exists on D/Z half). Audited 2026-05-11; verified by inspecting
+  # the sibling's source.
+  - dgejsv.f.patch         # sgejsv already has LWORK-N
+  - dtrsyl3.f.patch        # strsyl3 has no equivalent
+  - ztrsyl3.f.patch        # (and ctrsyl3 had its own patch)
+  - ctrsyl3.f.patch        # (and ztrsyl3 had its own patch)
+  - dlaqp2.f.patch         # slaqp2 already correct
+  - zhetrf_aa.f.patch      # chetrf_aa already correct (no CGEMV)
+  - zlahef_aa.f.patch      # clahef_aa already correct (no CGEMM)
+  - zgbrfsx.f.patch        # cgbrfsx already correct
+  - dlaswlq.f.patch        # slaswlq already correct
+  - zla_syrfsx_extended.f.patch  # cla_syrfsx_extended already correct
+  - dorgr2.f.patch         # sorgr2 already correct
+  - zgelss.f.patch         # cgelss already correct
 
 # Patches that close a D↔S or Z↔C cosmetic asymmetry (dead PARAMETER
 # blocks, redundant CMPLX casts, dead INTRINSIC entries, literal-style

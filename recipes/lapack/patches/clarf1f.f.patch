@@ -1,0 +1,11 @@
+--- a/clarf1f.f
++++ b/clarf1f.f
+@@ -151,7 +151,7 @@
+       INTEGER            I, LASTV, LASTC
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL           CGEMV, CGER, CSCAL
++      EXTERNAL           CAXPY, CGEMV, CGERC, CSCAL
+ *     ..
+ *     .. Intrinsic Functions ..
+       INTRINSIC          CONJG

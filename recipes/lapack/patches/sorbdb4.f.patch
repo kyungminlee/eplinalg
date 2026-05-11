@@ -1,0 +1,9 @@
+--- a/sorbdb4.f
++++ b/sorbdb4.f
+@@ -280,5 +280,5 @@
+          IF( LWORK .LT. LWORKMIN .AND. .NOT.LQUERY ) THEN
+-           INFO = -14
++           INFO = -15
+          END IF
+       END IF
+       IF( INFO .NE. 0 ) THEN
