@@ -45,35 +45,28 @@ skip_files:
 # unaffected.
 patches:
   - B01__nrm2-rotg-lazy-init.patch
+  - B01_SC__nrm2-rotg-lazy-init.patch
 
 # Convergence whitelist (Phase D, doc/refactor-20260509.md).
-# Stems where divergence is expected and not a regression. Audit
-# documented in doc/convergence-20260507.md §blas:
-#   DNRM2/DZNRM2/DROTG/ZROTG: B01 patches D/Z only; S/C halves
-#     re-migrate without the lazy-init form (no S/C override exists,
-#     since the workaround is multifloats-target-only).
-#   DDOT: upstream STEMP/SDOT vs DDOT/DTEMP line-swap (delete+insert
-#     reordering that _filter_precision_drift intentionally doesn't
-#     fold).
+# Audit in doc/convergence-20260507.md §blas:
+#   DDOT: upstream STEMP/SDOT vs DDOT/DTEMP line-swap (independent
+#     zero-init assignments emitted in different order — semantically
+#     equivalent but textually divergent).
 #   DROTMG: upstream constants drift (different DATA GAM/GAMSQ/RGAMSQ
-#     and conditional structure between S and D halves).
+#     between S and D halves: 1.67772E7 vs 16777216, 5.96046E-8 vs
+#     5.9604645E-8).
 #   DZASUM: upstream code-shape drift (D delegates to DCABS1, S
 #     inlines ABS+AIMAG).
+#   DGEMMTR: upstream design split.
 expected_divergences:
   - DDOT
   - DGEMMTR
-  - DNRM2
-  - DROTG
   - DROTMG
   - DZASUM
-  - DZNRM2
-  - ZROTG
 
-# Symmetric-patch CI escape hatch (Phase D). Every B01 hunk touches
-# the D/Z file only — the S/C halves don't have an equivalent
-# multifloats workaround (the build issue is target-specific to
-# kind16/multifloats which always picks the D/Z half as canonical).
-# When/if S/C overrides are added, remove their patches from this
-# list so verify-patches enforces co-family symmetry.
-asymmetric_patches:
-  - B01__nrm2-rotg-lazy-init.patch
+# Symmetric-patch CI escape hatch (Phase D). B01 originally patched
+# only the D/Z half; B01_SC extends it to the S/C halves
+# (snrm2/scnrm2/srotg/crotg) so the lazy-init pattern is applied
+# symmetrically. With both patches landed, the asymmetry list is
+# empty.
+asymmetric_patches: []
