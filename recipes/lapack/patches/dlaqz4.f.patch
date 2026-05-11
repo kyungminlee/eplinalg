@@ -1,0 +1,18 @@
+--- a/dlaqz4.f
++++ b/dlaqz4.f
+@@ -237,6 +237,7 @@
+ *     External functions
+       EXTERNAL :: XERBLA, DGEMM, DLAQZ1, DLAQZ2, DLASET, DLARTG, DROT,
+      $            DLACPY
++      DOUBLE PRECISION, EXTERNAL :: DROUNDUP_LWORK
+ 
+       INFO = 0
+       IF ( NBLOCK_DESIRED .LT. NSHIFTS+1 ) THEN
+@@ -245,6 +246,6 @@
+       END IF
+       IF ( LWORK .EQ.-1 ) THEN
+ *        workspace query, quick return
+-         WORK( 1 ) = N*NBLOCK_DESIRED
++         WORK( 1 ) = DROUNDUP_LWORK( N*NBLOCK_DESIRED )
+          RETURN
+       ELSE IF ( LWORK .LT. N*NBLOCK_DESIRED ) THEN

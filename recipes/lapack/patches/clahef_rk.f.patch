@@ -1,0 +1,11 @@
+--- a/clahef_rk.f
++++ b/clahef_rk.f
+@@ -299,7 +299,7 @@
+       EXTERNAL           LSAME, ICAMAX, SLAMCH
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL           CCOPY, CSSCAL, CGEMM, CGEMV, CLACGV,
++      EXTERNAL           CCOPY, CSSCAL, CGEMMTR, CGEMV, CLACGV,
+      $                   CSWAP
+ *     ..
+ *     .. Intrinsic Functions ..

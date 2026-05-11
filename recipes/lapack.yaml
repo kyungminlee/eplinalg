@@ -159,6 +159,18 @@ patches:
   # I05: ?laqz0 LWORK INFO -19 → -18
   - zlaqz0.f.patch
   - claqz0.f.patch        # sibling: same fix
+  # I07: dlaqz4 WORK(1) workspace-return missing DROUNDUP_LWORK
+  # (audit 2026-05-11; slaqz4 already uses SROUNDUP_LWORK upstream)
+  - dlaqz4.f.patch
+  # L13: clahef upper-branch loop condition J.LE.N should be J.LT.N
+  # (audit 2026-05-11; slasyf/dlasyf/zlahef all use J.LT.N at the
+  # same location — clahef is the odd one out, one extra iteration
+  # of the IPIV-undo loop; same fix in lower branch: J.GE.1 → J.GT.1)
+  - clahef.f.patch
+  # L14: clahef_rk EXTERNAL lists CGEMM but actually CALLs CGEMMTR
+  # (audit 2026-05-11; slasyf_rk / dlasyf_rk / zlahef_rk all
+  # correctly declare GEMMTR)
+  - clahef_rk.f.patch
   # I06: ?laqz2 LWORK INFO -26 → -25
   - zlaqz2.f.patch
   - claqz2.f.patch        # sibling: same fix

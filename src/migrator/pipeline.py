@@ -713,6 +713,10 @@ def _canonicalize_for_compare(text: str) -> str:
     #     precision halves.
     text = re.sub(r'\bEND\s+(IF|DO|SELECT|WHERE|FORALL|SUBROUTINE|FUNCTION|MODULE|INTERFACE|PROGRAM|TYPE|BLOCK|ASSOCIATE)\b',
                   r'END\1', text)
+    # 5c2. Merge ``ELSE IF`` → ``ELSEIF`` and ``GO TO`` → ``GOTO``.
+    #      Same upstream-style asymmetry as END+keyword.
+    text = re.sub(r'\bELSE\s+IF\b', 'ELSEIF', text)
+    text = re.sub(r'\bGO\s+TO\b', 'GOTO', text)
     # 5d. Strip bare ``IMPLICIT NONE`` (or any other IMPLICIT spec).
     #     Some S/D halves have it and others don't; it has no bearing
     #     on the migrated numerics.
