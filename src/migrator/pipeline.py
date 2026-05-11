@@ -339,6 +339,16 @@ def _light_normalize(text: str) -> str:
     text = re.sub(r'[ \t]*\([ \t]*', '(', text)
     text = re.sub(r'[ \t]*\)', ')', text)
     text = re.sub(r'[ \t]*,[ \t]*', ',', text)
+    # Collapse whitespace around Fortran word-operators (``. NOT . X``,
+    # ``.NOT. X``, ``X .AND. Y`` all canonicalize to ``.NOT.X``,
+    # ``X.AND.Y``). Each upstream half's hand-edits may sprinkle
+    # different spacing here; the operator semantics are identical.
+    text = re.sub(
+        r'[ \t]*\.[ \t]*'
+        r'(EQ|NE|LT|GT|LE|GE|AND|OR|NOT|TRUE|FALSE|EQV|NEQV)'
+        r'[ \t]*\.[ \t]*',
+        r'.\1.', text,
+    )
 
     # Fold ``REAL(<expr>,KIND=N)`` and ``CMPLX(<expr>,KIND=N)`` casts to
     # bare ``<expr>``. Co-family halves disagree cosmetically when one

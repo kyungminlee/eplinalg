@@ -260,8 +260,6 @@ expected_divergences:
   - DLAEXC
   - DLALN2
   - DLAMSWLQ
-  - DLAMTSQR
-  - DLANV2
   - DLAPMT
   - DLAQR2
   - DLAQR3
@@ -315,7 +313,6 @@ expected_divergences:
   - ZGEDMD
   - ZGEDMDQ
   - ZGEJSV
-  - ZGELSY
   - ZGEMLQ
   - ZGEMQR
   - ZGERFSX
@@ -365,7 +362,6 @@ expected_divergences:
   - ZSYSWAPR
   - ZSYTRF_AA_2STAGE
   - ZTGSEN
-  - ZTRSYL3
   - ZUNBDB
   - ZUNBDB1
   - ZUNBDB2
