@@ -187,6 +187,17 @@ patches:
   # guard that dtgex2 has. Without it, LWORK<0 prints INFO=-16 only
   # when N*M>0, and WORK(1) can be 0 for empty subblocks.
   - stgex2.f.patch
+  # L21: cheevx LWKOPT formula missing the MAX(1,...) guard that
+  # zheevx has. (audit 2026-05-11)
+  - cheevx.f.patch
+  # L22: sggev3 EXTERNAL list missing XERBLA. sggev3 calls XERBLA
+  # at line 359 but doesn't declare it; dggev3 declares it. (audit
+  # 2026-05-11)
+  - sggev3.f.patch
+  # L23: slaqr2 EXTERNAL declares SLARF1L but actually CALLs SLARF1F
+  # (3 times). dlaqr2 declares the right one. slaqr3 already
+  # correct upstream. (audit 2026-05-11)
+  - slaqr2.f.patch
   # I06: ?laqz2 LWORK INFO -26 → -25
   - zlaqz2.f.patch
   - claqz2.f.patch        # sibling: same fix

@@ -1,0 +1,11 @@
+--- a/sggev3.f
++++ b/sggev3.f
+@@ -261,7 +261,7 @@
+ *     .. External Subroutines ..
+       EXTERNAL           SGEQRF, SGGBAK, SGGBAL,
+      $                   SGGHD3, SLAQZ0, SLACPY,
+      $                   SLASCL, SLASET, SORGQR,
+-     $                   SORMQR, STGEVC
++     $                   SORMQR, STGEVC, XERBLA
+ *     ..
+ *     .. External Functions ..
