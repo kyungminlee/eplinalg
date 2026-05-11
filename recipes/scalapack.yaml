@@ -259,23 +259,36 @@ patches:
   - pzlanhs.f.patch
   - pclanhs.f.patch
   - pdgeequ.f.patch
+  - psgeequ.f.patch
   - pzgeequ.f.patch
+  - pcgeequ.f.patch
   - pdposvx.f.patch
+  - psposvx.f.patch
   - pzposvx.f.patch
+  - pcposvx.f.patch
   - pdlarzb.f.patch
+  - pslarzb.f.patch
   - pzlarzb.f.patch
+  - pclarzb.f.patch
   - pdormrz.f.patch
   - psormrz.f.patch
   - pzunmrz.f.patch
   - pcunmrz.f.patch
   - pdlarz.f.patch
+  - pslarz.f.patch
   - pzlarz.f.patch
+  - pclarz.f.patch
   - pzlarzc.f.patch
+  - pclarzc.f.patch
   - pzheevd.f.patch
+  - pcheevd.f.patch
   - pzunmbr.f.patch
   - bdtrexc.f.patch
+  - bstrexc.f.patch
   - dpttrsv.f.patch
+  - spttrsv.f.patch
   - zpttrsv.f.patch
+  - cpttrsv.f.patch
   - pdsyevr.f.patch
   - pssyevr.f.patch
   - pzheevr.f.patch
@@ -287,11 +300,17 @@ patches:
   - pdtrord.f.patch
   - pstrord.f.patch
   - pdpttrs.f.patch
+  - pspttrs.f.patch
   - pzpttrs.f.patch
+  - pcpttrs.f.patch
   - pdpbtrsv.f.patch
+  - pspbtrsv.f.patch
   - pzpbtrsv.f.patch
+  - pcpbtrsv.f.patch
   - pdlascl.f.patch
+  - pslascl.f.patch
   - pzlascl.f.patch
+  - pclascl.f.patch
 
 # local_renames: (reserved for non-precision local-variable drift like
 # CONJTOPH→TTOPH that isn't an S↔D / C↔Z prefix swap. Precision-prefix
@@ -309,72 +328,41 @@ patches:
 # not S/C halves yet (e.g. PDORMRZ post-loop fix). See
 # doc/convergence-20260507.md §scalapack and doc/UPSTREAM_BUGS.md.
 expected_divergences:
-  - BDLAEXC
-  - BDTREXC
-  - DLAMSH
-  - DLARRE2
-  - DLARRE2A
-  - DLARRF2
-  - DPTTRSV
-  - DSTEGR2
-  - DSTEGR2A
-  - DSTEGR2B
-  - PCGESVD
-  - PCHETTRD
-  - PCLAWIL
-  - PCPOTF2
-  - PCTREVC
-  - PCUNGQL
-  - PCUNML2
-  - PDGEEQU
-  - PDLACON
-  - PDLAED3
-  - PDLAQR3
-  - PDLARZ
-  - PDLARZB
-  - PDLASCL
-  - PDLAWIL
-  - PDPBTRSV
-  - PDPOSVX
-  - PDPTTRS
-  - PDSTEBZ
-  - PDSYEVD
-  - PDSYTTRD
-  - PDTRSEN
-  - PZGEEQU
-  - PZHEEVD
-  - PZLARZ
-  - PZLARZB
-  - PZLARZC
-  - PZLASCL
-  - PZPBTRSV
-  - PZPOSVX
-  - PZPTTRS
-  - ZPTTRSV
+  # Bugs that remain asymmetric (genuine upstream design split):
+  - BDLAEXC          # bdlaexc/bslaexc: 1.0E1 vs TEN parameter constant
+  - DLAMSH           # constant-comparison drift
+  - DLARRE2          # PERT=4 vs PERT=8 + RTL formula split
+  - DLARRE2A         # ditto
+  - DLARRF2          # TWO*EPS vs FOUR*EPS multiplier
+  - DSTEGR2          # MINRGP=3e-3 vs 1e-3
+  - DSTEGR2A         # ditto
+  - DSTEGR2B         # ditto
+  - PCGESVD          # per-precision WPSLANGE/WPDLANGE/WPCLANGE rename
+  - PCHETTRD         # Hermitian vs symmetric algorithmic split
+  - PCLAWIL          # call-shape divergence
+  - PCPOTF2          # function vs subroutine restructure across halves
+  - PCTREVC          # algorithmic split
+  - PCUNGQL          # see prefer_source comment (C-side intentionally canonical)
+  - PCUNML2          # see prefer_source comment
+  - PDLACON          # declaration reorder
+  - PDLAED3          # bug fix only on D half (INFO=0 + IF guard)
+  - PDLAQR3          # MPI_WTIME external + LWK8 split
+  - PDLAWIL          # call-shape divergence
+  - PDSTEBZ          # IEFLAG branch restructure (D-only)
+  - PDSYEVD          # LIWORK validation split
+  - PDSYTTRD         # CONJTOPH vs TTOPH (Hermitian vs symmetric)
+  - PDTRSEN          # multi-line vs single-line IF
+  - PSGESVD          # per-precision WPS/WPD rename mirror of PCGESVD
+  - PCHEEV           # INTEGER decl content/ordering drift in @SIZE names
+  - PCLATTRS         # REAL XMAX(1) declaration line-position swap
+  - PZLARZ           # TAULOC( 1 ) vs TAULOC(1,1,…) comparer paren collapse
+  - PZLARZC          # ditto
+  - PDGESVD          # WPDLANGE mirror name (canonical from D-half pref)
 
-# Patches whose sibling half upstream carries the same bug but the
-# auto-translator (sed-based prefix swap) couldn't generate the
-# sibling diff cleanly — needs hand-translation in a future pass.
-# All entries are real upstream bugs, not cosmetic cleanup. (See
-# ``one_sided_cleanup`` in lapack.yaml for the cosmetic-asymmetry
-# field; ScaLAPACK has no entries in that category today.)
+# Patches whose sibling half is missing — known upstream-asymmetric
+# fixes that we haven't yet translated. Empty now: every D/Z patch
+# has its sibling S/C patch (2026-05-11 symmetric-fix sweep).
 asymmetric_patches:
-  - dpttrsv.f.patch
-  - pdgeequ.f.patch
-  - pdlarzb.f.patch
-  - pdlarz.f.patch
-  - pdlascl.f.patch
-  - pdpbtrsv.f.patch
-  - pdposvx.f.patch
-  - pdpttrs.f.patch
-  - pzgeequ.f.patch
-  - pzheevd.f.patch
-  - pzlarzb.f.patch
-  - pzlarzc.f.patch
-  - pzlarz.f.patch
-  - pzlascl.f.patch
-  - pzpbtrsv.f.patch
-  - pzposvx.f.patch
-  - pzpttrs.f.patch
+  # pzunmbr fixes PCHK1MAT→PCHK2MAT in EXTERNAL list; pcunmbr already
+  # has PCHK2MAT upstream, so no sibling patch is needed.
   - pzunmbr.f.patch
-  - zpttrsv.f.patch

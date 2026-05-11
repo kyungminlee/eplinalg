@@ -1,0 +1,11 @@
+--- a/pcheevd.f
++++ b/pcheevd.f
+@@ -262,6 +262,8 @@
+                INFO = -14
+             ELSE IF( LRWORK.LT.LRWMIN .AND. LRWORK.NE.-1 ) THEN
+                INFO = -16
++            ELSE IF( LIWORK.LT.LIWMIN .AND. LIWORK.NE.-1 ) THEN
++               INFO = -18
+             ELSE IF( IROFFA.NE.0 ) THEN
+                INFO = -4
+             ELSE IF( DESCA( MB_ ).NE.DESCA( NB_ ) ) THEN

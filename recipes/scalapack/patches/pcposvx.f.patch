@@ -1,0 +1,66 @@
+--- a/pcposvx.f
++++ b/pcposvx.f
+@@ -365,6 +365,7 @@
+      $                   IROFF, IROFFA, IROFFAF, IROFFB, IROFFX, IXCOL,
+      $                   IXROW, J, JJA, JJB, JJX, LDB, LDX, LRWMIN,
+      $                   LWMIN, MYCOL, MYROW, NP, NPCOL, NPROW, NRHSQ,
++     $                   NPMOD, NQMOD,
+      $                   NQ
+       REAL               AMAX, ANORM, BIGNUM, SCOND, SMAX, SMIN, SMLNUM
+ *     ..
+@@ -382,9 +383,9 @@
+ *     ..
+ *     .. External Functions ..
+       LOGICAL            LSAME
+-      INTEGER            INDXG2P, NUMROC
++      INTEGER            ICEIL, INDXG2P, NUMROC
+       REAL               PCLANHE, PSLAMCH
+-      EXTERNAL           INDXG2P, LSAME, NUMROC, PCLANHE, PSLAMCH
++      EXTERNAL           ICEIL, INDXG2P, LSAME, NUMROC, PCLANHE, PSLAMCH
+ *     ..
+ *     .. Intrinsic Functions ..
+       INTRINSIC          ICHAR, MAX, MIN, MOD
+@@ -426,8 +427,41 @@
+             NQ = NUMROC( N+ICOFFA, DESCA( NB_ ), MYCOL, IACOL, NPCOL )
+             IF( MYCOL.EQ.IACOL )
+      $         NQ = NQ-ICOFFA
+-            LWMIN = 3*DESCA( LLD_ )
+-            LRWMIN = MAX( 2*NQ, NP )
++*           Upstream bug fix: LWMIN/LRWMIN must accommodate the internal
++*           PCPOCON / PCPORFS calls (see comment at line 311 of the
++*           upstream prologue documenting the intended formula).
++*           Upstream sets LWMIN = 3*DESCA(LLD_) and LRWMIN = MAX(2*NQ,
++*           NP), both insufficient — PCPOCON aborts with INFO=-10.
++*           PCPOCON LWMIN  = 2*NPMOD + MAX(2, MAX(NB*ICEIL(NPROW-1,
++*                                                          NPCOL),
++*                                          NQMOD + NB*ICEIL(NPCOL-1,
++*                                                           NPROW)))
++*           PCPOCON LRWMIN = 2*NQMOD
++*           PCPORFS LWMIN  = 2*NPMOD,   LRWMIN = NPMOD
++*           PCLANHE('1') needs RWORK = 2*NQMOD + NPMOD + LDW (LDW=0 on
++*           square grids); upstream's LRWMIN = MAX(2*NQ, NP) is too
++*           small here too — pzlanhe scribbles past the buffer and
++*           triggers free()-time heap corruption a few iterations later.
++*           NPMOD/NQMOD are the unadjusted NUMROCs (PCPOCON's own
++*           definition).
++            NPMOD = NUMROC( N+IROFFA, DESCA( MB_ ), MYROW, IAROW,
++     $                      NPROW )
++            NQMOD = NUMROC( N+ICOFFA, DESCA( NB_ ), MYCOL, IACOL,
++     $                      NPCOL )
++            LWMIN = MAX(
++     $              2*NPMOD +
++     $              MAX( 2, MAX( DESCA( NB_ )*
++     $                   MAX( 1, ICEIL( NPROW-1, NPCOL ) ),
++     $                   NQMOD + DESCA( NB_ )*
++     $                   MAX( 1, ICEIL( NPCOL-1, NPROW ) ) ) ),
++     $              2*NPMOD )
++*           LDW term for non-square grids: MB_A*CEIL(CEIL(NPMOD/MB_A) /
++*           (LCM/NPROW)). Conservatively use NPMOD as an upper bound
++*           (it's always >= the LDW term).
++            LRWMIN = MAX( 2*NQMOD + NPMOD + NPMOD,
++     $                    2*NQMOD,
++     $                    NPMOD,
++     $                    NQ )
+             NOFACT = LSAME( FACT, 'N' )
+             EQUIL = LSAME( FACT, 'E' )
+             IF( NOFACT .OR. EQUIL ) THEN

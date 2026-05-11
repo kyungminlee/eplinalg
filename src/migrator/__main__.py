@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .config import load_recipe
 from .pipeline import (
-    run_convergence_report, run_divergence_report, run_migration,
+    run_divergence_report, run_migration,
 )
 from .prepare import prepare_recipe, run_prepare, verify_patches
 from .prefix_classifier import classify_symbols
@@ -95,6 +95,7 @@ def cmd_diverge(args):
         project_root=args.project_root,
         parser=parser,
         parser_cmd=parser_cmd,
+        apply_whitelist=not getattr(args, 'no_whitelist', False),
     )
     total = len(report)
     # Optional filtering on diff content.
@@ -126,59 +127,6 @@ def cmd_diverge(args):
     else:
         print(f'{total} divergent pairs')
     return 1 if total else 0
-
-
-def cmd_converge(args):
-    """Verify that migrated files on disk converge."""
-    parser, parser_cmd = _parser_args(args)
-    target = _get_target_mode(args)
-    report = run_convergence_report(
-        recipe_path=args.recipe,
-        output_dir=args.output_dir,
-        target_mode=target,
-        project_root=args.project_root,
-        parser=parser,
-        parser_cmd=parser_cmd,
-    )
-    total = len(report)
-    try:
-        if args.grep:
-            pat = re.compile(args.grep, re.IGNORECASE)
-            report = [r for r in report if any(pat.search(l) for l in r['diff'])]
-        if args.exclude:
-            pat = re.compile(args.exclude, re.IGNORECASE)
-            report = [r for r in report if not any(pat.search(l) for l in r['diff'])]
-    except re.error as exc:
-        print(f'error: invalid regex: {exc}', file=sys.stderr)
-        return 2
-
-    for entry in report:
-        if entry['status'] == 'missing':
-            print(f'### MISSING {entry["target"]} '
-                  f'(expected from {entry["canonical"]})')
-            print()
-            continue
-        header = (f'### {entry["other"]} vs {entry["canonical"]}'
-                  f' → {entry["target"]} (+{len(entry["diff"])})')
-        print(header)
-        diff = entry['diff'] if args.full else entry['diff'][:args.context]
-        for line in diff:
-            print(line[:args.max_width])
-        if not args.full and len(entry['diff']) > args.context:
-            print(f'  ...{len(entry["diff"]) - args.context} more')
-        print()
-
-    diverged = sum(1 for r in report if r['status'] == 'diverged')
-    missing = sum(1 for r in report if r['status'] == 'missing')
-    shown = len(report)
-    summary_total = sum(1 for _ in range(total))  # == total
-    if args.grep or args.exclude:
-        print(f'{shown} shown / {summary_total} entries '
-              f'({diverged} diverged, {missing} missing on disk)')
-    else:
-        print(f'{diverged} diverged, {missing} missing on disk')
-    # Non-zero exit when there are real problems so CI gates on this.
-    return 1 if (diverged or missing) else 0
 
 
 def _is_fixed_form_comment(line: str) -> bool:
@@ -831,7 +779,7 @@ def cmd_build(args):
 
 
 def cmd_run(args):
-    """Run the full pipeline: migrate → converge → verify → build."""
+    """Run the full pipeline: migrate → diverge → verify → build."""
     work_dir = args.work_dir
     output_dir = work_dir / 'output'
     src_dir = output_dir / 'src'
@@ -846,10 +794,9 @@ def cmd_run(args):
 
     print()
     print('=' * 60)
-    print('  Step 2: Convergence')
+    print('  Step 2: Divergence')
     print('=' * 60)
     args.output_dir = src_dir
-    # Set defaults for convergence report display options
     if not hasattr(args, 'grep'):
         args.grep = None
     if not hasattr(args, 'exclude'):
@@ -860,7 +807,7 @@ def cmd_run(args):
         args.full = False
     if not hasattr(args, 'max_width'):
         args.max_width = 200
-    rc_converge = cmd_converge(args) or 0
+    rc_diverge = cmd_diverge(args) or 0
 
     print()
     print('=' * 60)
@@ -882,7 +829,7 @@ def cmd_run(args):
     args.output_dir = output_dir
     rc_build = cmd_build(args) or 0
 
-    return rc_build or rc_verify or rc_converge
+    return rc_build or rc_verify or rc_diverge
 
 
 # Topologically sorted library build order for the unified CMake project.
@@ -1456,30 +1403,11 @@ def main():
                    help='Print full diff per entry (ignores --context)')
     p.add_argument('--max-width', type=int, default=200,
                    help='Truncate each diff line to this many chars')
+    p.add_argument('--no-whitelist', action='store_true',
+                   help='Bypass expected_divergences / defer_all_divergences '
+                        'whitelist for this run')
     _add_parser_args(p)
     p.set_defaults(func=cmd_diverge)
-
-    # --- converge ---
-    p = sub.add_parser('converge',
-                       help='Post-migration verification against on-disk '
-                            'files with a light whitespace-only normalizer')
-    p.add_argument('recipe', type=Path, help='Recipe YAML file')
-    p.add_argument('output_dir', type=Path,
-                   help='Directory holding migrated output')
-    _add_target_args(p)
-    p.add_argument('--project-root', type=Path, default=None)
-    p.add_argument('--grep', default=None,
-                   help='Regex: only show entries with diff matching')
-    p.add_argument('--exclude', default=None,
-                   help='Regex: drop entries whose diff matches')
-    p.add_argument('--context', type=int, default=8,
-                   help='Max diff lines per entry (default 8)')
-    p.add_argument('--full', action='store_true',
-                   help='Print full diff per entry (ignores --context)')
-    p.add_argument('--max-width', type=int, default=200,
-                   help='Truncate each diff line to this many chars')
-    _add_parser_args(p)
-    p.set_defaults(func=cmd_converge)
 
     # --- verify ---
     p = sub.add_parser('verify', help='Verify migrated output')

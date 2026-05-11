@@ -688,6 +688,12 @@ def _canonicalize_for_compare(text: str) -> str:
         r'\bTYPE\s*\(\s*\w+\s*\)',
         r'REAL', text, flags=re.IGNORECASE)
     
+    # 4e. Canonicalize numeric labels. Must run before the
+    #     ``[sdczSDCZ]→@`` substitution at step 5, which would turn
+    #     ``DO 100`` into ``@O 100`` and defeat the ``\bDO\b`` part of
+    #     the label pattern. Uppercase first so the pattern (which
+    #     expects uppercase ``DO``/``GO TO``) matches mixed-case input.
+    text = _canonicalize_labels(text.upper())
     # 5. Canonicalize prefix-dependent identifiers
     text = re.sub(
         r'(?<![A-Za-z0-9])[sdczSDCZ]+(?=[A-Za-z])', '@', text,
@@ -733,6 +739,35 @@ def _canonicalize_for_compare(text: str) -> str:
     #     and occasionally leaves a stray space before the comma
     #     (``1 ,WORK``).
     text = re.sub(r'\s*,\s*', ',', text)
+    # 6d2. Strip whitespace around Fortran word operators
+    #      (``.AND.``, ``.OR.``, ``.NOT.``, ``.NE.``, etc.). LAPACK
+    #      halves format ``LWMIN .AND. X`` vs ``LWMIN.AND.X``
+    #      arbitrarily; the arithmetic-op rule at 6b does not cover
+    #      these because they are bracketed by ``.``.
+    text = re.sub(
+        r'\s*(\.(?:AND|OR|NOT|NE|EQ|LT|LE|GT|GE|EQV|NEQV)\.)\s*',
+        r'\1', text)
+    # 6e. Drop redundant parens around RHS of assignments:
+    #     ``WORK(1)=(EXPR)`` vs ``WORK(1)=EXPR``. The outer ``(...)``
+    #     is stripped only if its matching ``)`` lands at end-of-line
+    #     (or end-of-text) — i.e. the parens wrap the entire RHS.
+    #     Nested parens inside ``EXPR`` are tolerated via depth-walk.
+    def _strip_rhs_parens(line: str) -> str:
+        i = line.find('=(')
+        if i < 0:
+            return line
+        depth = 1
+        j = i + 2
+        while j < len(line) and depth > 0:
+            if line[j] == '(':
+                depth += 1
+            elif line[j] == ')':
+                depth -= 1
+            j += 1
+        if depth == 0 and j == len(line):
+            return line[:i + 1] + line[i + 2:j - 1]
+        return line
+    text = '\n'.join(_strip_rhs_parens(ln) for ln in text.split('\n'))
     # 6e. Collapse doubled parens ``((X))`` → ``(X)``. LAPACK
     #     occasionally wraps a boolean / logical expression in an
     #     extra redundant paren on one half.
@@ -1005,7 +1040,8 @@ def _collect_all_symbols(config: RecipeConfig,
 def run_divergence_report(recipe_path: Path, target_mode=None,
                            project_root: Path | None = None,
                            parser: str | None = None,
-                           parser_cmd: str | None = None) -> list[dict]:
+                           parser_cmd: str | None = None,
+                           apply_whitelist: bool = True) -> list[dict]:
     """Migrate every co-family source pair in-memory and return the
     normalized diff for each pair whose members disagree.
 
@@ -1100,259 +1136,10 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
             'diff': diff,
         })
     report.sort(key=lambda r: (r['other'], r['canonical']))
+    if not apply_whitelist:
+        return report
     return _filter_expected_divergences(report, config)
 
-
-def run_convergence_report(recipe_path: Path, output_dir: Path,
-                            target_mode=None,
-                            project_root: Path | None = None,
-                            parser: str | None = None,
-                            parser_cmd: str | None = None) -> list[dict]:
-    """Verify that already-migrated files converge with a fresh
-    migration of their S/C co-family siblings.
-
-    Reads each pair's canonical (D/Z-derived) target from
-    ``output_dir``, re-migrates the S/C member in memory, then
-    compares the two with :func:`_light_normalize` — whitespace,
-    case, and ``END KEYWORD`` merging only. All semantic
-    transforms (identifier renames, literal kinds, casts, typedef
-    substitutions) are the migrator's responsibility; this report
-    flags anything that slipped through.
-
-    Returns ``[{'target', 'canonical', 'other', 'diff', 'status'}]``
-    where ``status`` is ``'diverged'`` for normalized mismatches and
-    ``'missing'`` for pairs whose on-disk canonical is absent.
-    """
-    import difflib
-    config = prepare_recipe(recipe_path, project_root)
-
-    if config.language == 'c':
-        return run_c_convergence_report(
-            recipe_path, output_dir, target_mode, project_root
-        )
-    if config.language != 'fortran':
-        print(f'  (converge currently only supports Fortran/C recipes; '
-              f'{config.library} is {config.language} — skipping)')
-        return []
-
-    symbols = _collect_all_symbols(config, project_root)
-    classification = classify_symbols(symbols)
-    rename_map = classification.build_rename_map(target_mode)
-    rename_map = _apply_extra_renames(rename_map, config, target_mode)
-
-    src_files = sorted(
-        p for p in config.source_dir.iterdir()
-        if p.suffix.lower() in config.extensions
-    )
-    by_target: dict[str, list[Path]] = {}
-    for p in src_files:
-        stem_u = p.stem.upper()
-        if stem_u in config.skip_files or stem_u in config.copy_files:
-            continue
-        if stem_u in classification.independent:
-            continue
-        by_target.setdefault(target_filename(p.name, rename_map, target_mode), []).append(p)
-
-    pairs: list[tuple[Path, Path]] = []
-    for tn, members in by_target.items():
-        if len(members) < 2:
-            continue
-        members.sort(key=lambda p: (
-            0 if p.stem.upper() in config.prefer_source
-            else (1 if p.stem and p.stem[0].upper() in ('D', 'Z') else 2),
-            p.name,
-        ))
-        canonical = members[0]
-        for other in members[1:]:
-            pairs.append((canonical, other))
-
-    # Only the S/C (other) halves need re-migration; the D/Z
-    # canonical is already on disk.
-    others_to_migrate = {other for _, other in pairs}
-    texts: dict[Path, str] = {}
-    workers = max(1, (os.cpu_count() or 4))
-    module_rename_pairs = _build_module_rename_pairs(config)
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        futures = {
-            ex.submit(migrate_file_to_string, p, rename_map,
-                      target_mode, parser, parser_cmd,
-                      config.keep_kind_lines.get(p.name)): p
-            for p in others_to_migrate
-        }
-        for fut in tqdm(as_completed(futures), total=len(futures),
-                        desc='  Re-migrating S/C', unit='file',
-                        mininterval=1.0, miniters=10):
-            p = futures[fut]
-            try:
-                res = fut.result()
-                if res is None:
-                    continue
-                _, migrated = res
-                # Match the on-disk canonical: run_fortran_migration
-                # applies module_renames before writing, so the
-                # re-migrated sibling has to receive the same rewrite
-                # before the comparison below.
-                texts[p] = _apply_module_renames(migrated, module_rename_pairs)
-            except Exception as exc:
-                print(f'  warning: re-migration crashed on {p.name}: '
-                      f'{type(exc).__name__}: {exc}', file=sys.stderr)
-
-    report: list[dict] = []
-    for canonical, other in pairs:
-        target_name = target_filename(canonical.name, rename_map, target_mode)
-        on_disk = output_dir / target_name
-        if not on_disk.is_file():
-            report.append({
-                'target': target_name,
-                'canonical': canonical.name,
-                'other': other.name,
-                'diff': [],
-                'status': 'missing',
-            })
-            continue
-        if other not in texts:
-            continue
-        disk_text = on_disk.read_text(errors='replace')
-        other_text = texts[other]
-        # Apply any remaining recipe-level local renames (for non-precision
-        # cases like CONJTOPH→TTOPH that aren't S↔D / C↔Z swaps).
-        if config.local_renames:
-            disk_text = _apply_local_renames(disk_text, config.local_renames)
-            other_text = _apply_local_renames(other_text,
-                                              config.local_renames)
-        n_can = _light_normalize(
-            _strip_fortran_comments(disk_text, canonical.suffix))
-        n_oth = _light_normalize(
-            _strip_fortran_comments(other_text, other.suffix))
-        if n_can == n_oth:
-            continue
-        # Filter out precision-prefix local-variable drift (S↔D, C↔Z).
-        # Any properly-classified symbol has the same migrated name in
-        # both halves, so precision-prefix differences in the diff can
-        # only come from locals not in the rename map.
-        diff = _filter_precision_drift(
-            n_oth.splitlines(), n_can.splitlines())
-        if not diff:
-            continue
-        report.append({
-            'target': target_name,
-            'canonical': canonical.name,
-            'other': other.name,
-            'diff': diff,
-            'status': 'diverged',
-        })
-    report.sort(key=lambda r: (r['status'], r['other'], r['canonical']))
-    return _filter_expected_divergences(report, config)
-
-
-def run_c_convergence_report(recipe_path: Path, output_dir: Path,
-                              target_mode=None,
-                              project_root: Path | None = None) -> list[dict]:
-    """Verify that migrated C files on disk converge with a fresh
-    migration of their S/C co-family siblings.
-
-    C counterpart of :func:`run_convergence_report`. Each eligible
-    source ``.c`` file in ``config.source_dir`` is migrated in memory
-    via :func:`migrate_c_file_to_string` to discover its target name;
-    files that collide on a target form co-family groups. The D/Z
-    member is the canonical (read from disk at ``output_dir``); each
-    S/C sibling's in-memory migration result is compared with
-    :func:`_light_normalize_c` after stripping C comments.
-
-    Supports both scalapack-style recipes (rename-map driven, e.g.
-    PBLAS) and direct-style recipes (prefix driven, e.g. BLACS).
-    """
-    import difflib
-    config = prepare_recipe(recipe_path, project_root)
-
-    if config.language != 'c':
-        print(f'  (run_c_convergence_report called on non-C recipe '
-              f'{config.library} — skipping)')
-        return []
-
-    rename_map: dict[str, str] | None = None
-    classification = None
-    # Every C recipe except BLACS uses the rename-map-driven path —
-    # see the matching gate in run_migration().
-    if config.library != 'blacs':
-        symbols = _collect_all_symbols(config, project_root)
-        classification = classify_symbols(symbols)
-        rename_map = classification.build_rename_map(target_mode)
-        rename_map = _apply_extra_renames(rename_map, config, target_mode)
-
-    src_files = sorted(
-        p for p in config.source_dir.iterdir()
-        if p.suffix.lower() == '.c'
-    )
-
-    # Migrate every source in memory and group by target filename. For
-    # BLACS the target-computing cost is trivial; for PBLAS we'd save
-    # work by skipping D/Z here, but the rename_map regex build is the
-    # hot part and unavoidable either way.
-    by_target: dict[str, list[tuple[Path, str]]] = {}
-    for p in tqdm(src_files, desc='  Re-migrating C sources', unit='file',
-                  mininterval=1.0, miniters=10):
-        try:
-            res = migrate_c_file_to_string(
-                p, target_mode,
-                rename_map=rename_map,
-                classification=classification,
-                c_type_aliases=config.c_type_aliases,
-            )
-        except Exception as exc:
-            print(f'  warning: C re-migration crashed on {p.name}: '
-                  f'{type(exc).__name__}: {exc}', file=sys.stderr)
-            continue
-        if res is None:
-            continue
-        target_name, text = res
-        by_target.setdefault(target_name, []).append((p, text))
-
-    def _is_dz(src_path: Path) -> bool:
-        stem = src_path.stem
-        base = stem[3:] if stem.startswith('BI_') else stem
-        return bool(base) and base[0].lower() in ('d', 'z')
-
-    report: list[dict] = []
-    for target_name, members in by_target.items():
-        if len(members) < 2:
-            continue
-        members.sort(key=lambda m: (not _is_dz(m[0]), m[0].name))
-        canonical_path, _ = members[0]
-        on_disk = output_dir / target_name
-        if not on_disk.is_file():
-            for other_path, _ in members[1:]:
-                report.append({
-                    'target': target_name,
-                    'canonical': canonical_path.name,
-                    'other': other_path.name,
-                    'diff': [],
-                    'status': 'missing',
-                })
-            continue
-        disk_text = on_disk.read_text(errors='replace')
-        n_can = _light_normalize_c(_strip_c_comments(disk_text))
-        for other_path, other_text in members[1:]:
-            n_oth = _light_normalize_c(_strip_c_comments(other_text))
-            if n_can == n_oth:
-                continue
-            diff = [
-                line for line in difflib.unified_diff(
-                    n_oth.splitlines(), n_can.splitlines(),
-                    lineterm='', n=0,
-                )
-                if line.startswith(('-', '+'))
-                and not line.startswith(('---', '+++'))
-            ]
-            report.append({
-                'target': target_name,
-                'canonical': canonical_path.name,
-                'other': other_path.name,
-                'diff': diff,
-                'status': 'diverged',
-            })
-    report.sort(key=lambda r: (r['status'], r['other'], r['canonical']))
-    return _filter_expected_divergences(report, config)
 
 
 def run_c_migration(config: RecipeConfig, output_dir: Path,
