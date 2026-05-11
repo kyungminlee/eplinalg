@@ -19,3 +19,9 @@ _lib/
 *.o
 *.mod
 external/multifloats/multifloats.f90
+
+# Repro binaries (built locally)
+repro/*
+!repro/*.f90
+!repro/*.md
+!repro/patches/
