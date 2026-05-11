@@ -159,9 +159,6 @@ patches:
   # I05: ?laqz0 LWORK INFO -19 → -18
   - zlaqz0.f.patch
   - claqz0.f.patch        # sibling: same fix
-  # I07: dlaqz4 WORK(1) workspace-return missing DROUNDUP_LWORK
-  # (audit 2026-05-11; slaqz4 already uses SROUNDUP_LWORK upstream)
-  - dlaqz4.f.patch
   # L13: clahef upper-branch loop condition J.LE.N should be J.LT.N
   # (audit 2026-05-11; slasyf/dlasyf/zlahef all use J.LT.N at the
   # same location — clahef is the odd one out, one extra iteration
@@ -171,6 +168,12 @@ patches:
   # (audit 2026-05-11; slasyf_rk / dlasyf_rk / zlahef_rk all
   # correctly declare GEMMTR)
   - clahef_rk.f.patch
+  # L16: dopmtr / dormr2 use deprecated DLARF where sopmtr / sormr2
+  # and the complex siblings (zunmr2 / cunmr2) all use DLARF1F /
+  # DLARF1L. dopmtr also missing EXTERNAL DLARF1L for its other call
+  # site. (audit 2026-05-11)
+  - dopmtr.f.patch
+  - dormr2.f.patch
   # I06: ?laqz2 LWORK INFO -26 → -25
   - zlaqz2.f.patch
   - claqz2.f.patch        # sibling: same fix

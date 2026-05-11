@@ -1,0 +1,24 @@
+--- a/dormr2.f
++++ b/dormr2.f
+@@ -185,7 +185,7 @@
+       EXTERNAL           LSAME
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL           DLARF, XERBLA
++      EXTERNAL           DLARF1L, XERBLA
+ *     ..
+ *     .. Intrinsic Functions ..
+       INTRINSIC          MAX
+@@ -262,11 +262,8 @@
+ *
+ *        Apply H(i)
+ *
+-         AII = A( I, NQ-K+I )
+-         A( I, NQ-K+I ) = ONE
+-         CALL DLARF( SIDE, MI, NI, A( I, 1 ), LDA, TAU( I ), C, LDC,
++         CALL DLARF1L( SIDE, MI, NI, A( I, 1 ), LDA, TAU( I ), C, LDC,
+      $               WORK )
+-         A( I, NQ-K+I ) = AII
+    10 CONTINUE
+       RETURN
+ *
