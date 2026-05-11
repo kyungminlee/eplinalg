@@ -3754,19 +3754,27 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
     migrated = _strip_roundup_lwork(migrated, target_mode)
 
     out_name = target_filename(src_path.name, rename_map, target_mode)
+    import re
+
+    # Type-conversion intrinsics frequently drift asymmetrically between
+    # co-family halves: D/Z-half upstream tends to declare ``REAL`` /
+    # ``CMPLX`` / ``DBLE`` / ``DIMAG`` / ``DCMPLX`` / ``DCONJG`` in its
+    # INTRINSIC list (used to convert ``DOUBLE COMPLEX`` ↔ ``DOUBLE
+    # PRECISION``), while S/C-half doesn't need them (kind4 default
+    # handles the same conversions implicitly). After kind16 migration
+    # both halves use the kind-promoted versions; the asymmetric
+    # INTRINSIC declarations remain as cosmetic text drift. Strip the
+    # type-conversion subset on every target to converge.
+    type_conv_intrinsics = {
+        'REAL', 'CMPLX', 'DCMPLX', 'DBLE',
+        'AIMAG', 'CONJG', 'DCONJG', 'DIMAG',
+    }
     if not target_mode.is_kind_based:
-        import re
-        # Names that the multifloats module overloads as generic
-        # interfaces. INTRINSIC declarations of these names become
-        # illegal once ``USE multifloats`` is in scope (gfortran:
-        # "Cannot change attributes of USE-associated symbol").
-        # Names that the multifloats module overloads as generic
-        # interfaces — see github.com/kyungminlee/multifloats
-        # (UNARY_MF_MF, BINARY_REAL, etc.). INTRINSIC declarations of
-        # these names become illegal once ``USE multifloats`` is in
-        # scope (gfortran: "Cannot change attributes of USE-associated
-        # symbol").
-        generics = {
+        # Multifloats also strips the full generic-overload set so
+        # INTRINSIC declarations of names that ``USE multifloats``
+        # provides as generic interfaces don't clash (gfortran: "Cannot
+        # change attributes of USE-associated symbol").
+        strip_set = type_conv_intrinsics | {
             # Unary real -> real
             'ABS', 'SQRT', 'SIN', 'COS', 'TAN', 'EXP', 'LOG', 'LOG10',
             'ATAN', 'ASIN', 'ACOS', 'AINT', 'ANINT', 'SINH', 'COSH',
@@ -3778,18 +3786,33 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
             'SIGN', 'MOD', 'ATAN2', 'DIM', 'MODULO', 'HYPOT', 'NEAREST',
             # Variadic
             'MAX', 'MIN',
-            # Type/conversion / complex
-            'REAL', 'AIMAG', 'CONJG', 'CMPLX', 'DCMPLX', 'DCONJG',
-            'DIMAG', 'DBLE', 'INT', 'NINT', 'CEILING', 'FLOOR',
+            # Extra type-conversion
+            'INT', 'NINT', 'CEILING', 'FLOOR',
         }
-        def clean_intrinsic(m):
-            indent, sep, funcs_str, newline = m.group(1), m.group(2), m.group(3), m.group(4)
-            kept = [f.strip() for f in funcs_str.split(',') if f.strip() and f.strip().upper() not in generics]
-            return f"{indent}INTRINSIC{sep}{', '.join(kept)}{newline}" if kept else ""
-        migrated = re.sub(
-            r'(?im)^([ \t]*)INTRINSIC(\s*::\s*|\s+)([A-Za-z0-9_,\s]+?)(\r?\n|$)',
-            clean_intrinsic, migrated,
-        )
+    else:
+        strip_set = type_conv_intrinsics
+
+    def clean_intrinsic(m):
+        indent, sep, funcs_str, newline = m.group(1), m.group(2), m.group(3), m.group(4)
+        # Skip continuation lines: trailing ``,`` means more on the next
+        # physical line, and stripping a name on this line could leave
+        # the continuation joined into a fused token (e.g.
+        # ``MAXEXPONENT,\n     $MINEXPONENT`` → ``MAXEXPONENTMINEXPONENT``).
+        # The full-list case is rare enough that conservative single-line
+        # handling captures the asymmetry we care about (S/C vs D/Z
+        # halves differ in the REAL/CMPLX type-conversion entries, which
+        # are always on the first line) without touching multi-line
+        # declarations.
+        if funcs_str.rstrip().endswith(','):
+            return m.group(0)
+        kept = [f.strip() for f in funcs_str.split(',')
+                if f.strip() and f.strip().upper() not in strip_set]
+        return f"{indent}INTRINSIC{sep}{', '.join(kept)}{newline}" if kept else ""
+
+    migrated = re.sub(
+        r'(?im)^([ \t]*)INTRINSIC(\s*::\s*|\s+)([A-Za-z0-9_,\s]+?)(\r?\n|$)',
+        clean_intrinsic, migrated,
+    )
     return out_name, migrated
 
 
