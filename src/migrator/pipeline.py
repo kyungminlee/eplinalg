@@ -717,6 +717,26 @@ def _canonicalize_for_compare(text: str) -> str:
     #      Same upstream-style asymmetry as END+keyword.
     text = re.sub(r'\bELSE\s+IF\b', 'ELSEIF', text)
     text = re.sub(r'\bGO\s+TO\b', 'GOTO', text)
+    # 5c3. ``DOUBLE PRECISION`` keyword: equate to ``REAL``. After
+    #      migration both halves' real-typed locals get the same
+    #      kind, but the keyword may survive as-is on each side.
+    text = re.sub(r'\bDOUBLE\s+PRECISION\b', 'REAL', text)
+    # 5c4. ``COMPLEX*16`` → ``COMPLEX`` for the same reason.
+    text = re.sub(r'\bCOMPLEX\s*\*\s*16\b', 'COMPLEX', text)
+    # 5c5. Collapse empty / single-space string literals — LAPACK has
+    #      ``ILAENV(..., '', ...)`` vs ``ILAENV(..., ' ', ...)`` and
+    #      ``XERBLA('NAME', ...)`` vs ``XERBLA('NAME ', ...)``. The
+    #      trailing spaces inside ``'...'`` (a Fortran CHARACTER literal)
+    #      affect the callee's interpretation only via LEN_TRIM, which
+    #      for LAPACK's ROUTINE / OPTS string args is always done — so
+    #      ``''`` and ``' '`` and ``'  '`` all behave identically.
+    text = re.sub(r"'( *)'",
+                  lambda m: "''" if not m.group(1) else "' '", text)
+    # 5c6. Strip trailing spaces inside XERBLA first-arg literals so
+    #      ``XERBLA('NAME ', ...)`` matches ``XERBLA('NAME', ...)``.
+    text = re.sub(
+        r"(XERBLA\s*\(\s*'[A-Z0-9_]+) +(')",
+        r'\1\2', text)
     # 5d. Strip bare ``IMPLICIT NONE`` (or any other IMPLICIT spec).
     #     Some S/D halves have it and others don't; it has no bearing
     #     on the migrated numerics.
@@ -737,6 +757,15 @@ def _canonicalize_for_compare(text: str) -> str:
     #     ``F(X)``, ``IF (X)`` vs ``IF(X)``).
     text = re.sub(r'\s*\(\s*', '(', text)
     text = re.sub(r'\s*\)', ')', text)
+    # 6c2. Strip whitespace around ``::`` (F90 attribute-list separator)
+    #      so ``REAL :: X`` and ``REAL::X`` compare equal.
+    text = re.sub(r'\s*::\s*', '::', text)
+    # 6c3. Strip whitespace before ``THEN``: ``IF(X)THEN`` and
+    #      ``IF(X) THEN`` are equivalent. ``\)THEN`` and ``)THEN``
+    #      should collapse, but the prior parens rule already strips
+    #      space inside the parens — what remains is a possibly-empty
+    #      gap between the closing ``)`` and ``THEN``.
+    text = re.sub(r'\)\s+THEN\b', ')THEN', text)
     # 6d. Strip whitespace around commas. LAPACK formats complex
     #     literals and argument lists as ``(1.0, 0.0)`` vs
     #     ``(1.0,0.0)`` inconsistently between S/C and D/Z halves,
