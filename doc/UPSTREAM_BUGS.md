@@ -71,30 +71,54 @@ extended to recognise the F90 attribute-list form
 the modern form (slaqz0 / slaqz3 / slaqz4) leaked its orphan
 declaration into the migrated output.
 
-### B? candidates flagged for domain review (not patched)
+### B? candidates after deep-dive (2026-05-11 follow-up)
 
-These divergences look like potential bugs but the "correct" choice
-isn't unambiguous without LAPACK domain expertise. Documented for
-future audit:
+After per-pair upstream-source review the seven B? candidates resolve as:
+
+**Reclassified to W (cosmetic / documented-design, not bugs):**
+
+- `slasq2.f:279` — `IEEE = .FALSE.` is upstream-documented at line 276
+  (`[11/15/2008]` comment) as a deliberate single-precision-only
+  workaround for type-16 test matrices. Not a bug; the limitation is
+  precision-specific by design.
+- `sorcsd.f` — passing `DUMMY(1)` for A/TAU during LWORK=-1 workspace
+  query is equivalent to passing the actual arrays (`U1`, `THETA`):
+  LAPACK does not read those slots in query mode. Cosmetic idiom split.
+- `sgedmdq.f90` — original "missing `.OR.WNTVCQ` branch" claim was a
+  mis-read; both halves use identical `IF (WNTVEC .OR. WNTVCF)` test.
+  Only divergence is literal `MIN(M,N)` vs the local `MINMN` (same
+  value). Cosmetic.
+
+**Real upstream inconsistency, no migrator impact:**
+
+- `ssytri2.f:166` queries `ILAENV` for `'SSYTRF'`'s blocksize where
+  `dsytri2.f:165` queries for `'DSYTRI2'`. Across the six-routine
+  family: ssytri2 → SSYTRF, dsytri2 → self, csytri2/zsytri2 → self,
+  chetri2/zhetri2 → HETRF. Genuinely inconsistent. The returned
+  blocksize feeds only the MINSIZE workspace-hint computation; no
+  numerical effect. Worth a Netlib report. Not patched.
+
+**Genuine B? remaining — domain-expertise gated, in the GEDMD/GEJSV
+family (newer LAPACK, known asymmetric maintenance):**
 
 - `sgejsv.f:1711` passes `'L'` to `SGESVJ` where `dgejsv.f:1711` passes
-  `'G'` (JOB argument: Lower triangular hint vs General). Algorithmic
-  routing choice.
-- `slasq2.f:279` hardcodes `IEEE = .FALSE.` per a 2008-vintage upstream
-  comment ("single-precision case has a problem with test matrix
-  type 16"). dlasq2 queries `ILAENV(10, ...).EQ.1`. At our migrated
-  kind10/kind16 targets the single-precision bug doesn't apply, but
-  flipping the source would be migrator-target-conditional logic.
-- `cgedmd.f90` / `sgedmd.f90` / `sgedmdq.f90`: GESVJ/GESVDQ call-arg
-  differences. Likely intentional precision-specific design.
-- `ssytri2.f:166` asks `ILAENV` for `SSYTRF`'s blocksize where
-  dsytri2 asks for `DSYTRI2`. Self-reference vs internal-call query.
-- `sorcsd.f` workspace-query passes `DUMMY(1)` for arrays where
-  dorcsd passes the actual `U1` / `THETA` buffers. May affect optimal
-  LWORK estimation but not correctness.
+  `'G'` (JOBA: Lower-triangular hint vs General). Operand is `U` from
+  prior operations; requires tracing whether U is L-structured at that
+  call site.
+- `cgedmd.f90` line 704/916 GEJSV JOBR `'N'` vs `'R'` in zgedmd; line
+  751 OFL conservative `SLAMCH('O')*SLAMCH('P')` (cgedmd) vs raw
+  `DLAMCH('O')` (zgedmd). C-half looks more carefully written.
+- `sgedmd.f90` line 716 passes `-1` to GESVDQ's LIWORK (consistent
+  with query mode); dgedmd passes actual `LIWORK`. Line 724 sgedmd
+  has `LWRSVQ = INT(RDUMMY(1))` where dgedmd has
+  `LWRSVQ = MAX(MWRSVQ, INT(RDUMMY(1)))` — D has a safety floor S
+  lacks.
+
+Net of the deep-dive: zero new migrator patches; one upstream-only
+report candidate (ssytri2 ILAENV typo).
 
 See `doc/lapack-residual-divergence-categorization.md` for the full
-110-pair classification.
+110-pair classification and the deep-dive table.
 
 ## 2026-05-11 symmetric-fix sweep (ScaLAPACK)
 

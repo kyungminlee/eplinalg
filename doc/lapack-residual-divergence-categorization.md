@@ -138,11 +138,29 @@ after the symmetric-fix sweep and bug-fix audit.
 | **B?** (ambiguous bug) | 6 | Domain review needed |
 | **B** (real bug) | 2 | sgges (missing XERBLA), sgelsd L10 (already patched on fix branch) |
 
+## B? deep-dive (2026-05-11)
+
+After per-pair upstream-source review, the seven B? candidates resolved as:
+
+| Pair | Verdict | Notes |
+|---|---|---|
+| slasq2/dlasq2 | **W** (reclassified) | slasq2.f line 276 has explicit 2008-11-15 upstream comment: `IEEE=.TRUE.` was disabled for *single-precision* on type-16 test matrices. Documented, intentional. At kind16 the limitation likely doesn't apply — separate migrator-target question, not an upstream bug. |
+| sorcsd/dorcsd | **W** | `DUMMY(1)` scratch vs reusing actual array (`U1`, `THETA`) for LWORK=-1 query: equivalent. LAPACK does not read A/TAU contents during workspace query. Cosmetic idiom split. |
+| sgedmdq/dgedmdq | **W** | Original "S misses `.OR.WNTVCQ`" claim was a mis-read — both halves use identical `IF (WNTVEC .OR. WNTVCF)` (without WNTVCQ). Only real divergence is literal `MIN(M,N)` vs the local `MINMN` (`MINMN = MIN(M,N)` is assigned at line 656). |
+| ssytri2/dsytri2 | **B (upstream, no migrator impact)** | Real inconsistency across six halves: ssytri2 queries `'SSYTRF'`, dsytri2 queries `'DSYTRI2'`, csytri2/zsytri2 query self, chetri2/zhetri2 query the HETRF factor. Affects ILAENV-returned blocksize used in workspace MINSIZE computation — workspace-hint only, no numerical effect. Worth a Netlib report; nothing to patch in-tree. |
+| cgedmd/zgedmd | **B? (domain)** | Two real asymmetries: (a) line 704/916 GEJSV JOBR `'N'` (cgedmd) vs `'R'` (zgedmd); (b) line 751 OFL `SLAMCH('O')*SLAMCH('P')` (conservative) vs `DLAMCH('O')` (raw overflow). C-half looks more careful; cannot determine correctness without GEDMD-domain expertise. Document; do not patch. |
+| sgedmd/dgedmd | **B? (domain)** | (a) GESVDQ LIWORK arg passed as `-1` (sgedmd, consistent with query mode) vs `LIWORK` actual (dgedmd) at line 716; (b) `LWRSVQ = INT(RDUMMY(1))` (S) vs `LWRSVQ = MAX(MWRSVQ, INT(RDUMMY(1)))` (D) — D has a safety floor that S lacks. Halves seem to have received different fix-ups at different times. Document; do not patch. |
+| sgejsv/dgejsv | **B? (domain)** | Line 1711 GESVJ JOBA `'L'` (sgejsv, Lower-triangular hint) vs `'G'` (dgejsv, General). Real algorithmic difference at a call site where the operand is `U` from prior operations — whether U is L-structured at that point requires tracing. Domain review needed. |
+
+**Net new bugs**: 1 (ssytri2 ILAENV typo) — upstream-only, workspace-hint, no migrator action.
+**Reclassified to W**: 3 (slasq2, sorcsd, sgedmdq).
+**Remain as B? (domain expertise gated)**: 3 (cgedmd, sgedmd, sgejsv — all in the relatively new GEDMD/GEJSV family).
+
 ## Real bugs identified for patching
 
 1. **sgges**: missing `XERBLA` in EXTERNAL list (calls XERBLA at error path but doesn't declare it). Mirror of sggev3 fix.
 
-2. **slasq2**: hardcoded `IEEE = .FALSE.` where dlasq2 dynamically queries `ILAENV(10, 'DLASQ2', 'N', ...) .EQ. 1`. This forces single-precision QR to disable IEEE-aware shifts even on IEEE-754 hardware. Actual performance/correctness impact.
+2. ~~**slasq2**: hardcoded `IEEE = .FALSE.` ...~~ — *Reclassified W on 2026-05-11; see deep-dive above.*
 
 ## Comparer-fixable normalizations (W cases)
 
