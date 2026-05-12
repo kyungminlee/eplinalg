@@ -130,28 +130,280 @@ See `doc/lapack-residual-divergence-categorization.md` for the full
 
 ## 2026-05-11 ScaLAPACK residual-divergence audit
 
-Per-pair audit of the 26 ScaLAPACK divergent pairs surfaced four real
-upstream bugs (see `doc/scalapack-residual-divergence-categorization.md`
-for the full categorization):
+Per-pair audit of the 26 ScaLAPACK divergent pairs (see
+`doc/scalapack-residual-divergence-categorization.md` for the full
+categorization) surfaced **four real upstream bugs**, each with its
+own detailed section below:
 
-| File | Bug | Fixed by |
-|---|---|---|
-| `pzungql.f` | Lines 292-293 call `PB_TOPGET` to "restore" the BLACS broadcast topology saved at lines 247-248 — must be `PB_TOPSET`. `pcungql.f` has the correct call. Topology left in the temporary `'I-ring'` / `' '` state after return | `pzungql.f.patch` |
-| `pzunml2.f` | Same `PB_TOPGET`/`PB_TOPSET` typo at lines 394-395. `pcunml2.f` is correct | `pzunml2.f.patch` |
-| `pdsyevd.f` | Line 225: `LQUERY = (LWORK.EQ.-1)` — workspace query via `LIWORK=-1` alone is not recognized; the `LIWORK.LT.LIWMIN .AND. .NOT.LQUERY` check at line 255 fires and returns an error instead of reporting `LIWMIN`. `pssyevd.f` correctly uses `LWORK.EQ.-1 .OR. LIWORK.EQ.-1` | `pdsyevd.f.patch` |
-| `pslaed3.f` | Two bugs: (1) line 156 initializes the local `IINFO=0` but never initializes the output `INFO`, so successful return leaves `INFO` undefined. `pdlaed3.f` correctly initializes `INFO=0`. (2) Lines 168-171 write `INDROW(I+J)` / `INDCOL(I+J)` without bounds check — out-of-bounds write on the last outer-loop iteration when N isn't a multiple of NB. `pdlaed3.f` guards with `IF(I+J.LE.N)` | `pslaed3.f.patch` |
+- `pzungql.f` — PB_TOPGET should be PB_TOPSET (BLACS topology restore)
+- `pzunml2.f` — same PB_TOPGET/PB_TOPSET typo
+- `pdsyevd.f` — LQUERY missing `.OR. LIWORK.EQ.-1` branch
+- `pslaed3.f` — missing `INFO=0` init + missing bounds-guard on INDROW/INDCOL writes
 
-Pre-patch state: `recipes/scalapack.yaml` carried `prefer_source:
-PCUNGQL, PCUNML2` to route around the Z-half topology bugs in
-migrated output, and `expected_divergences:` whitelisted PCUNGQL,
-PCUNML2, PDLAED3, PDSYEVD. The patches retire all four whitelist
-entries and both `prefer_source` pins. The PDSYEVD patch is the only
-one that changes migrated output (qsyevd previously inherited the
-LIWORK-query bug from the D-canonical half); the other three were
-already routed around but are fixed in upstream-source for
-convergence and future Netlib upstreaming.
+Pre-patch the recipe carried `prefer_source: PCUNGQL, PCUNML2` to
+route migrated output around the Z-half topology bugs, plus
+`expected_divergences:` entries for all four pairs. The patches
+retire both `prefer_source` pins and four whitelist entries. The
+`pdsyevd` patch is the only one that changes migrated output (qsyevd
+previously inherited the LIWORK-query bug from the D-canonical half);
+the other three were already routed-around but are fixed at source
+for convergence and future Netlib upstreaming.
 
 Divergent-pair count: **26 → 22** post-patch.
+
+---
+
+### ScaLAPACK 2.2.3: `pzungql.f` / `pzunml2.f` fail to restore BLACS broadcast topology
+
+**Symptom.** After PZUNGQL or PZUNML2 returns, the BLACS process-grid
+broadcast topology for the routine's ICTXT is left in the temporary
+`'I-ring'` (rowwise) / `' '` (columnwise) state that the routine
+installed for its internal communication. The caller's previously
+configured topology is silently overwritten. Subsequent BLACS
+broadcasts on the same context use the unexpected topology, which
+can change reduction order (affecting roundoff) and, on some
+broadcast shapes, deadlock when the caller's protocol assumes a
+different ring direction.
+
+**Root cause.** Both routines follow the standard save-temporary-
+restore idiom for the broadcast topology — save the user's current
+topology with `PB_TOPGET`, install `'I-ring'` for the routine's own
+broadcasts with `PB_TOPSET`, and restore the user's via `PB_TOPSET`
+at the end. The Z-half copy-pastes `PB_TOPGET` into the *restore*
+position instead of `PB_TOPSET`. The C-half counterparts have the
+correct call.
+
+`pzungql.f:245-251`:
+
+```fortran
+*     Save the topologies, install the routine's working topology.
+      CALL PB_TOPGET( ICTXT, 'Broadcast', 'Rowwise',    ROWBTOP )
+      CALL PB_TOPGET( ICTXT, 'Broadcast', 'Columnwise', COLBTOP )
+      CALL PB_TOPSET( ICTXT, 'Broadcast', 'Rowwise',    'I-ring' )
+      CALL PB_TOPSET( ICTXT, 'Broadcast', 'Columnwise', ' ' )
+```
+
+`pzungql.f:292-293` (the bug — should be PB_TOPSET to restore):
+
+```fortran
+      CALL PB_TOPGET( ICTXT, 'Broadcast', 'Rowwise',    ROWBTOP )
+      CALL PB_TOPGET( ICTXT, 'Broadcast', 'Columnwise', COLBTOP )
+```
+
+`pcungql.f:292-293` (correct):
+
+```fortran
+      CALL PB_TOPSET( ICTXT, 'Broadcast', 'Rowwise',    ROWBTOP )
+      CALL PB_TOPSET( ICTXT, 'Broadcast', 'Columnwise', COLBTOP )
+```
+
+`pzunml2.f` has the same bug at lines 394-395 with identical
+surrounding context. `pcunml2.f:394-395` is correct.
+
+**Affected files.**
+- `external/scalapack-2.2.3/SRC/pzungql.f` lines 292-293.
+- `external/scalapack-2.2.3/SRC/pzunml2.f` lines 394-395.
+
+**Fix.** Change both `PB_TOPGET` calls at each site to `PB_TOPSET`.
+The `ROWBTOP` / `COLBTOP` arguments are already the saved values from
+lines 247-248 / 332-333; the routine just needs to push them back
+out via `PB_TOPSET` instead of re-reading the current (still-
+temporary) values via `PB_TOPGET`.
+
+**Patches.** `recipes/scalapack/patches/pzungql.f.patch`,
+`recipes/scalapack/patches/pzunml2.f.patch`.
+
+**Severity.** Caller-visible side effect: callers that rely on a
+specific broadcast topology after PZUNGQL / PZUNML2 returns get
+silently the wrong topology. May cause perf regression, change
+roundoff order, or deadlock depending on the caller's BLACS
+protocol. Not a memory-safety bug.
+
+**Why upstream's tests miss it.** ScaLAPACK's test driver constructs
+a fresh context per test case and tears it down after, so the
+topology leak isn't visible: the broken context is destroyed before
+anything else uses it. The bug surfaces only in long-running
+applications that reuse a context across many ScaLAPACK calls.
+
+**Upstream report.** File as a PR at
+https://github.com/Reference-ScaLAPACK/scalapack — both halves are
+trivial three-character fixes, and the C-half is the reference for
+correctness.
+
+---
+
+### ScaLAPACK 2.2.3: `pdsyevd.f` LQUERY recognizes only LWORK=-1, not LIWORK=-1
+
+**Symptom.** Calling `PDSYEVD` with `LIWORK = -1` and a positive
+LWORK (the LAPACK workspace-query convention asking *just* for the
+integer-workspace size) returns INFO = -16 instead of populating
+`IWORK(1) = LIWMIN` and returning INFO = 0. The S-half (`pssyevd`)
+handles the call correctly. Migrated `qsyevd` previously inherited
+the bug because D is the canonical default in the migrator.
+
+**Root cause.** `pdsyevd.f:225` defines the workspace-query predicate
+recognizing only LWORK = -1:
+
+```fortran
+            LQUERY = ( LWORK.EQ.-1 )
+```
+
+The subsequent validation at `pdsyevd.f:253-255` uses `.NOT.LQUERY`
+as the guard for both LWORK and LIWORK too-small checks:
+
+```fortran
+            ELSE IF( LWORK.LT.LWMIN .AND. .NOT.LQUERY ) THEN
+               INFO = -14
+            ELSE IF( LIWORK.LT.LIWMIN .AND. .NOT.LQUERY ) THEN
+               INFO = -16
+```
+
+With LIWORK = -1, the second branch evaluates `LIWORK.LT.LIWMIN`
+(true, since -1 < any positive LIWMIN) `.AND. .NOT.LQUERY` (true,
+since LQUERY was false). INFO = -16 is set, and the routine returns
+via the PXERBLA path without populating `WORK(1)` / `IWORK(1)`.
+
+`pssyevd.f:224` has the correct predicate:
+
+```fortran
+            LQUERY = ( LWORK.EQ.-1 .OR. LIWORK.EQ.-1 )
+```
+
+**Affected files.**
+- `external/scalapack-2.2.3/SRC/pdsyevd.f` line 225.
+
+**Fix.** Replace `LQUERY = ( LWORK.EQ.-1 )` with `LQUERY = (
+LWORK.EQ.-1 .OR. LIWORK.EQ.-1 )`. This matches the S-half and the
+LAPACK convention: either workspace argument set to -1 indicates a
+size-query call.
+
+**Patch.** `recipes/scalapack/patches/pdsyevd.f.patch`.
+
+**Severity.** API contract violation. Standard LAPACK convention is
+that *either* LWORK = -1 *or* LIWORK = -1 signals a workspace query.
+Callers using the LIWORK-only query form (common when the caller
+already knows LWORK is sufficient and only wants to right-size IWORK)
+get a confusing INFO = -16 error. This is the same upstream-weakness
+family as the documented `pzheevd.f / pcheevd.f miss LIWORK
+validation` bug above — both are LIWORK-handling gaps in the
+heevd / syevd family, but they fail in opposite directions (pzheevd
+admits too-small LIWORK silently; pdsyevd rejects the legitimate
+LIWORK = -1 query).
+
+**Why upstream's tests miss it.** Upstream test drivers exercise
+workspace queries via LWORK = -1, not LIWORK = -1 alone. The S-half
+correctness was likely a happy accident of one developer writing
+the inclusive form by habit.
+
+**Upstream report.** File as a PR at
+https://github.com/Reference-ScaLAPACK/scalapack — the fix is a
+single-line change and the S-half provides the reference for the
+correct predicate form.
+
+---
+
+### ScaLAPACK 2.2.3: `pslaed3.f` two bugs — uninitialized INFO + missing bounds guard
+
+**Symptom.** Two independent bugs in the S-half copy of the secular-
+equation solver:
+
+1. The output parameter `INFO` is never initialized on the success
+   path. Callers that read `INFO == 0` to mean "success" instead
+   see whatever stack-garbage value was on entry. The D-half
+   (`pdlaed3.f`) correctly initializes `INFO = 0`.
+
+2. The block-cyclic distribution loop writes `INDROW(I+J)` and
+   `INDCOL(I+J)` without a bounds check. When N is not a multiple
+   of NB, the final outer-loop iteration's inner loop overruns
+   the INDROW / INDCOL arrays by `(I + NB - 1) - N` entries. The
+   D-half guards with `IF (I+J.LE.N)`.
+
+**Root cause 1 — uninitialized INFO.** `pslaed3.f:156`:
+
+```fortran
+*     Test the input parameters.
+*
+      IINFO = 0
+*
+*     Quick return if possible
+*
+      IF( K.EQ.0 )
+     $   RETURN
+```
+
+The initialization is on the *local* variable `IINFO` (used as the
+out-arg of the `SLAED4` calls at lines 209 / 316). The *output
+parameter* `INFO` is declared at line 12 but only written when
+`IINFO.NE.0` at lines 211 / 318. On the success path INFO is never
+written.
+
+`pdlaed3.f:156` correctly initializes the output parameter:
+
+```fortran
+      INFO = 0
+```
+
+(Note: pdlaed3 doesn't initialize IINFO at all — the redundant
+`IINFO = 0` in pslaed3 is dead code from the same edit that
+introduced the typo.)
+
+**Root cause 2 — missing bounds guard.** `pslaed3.f:166-173`:
+
+```fortran
+      ROW = DROW
+      COL = DCOL
+      DO 20 I = 1, N, NB
+         DO 10 J = 0, NB - 1
+            INDROW( I+J ) = ROW
+            INDCOL( I+J ) = COL
+   10    CONTINUE
+         ROW = MOD( ROW+1, NPROW )
+         COL = MOD( COL+1, NPCOL )
+   20 CONTINUE
+```
+
+When `N` is not a multiple of `NB`, the final outer iteration runs
+with `I + (NB-1) > N`. The inner loop writes past the end of INDROW
+/ INDCOL. The arrays are caller-supplied with documented size N, so
+this is a memory-safety bug.
+
+`pdlaed3.f:168-172` has the guard:
+
+```fortran
+         DO 10 J = 0, NB - 1
+            IF( I+J.LE.N ) THEN
+               INDROW( I+J ) = ROW
+               INDCOL( I+J ) = COL
+            END IF
+   10    CONTINUE
+```
+
+**Affected files.**
+- `external/scalapack-2.2.3/SRC/pslaed3.f` lines 156 and 168-171.
+
+**Fix.** (a) Replace `IINFO = 0` with `INFO = 0` at line 156. (b)
+Wrap the INDROW/INDCOL writes in `IF (I+J.LE.N) THEN ... END IF`.
+Both changes copy the D-half verbatim.
+
+**Patch.** `recipes/scalapack/patches/pslaed3.f.patch`.
+
+**Severity.** (1) Uninitialized output parameter — undefined
+behavior in caller-visible state, although in practice many callers
+ignore INFO on the success path. Spec-violation but rarely caught.
+(2) Out-of-bounds memory write — undefined behavior, memory
+corruption when N % NB != 0. The crashes are non-deterministic
+(depends on what follows INDROW / INDCOL in caller memory). May
+surface as silent corruption of unrelated data.
+
+**Why upstream's tests miss it.** Bug 1 is masked because most
+callers don't check INFO on the success path, and stack memory
+sometimes contains 0. Bug 2 is masked because ScaLAPACK's standard
+test grid uses N values that are multiples of NB; the failure
+condition `N % NB != 0` is outside the regular test matrix.
+
+**Upstream report.** File as a PR at
+https://github.com/Reference-ScaLAPACK/scalapack — both fixes are
+mechanical (copy from D-half) and the D-half is the reference.
 
 ## 2026-05-11 symmetric-fix sweep (ScaLAPACK)
 
