@@ -41,26 +41,48 @@ be 22 separate one-line patches with zero functional effect).
 | `dorbdb4.f` | `ONE` (DOUBLE PRECISION) | declaration block | sorbdb4 omits | Same |
 | `dsterf.f` | `RMAX` (DOUBLE PRECISION) | line 112 | ssterf omits | Declared, **assigned** at line 148 (`RMAX = DLAMCH('O')`), but never read afterward |
 | `ssysv_aa.f` | `ILAENV_EP` (INTEGER func) | declaration block | dsysv_aa omits | Declared but never called |
+| `zgetf2.f` | `SFMIN` (DOUBLE PRECISION) + `DLAMCH` external | line 129, 133, 167 | cgetf2 omits both | See discussion below; safety lives in ZRSCL |
 
-## Adjacent cases worth flagging (not strictly "D-class dead")
+## zgetf2 SFMIN — a D-class case that initially looked like a bug
 
-These look like dead declarations from the diverge comparator's
-perspective but actually surface a sibling-side bug. They are listed
-in `doc/UPSTREAM_BUGS.md` under "B? candidates flagged for domain
-review":
+**zgetf2.f line 129 + 167**: declares `DOUBLE PRECISION SFMIN`,
+assigns `SFMIN = DLAMCH('S')`, then never reads it. cgetf2 (the
+sibling) correctly omits both the declaration and the assignment.
 
-- **`cgetf2.f`** lacks the `SFMIN` declaration; **`zgetf2.f`**
-  declares `SFMIN` and assigns it (`SFMIN = DLAMCH('S')`) but
-  **never reads it**. `sgetf2` and `dgetf2` both use SFMIN as a
-  safety threshold at line 184 (`IF (ABS(A(J,J)) .GE. SFMIN) ...`).
-  So **both** complex halves are missing the safety check — zgetf2
-  copy-pasted the declaration without the check, cgetf2 omitted both.
-  This is a real correctness gap (rare overflow in pivoting near
-  underflow) and belongs in UPSTREAM_BUGS, not here.
+This was initially flagged as a potential missing-safety-check bug
+because sgetf2 / dgetf2 use SFMIN to gate the pivot scaling at
+line 184:
+
+```fortran
+IF( ABS(A(J,J)) .GE. SFMIN ) THEN
+   CALL SSCAL( M-J, ONE / A(J,J), A(J+1,J), 1 )    ! fast reciprocal
+ELSE
+   DO I = 1, M-J                                    ! safe per-element
+      A(J+I,J) = A(J+I,J) / A(J,J)
+   END DO
+END IF
+```
+
+— making it look like zgetf2 has the SFMIN declaration but lost
+the IF branch around it. But on closer reading, both **cgetf2 and
+zgetf2** delegate the pivot scaling to a dedicated routine
+(`CRSCL` / `ZRSCL`, "reciprocal scaling") which internally handles
+the underflow-safe split. The S/D halves inline what C/Z do via a
+helper call. So:
+
+- The safety check **is** present on every half — just structured
+  differently between the real and complex variants.
+- zgetf2's `SFMIN = DLAMCH('S')` is genuinely dead code, left over
+  from a refactor that moved the safe-scaling logic into ZRSCL but
+  didn't remove the now-unused threshold value.
+- cgetf2 was cleaned up correctly.
+
+Categorized as a D-class dead declaration alongside the others —
+no UPSTREAM_BUGS entry needed.
 
 ## Aggregate
 
-- **Total dead-declaration cases**: 23
+- **Total dead-declaration cases**: 24
 - **Aggregate cosmetic impact**: each contributes ~1-3 lines to the
   per-pair diff in the no-whitelist divergence report
 - **Patch cost if cleanup is wanted**: ~23 one-line patches
