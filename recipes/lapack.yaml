@@ -211,6 +211,8 @@ patches:
   # I06: ?laqz2 LWORK INFO -26 → -25
   - zlaqz2.f.patch
   - claqz2.f.patch        # sibling: same fix
+  # 2026-05-12 B? deep-dive promotion:
+  - cgedmdq.f90.patch     # LQUERY missing LZWORK==-1; ZWORK(1)/(2) init; inner CGEDMD query call args
 
 # Files dropped from the migrated archive:
 #  - ZC*/DS* mixed-precision iterative-refinement drivers and

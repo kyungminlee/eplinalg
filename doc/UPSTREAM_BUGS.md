@@ -405,6 +405,153 @@ condition `N % NB != 0` is outside the regular test matrix.
 https://github.com/Reference-ScaLAPACK/scalapack — both fixes are
 mechanical (copy from D-half) and the D-half is the reference.
 
+## 2026-05-12 B? deep-dive (LAPACK + ScaLAPACK)
+
+The four B? items remaining in the `2026-05-11` audits were
+re-examined; one promoted to B (fixable patch), two stayed B?
+(domain-gated — file as Netlib issues), one stayed B? (subtle
+workspace formula). Details below.
+
+### Promoted to B: `cgedmdq.f90` — three workspace-query bugs
+
+**Symptom.** `CGEDMDQ` is the Q-projected variant of the DMD driver.
+Three independent bugs in its workspace-query path, all absent from
+`ZGEDMDQ`:
+
+1. **Line 638: LQUERY missing LZWORK==-1.** The query predicate
+   recognizes only `LWORK==-1` or `LIWORK==-1`, not `LZWORK==-1`.
+   A caller asking only for the complex-workspace size by passing
+   `LZWORK=-1` and positive LWORK/LIWORK hits the validation block
+   instead of the query block, and returns INFO=-31 (or similar
+   negative INFO) instead of populating ZWORK(1)/(2). Same shape as
+   the `pdsyevd.f` and `pzheevd.f` LIWORK gaps documented above —
+   this is now the **fourth occurrence of this exact bug shape** in
+   the LAPACK/ScaLAPACK family.
+
+2. **Lines 700-701: missing ZWORK(1)/(2) init in the void-input
+   quick-return.** When `N==0` or `N==1` and `LQUERY` is true, the
+   routine sets `IWORK(1)=1`, `WORK(1)=2`, `WORK(2)=2` and returns.
+   It does NOT set `ZWORK(1)/(2)`, so the caller reads stale memory
+   for the complex-workspace size. ZGEDMDQ at the analogous line
+   (699-702) sets all five (`IWORK`, `ZWORK(1)/(2)`, `WORK(1)/(2)`).
+
+3. **Line 725: inner CGEDMD workspace query passes wrong arg
+   shape.** During the LQUERY path, CGEDMDQ calls inner CGEDMD to
+   discover its workspace requirements. The c-half call:
+
+   ```fortran
+   CALL CGEDMD( ..., S, LDS, ZWORK, LZWORK, WORK, -1, IWORK,
+                LIWORK, INFO1 )
+   ```
+   passes the user-supplied LZWORK and LIWORK rather than `-1`. So
+   CGEDMD only enters query mode for LWORK and only populates
+   `WORK(1)`. The subsequent reads `MLWDMD = INT(ZWORK(1))` and
+   `IMINWR = MAX(IMINWR, IWORK(1))` see stale/garbage values, so
+   CGEDMDQ's reported optimal LZWORK and LIWORK are wrong.
+
+   ZGEDMDQ at line 726 passes `-1` to all three workspace args:
+
+   ```fortran
+   CALL ZGEDMD( ..., S, LDS, ZWORK, -1, WORK, -1, IWORK,
+                -1, INFO1 )
+   ```
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/cgedmdq.f90` line 638 (LQUERY); lines
+  700-701 (void-input quick-return missing ZWORK init); line 725
+  (inner CGEDMD query call).
+
+**Fix.** Patch all three from the Z-half reference. See
+`recipes/lapack/patches/cgedmdq.f90.patch`.
+
+**Severity.** Workspace-query API contract violation. Callers
+following the LAPACK convention (either `LZWORK=-1` for a complex-
+workspace-only query, OR full `LWORK=LZWORK=LIWORK=-1`) get wrong
+results. Migrated `qgedmdq` is unaffected (Z is canonical), but the
+upstream `cgedmdq.f90` is broken for direct single-complex users.
+
+**Why upstream's tests miss it.** Same as the pzheevd / pcheevd /
+pdsyevd LIWORK family: workspace queries by individual workspace
+arg (rather than the bundled all-args query) are uncommon in
+upstream test drivers. The ZGEDMDQ branch is exercised; CGEDMDQ
+likely went through a single mechanical S→C find-replace pass that
+preserved the (broken) shape from an earlier draft.
+
+**Upstream report.** File as a PR at
+https://github.com/Reference-LAPACK/lapack — the fix is mechanical
+(copy from ZGEDMDQ).
+
+### Stays B?: `cgedmd` vs `zgedmd` — two independent inconsistencies
+
+**Symptom.** Two distinct cross-half asymmetries in the GEDMD
+driver, each with a 3-vs-1 vote shape (three halves agree, one is
+the outlier — but the *outlier is a different file* in each case):
+
+| Asymmetry | sgedmd | dgedmd | cgedmd | zgedmd |
+|---|---|---|---|---|
+| Inner `?GEJSV` JOBR arg (positional 4 in the call) | `'N'` | `'N'` | `'N'` | **`'R'`** |
+| `OFL` overflow threshold formula | `SLAMCH('O')` | `DLAMCH('O')` | **`SLAMCH('O')*SLAMCH('P')`** | `DLAMCH('O')` |
+
+`zgedmd` is the outlier on JOBR; `cgedmd` is the outlier on OFL.
+
+**Why each matters.** JOBR `'R'` tells GEJSV to flag and discard
+singular values smaller than the overflow threshold; `'N'` keeps
+them all. Different filtering strictness. The OFL formula sets the
+threshold used in `IF (SCALE .GE. (OFL / ROOTSC))` at lines 774 and
+848 — a scaling-safety guard. `LAMCH('O')*LAMCH('P')` is much
+smaller than `LAMCH('O')` (multiplying by precision epsilon),
+making cgedmd's guard fire on a much larger range of inputs.
+
+Both differences are real algorithmic choices. Each could be (a) a
+fix that landed on one half and wasn't backported, or (b) a typo
+that escaped review. Without DMD-domain expertise we cannot tell
+which half is correct in either case.
+
+**Affected files.**
+- `external/lapack-3.12.1/SRC/cgedmd.f90:703, 916` (JOBR `'N'`).
+- `external/lapack-3.12.1/SRC/zgedmd.f90:704, 916` (JOBR `'R'`).
+- `external/lapack-3.12.1/SRC/cgedmd.f90:751` (OFL conservative).
+- `external/lapack-3.12.1/SRC/zgedmd.f90:751` (OFL raw).
+- `external/lapack-3.12.1/SRC/sgedmd.f90:772` (OFL raw, JOBR `'N'`).
+- `external/lapack-3.12.1/SRC/dgedmd.f90:772` (OFL raw, JOBR `'N'`).
+
+**Upstream report.** File as **two separate issues** (not PRs) on
+the Netlib LAPACK tracker — one per asymmetry. Authors of the
+GEDMD/GEJSV family (cited in the file headers as Z. Drmac et al.)
+have the context to decide which form is canonical for each.
+
+### Stays B?: `pslaqr3` vs `pdlaqr3` — LWK8 workspace formula divergence
+
+**Symptom.** `pslaqr3.f` computes `LWK8 = 2*TZROWS*TZCOLS` at line
+400, where `TZROWS` and `TZCOLS` are NUMROC computations of the
+block-cyclic dimensions of an auxiliary matrix. `pdlaqr3.f` line
+398 hardcodes `LWK8 = 0` and never computes TZROWS/TZCOLS — those
+variables are declared at line 258 of both halves but only used in
+the S-half. LWK8 feeds into the `LWKOPT = MAX(LWK1, ..., LWK8)`
+that the routine returns as the optimal-workspace estimate.
+
+**Possible interpretations.**
+- pdlaqr3 under-reports LWKOPT — a bug; callers that allocate
+  `LWORK = LWKOPT` may hit insufficient-workspace at runtime in
+  inner routines.
+- pslaqr3 over-reports LWKOPT — harmless conservatism; callers
+  allocate extra unused memory.
+- LWK8 represents workspace for an optional code path that's
+  exercised in S but not D — neither over- nor under-reports.
+
+**Additional finding.** `pdlaqr3.f:273` declares `MPI_WTIME` in its
+EXTERNAL list but never calls it. Pure dead-EXTERNAL (D-class), not
+related to the LWK8 question but worth noting.
+
+**Affected files.**
+- `external/scalapack-2.2.3/SRC/pslaqr3.f` lines 398-400.
+- `external/scalapack-2.2.3/SRC/pdlaqr3.f` line 398.
+
+**Upstream report.** File as an issue on the Netlib ScaLAPACK
+tracker. Resolution requires reading the LWK1..LWK8 algorithm and
+matching each LWKi to a specific workspace consumer — which is
+ScaLAPACK QR-iteration domain knowledge.
+
 ## 2026-05-11 symmetric-fix sweep (ScaLAPACK)
 
 Every D/Z-half ScaLAPACK patch that previously stood alone has been
