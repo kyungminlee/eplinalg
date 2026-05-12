@@ -114,6 +114,14 @@ family (newer LAPACK, known asymmetric maintenance):**
   `LWRSVQ = MAX(MWRSVQ, INT(RDUMMY(1)))` — D has a safety floor S
   lacks.
 
+> **Reporting note.** These three items, plus the `ssytri2` ILAENV
+> inconsistency above, should be filed **as issues** on the Netlib
+> LAPACK tracker (https://github.com/Reference-LAPACK/lapack/issues),
+> *not* as PRs. We cannot determine the correct resolution from
+> reading the source alone — picking one branch over the other for
+> a PR would be a guess. The maintainers / GEDMD-GEJSV authors have
+> the algorithmic context to decide which half is canonical.
+
 Net of the deep-dive: zero new migrator patches; one upstream-only
 report candidate (ssytri2 ILAENV typo).
 
