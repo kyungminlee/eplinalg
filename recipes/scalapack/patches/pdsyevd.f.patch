@@ -1,0 +1,11 @@
+--- a/pdsyevd.f
++++ b/pdsyevd.f
+@@ -222,7 +222,7 @@
+             NP = NUMROC( N, NB, MYROW, IAROW, NPROW )
+             NQ = NUMROC( N, NB, MYCOL, IACOL, NPCOL )
+ *
+-            LQUERY = ( LWORK.EQ.-1 )
++            LQUERY = ( LWORK.EQ.-1 .OR. LIWORK.EQ.-1 )
+             TRILWMIN = 3*N + MAX( NB*( NP+1 ), 3*NB )
+             LWMIN = MAX( 1+6*N+2*NP*NQ, TRILWMIN ) + 2*N
+             LIWMIN = 7*N + 8*NPCOL + 2

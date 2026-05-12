@@ -128,6 +128,31 @@ report candidate (ssytri2 ILAENV typo).
 See `doc/lapack-residual-divergence-categorization.md` for the full
 110-pair classification and the deep-dive table.
 
+## 2026-05-11 ScaLAPACK residual-divergence audit
+
+Per-pair audit of the 26 ScaLAPACK divergent pairs surfaced four real
+upstream bugs (see `doc/scalapack-residual-divergence-categorization.md`
+for the full categorization):
+
+| File | Bug | Fixed by |
+|---|---|---|
+| `pzungql.f` | Lines 292-293 call `PB_TOPGET` to "restore" the BLACS broadcast topology saved at lines 247-248 — must be `PB_TOPSET`. `pcungql.f` has the correct call. Topology left in the temporary `'I-ring'` / `' '` state after return | `pzungql.f.patch` |
+| `pzunml2.f` | Same `PB_TOPGET`/`PB_TOPSET` typo at lines 394-395. `pcunml2.f` is correct | `pzunml2.f.patch` |
+| `pdsyevd.f` | Line 225: `LQUERY = (LWORK.EQ.-1)` — workspace query via `LIWORK=-1` alone is not recognized; the `LIWORK.LT.LIWMIN .AND. .NOT.LQUERY` check at line 255 fires and returns an error instead of reporting `LIWMIN`. `pssyevd.f` correctly uses `LWORK.EQ.-1 .OR. LIWORK.EQ.-1` | `pdsyevd.f.patch` |
+| `pslaed3.f` | Two bugs: (1) line 156 initializes the local `IINFO=0` but never initializes the output `INFO`, so successful return leaves `INFO` undefined. `pdlaed3.f` correctly initializes `INFO=0`. (2) Lines 168-171 write `INDROW(I+J)` / `INDCOL(I+J)` without bounds check — out-of-bounds write on the last outer-loop iteration when N isn't a multiple of NB. `pdlaed3.f` guards with `IF(I+J.LE.N)` | `pslaed3.f.patch` |
+
+Pre-patch state: `recipes/scalapack.yaml` carried `prefer_source:
+PCUNGQL, PCUNML2` to route around the Z-half topology bugs in
+migrated output, and `expected_divergences:` whitelisted PCUNGQL,
+PCUNML2, PDLAED3, PDSYEVD. The patches retire all four whitelist
+entries and both `prefer_source` pins. The PDSYEVD patch is the only
+one that changes migrated output (qsyevd previously inherited the
+LIWORK-query bug from the D-canonical half); the other three were
+already routed around but are fixed in upstream-source for
+convergence and future Netlib upstreaming.
+
+Divergent-pair count: **26 → 22** post-patch.
+
 ## 2026-05-11 symmetric-fix sweep (ScaLAPACK)
 
 Every D/Z-half ScaLAPACK patch that previously stood alone has been

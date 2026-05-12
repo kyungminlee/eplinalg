@@ -145,15 +145,10 @@ skip_files:
   - PJLAENV
   - PILAENVX
 
-# Override D/Z-first canonical selection for pairs where the Z half
-# carries an upstream bug that the C half does not. PZUNGQL / PZUNML2
-# call PB_TOPGET in their restore step where they should call
-# PB_TOPSET (copy-paste bug in ScaLAPACK 2.2.3 — the C counterparts
-# have the correct PB_TOPSET). Pinning PCUNGQL / PCUNML2 as canonical
-# makes the migrated output inherit the correct restore logic.
+# Override D/Z-first canonical selection for pairs whose D/Z half
+# needs to win convergence against a sibling that doesn't carry the
+# corresponding source_overrides patch.
 prefer_source:
-  - PCUNGQL   # fixes restore bug in pzungql.f:292-293
-  - PCUNML2   # fixes restore bug in pzunml2.f:394-395
   # Pin the D/Z half as canonical so the source_overrides on
   # pdlanhs.f / pzlanhs.f win convergence (the canonical-rank
   # picker doesn't recognize ScaLAPACK's pd*/pz* prefix shape, so
@@ -311,6 +306,11 @@ patches:
   - pslascl.f.patch
   - pzlascl.f.patch
   - pclascl.f.patch
+  # 2026-05-11 audit (doc/scalapack-residual-divergence-categorization.md)
+  - pzungql.f.patch    # PB_TOPGET → PB_TOPSET (topology restore)
+  - pzunml2.f.patch    # PB_TOPGET → PB_TOPSET (topology restore)
+  - pdsyevd.f.patch    # LQUERY missing LIWORK.EQ.-1 branch
+  - pslaed3.f.patch    # missing INFO=0 init + missing I+J.LE.N guard
 
 # local_renames: (reserved for non-precision local-variable drift like
 # CONJTOPH→TTOPH that isn't an S↔D / C↔Z prefix swap. Precision-prefix
@@ -342,14 +342,10 @@ expected_divergences:
   - PCLAWIL          # call-shape divergence
   - PCPOTF2          # function vs subroutine restructure across halves
   - PCTREVC          # algorithmic split
-  - PCUNGQL          # see prefer_source comment (C-side intentionally canonical)
-  - PCUNML2          # see prefer_source comment
   - PDLACON          # declaration reorder
-  - PDLAED3          # bug fix only on D half (INFO=0 + IF guard)
   - PDLAQR3          # MPI_WTIME external + LWK8 split
   - PDLAWIL          # call-shape divergence
   - PDSTEBZ          # IEFLAG branch restructure (D-only)
-  - PDSYEVD          # LIWORK validation split
   - PDSYTTRD         # CONJTOPH vs TTOPH (Hermitian vs symmetric)
   - PDTRSEN          # multi-line vs single-line IF
   - PSGESVD          # per-precision WPS/WPD rename mirror of PCGESVD

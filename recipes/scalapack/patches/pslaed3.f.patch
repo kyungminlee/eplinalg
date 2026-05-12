@@ -1,0 +1,24 @@
+--- a/pslaed3.f
++++ b/pslaed3.f
+@@ -153,7 +153,7 @@
+ *
+ *     Test the input parameters.
+ *
+-      IINFO = 0
++      INFO = 0
+ *
+ *     Quick return if possible
+ *
+@@ -166,8 +166,10 @@
+       COL = DCOL
+       DO 20 I = 1, N, NB
+          DO 10 J = 0, NB - 1
+-            INDROW( I+J ) = ROW
+-            INDCOL( I+J ) = COL
++            IF( I+J.LE.N ) THEN
++               INDROW( I+J ) = ROW
++               INDCOL( I+J ) = COL
++            END IF
+    10    CONTINUE
+          ROW = MOD( ROW+1, NPROW )
+          COL = MOD( COL+1, NPCOL )
