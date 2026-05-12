@@ -832,9 +832,17 @@ def _canonicalize_for_compare(text: str) -> str:
     #    writes "INTRINSIC REAL, CONJG, MAX" while Z source writes
     #    "INTRINSIC CONJG, MAX, MIN, REAL".
     def _sort_decl(match: re.Match) -> str:
+        # Sort with a precision-neutral key so co-family halves whose
+        # local-variable names differ only at an S↔D / C↔Z position
+        # (``WPSLANGE`` vs ``WPDLANGE``, ``SIZEPZHETRD`` vs
+        # ``SIZEPCHETRD``) land in the same order. Without the
+        # neutral key the post-sort positions diverge and
+        # ``_filter_precision_drift`` no longer recognizes the pair as
+        # token-aligned.
         kw = match.group(1)
         items = [s.strip() for s in match.group(2).split(',')]
-        return f'{kw} ' + ', '.join(sorted(items))
+        key = lambda s: s.replace('S', 'D').replace('C', 'Z')
+        return f'{kw} ' + ', '.join(sorted(items, key=key))
     text = re.sub(
         r'\b(INTRINSIC|EXTERNAL|INTEGER|LOGICAL|COMPLEX|REAL)\s+'
         r'([A-Za-z_@][A-Za-z0-9_@,\s]*?)(?=$)',
@@ -1171,14 +1179,10 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
             _strip_fortran_comments(texts[other], other.suffix))
         if n_can == n_oth:
             continue
-        diff = [
-            line for line in difflib.unified_diff(
-                n_oth.splitlines(), n_can.splitlines(),
-                lineterm='', n=0,
-            )
-            if line.startswith(('-', '+'))
-            and not line.startswith(('---', '+++'))
-        ]
+        diff = _filter_precision_drift(
+            n_oth.splitlines(), n_can.splitlines())
+        if not diff:
+            continue
         report.append({
             'target': target_filename(canonical.name, rename_map, target_mode),
             'canonical': canonical.name,
