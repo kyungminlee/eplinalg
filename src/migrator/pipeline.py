@@ -661,8 +661,12 @@ def _canonicalize_for_compare(text: str) -> str:
     text = re.sub(r"\b(\w*\d\w*)\s*\(\s*'([^']+)'\s*\)", r"\2", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(\w*\d\w*)\s*\(([^)]+)\)", r"\2", text, flags=re.IGNORECASE)
 
-    # 1. d/D exponent → E in numeric literals
-    text = re.sub(r'(\d)[dD]([+-]?\d)', r'\1E\2', text)
+    # 1. d/D exponent → E in numeric literals. The leading character may
+    #    be a digit or a ``.`` (Fortran allows ``1.D0`` as a typed-real
+    #    literal) — needed to fold ``1.D0`` ↔ ``1`` cosmetic drift between
+    #    MUMPS S/D halves (sana_aux_par writes ``SYMMETRY = 1.D0`` while
+    #    dana_aux_par writes ``SYMMETRY = 1``).
+    text = re.sub(r'([\d.])[dD]([+-]?\d)', r'\1E\2', text)
     # 2. Strip _N kind suffixes on literals (suffix after a digit)
     text = re.sub(r'(\d)_\d+\b', r'\1', text)
     # 3. Drop insignificant exponents (E0/E+0/e-0/E00 ...)
@@ -697,6 +701,19 @@ def _canonicalize_for_compare(text: str) -> str:
     # 5. Canonicalize prefix-dependent identifiers
     text = re.sub(
         r'(?<![A-Za-z0-9])[sdczSDCZ]+(?=[A-Za-z])', '@', text,
+    )
+    # 5_str. The previous rule requires a non-alphanumeric lookbehind so
+    #     it doesn't fold the ``D`` inside ``DBLE`` or the ``S`` inside
+    #     ``STOP``. But MUMPS error strings embed routine names directly
+    #     after a leading word with no separator (e.g.
+    #     ``"... message inSMUMPS_BUF_SEND_BLOCFACTO"`` vs
+    #     ``"... message inDMUMPS_BUF_..."``). Collapse the precision
+    #     letter immediately preceding the library-specific roots
+    #     ``MUMPS_``, ``LAPACK``, ``BLAS``, ``BLACS``, ``SCALAPACK`` so
+    #     these literal-embedded names converge regardless of context.
+    text = re.sub(
+        r'[sdczSDCZ](?=MUMPS_|LAPACK|BLAS|BLACS|SCALAPACK)',
+        '@', text,
     )
     # 5a. iso_fortran_env kind imports: ``only: real32`` vs
     #     ``only: real64`` survive as an unused import (after the
