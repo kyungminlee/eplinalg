@@ -515,6 +515,24 @@ which half is correct in either case.
 - `external/lapack-3.12.1/SRC/sgedmd.f90:772` (OFL raw, JOBR `'N'`).
 - `external/lapack-3.12.1/SRC/dgedmd.f90:772` (OFL raw, JOBR `'N'`).
 
+**Severity.** Numerical accuracy / robustness, not memory safety
+or API contract. JOBR `'R'` vs `'N'` changes which singular values
+GEJSV reports — for ill-conditioned inputs the two halves can
+return different DMD spectra. OFL formula difference changes the
+threshold at which cgedmd's scaling-safety guard fires; for inputs
+near the overflow boundary, cgedmd takes the safe-scaling branch
+while sgedmd/dgedmd/zgedmd take the fast-scaling branch. Whether
+the safe branch produces a *more* or *less* accurate result is
+algorithm-dependent.
+
+**Why upstream's tests miss them.** GEDMD landed in LAPACK 3.10
+(2021) and the GEDMD test suite focuses on well-conditioned DMD
+spectra. Neither asymmetry causes a test failure on the standard
+matrices. The 3-vs-1 vote shape with the outlier on a different
+file in each case strongly suggests these are uncoordinated
+hand-edits made during separate review passes rather than a
+deliberate per-precision design choice.
+
 **Upstream report.** File as **two separate issues** (not PRs) on
 the Netlib LAPACK tracker — one per asymmetry. Authors of the
 GEDMD/GEJSV family (cited in the file headers as Z. Drmac et al.)
@@ -544,8 +562,26 @@ EXTERNAL list but never calls it. Pure dead-EXTERNAL (D-class), not
 related to the LWK8 question but worth noting.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pslaqr3.f` lines 398-400.
-- `external/scalapack-2.2.3/SRC/pdlaqr3.f` line 398.
+- `external/scalapack-2.2.3/SRC/pslaqr3.f` lines 398-400 (LWK8
+  computation present); line 258 (TZROWS/TZCOLS declarations,
+  used).
+- `external/scalapack-2.2.3/SRC/pdlaqr3.f` line 398 (LWK8=0
+  hardcoded); line 258 (TZROWS/TZCOLS declared but never used);
+  line 273 (dead `MPI_WTIME` in EXTERNAL list).
+
+**Severity.** Depends on interpretation. If pdlaqr3 truly
+under-reports LWKOPT, callers querying workspace and allocating
+exactly that size hit runtime errors in inner routines — caller-
+visible failure on workspace-sized usage. If LWK8 represents an
+optional code path or pslaqr3 over-reports, the difference is
+harmless. The bug-vs-cosmetic distinction cannot be made by static
+reading.
+
+**Why upstream's tests miss them.** ScaLAPACK's pslaqr3/pdlaqr3
+test driver likely allocates workspace generously (not via
+LWKOPT query) so any under-reporting in pdlaqr3 goes unnoticed.
+The dead `TZROWS`/`TZCOLS`/`MPI_WTIME` declarations are pure
+compile-time hygiene and never cause a test failure.
 
 **Upstream report.** File as an issue on the Netlib ScaLAPACK
 tracker. Resolution requires reading the LWK1..LWK8 algorithm and
