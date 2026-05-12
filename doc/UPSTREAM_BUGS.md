@@ -8,6 +8,94 @@ This document catalogues bugs found in the vendored upstream sources
 editing `external/`. Each entry records the symptom, root cause, and
 the in-tree workaround.
 
+## 2026-05-11 LAPACK residual-divergence audit
+
+After the symmetric-fix sweep below cleared the asymmetric-patch
+backlog, an audit of the remaining 122 raw S↔D / C↔Z divergences
+surfaced 13 more upstream LAPACK bugs (and one ScaLAPACK / one
+migrator-side fix). All patches live under `recipes/lapack/patches/`
+unless noted otherwise.
+
+Numerical or correctness-affecting bugs:
+
+| File | Bug | Sibling state |
+|---|---|---|
+| `clahef.f` | IPIV-undo loop boundary off-by-one in **both** branches: upper uses `J.LE.N` where `slasyf` / `dlasyf` / `zlahef` use `J.LT.N`; lower uses `J.GE.1` where the family uses `J.GT.1`. One extra iteration of the swap-back loop, redundant `CSWAP` at edge | clahef alone — fixed via `clahef.f.patch` |
+| `slaqr5.f` | Line 604 typo: `T3 = T2*VT(3)` introduces a stray `VT(2)` factor (since `T2 = T1*VT(2)`). Every other `T3 = ...` site in slaqr5 (5 of them) and dlaqr5 all use `T3 = T1*VT(3)`. Affects the bulge-start tolerance test at line 608, so the bug can change bulge-start decisions in the single-precision QR iteration | slaqr5 alone — fixed via `slaqr5.f.patch` |
+| `cgesvj.f` | Lines 512-513: `BIG = ONE / SFMIN` is active while `BIG = SLAMCH('Overflow')` is commented out. The other three siblings (sgesvj, dgesvj, zgesvj) all use the LAMCH form (the canonical LAPACK overflow constant). At edge values the two forms differ | cgesvj alone — fixed via `cgesvj.f.patch` |
+| `sgeesx.f` | Line 648: `IWORK(1) = SDIM*(N-SDIM)` returns 0 when `SDIM=0` or `SDIM=N`. dgeesx wraps in `MAX(1, ...)` per LAPACK API convention (optimal-workspace report must be ≥1) | sgeesx alone — fixed via `sgeesx.f.patch` |
+| `zgemlq.f` | Lines 261 and 286: `WORK(1) = LW` where the three siblings (cgemlq, sgemlq, dgemlq) all return `LWMIN`. `LWMIN = MAX(1, LW)`; zgemlq reports 0 instead of 1 for empty input | zgemlq alone — fixed via `zgemlq.f.patch` |
+| `stgex2.f` | Lines 289 and 291: `LWORK.LT.MAX(N*M, M*M*2)` and `WORK(1) = REAL(MAX(N*M, M*M*2))` missing the LAPACK-conventional `MAX(1, ...)` floor. dtgex2 has the guard | stgex2 alone — fixed via `stgex2.f.patch` |
+| `cheevx.f` | Line 360: `LWKOPT = (NB+1)*N` missing the `MAX(1, ...)` guard that zheevx has at the same site. Returns LWKOPT=0 when N=0 | cheevx alone — fixed via `cheevx.f.patch` |
+
+EXTERNAL-list-vs-CALL-site bugs (declared routine missing, or wrong name):
+
+| File | Bug | Sibling state |
+|---|---|---|
+| `clahef_rk.f` | Line 302: EXTERNAL declares `CGEMM` but the routine actually `CALLs CGEMMTR` at lines 760 and 1190. slasyf_rk / dlasyf_rk / zlahef_rk all correctly list `GEMMTR` | clahef_rk alone — fixed via `clahef_rk.f.patch` |
+| `dopmtr.f` | Line 180: EXTERNAL lists only `DLARF` but the routine `CALLs DLARF1L` at line 264 (undeclared) and `CALL DLARF` at line 320 wrapped in manual `AII` save/restore (the inline expansion of what `DLARF1F` does internally). sopmtr / cunmr2 / zunmr2 all use the modern `LARF1F/LARF1L` wrappers | dopmtr alone — fixed via `dopmtr.f.patch` (also switches the line-320 call to `DLARF1F` and drops the manual `AII` tweak) |
+| `dormr2.f` | Lines 188 + 265-269: declares `DLARF` and does manual `AII` save/restore around the call. sormr2 / cunmr2 / zunmr2 all use `DLARF1L` (the modern wrapper handles the `AII` trick internally) | dormr2 alone — fixed via `dormr2.f.patch` |
+| `sggev3.f` | Lines 262-265: EXTERNAL omits `XERBLA`, but `CALL XERBLA('SGGEV3 ', -INFO)` at line 359. dggev3 declares it | sggev3 alone — fixed via `sggev3.f.patch` |
+| `sgges.f` | Lines 325-327: EXTERNAL omits `XERBLA`, but `CALL XERBLA('SGGES ', -INFO)` at line 420. dgges declares it correctly | sgges alone — fixed via `sgges.f.patch` |
+| `slaqr2.f` | Line 315: EXTERNAL declares `SLARF1L`, but the routine actually `CALLs SLARF1F` at lines 604, 606, 608. `SLARF1L` is dead, `SLARF1F` is undeclared. dlaqr2 declares the right one; slaqr3 / dlaqr3 were correct upstream | slaqr2 alone — fixed via `slaqr2.f.patch` |
+
+### Severity
+
+All 13 are real correctness or interface bugs. Most have visible
+impact only at edge cases (N=0, SDIM=0, empty-matrix workspace
+queries) or with vendor LAPACK that rounds workspace differently
+from Netlib. The `clahef` boundary fixes, `slaqr5` typo, and `cgesvj`
+overflow-constant difference are the only ones that could affect
+numerics in a non-edge-case path.
+
+### Upstream report
+
+Not yet filed.
+
+### Comparer-side fixes landed alongside
+
+`_canonicalize_for_compare` extended with 5 additional W-class
+normalizations (per `doc/lapack-residual-divergence-categorization.md`):
+`ELSE IF` ↔ `ELSEIF`, `GO TO` ↔ `GOTO`, `DOUBLE PRECISION` ↔ `REAL`,
+`COMPLEX*16` ↔ `COMPLEX`, `''` / `' '` / `'  '` CHARACTER-literal
+collapse, XERBLA trailing-space strip, `::` whitespace strip,
+`)\s*THEN` collapse. Plus label canonicalization (`DO 100` ↔ `DO 110`
+re-numbering) moved into the diverge comparator.
+
+### Migrator-side fix landed alongside
+
+`_strip_roundup_lwork` (`src/migrator/fortran_migrator.py:3300`)
+extended to recognise the F90 attribute-list form
+``REAL, EXTERNAL :: SROUNDUP_LWORK``. The existing F77 form
+``REAL ... + EXTERNAL ...`` on separate lines was already handled;
+the modern form (slaqz0 / slaqz3 / slaqz4) leaked its orphan
+declaration into the migrated output.
+
+### B? candidates flagged for domain review (not patched)
+
+These divergences look like potential bugs but the "correct" choice
+isn't unambiguous without LAPACK domain expertise. Documented for
+future audit:
+
+- `sgejsv.f:1711` passes `'L'` to `SGESVJ` where `dgejsv.f:1711` passes
+  `'G'` (JOB argument: Lower triangular hint vs General). Algorithmic
+  routing choice.
+- `slasq2.f:279` hardcodes `IEEE = .FALSE.` per a 2008-vintage upstream
+  comment ("single-precision case has a problem with test matrix
+  type 16"). dlasq2 queries `ILAENV(10, ...).EQ.1`. At our migrated
+  kind10/kind16 targets the single-precision bug doesn't apply, but
+  flipping the source would be migrator-target-conditional logic.
+- `cgedmd.f90` / `sgedmd.f90` / `sgedmdq.f90`: GESVJ/GESVDQ call-arg
+  differences. Likely intentional precision-specific design.
+- `ssytri2.f:166` asks `ILAENV` for `SSYTRF`'s blocksize where
+  dsytri2 asks for `DSYTRI2`. Self-reference vs internal-call query.
+- `sorcsd.f` workspace-query passes `DUMMY(1)` for arrays where
+  dorcsd passes the actual `U1` / `THETA` buffers. May affect optimal
+  LWORK estimation but not correctness.
+
+See `doc/lapack-residual-divergence-categorization.md` for the full
+110-pair classification.
+
 ## 2026-05-11 symmetric-fix sweep (ScaLAPACK)
 
 Every D/Z-half ScaLAPACK patch that previously stood alone has been
