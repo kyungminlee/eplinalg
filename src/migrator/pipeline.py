@@ -677,6 +677,24 @@ def _canonicalize_for_compare(text: str) -> str:
     text = _strip_real_cmplx_casts(text)
     # 4c. Canonicalize numeric literal forms.
     text = re.sub(r'(\d)\.0*(?![\deEdD_])', r'\1', text)
+    # 4c2. Collapse scientific-notation literals that name an integer
+    #     to that integer's decimal form. ScaLAPACK's ``bslaexc.f``
+    #     writes ``PARAMETER(TEN=1.0E1)`` while ``bdlaexc.f`` writes
+    #     ``PARAMETER(TEN=10)``; both name the same value but as
+    #     different literal forms. Match ``<int>.<zeros?>E<+?<int>``
+    #     and re-render as the expanded integer when the result fits
+    #     in a reasonable size (exp ≤ 18, the precision limit of
+    #     double-precision integer reproduction).
+    def _expand_int_exponent(m: re.Match) -> str:
+        mantissa = int(m.group(1))
+        exp = int(m.group(2))
+        if exp > 18:
+            return m.group(0)
+        return str(mantissa * (10 ** exp))
+    text = re.sub(
+        r'\b(\d+)\.0*[eE]\+?(\d+)\b',
+        _expand_int_exponent, text,
+    )
     # 4d. Strip ``(KIND=N)`` suffix or TYPE(...) specifier.
     text = re.sub(
         r'\bREAL\s*\(\s*KIND\s*=\s*\d+\s*\)',
