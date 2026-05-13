@@ -1756,36 +1756,39 @@ _INTERFACE_BEGIN_RE = re.compile(r'^\s*(?:ABSTRACT\s+)?INTERFACE\b', re.IGNORECA
 _INTERFACE_END_RE = re.compile(r'^\s*END\s*INTERFACE\b', re.IGNORECASE)
 
 
-def _scope_index_at(lines: list[str], line_idx: int) -> int:
-    """Return the 0-based procedure scope index for ``line_idx``.
+def _scope_indices(lines: list[str]) -> list[int]:
+    """Return a per-line list mapping line index → procedure scope index.
 
     Scope index 0 is the first SUBROUTINE/FUNCTION header encountered
     when scanning forward from the top of the file. Lines before any
     header are scope -1 (module/global level). Used by
-    ``convert_parameter_stmts`` to tag each converted assignment with
-    the scope it belongs to, so that ``insert_use_multifloats`` can
-    insert only the assignments belonging to the current scope.
+    ``convert_parameter_stmts`` / ``convert_data_stmts`` to tag each
+    converted assignment with the scope it belongs to, so that
+    ``insert_use_multifloats`` can insert only the assignments
+    belonging to the current scope.
 
     INTERFACE-block inner SUBROUTINE/FUNCTION declarations are NOT
     counted as new scopes — they declare prototypes for external
     procedures, not local scopes that take runtime assignments.
+
+    Replaces the prior per-call ``_scope_index_at`` helper that
+    rescanned ``lines[0..i]`` on every invocation (O(N²) when called
+    from a per-statement outer loop). Compute the full vector once
+    in O(N) and index into it.
     """
+    scopes: list[int] = []
     scope = -1
     in_interface = 0
-    for i in range(line_idx + 1):
-        ln = lines[i]
+    for ln in lines:
         if _INTERFACE_BEGIN_RE.match(ln):
             in_interface += 1
-            continue
-        if _INTERFACE_END_RE.match(ln):
+        elif _INTERFACE_END_RE.match(ln):
             if in_interface > 0:
                 in_interface -= 1
-            continue
-        if in_interface > 0:
-            continue
-        if _PROC_HEADER_RE_SCOPE.match(ln):
+        elif in_interface == 0 and _PROC_HEADER_RE_SCOPE.match(ln):
             scope += 1
-    return scope
+        scopes.append(scope)
+    return scopes
 
 
 def convert_parameter_stmts(
@@ -1818,6 +1821,7 @@ def convert_parameter_stmts(
     complex_names = _scan_complex_var_names(source)
 
     lines = source.splitlines(keepends=True)
+    scope_vec = _scope_indices(lines)
     result, fp_assignments = [], []
     dropped_known: dict[str, str] = {}
     param_re = re.compile(r'^(\s{6,}|^\s*)PARAMETER\s*\((.*)\)\s*(!.*)?$', re.IGNORECASE)
@@ -1974,7 +1978,7 @@ def convert_parameter_stmts(
                 # FP-valued and either dropped or converted. Emit the
                 # decl line + assignments and skip past the consumed
                 # source lines.
-                scope = _scope_index_at(lines, i)
+                scope = scope_vec[i]
                 fp_assignments.extend((scope, a) for a in line_assignments)
                 dropped_known.update(line_dropped_known)
                 if kept_names:
@@ -2038,7 +2042,7 @@ def convert_parameter_stmts(
                     else: kept_parts.append(part)
                 else: kept_parts.append(part)
 
-            scope = _scope_index_at(lines, i)
+            scope = scope_vec[i]
             fp_assignments.extend((scope, a) for a in line_assignments)
             dropped_known.update(line_dropped_known)
             if kept_parts:
@@ -2069,6 +2073,7 @@ def convert_data_stmts(
         return source, [], {}
 
     lines = source.splitlines(keepends=True)
+    scope_vec = _scope_indices(lines)
     result, fp_assignments = [], []
     dropped_known: dict[str, str] = {}
     data_re = re.compile(r'^(\s{6,}|^\s*)DATA\s+([^/]+)/\s*([^/]+)\s*/\s*(!.*)?$', re.IGNORECASE)
@@ -2108,7 +2113,7 @@ def convert_data_stmts(
                             dropped_known[v.upper()] = target_mode.known_constants[v.upper()]
                             continue
                         line_assignments.append(f"{indent}{v} = {val}{comment}\n")
-                    scope = _scope_index_at(lines, i)
+                    scope = scope_vec[i]
                     fp_assignments.extend((scope, a) for a in line_assignments)
                     if line_assignments:
                         result.append(f"{indent}! Converted to assignments below: {joined.strip()}\n")
