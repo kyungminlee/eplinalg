@@ -79,6 +79,12 @@ class UseStmtInfo:
     only_list: list[str]
 
 
+# The Flang parse-tree dump emits ``Name = 'IDENT'`` markers on
+# almost every interesting line; the same regex is searched at nine
+# call sites in this module. Hoist once.
+_NAME_RE = re.compile(r"Name\s*=\s*'(\w+)'")
+
+
 @dataclass
 class ParseTreeFacts:
     """All facts extracted from a Flang parse tree."""
@@ -184,9 +190,9 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
 
         # --- Use statement ---
         elif 'UseStmt' in line:
-            m = re.search(r"Name\s*=\s*'(\w+)'", line)
+            m = _NAME_RE.search(line)
             if not m and i + 1 < len(lines):
-                m = re.search(r"Name\s*=\s*'(\w+)'", lines[i + 1])
+                m = _NAME_RE.search(lines[i + 1])
             if m:
                 mod_name = m.group(1).upper()
                 facts.use_stmt_ranges.append(
@@ -217,13 +223,13 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
 
         # --- External declaration ---
         elif 'ExternalStmt' in line:
-            m = re.search(r"Name\s*=\s*'(\w+)'", line)
+            m = _NAME_RE.search(line)
             if m:
                 facts.external_names.append(m.group(1).upper())
 
         # --- Intrinsic declaration ---
         elif 'IntrinsicStmt' in line:
-            m = re.search(r"Name\s*=\s*'(\w+)'", line)
+            m = _NAME_RE.search(line)
             if m:
                 facts.intrinsic_names.append(m.group(1).upper())
 
@@ -248,15 +254,19 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
         i += 1
 
     # Also scan for all ProcedureDesignator names (function references
-    # that appear as sub-expressions, like DCONJG, LSAME, etc.)
+    # that appear as sub-expressions, like DCONJG, LSAME, etc.).
+    # Use a set for O(1) duplicate detection — the previous
+    # ``any(cs.name == name ...)`` scan was O(N) per ProcedureDesignator,
+    # quadratic in total over the parse tree.
+    seen_call_names = {cs.name for cs in facts.call_sites}
     for line in lines:
         if 'ProcedureDesignator -> Name' in line:
-            m = re.search(r"Name\s*=\s*'(\w+)'", line)
+            m = _NAME_RE.search(line)
             if m:
                 name = m.group(1).upper()
-                # Add as function reference if not already in call_sites
-                if not any(cs.name == name for cs in facts.call_sites):
+                if name not in seen_call_names:
                     facts.call_sites.append(CallSite(name, False))
+                    seen_call_names.add(name)
 
     return facts
 
@@ -264,7 +274,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
 def _extract_first_name(lines: list[str], start: int) -> str | None:
     """Extract the first Name = '...' value starting from a line index."""
     for j in range(start, min(start + 5, len(lines))):
-        m = re.search(r"Name\s*=\s*'(\w+)'", lines[j])
+        m = _NAME_RE.search(lines[j])
         if m:
             return m.group(1).upper()
     return None
@@ -274,7 +284,7 @@ def _extract_procedure_name(lines: list[str], start: int) -> str | None:
     """Extract ProcedureDesignator -> Name from around a line index."""
     for j in range(start, min(start + 10, len(lines))):
         if 'ProcedureDesignator' in lines[j]:
-            m = re.search(r"Name\s*=\s*'(\w+)'", lines[j])
+            m = _NAME_RE.search(lines[j])
             if m:
                 return m.group(1).upper()
     return None
@@ -323,11 +333,11 @@ def _parse_type_decl(lines: list[str], start: int) -> tuple:
         # Entity names
         if 'EntityDecl' in line:
             # Name is usually on the next line or same line
-            m = re.search(r"Name\s*=\s*'(\w+)'", line)
+            m = _NAME_RE.search(line)
             if m:
                 names.append(m.group(1).upper())
             elif j + 1 < len(lines):
-                m = re.search(r"Name\s*=\s*'(\w+)'", lines[j + 1])
+                m = _NAME_RE.search(lines[j + 1])
                 if m:
                     names.append(m.group(1).upper())
 
