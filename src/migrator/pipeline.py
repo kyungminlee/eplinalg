@@ -66,7 +66,7 @@ def _filter_expected_divergences(report: list[dict],
         if _stem_upper(r['canonical']) not in config.expected_divergences
     ]
 from .symbol_scanner import scan_symbols
-from .prefix_classifier import classify_symbols, build_rename_map
+from .prefix_classifier import classify_symbols
 from .fortran_migrator import (
     _find_inline_bang,
     migrate_file,
@@ -163,6 +163,26 @@ def _strip_fortran_comments(text: str, ext: str) -> str:
 
 def _strip_inline_bang(line: str) -> str:
     return line[:_find_inline_bang(line)]
+
+
+def _prec_neutral_key(name: str) -> str:
+    """Sort key that maps S↔D and C↔Z to the same character so
+    precision-equivalent locals (CI vs ZI) sort to the same position."""
+    return name.replace('S', 'D').replace('C', 'Z')
+
+
+def _sort_decl_match(match: re.Match, key=None, sep: str = ',') -> str:
+    """Sort the comma-separated identifier list in a regex match.
+
+    Group 1 is the leading keyword (e.g. ``INTRINSIC``, ``EXTERNAL``);
+    group 2 is the comma-separated body. Items are stripped before
+    sorting and rejoined with ``sep``. Pass ``key=_prec_neutral_key``
+    to sort with S↔D / C↔Z folded together.
+    """
+    kw = match.group(1)
+    items = [s.strip() for s in match.group(2).split(',')]
+    items = sorted(items, key=key) if key else sorted(items)
+    return f'{kw} ' + sep.join(items)
 
 
 def _strip_real_cmplx_casts(text: str) -> str:
@@ -356,202 +376,6 @@ def _canonicalize_labels(text: str) -> str:
     return re.sub(r'\x01L(\d+)\x01', r'\1', text)
 
 
-def _light_normalize(text: str) -> str:
-    """Minimal normalization for post-migration convergence checking.
-
-    Applies ONLY cosmetic rules that are never the migrator's job:
-
-    * uppercase everything (Fortran is case-insensitive)
-    * collapse runs of horizontal whitespace to a single space
-    * strip whitespace adjacent to punctuation (commas, parens,
-      arithmetic/relational operators)
-    * merge ``END IF``/``END DO``/... → ``ENDIF``/``ENDDO``/...
-    * sort ``INTRINSIC``/``EXTERNAL`` argument lists (cross-precision
-      co-family halves routinely list the same names in different
-      orders — purely cosmetic upstream drift)
-    * drop blank lines and trailing whitespace
-
-    No prefix collapse, no literal-form rewrites, no type-cast
-    stripping — convergence here means the migrator got it right and
-    the co-family halves already agree on identifiers, literal kinds,
-    and casts.
-    """
-    text = text.upper()
-    text = re.sub(
-        r'\bEND\s+('
-        r'IF|DO|SELECT|WHERE|FORALL|SUBROUTINE|FUNCTION|'
-        r'MODULE|INTERFACE|PROGRAM|TYPE|BLOCK|ASSOCIATE'
-        r')\b',
-        r'END\1', text,
-    )
-    text = re.sub(r'[ \t]+', ' ', text)
-    # Horizontal whitespace only ([ \t], not \s) so that a Fortran
-    # fixed-form DATA statement ``DATA Z,T/0.E0_16,2.E0_16/`` never
-    # gets glued onto the next line via its trailing ``/``.
-    text = re.sub(r'[ \t]*([*+\-/=])[ \t]*', r'\1', text)
-    text = re.sub(r'[ \t]*\([ \t]*', '(', text)
-    text = re.sub(r'[ \t]*\)', ')', text)
-    text = re.sub(r'[ \t]*,[ \t]*', ',', text)
-    # Collapse whitespace around Fortran word-operators (``. NOT . X``,
-    # ``.NOT. X``, ``X .AND. Y`` all canonicalize to ``.NOT.X``,
-    # ``X.AND.Y``). Each upstream half's hand-edits may sprinkle
-    # different spacing here; the operator semantics are identical.
-    text = re.sub(
-        r'[ \t]*\.[ \t]*'
-        r'(EQ|NE|LT|GT|LE|GE|AND|OR|NOT|TRUE|FALSE|EQV|NEQV)'
-        r'[ \t]*\.[ \t]*',
-        r'.\1.', text,
-    )
-
-    # Canonicalize numeric labels. Upstream LAPACK halves routinely
-    # drift on label numbering — same DO/CONTINUE structure, different
-    # numbers (e.g. D uses 70/60/50/40 where S uses 60/50/30/40).
-    # Re-assign every distinct label in order of first appearance to
-    # 1, 2, 3, ... so identical loop structures produce identical
-    # canonical text on both halves.
-    text = _canonicalize_labels(text)
-
-    # Fold ``REAL(<expr>,KIND=N)`` and ``CMPLX(<expr>,KIND=N)`` casts to
-    # bare ``<expr>``. Co-family halves disagree cosmetically when one
-    # writes the explicit kind cast and the other relies on implicit
-    # promotion (e.g. D writes ``REAL(NZ,KIND=16)*SAFMIN`` while S
-    # writes ``NZ*SAFMIN``). Both expressions evaluate identically when
-    # the surrounding type is REAL(KIND=16) — the cast is a no-op. The
-    # fold runs on both halves before the diff so the cosmetic drift
-    # disappears. Only top-level ``,KIND=N`` matches; parameter-form
-    # ``REAL(KIND=N)`` declarations are left alone (no leading expr).
-    def _strip_kind_casts(s: str) -> str:
-        out: list[str] = []
-        pat = re.compile(r'\b(REAL|CMPLX)\(')
-        i = 0
-        while i < len(s):
-            m = pat.search(s, i)
-            if not m:
-                out.append(s[i:]); break
-            out.append(s[i:m.start()])
-            depth = 1
-            comma_pos = -1
-            j = m.end()
-            while j < len(s) and depth > 0:
-                c = s[j]
-                if c == '(':
-                    depth += 1
-                elif c == ')':
-                    depth -= 1
-                    if depth == 0:
-                        break
-                elif c == ',' and depth == 1 and comma_pos == -1:
-                    comma_pos = j
-                j += 1
-            if depth != 0:
-                # Unbalanced — keep original prefix and stop folding.
-                out.append(s[m.start():])
-                return ''.join(out)
-            if comma_pos != -1 and re.match(
-                    r'KIND=\d+$', s[comma_pos + 1:j]):
-                out.append(s[m.end():comma_pos])  # the inner expression
-            else:
-                out.append(s[m.start():j + 1])
-            i = j + 1
-        return ''.join(out)
-    text = _strip_kind_casts(text)
-
-    # Strip per-line whitespace *before* sorting declarations so the
-    # ``^`` anchor sees the statement keyword at the line start.
-    text = '\n'.join(ln.strip() for ln in text.split('\n'))
-
-    # Sort INTRINSIC / EXTERNAL argument lists. The ordering of these
-    # declarations varies between co-family halves (e.g. C sources
-    # list ``INTRINSIC CONJG,MAX,MIN,REAL`` while Z sources write
-    # ``INTRINSIC REAL,CONJG,MAX,MIN``) but is semantically irrelevant.
-    def _sort_decl(m):
-        return f'{m.group(1)} ' + ','.join(sorted(m.group(2).split(',')))
-
-    text = re.sub(
-        r'\b(INTRINSIC|EXTERNAL)\s+([A-Z_][A-Z0-9_]*(?:,[A-Z_][A-Z0-9_]*)*)',
-        _sort_decl, text,
-    )
-
-    # Sort bare-identifier lists after a simple type-spec. Co-family
-    # halves reorder symbols between their ``INTEGER``/``REAL(KIND=N)``
-    # declarations of named external functions (``REAL(KIND=16)
-    # XLANGB,XLANTB,QLAMCH`` vs ``QLAMCH,XLANGB,XLANTB``). Match only
-    # pure name lists — lines with ``=``, ``(``, ``*`` (e.g. array
-    # specs ``A(LDA,*)``) are left alone.
-    def _prec_neutral_key(name: str) -> str:
-        """Sort key that maps S↔D and C↔Z to the same character so
-        precision-equivalent locals (CI vs ZI) sort to the same position."""
-        return name.replace('S', 'D').replace('C', 'Z')
-
-    def _sort_typed_decl(m):
-        type_spec, body = m.group(1), m.group(2)
-        names = body.split(',')
-        return f'{type_spec} ' + ','.join(
-            sorted(names, key=_prec_neutral_key))
-
-    text = re.sub(
-        r'^(INTEGER|LOGICAL|REAL\(KIND=\d+\)|COMPLEX\(KIND=\d+\)|TYPE\(\w+\))\s+'
-        r'([A-Z_][A-Z0-9_]*(?:,[A-Z_][A-Z0-9_]*)+)$',
-        _sort_typed_decl, text, flags=re.MULTILINE,
-    )
-
-    # Sort type-declaration statement lines to eliminate ordering drift
-    # between co-family halves. Only lines that start with a type
-    # keyword are reordered; everything else stays in place.
-    lines = text.split('\n')
-    _DECL_RE = re.compile(
-        r'^\s*(?:INTEGER|LOGICAL|REAL\(|COMPLEX\(|CHARACTER|'
-        r'DOUBLE\s+PRECISION|TYPE\s*\()\b'
-    )
-    decl_indices = [k for k, ln in enumerate(lines) if _DECL_RE.match(ln)]
-    if decl_indices:
-        decl_contents = sorted(
-            (lines[k] for k in decl_indices),
-            key=_prec_neutral_key,
-        )
-        for idx, k in enumerate(decl_indices):
-            lines[k] = decl_contents[idx]
-
-    lines = [ln.strip() for ln in lines]
-    return '\n'.join(ln for ln in lines if ln)
-
-
-def _apply_local_renames(text: str, renames: dict[str, str]) -> str:
-    """Apply recipe-declared local-variable equivalence folds.
-
-    ``renames`` declares equivalence classes: each key is a local
-    identifier that should be treated as identical to its value for
-    convergence-report purposes only. Applied **to both halves** of
-    every pair (D/Z canonical read from disk and S/C other migrated
-    in-memory) before light-normalized comparison, so ScaLAPACK's
-    S-half ``CR`` / ``CI`` folds onto Z-half ``ZR`` / ``ZI`` in
-    pzlattrs AND a D-half file that already uses ``CR`` still
-    converges with its S-half sibling. Neither the on-disk canonical
-    nor the recipe source is modified; this is comparison-only.
-    Matching is case-insensitive; replacement casing tracks the
-    source match.
-    """
-    if not renames:
-        return text
-    keys = sorted(renames.keys(), key=len, reverse=True)
-    pattern = re.compile(
-        r'\b(' + '|'.join(re.escape(k) for k in keys) + r')\b',
-        re.IGNORECASE,
-    )
-    upper_map = {k.upper(): v.upper() for k, v in renames.items()}
-
-    def _sub(m: re.Match) -> str:
-        src = m.group(0)
-        new = upper_map[src.upper()]
-        if src.isupper():
-            return new
-        if src.islower():
-            return new.lower()
-        return new
-
-    return pattern.sub(_sub, text)
-
-
 _PRECISION_PAIRS = frozenset({
     frozenset(('S', 'D')),
     frozenset(('C', 'Z')),
@@ -630,25 +454,6 @@ def _filter_precision_drift(lines_a: list[str],
         for line in lines_b[j1:j2]:
             diff_lines.append(f'+{line}')
     return diff_lines
-
-
-def _light_normalize_c(text: str) -> str:
-    """Minimal C normalization for post-migration convergence checking.
-
-    Mirrors :func:`_light_normalize` for Fortran. Assumes the migrator
-    has already rewritten identifiers, types, and MPI constants — the
-    only drift tolerated here is whitespace around tokens and blank
-    lines. Preserves case (C is case-sensitive) but collapses runs of
-    horizontal whitespace and strips whitespace adjacent to common
-    punctuation, so column-aligned declarations like ``float
-    *A,`` vs ``QREAL          *A,`` converge.
-    """
-    # Tokenize each line into words and single non-whitespace chars,
-    # then rejoin with a single space. This collapses column padding
-    # and incidental space drift around punctuation uniformly.
-    lines = [' '.join(re.findall(r'\w+|\S', ln)) for ln in text.split('\n')]
-    return '\n'.join(ln for ln in lines if ln)
-
 
 def _canonicalize_for_compare(text: str) -> str:
     """Normalize text to ignore cosmetic precision-specific differences
@@ -849,37 +654,20 @@ def _canonicalize_for_compare(text: str) -> str:
     #    arbitrary (often precision-specific) order — e.g., S source
     #    writes "INTRINSIC REAL, CONJG, MAX" while Z source writes
     #    "INTRINSIC CONJG, MAX, MIN, REAL".
-    def _sort_decl(match: re.Match) -> str:
-        # Sort with a precision-neutral key so co-family halves whose
-        # local-variable names differ only at an S↔D / C↔Z position
-        # (``WPSLANGE`` vs ``WPDLANGE``, ``SIZEPZHETRD`` vs
-        # ``SIZEPCHETRD``) land in the same order. Without the
-        # neutral key the post-sort positions diverge and
-        # ``_filter_precision_drift`` no longer recognizes the pair as
-        # token-aligned.
-        kw = match.group(1)
-        items = [s.strip() for s in match.group(2).split(',')]
-        key = lambda s: s.replace('S', 'D').replace('C', 'Z')
-        return f'{kw} ' + ', '.join(sorted(items, key=key))
+    # Sort declaration-list bodies with a precision-neutral key so
+    # co-family halves whose local-variable names differ only at an
+    # S↔D / C↔Z position (``WPSLANGE`` vs ``WPDLANGE``,
+    # ``SIZEPZHETRD`` vs ``SIZEPCHETRD``) land in the same order.
+    # Without the neutral key the post-sort positions diverge and
+    # ``_filter_precision_drift`` no longer recognizes the pair as
+    # token-aligned.
     text = re.sub(
         r'\b(INTRINSIC|EXTERNAL|INTEGER|LOGICAL|COMPLEX|REAL)\s+'
         r'([A-Za-z_@][A-Za-z0-9_@,\s]*?)(?=$)',
-        _sort_decl, text, flags=re.MULTILINE,
+        lambda m: _sort_decl_match(m, key=_prec_neutral_key, sep=', '),
+        text, flags=re.MULTILINE,
     )
     return text
-
-
-def _strip_c_comments(text: str) -> str:
-    """Strip // and /* */ comments plus blank/whitespace-only lines."""
-    # Remove /* ... */ block comments (possibly multi-line)
-    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
-    # Remove // line comments
-    text = re.sub(r'//[^\n]*', '', text)
-    # Collapse blank/whitespace-only lines and trim trailing spaces
-    lines = [ln.rstrip() for ln in text.split('\n')]
-    lines = [ln for ln in lines if ln.strip()]
-    return '\n'.join(lines)
-
 
 def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
                           output_dir: Path, target_mode: TargetMode,
@@ -1187,14 +975,26 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
                 print(f'  warning: migration crashed on {p.name}: '
                       f'{type(exc).__name__}: {exc}', file=sys.stderr)
 
+    # Memoize the normalized text per path. A 4-member precision
+    # family produces 3 pairs that all share the same canonical;
+    # without this cache the canonical's _canonicalize_for_compare +
+    # _strip_fortran_comments pipeline ran once per pair.
+    normalized: dict[Path, str] = {}
+
+    def _normalize(p: Path) -> str:
+        n = normalized.get(p)
+        if n is None:
+            n = _canonicalize_for_compare(
+                _strip_fortran_comments(texts[p], p.suffix))
+            normalized[p] = n
+        return n
+
     report: list[dict] = []
     for canonical, other in pairs:
         if canonical not in texts or other not in texts:
             continue
-        n_can = _canonicalize_for_compare(
-            _strip_fortran_comments(texts[canonical], canonical.suffix))
-        n_oth = _canonicalize_for_compare(
-            _strip_fortran_comments(texts[other], other.suffix))
+        n_can = _normalize(canonical)
+        n_oth = _normalize(other)
         if n_can == n_oth:
             continue
         diff = _filter_precision_drift(

@@ -15,6 +15,7 @@ The output reuses :class:`flang_parser.ParseTreeFacts` and its component
 dataclasses so that the downstream migrator is parser-agnostic.
 """
 
+import functools
 import re
 import shutil
 import subprocess
@@ -30,8 +31,10 @@ from .flang_parser import (
 # Locate gfortran
 # ---------------------------------------------------------------------------
 
+@functools.cache
 def find_gfortran() -> str | None:
-    """Find the gfortran executable on PATH."""
+    """Find the gfortran executable on PATH. Cached — the migrator
+    calls this once per source file when --parser gfortran is set."""
     for name in ('gfortran', 'gfortran-14', 'gfortran-13', 'gfortran-12'):
         path = shutil.which(name)
         if path:
@@ -77,8 +80,6 @@ def run_gfortran_parse_tree(source_path: Path,
 # ---------------------------------------------------------------------------
 
 # Maps gfortran ``(TYPE kind)`` to our canonical type-spec names.
-_TYPE_RE = re.compile(r'\((\w+)\s+(\d+)\)')
-
 # Canonical mapping: (gfortran_type, byte_kind) → flang-style type_spec
 _TYPE_MAP: dict[tuple[str, int], str] = {
     ('REAL', 4):    'Real',
@@ -138,6 +139,10 @@ _PROC_NAME_RE = re.compile(r'^\s*procedure name\s*=\s*(\w+)', re.IGNORECASE)
 
 # Regex for CALL in code section: ``CALL name (...)``
 _CALL_RE = re.compile(r'\bCALL\s+(\w+)\s*\(')
+_USE_STMT_RE = re.compile(r'^\s+USE\s+(\w+)', re.IGNORECASE)
+_USE_ASSOC_RE = re.compile(r'USE-ASSOC\(([\w]+)\)')
+_DATA_RE = re.compile(r'^\s+DATA\s+(\w+)/([^/]+)/', re.IGNORECASE)
+_ATTRS_RE = re.compile(r'attributes:\s*\(([^)]*)\)')
 
 # Regex for function references: ``name[[ ... ]]``
 _FUNCREF_RE = re.compile(r'\b(\w+)\[\[')
@@ -177,6 +182,10 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
     symbols: dict[str, dict] = {}
     call_names: set[str] = set()
     func_ref_names: set[str] = set()
+    # Module-name set mirroring facts.use_stmt_ranges for O(1) duplicate
+    # detection. The previous ``any(u.module_name == mod_name ...)``
+    # walk made USE-ASSOC harvesting O(M²) in #modules.
+    seen_use_modules: set[str] = set()
 
     i = 0
     while i < len(lines):
@@ -200,11 +209,12 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
 
         if not in_code:
             # --- Use statement ---
-            um = re.match(r'^\s+USE\s+(\w+)', line, re.IGNORECASE)
+            um = _USE_STMT_RE.match(line)
             if um:
                 mod_name = um.group(1).upper()
                 facts.use_stmt_ranges.append(
                     UseStmtInfo(mod_name, (0, 0), []))
+                seen_use_modules.add(mod_name)
 
             # --- USE-ASSOC tag ---
             # Symbols imported from another module appear with
@@ -214,12 +224,12 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
             # emit; harvesting USE-ASSOC tags from the symbol table
             # ensures the rename_map covers module names that the
             # caller imports a TYPE/symbol from.
-            for am in re.finditer(r'USE-ASSOC\(([\w]+)\)', line):
+            for am in _USE_ASSOC_RE.finditer(line):
                 mod_name = am.group(1).upper()
-                if not any(u.module_name == mod_name
-                           for u in facts.use_stmt_ranges):
+                if mod_name not in seen_use_modules:
                     facts.use_stmt_ranges.append(
                         UseStmtInfo(mod_name, (0, 0), []))
+                    seen_use_modules.add(mod_name)
 
             # --- Symbol table entry ---
             sm = _SYMTREE_RE.match(line)
@@ -244,13 +254,12 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                     # from another module, which we need in
                     # use_stmt_ranges so callers' rename_map keeps
                     # the imported module name.
-                    for am in re.finditer(
-                            r'USE-ASSOC\(([\w]+)\)', sline):
+                    for am in _USE_ASSOC_RE.finditer(sline):
                         mod_name = am.group(1).upper()
-                        if not any(u.module_name == mod_name
-                                   for u in facts.use_stmt_ranges):
+                        if mod_name not in seen_use_modules:
                             facts.use_stmt_ranges.append(
                                 UseStmtInfo(mod_name, (0, 0), []))
+                            seen_use_modules.add(mod_name)
                     j += 1
 
                 attrs = _parse_attributes(attrs_raw)
@@ -288,7 +297,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
         else:
             # --- Code section: scan for calls, references, literals, DATA ---
             # DATA zero/0.0/
-            dm = re.match(r'^\s+DATA\s+(\w+)/([^/]+)/', line, re.IGNORECASE)
+            dm = _DATA_RE.match(line)
             if dm:
                 facts.data_stmts.append(
                     DataInfo([dm.group(1).upper()], [dm.group(2)], None))
@@ -378,13 +387,15 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
     for name in sorted(call_names):
         facts.call_sites.append(CallSite(name.upper(), True))
 
+    seen_call_names = {cs.name for cs in facts.call_sites}
     for name in sorted(func_ref_names):
         uname = name.upper()
         # Skip gfortran internal helper symbols (e.g. __max_i4, __convert_*)
         if uname.startswith('__'):
             continue
-        if not any(cs.name == uname for cs in facts.call_sites):
+        if uname not in seen_call_names:
             facts.call_sites.append(CallSite(uname, False))
+            seen_call_names.add(uname)
 
     return facts
 
@@ -398,7 +409,7 @@ def _parse_attributes(attrs_line: str) -> set[str]:
 
     Returns ``{'PROCEDURE', 'EXTERNAL-PROC', 'EXTERNAL', 'SUBROUTINE', ...}``
     """
-    m = re.search(r'attributes:\s*\(([^)]*)\)', attrs_line)
+    m = _ATTRS_RE.search(attrs_line)
     if not m:
         return set()
     return set(m.group(1).split())
