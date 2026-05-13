@@ -740,6 +740,14 @@ _INTRINSIC_CALL_RE_REPL: dict[str, re.Pattern] = {
     _name: re.compile(rf'\b({_name})(\s*\()', re.IGNORECASE)
     for _name in INTRINSIC_MAP
 }
+# Cheap early-out gate: if no intrinsic name from the map appears
+# followed by an opening paren on this line, the 74-iteration body
+# below has nothing to do. One alternation search per line is much
+# cheaper than 74 single-name searches.
+_INTRINSIC_CALL_GATE_RE = re.compile(
+    r'\b(?:' + '|'.join(INTRINSIC_MAP) + r')\s*\(',
+    re.IGNORECASE,
+)
 
 
 def replace_intrinsic_calls(
@@ -749,6 +757,8 @@ def replace_intrinsic_calls(
     complex_names: set[str] | None = None,
 ) -> str:
     """Replace type-specific intrinsic function calls."""
+    if not _INTRINSIC_CALL_GATE_RE.search(line):
+        return line
     for old_name, (new_name, needs_kind) in INTRINSIC_MAP.items():
         pattern = _INTRINSIC_CALL_RE[old_name]
         if needs_kind:
