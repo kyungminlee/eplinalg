@@ -15,6 +15,7 @@ The output reuses :class:`flang_parser.ParseTreeFacts` and its component
 dataclasses so that the downstream migrator is parser-agnostic.
 """
 
+import functools
 import re
 import shutil
 import subprocess
@@ -30,8 +31,10 @@ from .flang_parser import (
 # Locate gfortran
 # ---------------------------------------------------------------------------
 
+@functools.cache
 def find_gfortran() -> str | None:
-    """Find the gfortran executable on PATH."""
+    """Find the gfortran executable on PATH. Cached — the migrator
+    calls this once per source file when --parser gfortran is set."""
     for name in ('gfortran', 'gfortran-14', 'gfortran-13', 'gfortran-12'):
         path = shutil.which(name)
         if path:

@@ -975,14 +975,26 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
                 print(f'  warning: migration crashed on {p.name}: '
                       f'{type(exc).__name__}: {exc}', file=sys.stderr)
 
+    # Memoize the normalized text per path. A 4-member precision
+    # family produces 3 pairs that all share the same canonical;
+    # without this cache the canonical's _canonicalize_for_compare +
+    # _strip_fortran_comments pipeline ran once per pair.
+    normalized: dict[Path, str] = {}
+
+    def _normalize(p: Path) -> str:
+        n = normalized.get(p)
+        if n is None:
+            n = _canonicalize_for_compare(
+                _strip_fortran_comments(texts[p], p.suffix))
+            normalized[p] = n
+        return n
+
     report: list[dict] = []
     for canonical, other in pairs:
         if canonical not in texts or other not in texts:
             continue
-        n_can = _canonicalize_for_compare(
-            _strip_fortran_comments(texts[canonical], canonical.suffix))
-        n_oth = _canonicalize_for_compare(
-            _strip_fortran_comments(texts[other], other.suffix))
+        n_can = _normalize(canonical)
+        n_oth = _normalize(other)
         if n_can == n_oth:
             continue
         diff = _filter_precision_drift(

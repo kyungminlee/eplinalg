@@ -14,6 +14,7 @@ tree tells us WHAT needs transformation, then source-level regex applies
 the actual byte-range replacements (preserving formatting).
 """
 
+import functools
 import re
 import shutil
 import subprocess
@@ -104,8 +105,11 @@ class ParseTreeFacts:
     use_stmt_ranges: list[UseStmtInfo] = field(default_factory=list)
 
 
+@functools.cache
 def find_flang() -> str | None:
-    """Find the flang-new executable."""
+    """Find the flang-new executable. Cached — shutil.which stats $PATH
+    on every invocation, and the migrator calls this once per source
+    file when --parser flang is set."""
     for name in ('flang-new', 'flang'):
         path = shutil.which(name)
         if path:
