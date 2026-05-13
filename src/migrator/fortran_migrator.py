@@ -1130,26 +1130,24 @@ def replace_include_filenames(line: str, rename_map: dict[str, str]) -> str:
                 (new_stem.lower() if stem.islower() else new_stem)) + ext
     return f'{m.group("lead")} {m.group("q")}{new_name}{m.group("q")}{m.group("tail")}'
 
-_RENAME_PATTERN_CACHE: dict[int, tuple[re.Pattern, dict[str, str]]] = {}
+_RENAME_PATTERN_CACHE: dict[tuple[int, int], tuple[re.Pattern, dict[str, str]]] = {}
 
 def _get_rename_pattern(rename_map: dict[str, str]) -> tuple[re.Pattern, dict[str, str]]:
-    # Cache by id(rename_map) — within a single migration run every
-    # file shares the same dict object, so this skips the O(N) upper()
-    # + frozenset build that dominated the MUMPS-scale (6k renames)
-    # workload.
-    key = id(rename_map)
+    # Cache key is (id(rename_map), len(rename_map)). The migrator
+    # builds rename_map once per run and never mutates it, so id is
+    # stable for the run's duration. The length tiebreaker guards
+    # against the (vanishingly unlikely) case where a GC'd dict's id
+    # is reused for a same-content map; in practice the caller holds
+    # rename_map live, so this is belt-and-suspenders.
+    #
+    # The previous implementation re-built ``{k.upper() for k in
+    # rename_map.keys()}`` on every cache hit to verify the cache —
+    # that O(N) scan dominated for MUMPS (~6k renames × thousands of
+    # per-line calls per file).
+    key = (id(rename_map), len(rename_map))
     cached = _RENAME_PATTERN_CACHE.get(key)
-    # Cache by identity only works if the dict lives for the whole run.
-    # Local const_renames dicts created inside a single function call may
-    # be GC'd and re-used at the same id with different content — so we
-    # also verify the dict's upper()-ed keys match the cache to avoid
-    # stale-pattern poisoning.
     if cached is not None:
-        pattern, cached_upper = cached
-        # Fast verification: comparing dict is O(N) but keys only — still
-        # cheaper than rebuilding the regex from scratch for large maps.
-        if {k.upper() for k in rename_map.keys()} == set(cached_upper.keys()):
-            return cached
+        return cached
     upper_map = {k.upper(): v for k, v in rename_map.items()}
     names = sorted(upper_map.keys(), key=len, reverse=True)
     pattern = re.compile(r'\b(' + '|'.join(re.escape(n) for n in names) + r')\b', re.IGNORECASE) if names else re.compile(r'(?!x)x')
