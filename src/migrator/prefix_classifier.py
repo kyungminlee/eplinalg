@@ -61,10 +61,6 @@ class PrecisionFamily:
     members: dict[str, str]          # precision_key → symbol name
     slots: list[PrecisionSlot]       # positions + type tags
 
-    @property
-    def prefix_positions(self) -> list[int]:
-        return [s.position for s in self.slots]
-
 
 @dataclass
 class SymbolClassification:
@@ -73,9 +69,6 @@ class SymbolClassification:
     independent: set[str] = field(default_factory=set)
     _symbol_to_family: dict[str, PrecisionFamily] = field(
         default_factory=dict, repr=False)
-
-    def is_precision_dependent(self, name: str) -> bool:
-        return name.upper() in self._symbol_to_family
 
     def get_family(self, name: str) -> PrecisionFamily | None:
         return self._symbol_to_family.get(name.upper())

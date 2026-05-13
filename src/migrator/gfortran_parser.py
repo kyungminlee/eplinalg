@@ -77,8 +77,6 @@ def run_gfortran_parse_tree(source_path: Path,
 # ---------------------------------------------------------------------------
 
 # Maps gfortran ``(TYPE kind)`` to our canonical type-spec names.
-_TYPE_RE = re.compile(r'\((\w+)\s+(\d+)\)')
-
 # Canonical mapping: (gfortran_type, byte_kind) → flang-style type_spec
 _TYPE_MAP: dict[tuple[str, int], str] = {
     ('REAL', 4):    'Real',

@@ -367,7 +367,6 @@ def _convert_kr_to_ansi(text: str) -> str:
                     if name in param_names:
                         param_type_map[name] = f'{base_type} {decl}'
         j = body_start
-        comment_lines: list[str] = []
 
         # Check if all parameter names were resolved
         if len(param_type_map) == len(param_names) and param_names:
@@ -377,7 +376,6 @@ def _convert_kr_to_ansi(text: str) -> str:
             prefix = ' '.join(prefix.split())
             ansi_params = ', '.join(param_type_map[n] for n in param_names)
             result.append(f'{prefix} {ansi_params} )')
-            result.extend(comment_lines)
             # Preserve the body-opening line verbatim — it may carry
             # trailing content (a comment that opens on the same line
             # as ``{``, like ``{/* Rmk: ... */``) that the body needs.

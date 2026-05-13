@@ -69,7 +69,7 @@ def scan_fortran_source(src_dir: Path,
                         extensions: list[str] | None = None) -> set[str]:
     """Scan Fortran source files for SUBROUTINE/FUNCTION definitions."""
     if extensions is None:
-        extensions = ['.f', '.f90', '.F90', '.for', '.f95']
+        extensions = ['.f', '.f90', '.for', '.f95']
 
     names: set[str] = set()
     for f in sorted(src_dir.iterdir()):
