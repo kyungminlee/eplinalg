@@ -25,6 +25,17 @@ from .prefix_classifier import classify_symbols
 from .symbol_scanner import scan_symbols
 from .target_mode import load_target
 
+# BLACS-style dual-entry-point detector used by ``cmd_stage`` to
+# identify C sources that switch their public symbol via the
+# ``INTFACE == C_CALL`` / ``CallFromC`` macros. Hoisted to module scope
+# so it's compiled once instead of per-library in the cmd_stage loop.
+_DUAL_ENTRY_C_RE = re.compile(
+    r'#\s*if\s*\(?\s*INTFACE\s*==\s*C_CALL\b'
+    r'|#\s*ifdef\s+CallFromC\b'
+    r'|#\s*if\s+defined\s*\(\s*CallFromC\s*\)',
+)
+
+
 def _get_target_mode(args):
     """Construct TargetMode based on CLI arguments."""
     target_str = getattr(args, 'target', None) or 'kind16'
@@ -384,6 +395,13 @@ def cmd_verify(args):
     print(f'Verifying {len(all_files)} files in {src_dir}')
     print()
 
+    # Read each file once and cache the splitlines result. Without this
+    # cache cmd_verify did 3-4 separate read_text passes over every
+    # source file in src_dir, dominating wall-time on big libraries.
+    file_lines: dict[Path, list[str]] = {
+        f: f.read_text(errors='replace').splitlines() for f in all_files
+    }
+
     # Determine if the target uses module-based constructors
     is_constructor_based = target_mode.real_constructor is not None
 
@@ -391,7 +409,7 @@ def cmd_verify(args):
     print('Residual precision types (code lines):')
     residuals = 0
     for f in f_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_fixed_form_comment(line):
                 continue
             if re.search(r'DOUBLE\s+PRECISION|COMPLEX\*16|COMPLEX\*8|DOUBLE\s+COMPLEX|REAL\*[48]',
@@ -399,7 +417,7 @@ def cmd_verify(args):
                 print(f'  {f.name}:{i}: {line.strip()}')
                 residuals += 1
     for f in f90_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_free_form_comment(line):
                 continue
             if re.search(r'kind\s*\(\s*1\.[de]0\s*\)', line, re.IGNORECASE):
@@ -432,7 +450,7 @@ def cmd_verify(args):
     print('Residual D-exponent literals (code lines):')
     d_lits = 0
     for f in f_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_fixed_form_comment(line):
                 continue
             cleaned_line = _strip_constructors(line)
@@ -440,7 +458,7 @@ def cmd_verify(args):
                 print(f'  {f.name}:{i}: {line.strip()}')
                 d_lits += 1
     for f in f90_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_free_form_comment(line):
                 continue
             cleaned_line = _strip_constructors(line)
@@ -461,9 +479,8 @@ def cmd_verify(args):
         print('Residual FP PARAMETER/DATA (code lines):')
         leftover = 0
         for f in all_files:
-            text = f.read_text(errors='replace')
             is_fixed = f.suffix.lower() == '.f'
-            for i, line in enumerate(text.splitlines(), 1):
+            for i, line in enumerate(file_lines[f], 1):
                 if is_fixed and _is_fixed_form_comment(line):
                     continue
                 if not is_fixed and _is_free_form_comment(line):
@@ -485,7 +502,7 @@ def cmd_verify(args):
     print('Column overflow (code lines > 72 chars):')
     overflows = 0
     for f in f_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_fixed_form_comment(line):
                 continue
             if len(line) > 72:
@@ -1251,11 +1268,6 @@ def cmd_stage(args):
         # twice so the final static library ships both entry points.
         # Detection is a cheap regex scan of the staged source; any
         # library that does not use the pattern emits an empty list.
-        dual_re = re.compile(
-            r'#\s*if\s*\(?\s*INTFACE\s*==\s*C_CALL\b'
-            r'|#\s*ifdef\s+CallFromC\b'
-            r'|#\s*if\s+defined\s*\(\s*CallFromC\s*\)',
-        )
         dual_files = []
         if config.language == 'c':
             for f in files:
@@ -1265,7 +1277,7 @@ def cmd_stage(args):
                     text = f.read_text(errors='replace')
                 except OSError:
                     continue
-                if dual_re.search(text):
+                if _DUAL_ENTRY_C_RE.search(text):
                     dual_files.append(f'src/{f.name}')
 
         # Write manifest.cmake
