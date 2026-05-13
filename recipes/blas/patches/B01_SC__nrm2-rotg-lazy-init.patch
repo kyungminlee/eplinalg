@@ -6,7 +6,7 @@
  !  =====================================================================
 -function SNRM2( n, x, incx ) 
 +!
-+!  Override of upstream LAPACK 3.12.1's BLAS/SRC/dnrm2.f90.
++!  Override of upstream LAPACK 3.12.1's BLAS/SRC/snrm2.f90.
 +!
 +!  Two diffs from upstream, both target the multifloats build:
 +!
@@ -156,8 +156,8 @@
  !  =====================================================================
 -function SCNRM2( n, x, incx ) 
 +!
-+!  Override of upstream LAPACK 3.12.1's BLAS/SRC/dznrm2.f90. See the
-+!  matching dnrm2.f90 override for the full rationale: Blue's scaling
++!  Override of upstream LAPACK 3.12.1's BLAS/SRC/scnrm2.f90. See the
++!  matching snrm2.f90 override for the full rationale: Blue's scaling
 +!  constants are renamed `tsml/tbig/ssml/sbig` -> `btsml/btbig/bssml/bsbig`
 +!  (avoids the multifloats-target nuke-rename that imports broken
 +!  `DD_T*BIG / DD_S*ML` values), and they are SAVE locals init'd at
@@ -198,7 +198,7 @@
     logical :: notbig
     real(wp) :: abig, amed, asml, ax, scl, sumsq, ymax, ymin
  !
-+!  First-call init of Blue's scaling constants (see dnrm2 override).
++!  First-call init of Blue's scaling constants (see snrm2 override).
 +!
 +   if (.not. blue_initialized) then
 +      r_radix  = real(radix(0._wp), wp)

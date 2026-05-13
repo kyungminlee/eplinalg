@@ -23,7 +23,6 @@ from migrator.c_migrator import (
     _apply_overrides,
     _build_rename_regex,
     _make_rename_substituter,
-    _migrate_blacs_c_directory,
     _patch_bdef_header,
     migrate_c_file_to_string,
 )
@@ -263,96 +262,6 @@ def test_apply_overrides_missing_source_raises(tmp_path):
             output_dir,
             [(tmp_path / 'does_not_exist.c', f'BI_{_RP}vvsum.c')],
         )
-
-
-# ---------------------------------------------------------------------------
-# _migrate_blacs_c_directory -- source_overrides
-# ---------------------------------------------------------------------------
-
-
-def _stub_bdef_header() -> str:
-    """Minimal Bdef.h that the BLACS migrator will leave alone (no
-    SCOMPLEX typedef means _patch_bdef_header is a no-op)."""
-    return '/* stub */\n'
-
-
-def test_blacs_source_overrides_replace_upstream(tmp_path):
-    """An override for an upstream basename swaps the file before clone.
-
-    The replacement goes through the same d→{rp} substitution as the
-    upstream file, so the override's body — not the upstream body —
-    determines what lands in the migrated clone.
-    """
-    src = tmp_path / 'src'
-    src.mkdir()
-    (src / 'Bdef.h').write_text(_stub_bdef_header())
-    (src / 'dgsum2d_.c').write_text(
-        '#include "Bdef.h"\n'
-        'void dgsum2d_(void) { /* upstream body, MPI_SUM */ }\n'
-    )
-
-    override_dir = tmp_path / 'overrides'
-    override_dir.mkdir()
-    (override_dir / 'dgsum2d_.c').write_text(
-        '#include "Bdef.h"\n'
-        'void BI_dMPI_sum(void *, void *, int *, int *);\n'
-        'void dgsum2d_(void) { /* OVERRIDDEN: uses MPI_Op_create */ }\n'
-    )
-
-    out = tmp_path / 'out'
-    mf = load_target('multifloats')
-    _migrate_blacs_c_directory(
-        src, out, mf, copy_originals=False,
-        source_overrides={'dgsum2d_.c': override_dir / 'dgsum2d_.c'},
-    )
-
-    clone = out / f'{_RP}gsum2d_.c'
-    assert clone.exists(), 'd→prefix clone should be created'
-    text = clone.read_text()
-    assert 'OVERRIDDEN' in text, 'override body, not upstream, should win'
-    # And the d→prefix substitution still ran on the override body —
-    # BI_dMPI_sum is renamed to BI_{rp}MPI_sum (e.g. BI_mMPI_sum).
-    assert f'BI_{_RP}MPI_sum' in text
-
-
-def test_blacs_source_overrides_add_new_source(tmp_path):
-    """An override for a basename that does not exist upstream is
-    treated as a new source file and goes through the clone pipeline.
-
-    This is how ``BI_dMPI_sum.c`` (no upstream counterpart) reaches
-    the migrated archive as ``BI_{rp}MPI_sum.c``.
-    """
-    src = tmp_path / 'src'
-    src.mkdir()
-    (src / 'Bdef.h').write_text(_stub_bdef_header())
-    # Provide BI_dvvsum so the precision-prefix-detection code has a
-    # plausible BLACS-shaped tree even though the test only cares
-    # about the override-only addition.
-    (src / 'BI_dvvsum.c').write_text(
-        '#include "Bdef.h"\n'
-        'void BI_dvvsum(int N, char *v1, char *v2) { (void)N; (void)v1; (void)v2; }\n'
-    )
-
-    override_dir = tmp_path / 'overrides'
-    override_dir.mkdir()
-    (override_dir / 'BI_dMPI_sum.c').write_text(
-        '#include "Bdef.h"\n'
-        'void BI_dMPI_sum(void *in, void *inout, int *N, int *dt)\n'
-        '{ void BI_dvvsum(int, char *, char *); BI_dvvsum(*N, inout, in); }\n'
-    )
-
-    out = tmp_path / 'out'
-    mf = load_target('multifloats')
-    _migrate_blacs_c_directory(
-        src, out, mf, copy_originals=False,
-        source_overrides={'BI_dMPI_sum.c': override_dir / 'BI_dMPI_sum.c'},
-    )
-
-    clone = out / f'BI_{_RP}MPI_sum.c'
-    assert clone.exists(), 'override-only file must produce a clone'
-    text = clone.read_text()
-    assert f'void BI_{_RP}MPI_sum(' in text
-    assert f'BI_{_RP}vvsum' in text  # body's d→rp rewrite ran
 
 
 # ---------------------------------------------------------------------------

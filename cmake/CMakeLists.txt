@@ -67,46 +67,7 @@ if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
 endif()
 set(CMAKE_Fortran_PREPROCESS ON)
 
-# Detect 80-bit extended precision (KIND=10) support.
-#
-# We probe the literal ``REAL(KIND=10)`` on purpose, not
-# ``selected_real_kind(18, 4931)``. On compilers that lack x87 80-bit
-# reals (ifx on Linux/x86-64), the latter returns 16 and silently
-# aliases the KIND=10 path onto KIND=16, which makes the EISNAN and
-# QISNAN overloads in LA_XISNAN_EP collapse to the same argument type
-# and triggers an ambiguous-generic-interface error. Asking for
-# KIND=10 directly fails to compile on such compilers, which is the
-# behavior we want.
-include(CheckFortranSourceCompiles)
-check_fortran_source_compiles("
-    program test_real10
-    real(kind=10) :: x
-    x = 1.0_10
-    end program
-" HAVE_REAL10 SRC_EXT F90)
-if(HAVE_REAL10)
-    add_compile_definitions(HAVE_REAL10)
-endif()
-
-# Detect 128-bit quadruple precision (IEEE binary128) support.
-#
-# We probe ``selected_real_kind(33, 4931)`` (the pattern used inside
-# la_constants_ep to pick ``qp``), not the literal ``REAL(KIND=16)``.
-# LLVM Flang 20 accepts the KIND=16 literal but then returns -1 for
-# ``selected_real_kind(33)``, so the module ends up with ``qp = -1``
-# and every subsequent ``real(qp)`` declaration fails. Probing the
-# real selector catches this case; the module's qp block is then
-# gated behind HAVE_REAL16 for flang's benefit.
-check_fortran_source_compiles("
-    program test_real16
-    integer, parameter :: qp = selected_real_kind(33, 4931)
-    real(qp) :: x
-    x = 1.0_qp
-    end program
-" HAVE_REAL16 SRC_EXT F90)
-if(HAVE_REAL16)
-    add_compile_definitions(HAVE_REAL16)
-endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/DetectExtendedPrecision.cmake)
 
 find_package(MPI COMPONENTS C CXX Fortran QUIET)
 
@@ -134,47 +95,19 @@ if(NEEDS_MULTIFLOATS)
         include(FetchContent)
         set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
             CACHE STRING "Git URL for the multifloats library")
-        set(MULTIFLOATS_GIT_TAG "main"
-            CACHE STRING "Git tag/branch/commit for multifloats")
+        # multifloats v0.6.0 fixed the ${CMAKE_SOURCE_DIR} include-path
+        # leak that broke add_subdirectory'd builds (upstream issue #23).
+        # Earlier tags need the file(READ ... REPLACE ... WRITE) shim
+        # that used to live here; bumping below this floor is not
+        # supported without restoring it.
+        set(MULTIFLOATS_GIT_TAG "v0.6.0"
+            CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
         message(STATUS "Fetching multifloats from ${MULTIFLOATS_GIT_REPO} (${MULTIFLOATS_GIT_TAG})")
         FetchContent_Declare(multifloats_fetch
             GIT_REPOSITORY ${MULTIFLOATS_GIT_REPO}
             GIT_TAG        ${MULTIFLOATS_GIT_TAG}
         )
         FetchContent_Populate(multifloats_fetch)
-        # Upstream src/ and fsrc/ CMakeLists reference paths via
-        # ${CMAKE_SOURCE_DIR} (older multifloats) or ${PROJECT_SOURCE_DIR}/..
-        # (current multifloats). Both forms break when included as a
-        # sub-build: CMAKE_SOURCE_DIR points at our staging dir, and
-        # PROJECT_SOURCE_DIR's value across CMake versions/scopes is
-        # unreliable (CMake 3.31 in particular resolves it to the outer
-        # project at configure_package_config_file time, not to fsrc/).
-        # Substitute both forms with the absolute fetched source path so
-        # the patch is independent of CMake-version scoping rules.
-        file(READ "${multifloats_fetch_SOURCE_DIR}/src/CMakeLists.txt" _mf_src_cmake)
-        string(REPLACE
-            "\${CMAKE_SOURCE_DIR}/include"
-            "${multifloats_fetch_SOURCE_DIR}/include"
-            _mf_src_cmake "${_mf_src_cmake}")
-        string(REPLACE
-            "\${PROJECT_SOURCE_DIR}/../include"
-            "${multifloats_fetch_SOURCE_DIR}/include"
-            _mf_src_cmake "${_mf_src_cmake}")
-        file(WRITE "${multifloats_fetch_SOURCE_DIR}/src/CMakeLists.txt" "${_mf_src_cmake}")
-        if(EXISTS "${multifloats_fetch_SOURCE_DIR}/fsrc/CMakeLists.txt")
-            file(READ "${multifloats_fetch_SOURCE_DIR}/fsrc/CMakeLists.txt"
-                 _mf_fsrc_cmake)
-            string(REPLACE
-                "\${CMAKE_SOURCE_DIR}/cmake/"
-                "${multifloats_fetch_SOURCE_DIR}/cmake/"
-                _mf_fsrc_cmake "${_mf_fsrc_cmake}")
-            string(REPLACE
-                "\${PROJECT_SOURCE_DIR}/../cmake/"
-                "${multifloats_fetch_SOURCE_DIR}/cmake/"
-                _mf_fsrc_cmake "${_mf_fsrc_cmake}")
-            file(WRITE "${multifloats_fetch_SOURCE_DIR}/fsrc/CMakeLists.txt"
-                 "${_mf_fsrc_cmake}")
-        endif()
         add_subdirectory(
             ${multifloats_fetch_SOURCE_DIR}
             ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)

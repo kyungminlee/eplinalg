@@ -71,11 +71,13 @@ class RecipeConfig:
     # path to a single ``.f``/``.f90``/``.F90``/``.c``/``.h`` file.
     # Used to pull in targeted leaf sources from shared directories
     # whose other contents belong to a different library — e.g.
-    # LAPACK migrates ``INSTALL/dlamch.f`` and
-    # ``INSTALL/droundup_lwork.f`` without swallowing the timer
-    # variants and test programs that live alongside them; PTZBLAS
-    # pulls in ``TOOLS/zzdotc.f`` and ``TOOLS/zzdotu.f`` without
-    # claiming the rest of ScaLAPACK's TOOLS/.
+    # LAPACK migrates ``INSTALL/dlamch.f`` without swallowing the
+    # timer variants and test programs that live alongside it
+    # (``INSTALL/droundup_lwork.f`` is deliberately not migrated;
+    # the engine's ``_strip_roundup_lwork`` post-pass elides every
+    # call site — see ``recipes/lapack.yaml``); PTZBLAS pulls in
+    # ``TOOLS/zzdotc.f`` and ``TOOLS/zzdotu.f`` without claiming
+    # the rest of ScaLAPACK's TOOLS/.
     extra_migrate_files: list[Path] = field(default_factory=list)
     # Additional C source directories to *migrate* (not just scan) in
     # the same generic-rename-map pass as ``source_dir``. Used by PBLAS

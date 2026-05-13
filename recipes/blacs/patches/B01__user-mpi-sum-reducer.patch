@@ -15,7 +15,7 @@ diff -urN work/BI_dMPI_sum.c /tmp/tmp.JL4TCVjgBQ/work/BI_dMPI_sum.c
 + * the per-element addition in user code (native ``+=`` on the target
 + * real type after migration), bypassing the broken builtin entirely.
 + *
-+ * Audit task #24, ``doc/AUDIT-20260430.md`` Addendum 4.
++ * See doc/UPSTREAM_BUGS-ScaLAPACK.md (BLACS section) for context.
 + */
 +#include "Bdef.h"
 +void BI_dMPI_sum(void *in, void *inout, MpiInt *N, MPI_Datatype *dtype)
@@ -55,7 +55,7 @@ diff -urN work/dgsum2d_.c /tmp/tmp.JL4TCVjgBQ/work/dgsum2d_.c
 + * ``zgsum2d_`` path. The companion ``BI_dMPI_sum.c`` ships alongside
 + * this file via the same ``source_overrides`` recipe entry.
 + *
-+ * Audit task #24, ``doc/AUDIT-20260430.md`` Addendum 4.
++ * See doc/UPSTREAM_BUGS-ScaLAPACK.md (BLACS section) for context.
 + */
 +
  #include "Bdef.h"

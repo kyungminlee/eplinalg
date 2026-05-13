@@ -555,11 +555,11 @@ later removed. Three call sites per routine.
 
 Already documented separately as the first PCHK2MAT bug found via
 convergence audit (caught earlier this session, patched at
-`recipes/scalapack/source_overrides/pzheevd.f`).
+`recipes/scalapack/patches/pzheevd.f.patch`).
 
 ### Patches in migrated archive
 
-D/Z-canonical halves patched at `recipes/scalapack/source_overrides/`:
+D/Z-canonical halves patched at `recipes/scalapack/patches/`:
 - `pdsyevr.f` (DESCZ POS0 21→19)
 - `pzheevr.f` (DESCZ POS0 21→19)
 - `pdsygvx.f` (N POS0 4→5 in both calls; B/Z param indices left
@@ -638,8 +638,8 @@ alpha) * |L_below^T * x_below|`.
 
 **Fix.** One-token change: pass `((char *) ALPHA)` instead of `one`
 to `?agemv_`. Carried in
-`recipes/pblas/source_overrides/p{d,z}atrmv_.c` and wired via
-`recipes/pblas.yaml`'s `source_overrides:` block. The migrator's
+`recipes/pblas/patches/S04__atrmv-alpha-hardcoded-one.patch` and wired via
+`recipes/pblas.yaml`'s `patches:` list. The migrator's
 PBLAS pipeline applies the patched form for every extended-precision
 target.
 
@@ -765,10 +765,10 @@ multifloats double-double.
 
 **Workaround in tree.**
 
-* `recipes/scalapack/source_overrides/pdlanhs.f`
-* `recipes/scalapack/source_overrides/pzlanhs.f`
+* `recipes/scalapack/patches/pdlanhs.f.patch`
+* `recipes/scalapack/patches/pzlanhs.f.patch`
 
-Wired via `recipes/scalapack.yaml`'s `source_overrides:` map.
+Wired via `recipes/scalapack.yaml`'s `patches:` list.
 `PDLANHS` and `PZLANHS` are pinned in `prefer_source:` so the
 patched D/Z halves win convergence over the un-fixed C/S siblings.
 
@@ -838,8 +838,8 @@ INXTROW = MOD( INXTROW + 1, NPROW )
 
 **Workaround in tree.** Same pair as the NPROW=1 fix:
 
-* `recipes/scalapack/source_overrides/pdlanhs.f`
-* `recipes/scalapack/source_overrides/pzlanhs.f`
+* `recipes/scalapack/patches/pdlanhs.f.patch`
+* `recipes/scalapack/patches/pzlanhs.f.patch`
 
 Both the NPROW=1 `II = II + JB` patch and this IAROW fix live in the
 same override file.
@@ -926,7 +926,7 @@ extrema in the complex routine).
 
 **Fix.** Change `'Columnwise'` to `'Rowwise'` and `COLCTOP` to
 `ROWCTOP` on those three calls. The patched override in
-`recipes/scalapack/source_overrides/p[dz]geequ.f` carries the fix
+`recipes/scalapack/patches/p[dz]geequ.f` carries the fix
 plus an inline comment block explaining the mirror.
 
 **Why upstream's tests miss it.** The driver compares row/column
@@ -977,7 +977,7 @@ versus `LRWMIN_PZPOCON = 2*NQMOD` and `LRWMIN_PZPORFS = NPMOD`.
 - `external/scalapack-2.2.3/SRC/pzposvx.f` (lines 429–430).
 
 **Fix.** Patched overrides in
-`recipes/scalapack/source_overrides/p[dz]posvx.f` recompute
+`recipes/scalapack/patches/p[dz]posvx.f` recompute
 `NPMOD`/`NQMOD` (PDPOCON's unadjusted NUMROCs), then set
 `LWMIN = MAX( PDPOCON_LWMIN, PDPORFS_LWMIN )` (and `LRWMIN` accordingly
 for the complex variant). `recipes/scalapack.yaml` declares the
@@ -1053,7 +1053,7 @@ is `complex`).
 
 Same pattern as the `target_pdtrsen` `iwork_t(max(1,n))` fix
 documented in the next section. Both fixes live wrapper-side rather
-than as `recipes/scalapack/source_overrides/` entries because they
+than as `recipes/scalapack/patches/` entries because they
 adjust caller workspace expectations rather than the algorithm; they
 don't need to ship into migrated builds the way an algorithm fix does.
 
@@ -1163,7 +1163,7 @@ shape with `mA <= nA`). Since `mC = K + L > L` for any non-trivial K,
   `pzunmrz`.
 
 **Fix (PARTIAL).** Patched overrides in
-`recipes/scalapack/source_overrides/p[dz]larzb.f`. The repair is a
+`recipes/scalapack/patches/p[dz]larzb.f`. The repair is a
 one-line change to the SIDE='L' branch: PBDTRAN/PBZTRAN's N argument
 goes from `M+ICOFFV` to `L+ICOFFV` (and the matching `MQV0` line is
 adjusted likewise). Per `pdlarzb`'s comment "WORK(IPW) is K x MQV0 = [
@@ -1248,7 +1248,7 @@ $    ( LEFT .AND. NOTRAN ) ) THEN
 - Same shape in `psormrz.f` / `pcunmrz.f` (untested by us).
 
 **Fix.** Patched overrides in
-`recipes/scalapack/source_overrides/p[dz]ormrz.f` change the post-loop
+`recipes/scalapack/patches/p[dz]ormrz.f` change the post-loop
 condition to `(LEFT .AND. NOTRAN) .OR. (.NOT.LEFT .AND. .NOT.NOTRAN)`.
 Wired via `recipes/scalapack.yaml` plus matching `prefer_source:
 PDORMRZ, PZUNMRZ` pins.
@@ -1302,8 +1302,8 @@ SIDE='L'; `L+ICOFFC2` / `DESCC(NB_)` / `ICCOL2` for SIDE='R'). The
 upstream `LWMIN` already sizes the leading WORK region to `MPC0`
 (full sub(C) local rows), which dominates the new `MPV`, so no
 `LWMIN` change is needed. Wired via
-`recipes/scalapack/source_overrides/p[dz]larz.f` and
-`recipes/scalapack/source_overrides/pzlarzc.f`, with
+`recipes/scalapack/patches/p[dz]larz.f` and
+`recipes/scalapack/patches/pzlarzc.f`, with
 `prefer_source: PDLARZ, PZLARZ, PZLARZC` pins.
 
 
@@ -1340,7 +1340,7 @@ CALL DAXPY( N, -TAU, WORK, 1, C, LDC )
 **Fix.** Override changes `INCY` from `MAX(1, NQC2)` to `1` in every
 AXPY into `WORK`. The `MAX(1, NQC2)` expression is retained where it
 is the legitimate LD of the surrounding `LASET` / `GSUM2D` matrix
-calls. Wired via the same `source_overrides` entries as the
+calls. Wired via the same `patches:` entries as the
 `MPV`/`NQV` fix.
 
 
@@ -1418,7 +1418,7 @@ SIDE='L' `ZGEMV('Conjugate transpose', ...)` (where `accum` is
 the corresponding `ZGERU(...)`. The SIDE='R' `ZGERC` calls
 (`MPC2×NQV`) are left untouched. `ZLACGV` and `ZGERU` are added to
 the `EXTERNAL` declaration in both files. Wired via the same
-`source_overrides` entries and `prefer_source` pins as the
+`patches:` entries and `prefer_source` pins as the
 `MPV`/`NQV` and AXPY-stride fixes.
 
 **Not in `../scalapack-bugfix/scalapack`.** The four prior `fix-*`
@@ -1460,7 +1460,7 @@ case that surfaced the bug upstream is not in our test matrix
 (rowwise SIDE='L') / `N` (columnwise SIDE='R') to `L` in all four
 sites of each file. Same `N`-vs-`L` pattern as the `P?LARZB`
 PBxTRAN fix landed earlier (commit `75714cb` upstream). Wired via
-the same `source_overrides` entries.
+the same `patches:` entries.
 
 ---
 
@@ -1509,7 +1509,7 @@ The S/D halves (`psorgql.f` / `psormql.f` / `pdorgql.f` /
 migrator concern is the Z half because that's what the differential
 suite exercises.
 
-**Fix in-tree.** No `source_overrides` body — the C-half is already
+**Fix in-tree.** No patch needed — the C-half is already
 correct. Recipe pins the C-half as canonical via
 `prefer_source: PCUNGQL / PCUNML2` so the convergence picker takes
 the C body and the migrator generates correct `Q`/`X`/`E`/`Y` clones
@@ -1559,8 +1559,8 @@ to forward to `PXERBLA` if `DESCB` (= `DESCZ` here) is invalid.
 
 **Fix.** Single-token change `11 → 12` on the 16th argument of the
 `PCHK2MAT` call. Carried in
-`recipes/scalapack/source_overrides/pzheevd.f`. Wired via
-`recipes/scalapack.yaml`'s `source_overrides:` map plus a matching
+`recipes/scalapack/patches/pzheevd.f.patch`. Wired via
+`recipes/scalapack.yaml`'s `patches:` list plus a matching
 `prefer_source: PZHEEVD` pin so the patched Z half wins convergence
 over the un-fixed `PCHEEVD` sibling (which carries the *correct* 12,
 but the migrator's canonical-rank picker doesn't know that and would
@@ -1599,8 +1599,8 @@ it's the wrong name: the C half's `pcunmbr.f:302` correctly lists
 - `external/scalapack-2.2.3/SRC/pzunmbr.f` (line 302).
 
 **Fix.** Replace `PCHK1MAT` with `PCHK2MAT` in the EXTERNAL list.
-Carried in `recipes/scalapack/source_overrides/pzunmbr.f`. Wired via
-`recipes/scalapack.yaml`'s `source_overrides:` map plus a matching
+Carried in `recipes/scalapack/patches/pzunmbr.f.patch`. Wired via
+`recipes/scalapack.yaml`'s `patches:` list plus a matching
 `prefer_source: PZUNMBR` pin so the patched Z half wins convergence
 over the (already-correct) C half (canonical-rank picker would
 otherwise sort `pcunmbr.f` first).

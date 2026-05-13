@@ -307,10 +307,11 @@ overrides:
       # Overlay header (fallback for pure-C compilation path).
       - pblas_mf_overlay.h
 
-# Symmetric-patch CI escape hatch (Phase D). S04 patches the
-# D/Z halves of patrmv (real upstream bug); S/C halves carry the
-# same bug upstream but are non-canonical for the migrated archive.
-# When S/C patches are added (to fix the un-migrated standard PBLAS
-# archive too), remove their patches from this list.
+# Patches that touch only one half of the S/D ↔ C/Z precision pair.
+# S04 fixes the D/Z halves of patrmv (real upstream bug); S/C halves
+# carry the same bug upstream but are non-canonical for the migrated
+# archive so we don't ship an S/C patch. When S/C patches are added
+# (to fix the un-migrated standard PBLAS archive too), remove them
+# from this list.
 asymmetric_patches:
   - S04__atrmv-alpha-hardcoded-one.patch

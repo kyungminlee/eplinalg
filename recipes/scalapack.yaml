@@ -21,20 +21,23 @@ extra_symbol_dirs:
   - external/scalapack-2.2.3/REDIST/SRC # pigemr2d, etc.
 
 # TOOLS/ houses ScaLAPACK's descriptor/grid/communication helpers —
-# numroc_, iceil_, ilcm_, descinit_, pchk1mat_, the pd*/pz* element
-# accessors, pdtreecomb_ (with its embedded DCOMBSSQ), SL_init
-# (sl_gridreshape_), the {s,c,d,z}{matadd,latcpy} families, and the
-# integer-family piXXX helpers. Every symbol a ScaLAPACK routine calls
-# into from TOOLS is sourced from here. The zzdotc.f/zzdotu.f pair is
-# owned by PTZBLAS (migrated via ptzblas.yaml) and is deliberately
-# excluded so the final link isn't ambushed by duplicate xxdotc_/
-# xxdotu_ symbols across two archives.
+# descinit_, pchk1mat_, the pd*/pz* element accessors, pdtreecomb_
+# (with its embedded DCOMBSSQ), SL_init (sl_gridreshape_), the
+# {s,c,d,z}{matadd,latcpy} families, and the integer-family piXXX
+# helpers. The precision-independent integer helpers numroc_ / iceil_
+# / ilcm_ live in scalapack_tools.yaml (hoisted out so PBBLAS can link
+# them without dragging libqscalapack — see depends above). Every
+# other symbol a ScaLAPACK routine calls into from TOOLS is sourced
+# from here. The zzdotc.f/zzdotu.f pair is owned by PTZBLAS (migrated
+# via ptzblas.yaml) and is deliberately excluded so the final link
+# isn't ambushed by duplicate xxdotc_/xxdotu_ symbols across two
+# archives.
 extra_migrate_files:
   # PJLAENV_EP — extended-precision-aware variant of PJLAENV. Lives
   # under recipes/scalapack/extras/ rather than external/ because it
   # is a new symbol introduced by the migrator (not a swap of an
   # upstream file). The 10 callers that pass their own migrated name
-  # to PJLAENV are rerouted via source_overrides below to call
+  # to PJLAENV are rerouted via patches below to call
   # PJLAENV_EP instead, sidestepping upstream PJLAENV's strict
   # S/D/C/Z precision-letter gate.
   - recipes/scalapack/extras/pjlaenv_ep.f
@@ -147,48 +150,39 @@ skip_files:
 
 # Override D/Z-first canonical selection for pairs whose D/Z half
 # needs to win convergence against a sibling that doesn't carry the
-# corresponding source_overrides patch.
+# corresponding patch (the canonical-rank picker doesn't recognize
+# ScaLAPACK's pd*/pz* prefix shape, so without an explicit pin it
+# sorts the C/S copy alphabetically first and the un-fixed body
+# becomes canonical).
 prefer_source:
-  # Pin the D/Z half as canonical so the source_overrides on
-  # pdlanhs.f / pzlanhs.f win convergence (the canonical-rank
-  # picker doesn't recognize ScaLAPACK's pd*/pz* prefix shape, so
-  # without an explicit pin it sorts pclanhs.f alphabetically first
-  # and that un-fixed copy becomes canonical). The corresponding
-  # source_overrides entries supply the bug-fixed PD/PZ bodies.
+  # Pin the D/Z half so the bug-fixed PD/PZ patches for pdlanhs.f /
+  # pzlanhs.f win convergence against an un-patched PCLANHS sibling.
   - PDLANHS
   - PZLANHS
-  # Same pin reason as PDLANHS/PZLANHS: the source_overrides for
-  # PDGEEQU/PZGEEQU only patch the D/Z half. Without an explicit
-  # prefer_source pin, the canonical-rank picker sorts pcgeequ.f
-  # alphabetically first and the un-fixed copy becomes canonical.
+  # PDGEEQU/PZGEEQU patches only fix the D/Z half.
   - PDGEEQU
   - PZGEEQU
-  # Same pin reason: source_overrides for PDPOSVX/PZPOSVX patch the
-  # LWMIN-too-small upstream bug; pin the D/Z half so the canonical-
-  # rank picker doesn't choose an alphabetically-earlier S/C copy.
+  # PDPOSVX/PZPOSVX patches fix the LWMIN-too-small upstream bug.
   - PDPOSVX
   - PZPOSVX
-  # Same pin reason: source_overrides for PDLARZB/PZLARZB patch the
-  # PBDTRAN/PBZTRAN LDC mismatch (M+ICOFFV vs L+ICOFFV); pin the D/Z
-  # half so the canonical-rank picker doesn't pick the un-fixed
-  # alphabetically-earlier S/C copy.
+  # PDLARZB/PZLARZB patches fix the PBDTRAN/PBZTRAN LDC mismatch
+  # (M+ICOFFV vs L+ICOFFV).
   - PDLARZB
   - PZLARZB
-  # Same pin reason: source_overrides for PDORMRZ/PZUNMRZ patch the
-  # post-loop-condition copy-paste bug (post-loop should be the
-  # complement of pre-loop, not a duplicate). Pin the D/Z half.
+  # PDORMRZ/PZUNMRZ patches fix the post-loop-condition copy-paste
+  # bug (post-loop should be the complement of pre-loop, not a duplicate).
   - PDORMRZ
   - PZUNMRZ
-  # Same pin reason: source_overrides for PDLARZ/PZLARZ patch the
-  # MPV/NQV undersizing and the DAXPY stride bug. Pin the D/Z half.
+  # PDLARZ/PZLARZ patches fix the MPV/NQV undersizing and the DAXPY
+  # stride bug.
   - PDLARZ
   - PZLARZ
-  # Same pin reason: source_overrides for PZLARZC patch the same
-  # buffer/stride bugs in the Q**H variant. Pin to dominate PCLARZC.
+  # PZLARZC patch fixes the same buffer/stride bugs in the Q**H
+  # variant; pin to dominate PCLARZC.
   - PZLARZC
-  # Pin the Z halves so the source_overrides for PZHEEVD (PCHK2MAT
-  # parameter-index 11→12) and PZUNMBR (EXTERNAL list PCHK1MAT→
-  # PCHK2MAT) win convergence over the un-patched PCHEEVD/PCUNMBR.
+  # Pin the Z halves so the patches for PZHEEVD (PCHK2MAT parameter-
+  # index 11→12) and PZUNMBR (EXTERNAL list PCHK1MAT→PCHK2MAT) win
+  # convergence over the un-patched PCHEEVD/PCUNMBR.
   - PZHEEVD
   - PZUNMBR
   # PCHK?MAT parameter-position fixes (2026-05-08 sweep) — pin the
@@ -206,8 +200,8 @@ prefer_source:
   - PZPBTRSV
   - PDLASCL
   - PZLASCL
-  # PDORMRZ / PZUNMRZ already pinned above (line ~185) for the larz
-  # buffer-sizing fixes.
+  # PDORMRZ / PZUNMRZ are already pinned above for the post-loop-condition
+  # copy-paste fix.
 
 # Mirror the scalapack_c.yaml rename for pdlaiectb_/pdlaiectl_: the
 # Fortran callers PDSTEBZ / PDSYEVX / PDSYGVX / PZHEEVX / PZHEGVX
@@ -228,26 +222,28 @@ extra_renames:
   PILAENVX: PILAENVX_EP
 
 # Patches applied to staged sources before migration (one per upstream
-# bug). See doc/UPSTREAM_BUGS.md for the bug catalogue and
+# bug). See doc/UPSTREAM_BUGS-ScaLAPACK.md for the bug catalogue
+# (prose section titles; the S##/X##/P##/I##/W## tags below are an
+# older internal index that no longer cross-references the doc) and
 # doc/refactor-20260509.md for the patch convention.
 #
-# Each patch corresponds to a bug ID:
-#   S05+S06 lanhs (NPROW=1 underestimate + IAROW double-advance)
-#   S07     geequ column-scale wrong axis
-#   S08     posvx LWMIN too small
-#   S11     pdlarzb PBDTRAN N-arg vs LV-buffer mismatch
-#   S12+I09 ormrz/unmrz post-loop condition + L-validation bug
-#   S13/S14/S16 larz buffer undersizing + DAXPY stride
-#   S15     pzlarzc SIDE='L' missing ZLACGV; ZGERC vs ZGERU
-#   P04+W01 pzheevd PCHK2MAT index + LIWORK validation
-#   S01     pzunmbr EXTERNAL declares PCHK1MAT body calls PCHK2MAT
-#   X02     bdtrexc XERBLA reports 'DTREXC' typo
-#   X03     {d,z}pttrsv XERBLA reports '?PTTRS' instead of '?PTTRSV'
-#   P01     {syevr,heevr} DESCZ POS0 21 → 19
-#   P02     {sygvx,hegvx} N POS0 4 → 5
-#   P03     pdtrord POS0 off by +1
-#   I07     {pttrs,pbtrsv} LWORK sentinel INFO off-by-one
-#   I08     {lascl} CFROM/CTO INFO codes inherited from LAPACK
+# Bug summaries:
+#   lanhs (NPROW=1 underestimate + IAROW double-advance)
+#   geequ column-scale wrong axis
+#   posvx LWMIN too small
+#   pdlarzb PBDTRAN N-arg vs LV-buffer mismatch
+#   ormrz/unmrz post-loop condition + L-validation bug
+#   larz buffer undersizing + DAXPY stride
+#   pzlarzc SIDE='L' missing ZLACGV; ZGERC vs ZGERU
+#   pzheevd PCHK2MAT index + LIWORK validation
+#   pzunmbr EXTERNAL declares PCHK1MAT body calls PCHK2MAT
+#   bdtrexc XERBLA reports 'DTREXC' typo
+#   {d,z}pttrsv XERBLA reports '?PTTRS' instead of '?PTTRSV'
+#   {syevr,heevr} DESCZ POS0 21 → 19
+#   {sygvx,hegvx} N POS0 4 → 5
+#   pdtrord POS0 off by +1
+#   {pttrs,pbtrsv} LWORK sentinel INFO off-by-one
+#   {lascl} CFROM/CTO INFO codes inherited from LAPACK
 patches:
   - pdlanhs.f.patch
   - pslanhs.f.patch
@@ -323,10 +319,9 @@ patches:
 
 
 # Convergence whitelist (Phase D, doc/refactor-20260509.md).
-# Most are upstream MINRGP/larre2/larrf2 tuning splits, larzc/larzb/
-# stebz/lanhs algorithmic asymmetries, and patches that cover D/Z but
-# not S/C halves yet (e.g. PDORMRZ post-loop fix). See
-# doc/convergence-20260507.md §scalapack and doc/UPSTREAM_BUGS.md.
+# Most are upstream MINRGP/larre2/larrf2 tuning splits and larzc/larzb/
+# stebz/lanhs algorithmic asymmetries. See doc/convergence-20260507.md
+# §scalapack and doc/UPSTREAM_BUGS-ScaLAPACK.md.
 expected_divergences:
   # Bugs that remain asymmetric (genuine upstream design split):
   - BDLAEXC          # bdlaexc/bslaexc: 1.0E1 vs TEN parameter constant

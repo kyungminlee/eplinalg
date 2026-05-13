@@ -9,39 +9,37 @@ symbols:
 prefix:
   style: direct
 
-# copy_all_originals removed: the upstream S/D/C/Z entry points
-# (dgesd2d_, sgebr2d_, igsum2d_, ...) and precision-independent
-# helpers (BI_BlacsErr, BI_GetBuff, blacs_setup_, ...) live in the
-# standard-precision archive ``blacs`` built directly from
-# external/scalapack-2.2.3/BLACS/SRC/. The migrated archive
-# ``${LIB_PREFIX}blacs`` ships only the Q/X/E/Y/M/W clones
+# The upstream S/D/C/Z entry points (dgesd2d_, sgebr2d_, igsum2d_, ...)
+# and precision-independent helpers (BI_BlacsErr, BI_GetBuff,
+# blacs_setup_, ...) live in the standard-precision archive ``blacs``
+# built directly from external/scalapack-2.2.3/BLACS/SRC/. The migrated
+# archive ``${LIB_PREFIX}blacs`` ships only the Q/X/E/Y/M/W clones
 # (qgesd2d_, xgebr2d_, BI_qgemm, ...) and PUBLIC-links the standard
 # archive so consumers resolve both symbol families through one link.
 
 skip_files: []
 
-# Pre-migration source replacements + new sources. Both go through the
-# regular BLACS d→{q,e,m} / z→{x,y,w} clone pipeline so a single set of
-# upstream-shape patches services every extended-precision target.
+# Patches applied to staged sources before migration. The patched body
+# goes through the BLACS d→{q,e,m} / z→{x,y,w} clone pipeline so a single
+# upstream-shape patch services every extended-precision target.
 #
-#   dgsum2d_.c     -- patched to use ``MPI_Op_create(BI_dMPI_sum, ...)``
-#                     instead of the stock ``MPI_SUM``. Intel MPI
-#                     2021.17's ``MPI_SUM`` is broken on ``MPI_REAL16``
-#                     (segfault) and ``MPI_LONG_DOUBLE`` (returns
-#                     nonsense), and MPICH ``mpiexec`` deadlocks rank 0
-#                     on REAL16 — so every kind16/kind10 caller hangs or
-#                     crashes the moment a default-topology PDSYEVR /
-#                     PZHEEVR / PDSYEVX / PZHEEVX issues a real-side
-#                     gsum. The user-op routes the per-element add
-#                     through ``BI_dvvsum`` (target-promoted to
+#   B01 (dgsum2d_.c + BI_dMPI_sum.c) -- replaces the stock ``MPI_SUM``
+#                     with a ``MPI_Op_create(BI_dMPI_sum, ...)`` user-op.
+#                     Intel MPI 2021.17's ``MPI_SUM`` is broken on
+#                     ``MPI_REAL16`` (segfault) and ``MPI_LONG_DOUBLE``
+#                     (returns nonsense), and MPICH ``mpiexec`` deadlocks
+#                     rank 0 on REAL16 — so every kind16/kind10 caller
+#                     hangs or crashes the moment a default-topology
+#                     PDSYEVR / PZHEEVR / PDSYEVX / PZHEEVX issues a
+#                     real-side gsum. The user-op routes the per-element
+#                     add through ``BI_dvvsum`` (target-promoted to
 #                     ``BI_qvvsum`` / ``BI_evvsum`` / ``BI_mvvsum`` by
-#                     the BLACS C migrator), which uses the native
-#                     ``+=`` operator on the target's real type.
-#                     Mirrors upstream ``zgsum2d_.c``'s long-standing
-#                     pattern. Tracked as audit task #24.
-#   BI_dMPI_sum.c  -- new file (no upstream counterpart) defining the
-#                     user-op kernel — analogous to upstream
-#                     ``BI_zMPI_sum.c``. Cloned into ``BI_qMPI_sum.c`` /
+#                     the BLACS C migrator), which uses the native ``+=``
+#                     operator on the target's real type. Mirrors
+#                     upstream ``zgsum2d_.c``'s long-standing pattern.
+#                     ``BI_dMPI_sum.c`` has no upstream counterpart
+#                     (analogous to upstream ``BI_zMPI_sum.c``); the
+#                     d→prefix clone pipeline produces ``BI_qMPI_sum.c`` /
 #                     ``BI_eMPI_sum.c`` / ``BI_mMPI_sum.c`` automatically.
 patches:
   - B01__user-mpi-sum-reducer.patch

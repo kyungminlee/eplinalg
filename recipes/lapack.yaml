@@ -53,14 +53,11 @@ extra_migrate_files:
 prefix:
   style: direct
 
-# Source overrides — patched upstream bodies that go through the normal
-# migration pipeline. Overrides displace the same-named upstream files
-# in source_dir before the migrator scans them.
-#
 # Patches applied to staged sources before migration. Unified diffs
-# vs upstream Netlib LAPACK 3.12.1. See doc/UPSTREAM_BUGS.md for the
-# bug catalogue (each patch corresponds to a bug ID L01-L12 / X01-X03 /
-# E01 / I01-I06 / D01) and doc/refactor-20260509.md for the convention.
+# vs upstream Netlib LAPACK 3.12.1. The per-patch leading comments
+# (L01/X01/E01/I01/D01 tags) cross-reference an older bug-ID scheme;
+# doc/UPSTREAM_BUGS-LAPACK.md now uses prose section titles instead.
+# See doc/refactor-20260509.md for the patch-file convention.
 patches:
   # L01: ?orbdb3 ?ROT INCY uses LDX11 where it should be LDX21
   - dorbdb3.f.patch
@@ -290,8 +287,12 @@ extra_renames:
 # The L01-L12, X01-X03, E01, I01-I06, D01 patches address the bug
 # subset; remaining drift is upstream design.
 #
-# When a patch is added that closes one of these stems, REMOVE the
-# stem from this list and re-run ``migrator converge`` to confirm.
+# When a patch is added that closes one of these stems AND
+# ``migrator converge`` confirms convergence, REMOVE the stem from
+# this list. Stems whose divergence is genuinely upstream-asymmetric
+# (cosmetic/dead/refactor — see doc/lapack-residual-divergence-
+# categorization.md) stay listed even after patching; flag them with
+# an inline comment so reviewers know not to chase a converge.
 expected_divergences:
   - DBDSDC
   - DGBRFSX

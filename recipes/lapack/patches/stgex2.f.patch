@@ -1,6 +1,6 @@
 --- a/stgex2.f
 +++ b/stgex2.f
-@@ -286,8 +286,8 @@
+@@ -286,9 +286,9 @@
        IF( N1.GT.N .OR. ( J1+N1 ).GT.N )
       $   RETURN
        M = N1 + N2
@@ -11,3 +11,4 @@
 +         WORK( 1 ) = REAL( MAX( 1, N*M, M*M*2 ) )
           RETURN
        END IF
+ *

@@ -259,6 +259,90 @@ def _patch_libseq_mpi_f(path: Path) -> None:
     path.write_text(src)
 
 
+# Files to exclude from the *standard*-precision sibling archive that
+# the embedded Fortran template (and ``cmake/CMakeLists.txt``) builds
+# alongside the migrated one. Same EXCLUDE_REGEX semantics as the
+# shared ``add_standard_fortran_library`` calls — stems matched
+# case-insensitively against the file basename minus its extension.
+#
+# blas:   ``dsdot`` / ``sdsdot`` are cross-precision (mixed S+D) and
+#         not migratable; the migrator also drops them.
+# lapack: cross-precision routines (``dsgesv`` / ``zcposv`` / …) and
+#         the migrator-introduced extended-precision helpers
+#         (``la_constants_ep`` / ``la_xisnan_mf`` / …) — those are
+#         migrated content, not upstream content, and don't belong
+#         in the standard archive.
+_REF_EXCLUDE_STEMS: dict[str, set[str]] = {
+    'blas': {'dsdot', 'sdsdot'},
+    'lapack': {
+        'dsgesv', 'zcgesv', 'dsposv', 'zcposv', 'dsgels', 'zcgels',
+        'dlag2s', 'slag2d', 'zlag2c', 'clag2z', 'dlat2s', 'zlat2c',
+        'la_constants_ep', 'la_constants_mf',
+        'la_xisnan_ep', 'la_xisnan_mf',
+    },
+}
+
+# Libraries for which the embedded template emits a standard-precision
+# sibling archive. Matches the ``add_standard_fortran_library`` /
+# ``add_standard_c_library`` set in ``cmake/CMakeLists.txt``. Other
+# Fortran recipes (mumps, scalapack_tools, xblas) intentionally don't
+# get a sibling: mumps's sources need extra include directories the
+# embedded template doesn't wire; scalapack_tools' three helpers are
+# already inside the std scalapack archive; xblas is C-only and the C
+# template doesn't ship a sibling.
+_REF_LIBRARIES: set[str] = {
+    'blas', 'lapack', 'ptzblas', 'pbblas', 'scalapack',
+}
+
+
+def _collect_ref_sources(config) -> list[Path]:
+    """Collect upstream Fortran sources for the standard-precision
+    sibling archive built alongside the migrated one.
+
+    Globs ``config.source_dir`` for ``.f``/``.F``/``.f90``/``.F90``
+    files, pulls in any ``extra_migrate_files`` rooted under
+    ``external/`` (so LAPACK picks up ``INSTALL/dlamch.f``), then
+    applies the per-library exclude list above.
+
+    Returns ``[]`` for non-Fortran recipes — the C templates don't
+    build a sibling archive (yet) — and for recipes outside
+    ``_REF_LIBRARIES`` (mumps in particular has Fortran sources that
+    INCLUDE per-arithmetic headers from a sibling directory the
+    embedded template doesn't wire onto the std-archive's include
+    path). Callers treat an empty list as "no standard archive
+    emitted".
+    """
+    if config.language != 'fortran':
+        return []
+    if config.library not in _REF_LIBRARIES:
+        return []
+    fortran_exts = {'.f', '.f90'}  # case-insensitive match below
+    sources: list[Path] = []
+    if config.source_dir.is_dir():
+        for f in config.source_dir.iterdir():
+            if f.is_file() and f.suffix.lower() in fortran_exts:
+                sources.append(f)
+    for p in config.extra_migrate_files:
+        p = Path(p) if not isinstance(p, Path) else p
+        if 'external' in p.parts and p.suffix.lower() in fortran_exts and p.is_file():
+            sources.append(p)
+    excl = _REF_EXCLUDE_STEMS.get(config.library, set())
+    sources = [p for p in sources if p.stem.lower() not in excl]
+    # Dedupe + stable order. Resolve to absolute paths so the
+    # generated CMakeLists.txt finds them regardless of where the
+    # build directory lives.
+    seen: dict[tuple, Path] = {}
+    for f in sources:
+        f = f.resolve()
+        try:
+            st = f.stat()
+            key = (st.st_dev, st.st_ino)
+        except OSError:
+            key = ('missing', str(f))
+        seen.setdefault(key, f)
+    return sorted(seen.values())
+
+
 def _collect_source_files(src_dir: Path, language: str) -> list[Path]:
     """Discover migrated source files in ``src_dir`` for the given language.
 
@@ -423,7 +507,8 @@ def cmd_verify(args):
 def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
                     common_files: list[str], precision_files: list[str],
                     language: str = 'fortran',
-                    project_root: Path | None = None):
+                    project_root: Path | None = None,
+                    ref_sources: list[Path] | None = None):
     """Generate a self-contained CMakeLists.txt in the output directory."""
     pmap = target_mode.prefix_map
     real_pfx = pmap['R'].lower()
@@ -432,6 +517,7 @@ def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
 
     common_list = '\n    '.join(sorted(common_files))
     precision_list = '\n    '.join(sorted(precision_files))
+    ref_list = '\n    '.join(f'"{p}"' for p in (ref_sources or []))
 
     # Default path to the vendored Intel MPI headers. ``project_root``
     # is resolved at generation time, so the generated CMakeLists.txt
@@ -440,9 +526,110 @@ def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
                          / 'external' / 'impi-headers').resolve())
 
     if language == 'c':
+        # When targeting multifloats, the migrated C sources `#include
+        # "multifloats_bridge.h"`. Copy + patch the bridge header into
+        # the output dir so the migrated sources find it on the include
+        # path, mirroring what cmd_stage does for the shared driver.
+        c_mf_link = ''
+        c_mf_deps = ''
+        if target_mode.module_name is not None:
+            _root = project_root or Path.cwd()
+            mf_local = _root / 'external' / 'multifloats-mpi'
+            bridge_h_src = mf_local / 'multifloats_bridge.h'
+            if bridge_h_src.is_file():
+                helpers_dst = output_dir / '_helpers'
+                helpers_dst.mkdir(exist_ok=True)
+                staged = helpers_dst / bridge_h_src.name
+                shutil.copy2(bridge_h_src, staged)
+                # Guard the bridge header's `#include <mpi.h>` against
+                # the C++ MPI bindings — without it, scalapack_c's
+                # C-as-C++ build pulls thousands of mpicxx.h templates
+                # into the migrator-injected ``extern "C" { … }`` wrap
+                # and fails to link. Same patch cmd_stage applies.
+                text = staged.read_text()
+                if 'MPICH_SKIP_MPICXX' not in text:
+                    text = text.replace(
+                        '#include <mpi.h>',
+                        '#define MPICH_SKIP_MPICXX 1\n'
+                        '#define OMPI_SKIP_MPICXX 1\n'
+                        '#include <mpi.h>',
+                        1,
+                    )
+                    staged.write_text(text)
+            c_mf_link = """
+# multifloats: FetchContent (or local via -DMULTIFLOATS_DIR) so the
+# migrated sources can link against ``libmultifloats.a`` (C++) and
+# include ``multifloats_bridge.h`` (staged into ./_helpers/).
+set(BUILD_TESTING OFF CACHE BOOL "Disable tests in fetched multifloats" FORCE)
+set(MULTIFLOATS_BUILD_BENCH OFF CACHE BOOL "Disable benches in fetched multifloats" FORCE)
+if(DEFINED MULTIFLOATS_DIR)
+    message(STATUS "Using local multifloats: ${MULTIFLOATS_DIR}")
+    add_subdirectory(${MULTIFLOATS_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
+else()
+    include(FetchContent)
+    set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
+        CACHE STRING "Git URL for the multifloats library")
+    set(MULTIFLOATS_GIT_TAG "v0.6.0"
+        CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
+    FetchContent_Declare(multifloats_fetch
+        GIT_REPOSITORY ${MULTIFLOATS_GIT_REPO}
+        GIT_TAG        ${MULTIFLOATS_GIT_TAG}
+    )
+    FetchContent_Populate(multifloats_fetch)
+    add_subdirectory(
+        ${multifloats_fetch_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
+endif()
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/_helpers)
+"""
+            c_mf_deps = f"""
+if(TARGET multifloats)
+    target_link_libraries({precision_lib} PUBLIC multifloats)
+    if(TARGET {common_lib})
+        target_link_libraries({common_lib} PUBLIC multifloats)
+    endif()
+endif()
+# multifloats's bridge header (multifloats_bridge.h) uses C++ ``using``
+# declarations to expose ``float64x2`` at file scope. Migrated .c
+# bodies need a C++ translation unit for those typedefs to resolve.
+# Reclassify the migrated sources to LANGUAGE CXX so they go through
+# the C++ compiler while keeping their .c extension on disk.
+set_source_files_properties(${{PRECISION_SOURCES}} PROPERTIES LANGUAGE CXX)
+if(COMMON_SOURCES)
+    set_source_files_properties(${{COMMON_SOURCES}} PROPERTIES LANGUAGE CXX)
+endif()
+# C-as-C++ flags (mirror add_migrated_c_library in the shared driver):
+#   - cxx_std_17: multifloats requires it.
+#   - -fpermissive: BLACS/PBLAS bodies have implicit ``void *`` →
+#     ``char *`` casts (e.g. BI_iMPI_amn.c:12) that C accepts and C++
+#     rejects. Tolerated on g++; clang++ does NOT honor this flag,
+#     so a clang-based multifloats build still needs the explicit-cast
+#     overrides in ``recipes/<lib>/mfc_overrides/``.
+#   - -Wno-write-strings: silences `const char[]` -> `char *` literals.
+#   - MPICH_SKIP_MPICXX / OMPI_SKIP_MPICXX: keep mpicxx.h's templates
+#     out of the migrator-injected ``extern "C" {{ ... }}`` wrap.
+target_compile_features({precision_lib} PRIVATE cxx_std_17)
+target_compile_options({precision_lib} PRIVATE -fpermissive -Wno-write-strings)
+target_compile_definitions({precision_lib} PRIVATE
+    MPICH_SKIP_MPICXX OMPI_SKIP_MPICXX)
+if(TARGET {common_lib})
+    target_compile_features({common_lib} PRIVATE cxx_std_17)
+    target_compile_options({common_lib} PRIVATE -fpermissive -Wno-write-strings)
+    target_compile_definitions({common_lib} PRIVATE
+        MPICH_SKIP_MPICXX OMPI_SKIP_MPICXX)
+endif()
+"""
+
+        # Add CXX to project() languages when multifloats is in play —
+        # multifloats's targets request cxx_std_17 features from the
+        # embedding project. Harmless on KIND targets (small detect
+        # cost, no sources compiled as C++).
+        project_langs = 'C CXX' if target_mode.module_name is not None else 'C'
+
         cmake = f"""\
 cmake_minimum_required(VERSION 3.20)
-project({precision_lib} C)
+project({precision_lib} {project_langs})
 
 # --- Compiler flags ---
 set(CMAKE_C_FLAGS "${{CMAKE_C_FLAGS}} -w")
@@ -460,7 +647,7 @@ if(NOT DEFINED IMPI_HEADERS)
 endif()
 include_directories(${{IMPI_HEADERS}})
 find_package(MPI COMPONENTS C QUIET)
-
+{c_mf_link}
 # --- Common (type-independent) library ---
 set(COMMON_SOURCES
     {common_list}
@@ -482,7 +669,7 @@ add_library({precision_lib} STATIC ${{PRECISION_SOURCES}})
 if(TARGET {common_lib})
     target_link_libraries({precision_lib} PUBLIC {common_lib})
 endif()
-
+{c_mf_deps}
 # --- Install rules ---
 install(TARGETS {precision_lib} ARCHIVE DESTINATION lib)
 if(TARGET {common_lib})
@@ -498,8 +685,19 @@ endif()
         if target_mode.module_name is not None:
             # Resolve absolute paths to external dependencies so the
             # generated CMakeLists.txt works from any output directory.
+            # MF helpers (la_constants_mf.f90 / la_xisnan_mf.f90) live
+            # under recipes/<lib>/mf_helpers/. Prefer the per-recipe
+            # directory if present; otherwise fall back to the upstream
+            # SRC dir which (historically) shipped the EP helpers.
             _root = project_root or Path.cwd()
-            _helpers_default = str((_root / 'external' / 'lapack-3.12.1' / 'SRC').resolve())
+            _per_recipe_mf = _root / 'recipes' / lib_name / 'mf_helpers'
+            if _per_recipe_mf.is_dir():
+                _helpers_default = str(_per_recipe_mf.resolve())
+            else:
+                _helpers_default = str((_root / 'external' / 'lapack-3.12.1' / 'SRC').resolve())
+            # multifloats-mpi extras: Fortran-side MPI handle module
+            # used by MUMPS (``USE multifloats_mpi_f``).
+            _mf_mpi_dir = (_root / 'external' / 'multifloats-mpi').resolve()
             mf_link = f"""
 # Fetch the multifloats library from GitHub (default) or use a local
 # checkout via -DMULTIFLOATS_DIR=/path/to/multifloats. We add the
@@ -517,8 +715,11 @@ else()
     include(FetchContent)
     set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
         CACHE STRING "Git URL for the multifloats library")
-    set(MULTIFLOATS_GIT_TAG "main"
-        CACHE STRING "Git tag/branch/commit for multifloats")
+    # multifloats v0.6.0 fixed the ${{CMAKE_SOURCE_DIR}} include-path
+    # leak (upstream issue #23). Earlier tags fail at configure when
+    # add_subdirectory'd; don't drop below this floor.
+    set(MULTIFLOATS_GIT_TAG "v0.6.0"
+        CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
     message(STATUS "Fetching multifloats from ${{MULTIFLOATS_GIT_REPO}} (${{MULTIFLOATS_GIT_TAG}})")
     FetchContent_Declare(multifloats_fetch
         GIT_REPOSITORY ${{MULTIFLOATS_GIT_REPO}}
@@ -543,6 +744,13 @@ if(EXISTS "${{MF_HELPERS_DIR}}/la_constants_mf.f90")
         Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
     target_include_directories(la_constants_mf PUBLIC
         $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
+    # la_constants_mf.f90 does ``use multifloats, only: real64x2`` —
+    # the Fortran module lives in ``multifloatsf`` (the Fortran half),
+    # not the C++ ``multifloats`` target.
+    if(TARGET multifloatsf)
+        target_link_libraries(la_constants_mf PUBLIC
+            $<BUILD_INTERFACE:multifloatsf>)
+    endif()
     if(TARGET multifloats)
         target_link_libraries(la_constants_mf PUBLIC multifloats)
     endif()
@@ -554,8 +762,30 @@ if(EXISTS "${{MF_HELPERS_DIR}}/la_xisnan_mf.f90")
         Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
     target_include_directories(la_xisnan_mf PUBLIC
         $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
+    if(TARGET multifloatsf)
+        target_link_libraries(la_xisnan_mf PUBLIC
+            $<BUILD_INTERFACE:multifloatsf>)
+    endif()
     if(TARGET multifloats)
         target_link_libraries(la_xisnan_mf PUBLIC multifloats)
+    endif()
+endif()
+
+# multifloats_mpi_f.f90: Fortran module exposing the C-side MPI
+# datatype handles (MPI_FLOAT64X2 / MPI_DD_SUM / ...) via bind(c).
+# MUMPS's migrated source `USE multifloats_mpi_f` requires the .mod;
+# other libraries route MPI through C and don't need this target.
+set(MF_MPI_DIR "{_mf_mpi_dir}"
+    CACHE PATH "Directory containing multifloats_mpi_f.f90")
+if(EXISTS "${{MF_MPI_DIR}}/multifloats_mpi_f.f90")
+    add_library(multifloats_mpi_f STATIC
+        "${{MF_MPI_DIR}}/multifloats_mpi_f.f90")
+    set_target_properties(multifloats_mpi_f PROPERTIES
+        Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
+    target_include_directories(multifloats_mpi_f PUBLIC
+        $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
+    if(MPI_Fortran_FOUND)
+        target_link_libraries(multifloats_mpi_f PUBLIC MPI::MPI_Fortran)
     endif()
 endif()
 """
@@ -563,17 +793,29 @@ endif()
 if(TARGET multifloats)
     target_link_libraries({precision_lib} PUBLIC multifloats)
 endif()
+# multifloatsf is the Fortran half of multifloats — provides the
+# ``multifloats.mod`` module that the migrated source's ``use
+# multifloats`` clauses resolve against. Wrap in $<BUILD_INTERFACE:>
+# because multifloats owns its own install/export set; we just need
+# the .mod path during this build.
+if(TARGET multifloatsf)
+    target_link_libraries({precision_lib} PUBLIC
+        $<BUILD_INTERFACE:multifloatsf>)
+endif()
 if(TARGET la_constants_mf)
     target_link_libraries({precision_lib} PUBLIC la_constants_mf)
 endif()
 if(TARGET la_xisnan_mf)
     target_link_libraries({precision_lib} PUBLIC la_xisnan_mf)
 endif()
+if(TARGET multifloats_mpi_f)
+    target_link_libraries({precision_lib} PUBLIC multifloats_mpi_f)
+endif()
 """
 
         cmake = f"""\
 cmake_minimum_required(VERSION 3.20)
-project({precision_lib} Fortran)
+project({precision_lib} Fortran C CXX)
 
 # --- Compiler flags ---
 set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} -w")
@@ -596,21 +838,42 @@ endif()
 include_directories(${{IMPI_HEADERS}})
 find_package(MPI COMPONENTS Fortran QUIET)
 
-# Detect 80-bit extended precision (KIND=10) support
-if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
-    include(CheckFortranSourceCompiles)
-    check_fortran_source_compiles("
-        program test_real10
-        integer, parameter :: ep = selected_real_kind(18, 4931)
-        real(ep) :: x
-        x = 1.0_ep
-        end program
-    " HAVE_REAL10 SRC_EXT F90)
-    if(HAVE_REAL10)
-        add_compile_definitions(HAVE_REAL10)
+# Detect extended-precision (KIND=10 / KIND=16) support.
+# Shared probe sits in cmake/DetectExtendedPrecision.cmake; copied
+# next to this CMakeLists.txt at generation time so the staging
+# tree stays self-contained.
+include(${{CMAKE_CURRENT_SOURCE_DIR}}/DetectExtendedPrecision.cmake)
+{mf_link}
+# --- Standard-precision sibling archive ---
+# Built from upstream Fortran sources alongside the migrated archive.
+# Carries the original S/D/C/Z entry points and the precision-
+# independent helpers (LSAME, XERBLA, LA_XISNAN module, ...) that
+# the migrated archive's bodies reference but don't ship themselves.
+# The migrated archive PUBLIC-links this so downstreams resolve both
+# symbol families through one link line. Modules also flow to the
+# migrated build via the shared module directory (e.g. la_xisnan.mod
+# from std-precision is what la_xisnan_ep.F90 `use`s).
+set(REF_SOURCES
+    {ref_list}
+)
+
+if(REF_SOURCES)
+    add_library({lib_name} STATIC ${{REF_SOURCES}})
+    set_target_properties({lib_name} PROPERTIES
+        Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
+    target_include_directories({lib_name} PUBLIC
+        $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
+    # The migrator can lengthen tokens (e.g. MPI_DOUBLE_COMPLEX →
+    # MPI_C_LONG_DOUBLE_COMPLEX), pushing fixed-form .F lines past
+    # column 72. Disable the line-length limit on the standard
+    # archive too — same flag as the precision archive — so the
+    # build stays consistent across the pair.
+    if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
+        target_compile_options({lib_name} PRIVATE
+            $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>)
     endif()
 endif()
-{mf_link}
+
 # --- Common (type-independent) library ---
 set(COMMON_SOURCES
     {common_list}
@@ -635,13 +898,23 @@ set_target_properties({precision_lib} PROPERTIES
 target_include_directories({precision_lib} PUBLIC
     $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>
     $<BUILD_INTERFACE:${{CMAKE_CURRENT_SOURCE_DIR}}>)
+if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
+    target_compile_options({precision_lib} PRIVATE
+        $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>)
+endif()
 if(TARGET {common_lib})
     target_link_libraries({precision_lib} PUBLIC {common_lib})
+endif()
+if(TARGET {lib_name})
+    target_link_libraries({precision_lib} PUBLIC {lib_name})
 endif()
 if(MPI_Fortran_FOUND)
     target_link_libraries({precision_lib} PUBLIC MPI::MPI_Fortran)
     if(TARGET {common_lib})
         target_link_libraries({common_lib} PUBLIC MPI::MPI_Fortran)
+    endif()
+    if(TARGET {lib_name})
+        target_link_libraries({lib_name} PUBLIC MPI::MPI_Fortran)
     endif()
 endif()
 {mf_deps}
@@ -651,8 +924,21 @@ install(TARGETS {precision_lib} ARCHIVE DESTINATION lib)
 if(TARGET {common_lib})
     install(TARGETS {common_lib} ARCHIVE DESTINATION lib)
 endif()
+if(TARGET {lib_name})
+    install(TARGETS {lib_name} ARCHIVE DESTINATION lib)
+endif()
 """
     (output_dir / 'CMakeLists.txt').write_text(cmake)
+
+    # Ship the shared extended-precision probe alongside the generated
+    # CMakeLists.txt. The Fortran template ``include(...)``s it; the C
+    # template doesn't need it but the file is cheap to copy and keeps
+    # the staging tree self-contained.
+    if language != 'c':
+        _root = project_root or Path.cwd()
+        probe = _root / 'cmake' / 'DetectExtendedPrecision.cmake'
+        if probe.exists():
+            shutil.copy2(probe, output_dir / probe.name)
 
 
 def cmd_build(args):
@@ -703,13 +989,18 @@ def cmd_build(args):
         else:
             precision_files.append(str(rel))
 
+    ref_sources = _collect_ref_sources(config)
+
     print(f'Generating CMake project in {output_dir}/')
     print(f'  Common:    {len(common_files)} files')
     print(f'  Precision: {len(precision_files)} files')
+    if ref_sources:
+        print(f'  Reference: {len(ref_sources)} files (standard-precision sibling)')
 
     proj_root = (args.project_root or args.recipe.resolve().parent.parent)
     _generate_cmake(output_dir, lib_name, target_mode, common_files, precision_files,
-                    language=config.language, project_root=proj_root)
+                    language=config.language, project_root=proj_root,
+                    ref_sources=ref_sources)
 
     # Configure and build
     build_dir = output_dir / '_build'
@@ -766,9 +1057,10 @@ def cmd_build(args):
     real_pfx = pmap['R'].lower()
     precision_lib_name = f'lib{real_pfx}{lib_name}.a'
     common_lib_name = f'lib{lib_name}_common.a'
+    ref_lib_name = f'lib{lib_name}.a'
 
     print(f'\nBuild succeeded:')
-    for name in [common_lib_name, precision_lib_name]:
+    for name in [common_lib_name, ref_lib_name, precision_lib_name]:
         matches = list(build_dir.rglob(name))
         if matches:
             p = matches[0]
@@ -1072,6 +1364,7 @@ set(STAGED_LIBRARIES {staged_list})
     # tree without having to re-discover Intel MPI's wrapper paths.
     cmake_dir = proj_root / 'cmake'
     for cmake_file in ['CMakeLists.txt', 'FortranCompiler.cmake',
+                       'DetectExtendedPrecision.cmake',
                        'CMakePresets.json',
                        'mpiseq_qx_stubs.f',
                        'mpiseq_mw_stubs.f90',
@@ -1247,6 +1540,7 @@ def _stage_baseline(args, target_name: str):
     # mpiseq stubs). Same files cmd_stage copies; baseline reuses them.
     cmake_dir = proj_root / 'cmake'
     for cmake_file in ['CMakeLists.txt', 'FortranCompiler.cmake',
+                       'DetectExtendedPrecision.cmake',
                        'CMakePresets.json',
                        'mpiseq_qx_stubs.f',
                        'mpiseq_mw_stubs.f90',
