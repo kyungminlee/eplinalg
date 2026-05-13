@@ -165,6 +165,26 @@ def _strip_inline_bang(line: str) -> str:
     return line[:_find_inline_bang(line)]
 
 
+def _prec_neutral_key(name: str) -> str:
+    """Sort key that maps S↔D and C↔Z to the same character so
+    precision-equivalent locals (CI vs ZI) sort to the same position."""
+    return name.replace('S', 'D').replace('C', 'Z')
+
+
+def _sort_decl_match(match: re.Match, key=None, sep: str = ',') -> str:
+    """Sort the comma-separated identifier list in a regex match.
+
+    Group 1 is the leading keyword (e.g. ``INTRINSIC``, ``EXTERNAL``);
+    group 2 is the comma-separated body. Items are stripped before
+    sorting and rejoined with ``sep``. Pass ``key=_prec_neutral_key``
+    to sort with S↔D / C↔Z folded together.
+    """
+    kw = match.group(1)
+    items = [s.strip() for s in match.group(2).split(',')]
+    items = sorted(items, key=key) if key else sorted(items)
+    return f'{kw} ' + sep.join(items)
+
+
 def _strip_real_cmplx_casts(text: str) -> str:
     """Strip ``REAL(expr, KIND=N)`` and ``CMPLX(expr, KIND=N)`` wrappers,
     replacing them with just ``expr``. Single-argument ``REAL(expr)``
@@ -464,12 +484,9 @@ def _light_normalize(text: str) -> str:
     # declarations varies between co-family halves (e.g. C sources
     # list ``INTRINSIC CONJG,MAX,MIN,REAL`` while Z sources write
     # ``INTRINSIC REAL,CONJG,MAX,MIN``) but is semantically irrelevant.
-    def _sort_decl(m):
-        return f'{m.group(1)} ' + ','.join(sorted(m.group(2).split(',')))
-
     text = re.sub(
         r'\b(INTRINSIC|EXTERNAL)\s+([A-Z_][A-Z0-9_]*(?:,[A-Z_][A-Z0-9_]*)*)',
-        _sort_decl, text,
+        _sort_decl_match, text,
     )
 
     # Sort bare-identifier lists after a simple type-spec. Co-family
@@ -478,16 +495,8 @@ def _light_normalize(text: str) -> str:
     # XLANGB,XLANTB,QLAMCH`` vs ``QLAMCH,XLANGB,XLANTB``). Match only
     # pure name lists — lines with ``=``, ``(``, ``*`` (e.g. array
     # specs ``A(LDA,*)``) are left alone.
-    def _prec_neutral_key(name: str) -> str:
-        """Sort key that maps S↔D and C↔Z to the same character so
-        precision-equivalent locals (CI vs ZI) sort to the same position."""
-        return name.replace('S', 'D').replace('C', 'Z')
-
     def _sort_typed_decl(m):
-        type_spec, body = m.group(1), m.group(2)
-        names = body.split(',')
-        return f'{type_spec} ' + ','.join(
-            sorted(names, key=_prec_neutral_key))
+        return _sort_decl_match(m, key=_prec_neutral_key)
 
     text = re.sub(
         r'^(INTEGER|LOGICAL|REAL\(KIND=\d+\)|COMPLEX\(KIND=\d+\)|TYPE\(\w+\))\s+'
@@ -849,22 +858,18 @@ def _canonicalize_for_compare(text: str) -> str:
     #    arbitrary (often precision-specific) order — e.g., S source
     #    writes "INTRINSIC REAL, CONJG, MAX" while Z source writes
     #    "INTRINSIC CONJG, MAX, MIN, REAL".
-    def _sort_decl(match: re.Match) -> str:
-        # Sort with a precision-neutral key so co-family halves whose
-        # local-variable names differ only at an S↔D / C↔Z position
-        # (``WPSLANGE`` vs ``WPDLANGE``, ``SIZEPZHETRD`` vs
-        # ``SIZEPCHETRD``) land in the same order. Without the
-        # neutral key the post-sort positions diverge and
-        # ``_filter_precision_drift`` no longer recognizes the pair as
-        # token-aligned.
-        kw = match.group(1)
-        items = [s.strip() for s in match.group(2).split(',')]
-        key = lambda s: s.replace('S', 'D').replace('C', 'Z')
-        return f'{kw} ' + ', '.join(sorted(items, key=key))
+    # Sort declaration-list bodies with a precision-neutral key so
+    # co-family halves whose local-variable names differ only at an
+    # S↔D / C↔Z position (``WPSLANGE`` vs ``WPDLANGE``,
+    # ``SIZEPZHETRD`` vs ``SIZEPCHETRD``) land in the same order.
+    # Without the neutral key the post-sort positions diverge and
+    # ``_filter_precision_drift`` no longer recognizes the pair as
+    # token-aligned.
     text = re.sub(
         r'\b(INTRINSIC|EXTERNAL|INTEGER|LOGICAL|COMPLEX|REAL)\s+'
         r'([A-Za-z_@][A-Za-z0-9_@,\s]*?)(?=$)',
-        _sort_decl, text, flags=re.MULTILINE,
+        lambda m: _sort_decl_match(m, key=_prec_neutral_key, sep=', '),
+        text, flags=re.MULTILINE,
     )
     return text
 

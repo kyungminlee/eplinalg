@@ -2206,6 +2206,10 @@ def _scan_referenced_identifiers(proc_lines: list[str]) -> set[str]:
     return names
 
 
+# Procedure header for SUBROUTINE/FUNCTION/PROGRAM/MODULE/BLOCK DATA.
+# ``MODULE PROCEDURE`` (inside an INTERFACE block) is NOT a procedure
+# header and is excluded — injecting USE between ``MODULE PROCEDURE foo``
+# and ``END INTERFACE`` is illegal Fortran.
 _PROC_HEADER_RE = re.compile(
     r'^(\s{6,}|^\s*)(?:RECURSIVE\s+|PURE\s+|ELEMENTAL\s+)*'
     r'(?:(?:INTEGER|REAL|COMPLEX|LOGICAL|CHARACTER|TYPE\s*\([^)]+\)|DOUBLE\s+PRECISION|DOUBLE\s+COMPLEX)'
@@ -2213,8 +2217,13 @@ _PROC_HEADER_RE = re.compile(
     r'(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE(?!\s+PROCEDURE\b)|BLOCK\s+DATA)\b',
     re.IGNORECASE,
 )
+# ``END SUBROUTINE FOO``, ``END FUNCTION``, plain ``END``. Crucially
+# NOT ``END IF`` / ``END DO`` / ``END SELECT`` — the keyword whitelist
+# must be required when any word follows ``END``, otherwise inner
+# control-flow ENDs would falsely terminate body scans.
 _END_PROC_RE = re.compile(
-    r'^\s*END\s*(?:(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE|BLOCK\s*DATA)\b\s*\w*)?\s*(?:!.*)?$',
+    r'^\s*END(?:\s+(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE|BLOCK\s*DATA)'
+    r'(?:\s+\w+)?)?\s*(?:!.*)?$',
     re.IGNORECASE,
 )
 def specialize_use_module(source: str, target_mode: TargetMode, fixed_form: bool) -> str:
@@ -2429,26 +2438,8 @@ def insert_use_multifloats(source: str, target_mode: TargetMode,
 
     lines = source.splitlines(keepends=True)
     result = []
-    # Robust header match for SUBROUTINE, FUNCTION, PROGRAM, etc.
-    # ``MODULE PROCEDURE`` (inside an INTERFACE block) is NOT a procedure
-    # header and must be excluded — injecting USE between
-    # ``MODULE PROCEDURE foo`` and ``END INTERFACE`` is illegal Fortran.
-    proc_header_re = re.compile(
-        r'^(\s{6,}|^\s*)(?:RECURSIVE\s+|PURE\s+|ELEMENTAL\s+)*'
-        r'(?:(?:INTEGER|REAL|COMPLEX|LOGICAL|CHARACTER|TYPE\s*\([^)]+\)|DOUBLE\s+PRECISION|DOUBLE\s+COMPLEX)'
-        r'(?:\s*\*\s*\d+)?\s+)?'
-        r'(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE(?!\s+PROCEDURE\b)|BLOCK\s+DATA)\b',
-        re.IGNORECASE
-    )
-    # ``END SUBROUTINE FOO``, ``END FUNCTION``, plain ``END``. Crucially
-    # NOT ``END IF`` / ``END DO`` / ``END SELECT`` — those would cut off
-    # the scan partway through the procedure. The keyword whitelist must
-    # be required if any word follows ``END``.
-    end_proc_re = re.compile(
-        r'^\s*END(?:\s+(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE|BLOCK\s*DATA)'
-        r'(?:\s+\w+)?)?\s*$',
-        re.IGNORECASE,
-    )
+    proc_header_re = _PROC_HEADER_RE
+    end_proc_re = _END_PROC_RE
 
     # Normalise extra_lines: support both scoped (int, str) tuples and
     # legacy flat strings (all go to scope -1 which matches every scope
@@ -3630,24 +3621,8 @@ def insert_use_multifloats_mpi_f(source: str, target_mode: TargetMode) -> str:
         return source
 
     lines = source.splitlines(keepends=True)
-    proc_header_re = re.compile(
-        r'^(\s{6,}|^\s*)(?:RECURSIVE\s+|PURE\s+|ELEMENTAL\s+)*'
-        r'(?:(?:INTEGER|REAL|COMPLEX|LOGICAL|CHARACTER|TYPE\s*\([^)]+\)'
-        r'|DOUBLE\s+PRECISION|DOUBLE\s+COMPLEX)'
-        r'(?:\s*\*\s*\d+)?\s+)?'
-        r'(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE(?!\s+PROCEDURE\b)|BLOCK\s+DATA)\b',
-        re.IGNORECASE,
-    )
-    # ``END SUBROUTINE FOO``, ``END FUNCTION``, plain ``END``. Crucially
-    # NOT ``END IF`` / ``END DO`` / ``END SELECT`` — those would cut off
-    # the body scan partway through the procedure and miss MPI tokens
-    # that appear later. Hence the keyword whitelist must be required
-    # if any word follows ``END``.
-    end_proc_re = re.compile(
-        r'^\s*END(?:\s+(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE|BLOCK\s*DATA)'
-        r'(?:\s+\w+)?)?\s*$',
-        re.IGNORECASE,
-    )
+    proc_header_re = _PROC_HEADER_RE
+    end_proc_re = _END_PROC_RE
 
     result: list[str] = []
     i = 0

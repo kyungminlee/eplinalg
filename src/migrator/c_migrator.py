@@ -30,83 +30,59 @@ from .target_mode import TargetMode
 #   ...
 #   {C_REAL_TYPE}  → underlying C type (e.g., "__float128")
 
-REAL_CLONE_SUBS = [
-    # Type names (run twice to catch adjacent matches).
-    # Boundary excludes [a-zA-Z_0-9] so we don't re-match inside
-    # replacement types that contain the original as a prefix
-    # (e.g. 'float' inside 'float64x2_t').
-    (r'(^|[^a-zA-Z_0-9])double([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])double([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    # MPI types
-    (r'\bMPI_DOUBLE\b', '{MPI_REAL}'),
-    # Reduction op. For KIND targets {MPI_SUM_REAL} expands to 'MPI_SUM'
-    # so the rule is a textual no-op. For multifloats it expands to
-    # 'MPI_DD_SUM', the user-defined op registered by libmfc.
-    (r'\bMPI_SUM\b', '{MPI_SUM_REAL}'),
-    # Function name prefixes (allow uppercase after prefix for BI_dMPI_* etc.)
-    (r'(?<![A-Za-z0-9_])Cd([a-z])', r'C{RP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_d([a-zA-Z])', r'BI_{RP}\1'),
-]
+# Clone-sub builders. Each table is a flat list of (pattern, replacement)
+# pairs applied in order to one C source line at a time. ``\b`` boundary
+# matches catch adjacent tokens in a single pass (so no "run twice" dup
+# is needed) and exclude underscore-adjacent identifiers like
+# ``float64x2_t``. Prefix rules (``Cd*``/``BI_d*``) use ``(?<![A-Za-z0-9_])``
+# lookbehind rather than ``\b`` because the leading prefix letter is
+# lowercase and may follow a word boundary that ``\b`` would mistake.
+#
+# {MPI_SUM_REAL}/{MPI_SUM_COMPLEX} are textual no-ops for KIND targets
+# (both expand to ``MPI_SUM``); multifloats expands them to its
+# user-defined ops (``MPI_DD_SUM`` / the zz variant) registered by libmfc.
 
-COMPLEX_CLONE_SUBS = [
-    # Complex struct types
-    (r'(^|[^a-zA-Z_0-9])DCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])DCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])SCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])SCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    # Underlying real type
-    (r'(^|[^a-zA-Z_0-9])double([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])double([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    # MPI types (order matters: DOUBLE_COMPLEX before DOUBLE)
-    (r'\bMPI_DOUBLE_COMPLEX\b', '{MPI_COMPLEX}'),
-    (r'\bMPI_DOUBLE\b', '{MPI_REAL}'),
-    (r'MPI_COMPLEX([^a-zA-Z_0-9])', r'{MPI_COMPLEX}\1'),
-    # Reduction op (see REAL_CLONE_SUBS). Complex files use the zz op.
-    (r'\bMPI_SUM\b', '{MPI_SUM_COMPLEX}'),
-    # Function name prefixes (allow uppercase after prefix for BI_zMPI_* etc.)
-    (r'(?<![A-Za-z0-9_])Cz([a-z])', r'C{CP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_z([a-zA-Z])', r'BI_{CP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_d([a-zA-Z])', r'BI_{RP}\1'),
-]
 
-# Convergence-only sub rule sets: mirror of REAL_CLONE_SUBS/COMPLEX_CLONE_SUBS
-# but sourced from S/C sibling files (``float``/``MPI_FLOAT``/``Cs*``/``BI_s*``
-# and ``SCOMPLEX``/``MPI_COMPLEX``/``Cc*``/``BI_c*``). Used by the per-file
-# in-memory migrator to re-derive the Q/X target from the S/C half for
-# convergence checking against the on-disk canonical produced from D/Z.
-SINGLE_CLONE_SUBS = [
-    # Type names (run twice to catch adjacent matches)
-    (r'(^|[^a-zA-Z_0-9])float([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])float([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    # MPI types
-    (r'\bMPI_FLOAT\b', '{MPI_REAL}'),
-    # Reduction op (see REAL_CLONE_SUBS)
-    (r'\bMPI_SUM\b', '{MPI_SUM_REAL}'),
-    # Function name prefixes
-    (r'(?<![A-Za-z0-9_])Cs([a-z])', r'C{RP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_s([a-zA-Z])', r'BI_{RP}\1'),
-]
+def _real_clone_subs(real_keyword: str, src_letter: str) -> list[tuple[str, str]]:
+    mpi_real_src = f'MPI_{real_keyword.upper()}'
+    return [
+        (rf'\b{real_keyword}\b', '{REAL_TYPE}'),
+        (rf'\b{mpi_real_src}\b', '{MPI_REAL}'),
+        (r'\bMPI_SUM\b', '{MPI_SUM_REAL}'),
+        # Function name prefixes (allow uppercase suffix for BI_dMPI_* etc.).
+        (rf'(?<![A-Za-z0-9_])C{src_letter}([a-z])', r'C{RP}\1'),
+        (rf'(?<![A-Za-z0-9_])BI_{src_letter}([a-zA-Z])', r'BI_{RP}\1'),
+    ]
 
-CSINGLE_CLONE_SUBS = [
-    # Complex struct types
-    (r'(^|[^a-zA-Z_0-9])SCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])SCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])DCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])DCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    # Underlying real type
-    (r'(^|[^a-zA-Z_0-9])float([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])float([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    # MPI types (order matters: FLOAT_COMPLEX before FLOAT, MPI_COMPLEX gated)
-    (r'\bMPI_FLOAT_COMPLEX\b', '{MPI_COMPLEX}'),
-    (r'\bMPI_FLOAT\b', '{MPI_REAL}'),
-    (r'MPI_COMPLEX([^a-zA-Z_0-9])', r'{MPI_COMPLEX}\1'),
-    # Reduction op (see REAL_CLONE_SUBS). Complex files use the zz op.
-    (r'\bMPI_SUM\b', '{MPI_SUM_COMPLEX}'),
-    # Function name prefixes
-    (r'(?<![A-Za-z0-9_])Cc([a-z])', r'C{CP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_c([a-zA-Z])', r'BI_{CP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_s([a-zA-Z])', r'BI_{RP}\1'),
-]
+
+def _complex_clone_subs(real_keyword: str, own_struct: str, cross_struct: str,
+                        complex_letter: str, real_letter: str) -> list[tuple[str, str]]:
+    mpi_real_src = f'MPI_{real_keyword.upper()}'
+    mpi_complex_src = f'MPI_{real_keyword.upper()}_COMPLEX'
+    return [
+        (rf'\b{own_struct}\b', '{COMPLEX_TYPE}'),
+        (rf'\b{cross_struct}\b', '{COMPLEX_TYPE}'),
+        (rf'\b{real_keyword}\b', '{REAL_TYPE}'),
+        # MPI types — order matters: <PREC>_COMPLEX before <PREC>.
+        (rf'\b{mpi_complex_src}\b', '{MPI_COMPLEX}'),
+        (rf'\b{mpi_real_src}\b', '{MPI_REAL}'),
+        # Gated MPI_COMPLEX rule (preserved as-is: no leading boundary).
+        (r'MPI_COMPLEX([^a-zA-Z_0-9])', r'{MPI_COMPLEX}\1'),
+        (r'\bMPI_SUM\b', '{MPI_SUM_COMPLEX}'),
+        (rf'(?<![A-Za-z0-9_])C{complex_letter}([a-z])', r'C{CP}\1'),
+        (rf'(?<![A-Za-z0-9_])BI_{complex_letter}([a-zA-Z])', r'BI_{CP}\1'),
+        (rf'(?<![A-Za-z0-9_])BI_{real_letter}([a-zA-Z])', r'BI_{RP}\1'),
+    ]
+
+
+REAL_CLONE_SUBS = _real_clone_subs('double', 'd')
+COMPLEX_CLONE_SUBS = _complex_clone_subs('double', 'DCOMPLEX', 'SCOMPLEX', 'z', 'd')
+# S/C convergence-only mirror tables: re-derive the Q/X target from the
+# S/C half (sources use ``float``/``MPI_FLOAT``/``Cs*``/``Cc*``) so the
+# in-memory result can be compared against the canonical produced from
+# the D/Z half on disk.
+SINGLE_CLONE_SUBS = _real_clone_subs('float', 's')
+CSINGLE_CLONE_SUBS = _complex_clone_subs('float', 'SCOMPLEX', 'DCOMPLEX', 'c', 's')
 
 
 def _build_sub_vars(target_mode: TargetMode) -> dict[str, str]:
