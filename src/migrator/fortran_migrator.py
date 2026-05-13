@@ -2841,7 +2841,16 @@ def _iter_outside_strings(text: str):
 def _find_inline_bang(text: str) -> int:
     """Return the index of the first inline ``!`` comment marker in
     ``text``, or ``len(text)`` if none. Quote-aware (doubled-quote
-    escape included)."""
+    escape included).
+
+    Fast path: when the line has no string-delimiter characters at
+    all (the common case for code-bearing source lines), fall through
+    to ``str.find`` which runs in C. Only when a quote appears do we
+    need the full quote-aware scan.
+    """
+    if "'" not in text and '"' not in text:
+        idx = text.find('!')
+        return idx if idx != -1 else len(text)
     for i, ch in _iter_outside_strings(text):
         if ch == '!':
             return i
