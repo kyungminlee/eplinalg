@@ -71,6 +71,54 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/DetectExtendedPrecision.cmake)
 
 find_package(MPI COMPONENTS C CXX Fortran QUIET)
 
+# ── libmpiseq compatibility gate ─────────────────────────────────────
+# libmpiseq's stubs (cmake/mpiseq_c_stubs.c et al.) are written against
+# Intel MPI's handle ABI: MPI_BYTE, MPI_FLOAT, MPI_OP_NULL, etc. are
+# integer constants in Intel MPI's mpi.h, so the stubs resolve cleanly
+# at link time. OpenMPI and MPICH expose those handles as external
+# symbol references (``ompi_mpi_byte``, ``mpich_mpi_byte``); linking
+# libmpiseq.a against an executable on those MPIs produces unresolved
+# references like ``undefined reference to `ompi_mpi_byte```.
+#
+# To prevent that silent failure mode (which previously surfaced as a
+# build failure at the first ``_seq`` test executable), detect at
+# configure time whether the active MPI is Intel MPI and only build
+# the libmpiseq target on that host. Downstream test variants
+# (``mumps_test_*_seq`` etc.) gate on ``TARGET mpiseq``, so they
+# silently drop out on OpenMPI/MPICH hosts instead of failing to link.
+if(MPI_C_FOUND)
+    include(CheckSymbolExists)
+    # Use the imported target's interface property when available;
+    # FindMPI populates it on every CMake ≥ 3.10. Fall back to the
+    # ``MPI_C_HEADER_DIR`` cache entry on older builds.
+    set(_mpi_inc ${MPI_C_HEADER_DIR})
+    if(TARGET MPI::MPI_C)
+        get_target_property(_iface MPI::MPI_C INTERFACE_INCLUDE_DIRECTORIES)
+        if(_iface)
+            list(APPEND _mpi_inc ${_iface})
+        endif()
+    endif()
+    list(REMOVE_DUPLICATES _mpi_inc)
+    set(_prev_required_includes ${CMAKE_REQUIRED_INCLUDES})
+    set(CMAKE_REQUIRED_INCLUDES ${_mpi_inc})
+    # ``check_symbol_exists`` caches its result by output-variable name
+    # and short-circuits when that name is already DEFINED — so we must
+    # *not* pre-set ``MPISEQ_IS_INTEL_MPI``. Probe directly; the macro
+    # writes the result into the cache.
+    check_symbol_exists(I_MPI_VERSION "mpi.h" MPISEQ_IS_INTEL_MPI)
+    set(CMAKE_REQUIRED_INCLUDES ${_prev_required_includes})
+else()
+    set(MPISEQ_IS_INTEL_MPI FALSE)
+endif()
+if(MPISEQ_IS_INTEL_MPI)
+    message(STATUS "libmpiseq: Intel MPI detected — _seq test variants enabled")
+else()
+    message(STATUS
+        "libmpiseq: skipping (active MPI is not Intel MPI). "
+        "_seq test variants will be omitted. Use the linux-impi CMake "
+        "preset to enable them.")
+endif()
+
 # ── Multifloats (conditional) ────────────────────────────────────────
 if(NEEDS_MULTIFLOATS)
     find_program(FYPP_EXECUTABLE fypp REQUIRED)
@@ -872,7 +920,7 @@ endif()
 # ``_std_dirs`` in ``src/migrator/__main__.py``); the build silently
 # skips when that directory is absent (e.g., a bare repo with no
 # upstream MUMPS vendored).
-if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_mpiseq_src)
+if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_mpiseq_src AND MPISEQ_IS_INTEL_MPI)
     # Replace libseq's mpif.h / mpi.h with the configured MPI's so
     # libmpiseq.a is ABI-compatible with archives compiled against
     # real MPI: same constant values (MPI_INTEGER = 1275069467, etc.)
