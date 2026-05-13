@@ -255,6 +255,7 @@ endfunction()
 
 # ---------------------------------------------------------------------------
 # fortran_install_library(<target>
+#     [MPI]
 #     [NAMESPACE <ns>]
 #     [EXPORT <export-name>]
 #     [DESTINATION <lib-dir>])
@@ -262,13 +263,21 @@ endfunction()
 # Installs the library with a compiler-version-tagged filename (for ABI),
 # while the export/config system uses the mod compat tag to find modules.
 #
+# When ``MPI`` is passed, the install ALSO tags the output with
+# ``${MPI_TAG}`` (e.g. ``intelmpi-2021.18`` / ``openmpi-5.0`` /
+# ``mpich-4.2``) so MPI-dependent libraries built against different
+# implementations can coexist in the same install prefix. ``MPI_TAG``
+# must be set by the caller (the top-level CMakeLists detects it from
+# mpi.h's vendor macros). When ``MPI_TAG`` is unset, the MPI option is
+# a no-op — the build falls back to compiler-only tagging.
+#
 # Note: This function generates a <ProjectName>Config.cmake. If your project
 # has multiple Fortran library targets, add them all to a single EXPORT set
 # by passing the same EXPORT name. The Config.cmake and export file are
 # generated only once per export set.
 # ---------------------------------------------------------------------------
 function(fortran_install_library target)
-  cmake_parse_arguments(PARSE_ARGV 1 ARG "" "NAMESPACE;EXPORT;DESTINATION" "")
+  cmake_parse_arguments(PARSE_ARGV 1 ARG "MPI" "NAMESPACE;EXPORT;DESTINATION" "")
   if(ARG_UNPARSED_ARGUMENTS)
     message(FATAL_ERROR "fortran_install_library: unexpected arguments: ${ARG_UNPARSED_ARGUMENTS}")
   endif()
@@ -282,16 +291,25 @@ function(fortran_install_library target)
     set(ARG_DESTINATION "${CMAKE_INSTALL_LIBDIR}")
   endif()
 
+  # Assemble the install tag. Compiler-version always; MPI flavor
+  # appended for MPI-dependent libs when MPI_TAG is known.
+  set(_full_tag "${FORTRAN_COMPILER_TAG}")
+  set(_is_mpi_lib FALSE)
+  if(ARG_MPI AND MPI_TAG)
+    set(_full_tag "${FORTRAN_COMPILER_TAG}-${MPI_TAG}")
+    set(_is_mpi_lib TRUE)
+  endif()
+
   # Derive config name from the export set name (strip trailing "Targets").
   # This allows each library to get its own Config.cmake when given a
   # unique EXPORT name (e.g. EXPORT qblasTargets → qblasConfig.cmake).
   string(REGEX REPLACE "Targets$" "" _config_name "${ARG_EXPORT}")
   set(_cmake_install_dir "${ARG_DESTINATION}/cmake/${_config_name}")
-  set(_targets_file "${ARG_EXPORT}-${FORTRAN_COMPILER_TAG}.cmake")
+  set(_targets_file "${ARG_EXPORT}-${_full_tag}.cmake")
 
-  # Tag the library output filename by compiler version (ABI compatibility)
+  # Tag the library output filename by compiler + (optionally) MPI.
   set_target_properties(${target} PROPERTIES
-    OUTPUT_NAME "${target}-${FORTRAN_COMPILER_TAG}"
+    OUTPUT_NAME "${target}-${_full_tag}"
   )
 
   # Add target to the export set
@@ -320,8 +338,58 @@ function(fortran_install_library target)
   )
 
   # Generate Config.cmake that finds the right targets file.
-  # Strategy: derive the consumer's compiler tag and look for an exact match.
-  # If no exact match, fail with an informative error listing available builds.
+  # Strategy: derive the consumer's compiler tag (and MPI tag if this
+  # is an MPI-dependent library) and look for an exact match. If no
+  # exact match, fail with an informative error listing available builds.
+  if(_is_mpi_lib)
+    set(_mpi_detect_block "\
+# --- Derive consumer's MPI flavor + major.minor tag ---
+find_package(MPI QUIET COMPONENTS C)
+set(_FC_consumer_mpi_tag \"\")
+if(MPI_C_FOUND)
+  set(_FC_mpi_inc \"\${MPI_C_HEADER_DIR}\")
+  if(TARGET MPI::MPI_C)
+    get_target_property(_FC_mpi_iface MPI::MPI_C INTERFACE_INCLUDE_DIRECTORIES)
+    if(_FC_mpi_iface)
+      list(APPEND _FC_mpi_inc \${_FC_mpi_iface})
+    endif()
+  endif()
+  list(REMOVE_DUPLICATES _FC_mpi_inc)
+  set(_FC_mpi_probe \"\${CMAKE_CURRENT_BINARY_DIR}/_FC_mpi_probe.c\")
+  file(WRITE \"\${_FC_mpi_probe}\" \"\\#include <mpi.h>\\n\\#include <stdio.h>\\nint main(void){\\n\\#if defined(I_MPI_VERSION)\\n  printf(\\\"intelmpi %s\\\\n\\\", I_MPI_VERSION);\\n\\#elif defined(OMPI_MAJOR_VERSION) && defined(OMPI_MINOR_VERSION)\\n  printf(\\\"openmpi %d.%d\\\\n\\\", OMPI_MAJOR_VERSION, OMPI_MINOR_VERSION);\\n\\#elif defined(MPICH_VERSION)\\n  printf(\\\"mpich %s\\\\n\\\", MPICH_VERSION);\\n\\#else\\n  printf(\\\"unknown ?\\\\n\\\");\\n\\#endif\\n  return 0;\\n}\\n\")
+  try_run(_FC_run_rc _FC_compile_rc
+    \"\${CMAKE_CURRENT_BINARY_DIR}/_FC_mpi_probe.dir\"
+    \"\${_FC_mpi_probe}\"
+    CMAKE_FLAGS \"-DINCLUDE_DIRECTORIES=\${_FC_mpi_inc}\"
+    RUN_OUTPUT_VARIABLE _FC_mpi_id)
+  if(_FC_compile_rc AND \"\${_FC_run_rc}\" STREQUAL \"0\")
+    string(STRIP \"\${_FC_mpi_id}\" _FC_mpi_id)
+    if(_FC_mpi_id MATCHES \"^([a-z]+) ([0-9]+)\\\\.([0-9]+)\")
+      set(_FC_consumer_mpi_tag \"\${CMAKE_MATCH_1}-\${CMAKE_MATCH_2}.\${CMAKE_MATCH_3}\")
+    endif()
+  endif()
+  unset(_FC_mpi_inc)
+  unset(_FC_mpi_iface)
+  unset(_FC_mpi_probe)
+  unset(_FC_mpi_id)
+  unset(_FC_run_rc)
+  unset(_FC_compile_rc)
+endif()
+if(NOT _FC_consumer_mpi_tag)
+  set(\${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+  set(\${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+    \"${_config_name}: MPI-dependent library but no MPI flavor detected on the consumer side. find_package(MPI) must succeed and mpi.h must be locatable.\")
+  return()
+endif()
+")
+    set(_consumer_tag_expr "\${_FC_consumer_tag}-\${_FC_consumer_mpi_tag}")
+    set(_cleanup_mpi "unset(_FC_consumer_mpi_tag)")
+  else()
+    set(_mpi_detect_block "")
+    set(_consumer_tag_expr "\${_FC_consumer_tag}")
+    set(_cleanup_mpi "")
+  endif()
+
   set(_config_content "\
 # ${_config_name}Config.cmake
 # Auto-generated by FortranCompiler.cmake
@@ -366,8 +434,9 @@ endif()
 set(_FC_consumer_tag \"\${_FC_consumer_family}-\${_FC_abi_version}\")
 unset(_FC_abi_version)
 
-# Look for exact compiler version match
-set(_FC_targets_file \"\${CMAKE_CURRENT_LIST_DIR}/${ARG_EXPORT}-\${_FC_consumer_tag}.cmake\")
+${_mpi_detect_block}
+# Look for exact (compiler[+MPI]) tag match
+set(_FC_targets_file \"\${CMAKE_CURRENT_LIST_DIR}/${ARG_EXPORT}-${_consumer_tag_expr}.cmake\")
 
 if(NOT EXISTS \"\${_FC_targets_file}\")
   # No exact match — list available builds and fail
@@ -380,13 +449,14 @@ if(NOT EXISTS \"\${_FC_targets_file}\")
   list(JOIN _FC_available_names \", \" _FC_available_list)
   set(\${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
   set(\${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
-    \"${_config_name}: no pre-built library found for compiler '\${_FC_consumer_tag}'. Available: [\${_FC_available_list}]\")
+    \"${_config_name}: no pre-built library found for tag '${_consumer_tag_expr}'. Available: [\${_FC_available_list}]\")
   unset(_FC_consumer_family)
   unset(_FC_consumer_tag)
   unset(_FC_targets_file)
   unset(_FC_available)
   unset(_FC_available_names)
   unset(_FC_available_list)
+  ${_cleanup_mpi}
   return()
 endif()
 
@@ -395,6 +465,7 @@ include(\"\${_FC_targets_file}\")
 unset(_FC_consumer_family)
 unset(_FC_consumer_tag)
 unset(_FC_targets_file)
+${_cleanup_mpi}
 ")
 
   file(GENERATE

@@ -71,6 +71,70 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/DetectExtendedPrecision.cmake)
 
 find_package(MPI COMPONENTS C CXX Fortran QUIET)
 
+# ── MPI flavor + version detection ───────────────────────────────────
+# MPI-dependent libraries are not ABI-compatible across implementations
+# (Intel MPI / OpenMPI / MPICH expose different ABIs for the same
+# handles — see the libmpiseq comment below for the canonical example).
+# Tag every MPI-dependent install with the implementation flavor and
+# its major.minor version so multiple builds can coexist in the same
+# install prefix and ``find_package(<lib>)`` can pick the matching
+# variant.
+#
+# Probe mpi.h's vendor-specific version macros at configure time:
+#   Intel MPI : I_MPI_VERSION (string, e.g. "2021.18.0")
+#   OpenMPI   : OMPI_MAJOR_VERSION / OMPI_MINOR_VERSION (ints)
+#   MPICH     : MPICH_VERSION (string, e.g. "4.2.0")
+# Produces ``MPI_TAG`` like ``intelmpi-2021.18`` / ``openmpi-5.0`` /
+# ``mpich-4.2``. Empty when no MPI was found.
+set(MPI_TAG "")
+if(MPI_C_FOUND)
+    set(_mpi_inc ${MPI_C_HEADER_DIR})
+    if(TARGET MPI::MPI_C)
+        get_target_property(_iface MPI::MPI_C INTERFACE_INCLUDE_DIRECTORIES)
+        if(_iface)
+            list(APPEND _mpi_inc ${_iface})
+        endif()
+    endif()
+    list(REMOVE_DUPLICATES _mpi_inc)
+    set(_mpi_probe_c "${CMAKE_BINARY_DIR}/CMakeFiles/mpi_probe.c")
+    file(WRITE "${_mpi_probe_c}" "\
+#include <mpi.h>
+#include <stdio.h>
+int main(void) {
+#if defined(I_MPI_VERSION)
+    printf(\"intelmpi %s\\n\", I_MPI_VERSION);
+#elif defined(OMPI_MAJOR_VERSION) && defined(OMPI_MINOR_VERSION)
+    printf(\"openmpi %d.%d\\n\", OMPI_MAJOR_VERSION, OMPI_MINOR_VERSION);
+#elif defined(MPICH_VERSION)
+    printf(\"mpich %s\\n\", MPICH_VERSION);
+#else
+    printf(\"unknown ?\\n\");
+#endif
+    return 0;
+}
+")
+    try_run(_mpi_run_rc _mpi_compile_rc
+        "${CMAKE_BINARY_DIR}/CMakeFiles/mpi_probe.dir"
+        "${_mpi_probe_c}"
+        CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${_mpi_inc}"
+        COMPILE_OUTPUT_VARIABLE _mpi_co
+        RUN_OUTPUT_VARIABLE _mpi_id)
+    if(_mpi_compile_rc AND "${_mpi_run_rc}" STREQUAL "0")
+        string(STRIP "${_mpi_id}" _mpi_id)
+        # ``flavor major.minor[.patch]`` → ``flavor-major.minor``
+        if(_mpi_id MATCHES "^([a-z]+) ([0-9]+)\\.([0-9]+)")
+            set(MPI_TAG "${CMAKE_MATCH_1}-${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+        endif()
+    endif()
+    unset(_mpi_id)
+    unset(_mpi_co)
+endif()
+if(MPI_TAG)
+    message(STATUS "MPI tag: ${MPI_TAG}")
+elseif(MPI_C_FOUND)
+    message(STATUS "MPI found but could not identify flavor/version — MPI-dependent libraries will not be tag-suffixed")
+endif()
+
 # ── libmpiseq compatibility gate ─────────────────────────────────────
 # libmpiseq's stubs (cmake/mpiseq_c_stubs.c et al.) are written against
 # Intel MPI's handle ABI: MPI_BYTE, MPI_FLOAT, MPI_OP_NULL, etc. are
@@ -86,27 +150,8 @@ find_package(MPI COMPONENTS C CXX Fortran QUIET)
 # the libmpiseq target on that host. Downstream test variants
 # (``mumps_test_*_seq`` etc.) gate on ``TARGET mpiseq``, so they
 # silently drop out on OpenMPI/MPICH hosts instead of failing to link.
-if(MPI_C_FOUND)
-    include(CheckSymbolExists)
-    # Use the imported target's interface property when available;
-    # FindMPI populates it on every CMake ≥ 3.10. Fall back to the
-    # ``MPI_C_HEADER_DIR`` cache entry on older builds.
-    set(_mpi_inc ${MPI_C_HEADER_DIR})
-    if(TARGET MPI::MPI_C)
-        get_target_property(_iface MPI::MPI_C INTERFACE_INCLUDE_DIRECTORIES)
-        if(_iface)
-            list(APPEND _mpi_inc ${_iface})
-        endif()
-    endif()
-    list(REMOVE_DUPLICATES _mpi_inc)
-    set(_prev_required_includes ${CMAKE_REQUIRED_INCLUDES})
-    set(CMAKE_REQUIRED_INCLUDES ${_mpi_inc})
-    # ``check_symbol_exists`` caches its result by output-variable name
-    # and short-circuits when that name is already DEFINED — so we must
-    # *not* pre-set ``MPISEQ_IS_INTEL_MPI``. Probe directly; the macro
-    # writes the result into the cache.
-    check_symbol_exists(I_MPI_VERSION "mpi.h" MPISEQ_IS_INTEL_MPI)
-    set(CMAKE_REQUIRED_INCLUDES ${_prev_required_includes})
+if(MPI_TAG MATCHES "^intelmpi")
+    set(MPISEQ_IS_INTEL_MPI TRUE)
 else()
     set(MPISEQ_IS_INTEL_MPI FALSE)
 endif()
@@ -1007,6 +1052,11 @@ endif()
 # so consumers can do: find_package(qblas), find_package(qlapack), etc.
 # The common library is bundled into the same export as its precision library.
 
+# Libraries that link MPI (transitively or directly) — their installs
+# pick up an extra ``-${MPI_TAG}`` suffix so OpenMPI/MPICH/Intel-MPI
+# variants can coexist in the same install prefix.
+set(_MPI_DEPENDENT_LIBS blacs pblas pbblas scalapack scalapack_c mumps)
+
 function(_install_library_pair lib_name)
     set(_precision_target "${LIB_PREFIX}${lib_name}")
     set(_common_target "${lib_name}_common")
@@ -1016,8 +1066,13 @@ function(_install_library_pair lib_name)
         return()
     endif()
 
+    set(_install_mpi_arg "")
+    if("${lib_name}" IN_LIST _MPI_DEPENDENT_LIBS)
+        set(_install_mpi_arg "MPI")
+    endif()
+
     # Install precision-specific library
-    fortran_install_library(${_precision_target} EXPORT ${_export})
+    fortran_install_library(${_precision_target} EXPORT ${_export} ${_install_mpi_arg})
     get_target_property(_fc_moddir ${_precision_target} Fortran_MODULE_DIRECTORY)
     if(_fc_moddir)
         fortran_install_modules(${_precision_target})
@@ -1025,7 +1080,7 @@ function(_install_library_pair lib_name)
 
     # Bundle common library into the same export
     if(TARGET ${_common_target})
-        fortran_install_library(${_common_target} EXPORT ${_export})
+        fortran_install_library(${_common_target} EXPORT ${_export} ${_install_mpi_arg})
         get_target_property(_fc_moddir ${_common_target} Fortran_MODULE_DIRECTORY)
         if(_fc_moddir)
             fortran_install_modules(${_common_target})
@@ -1037,7 +1092,7 @@ function(_install_library_pair lib_name)
     # is exportable. Standard archives use the bare library name (e.g.
     # ``blas``); they always go alongside their migrated sibling.
     if(TARGET ${lib_name} AND NOT "${lib_name}" STREQUAL "${_precision_target}")
-        fortran_install_library(${lib_name} EXPORT ${_export})
+        fortran_install_library(${lib_name} EXPORT ${_export} ${_install_mpi_arg})
     endif()
 endfunction()
 
@@ -1048,10 +1103,16 @@ if(NOT BASELINE_BUILD)
 endif()
 
 if(NEEDS_MULTIFLOATS)
-    # multifloats defines its own install rules; only install local helpers
+    # multifloats defines its own install rules; only install local helpers.
+    # multifloats_mpi(_f) link MPI; tag them accordingly.
+    set(_mf_mpi_helpers multifloats_mpi multifloats_mpi_f)
     foreach(_t la_constants_mf la_xisnan_mf multifloats_mpi multifloats_mpi_f)
         if(TARGET ${_t})
-            fortran_install_library(${_t} EXPORT ${_t}Targets)
+            set(_mf_mpi_arg "")
+            if("${_t}" IN_LIST _mf_mpi_helpers)
+                set(_mf_mpi_arg "MPI")
+            endif()
+            fortran_install_library(${_t} EXPORT ${_t}Targets ${_mf_mpi_arg})
             get_target_property(_fc_moddir ${_t} Fortran_MODULE_DIRECTORY)
             if(_fc_moddir)
                 fortran_install_modules(${_t})
