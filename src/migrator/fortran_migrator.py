@@ -35,6 +35,44 @@ from .target_mode import TargetMode
 # Type declaration replacement
 # ---------------------------------------------------------------------------
 
+# Pre-compiled patterns for replace_type_decls. The 14 substitutions
+# below were string-pattern ``re.sub`` calls; each went through
+# Python's regex cache lookup, which profiling showed accumulated to
+# ~5 s across 828k LAPACK invocations.
+_TD_DECL_TAIL = r'(?=\s+[A-Za-z_]|\s*::|\s*,)'
+_TD_DBL_PREC = re.compile(r'DOUBLE\s+PRECISION', re.IGNORECASE)
+_TD_DBL_CMPLX = re.compile(r'DOUBLE\s+COMPLEX', re.IGNORECASE)
+_TD_CMPLX_STAR16 = re.compile(r'COMPLEX\*16', re.IGNORECASE)
+_TD_REAL_STAR8 = re.compile(r'REAL\*8', re.IGNORECASE)
+_TD_CMPLX_STAR8 = re.compile(r'COMPLEX\*8', re.IGNORECASE)
+_TD_REAL_STAR4 = re.compile(r'REAL\*4', re.IGNORECASE)
+_TD_REAL_KIND_E0 = re.compile(
+    r'REAL\s*\(\s*kind\s*\(\s*0\.[Ee]0\s*\)\s*\)', re.IGNORECASE)
+_TD_CMPLX_KIND_E0 = re.compile(
+    r'COMPLEX\s*\(\s*kind\s*\(\s*0\.[Ee]0\s*\)\s*\)', re.IGNORECASE)
+_TD_REAL_KIND_D0 = re.compile(
+    r'REAL\s*\(\s*kind\s*\(\s*0\.[Dd]0\s*\)\s*\)', re.IGNORECASE)
+_TD_CMPLX_KIND_D0 = re.compile(
+    r'COMPLEX\s*\(\s*kind\s*\(\s*0\.[Dd]0\s*\)\s*\)', re.IGNORECASE)
+_TD_REAL_KIND_WP = re.compile(
+    r'REAL\s*\(\s*(?:KIND\s*=\s*)?WP\s*\)', re.IGNORECASE)
+_TD_CMPLX_KIND_WP = re.compile(
+    r'COMPLEX\s*\(\s*(?:KIND\s*=\s*)?WP\s*\)', re.IGNORECASE)
+_TD_REAL_KIND_4 = re.compile(
+    r'REAL\s*\(\s*(?:KIND\s*=\s*)?4\s*\)' + _TD_DECL_TAIL, re.IGNORECASE)
+_TD_CMPLX_KIND_4 = re.compile(
+    r'COMPLEX\s*\(\s*(?:KIND\s*=\s*)?4\s*\)' + _TD_DECL_TAIL, re.IGNORECASE)
+_TD_REAL_KIND_8 = re.compile(
+    r'REAL\s*\(\s*(?:KIND\s*=\s*)?8\s*\)' + _TD_DECL_TAIL, re.IGNORECASE)
+_TD_CMPLX_KIND_8 = re.compile(
+    r'COMPLEX\s*\(\s*(?:KIND\s*=\s*)?8\s*\)' + _TD_DECL_TAIL, re.IGNORECASE)
+# Cheap early-out gate: lines containing none of these tokens can't
+# match any of the 14 type-decl patterns above, so the whole pass is
+# skippable. Most LAPACK source lines (executable statements,
+# comments, blank lines) hit this gate and return immediately.
+_TD_GATE_RE = re.compile(r'\b(?:REAL|COMPLEX|DOUBLE|WP)\b', re.IGNORECASE)
+
+
 def replace_type_decls(
     line: str,
     target_mode: TargetMode,
@@ -67,6 +105,14 @@ def replace_type_decls(
     locals everywhere, since the global rename to a real
     multifloats constant would mistype the COMPLEX scope.
     """
+    # Most LAPACK lines have no type-decl token; bail before any sub.
+    if not _TD_GATE_RE.search(line):
+        if not target_mode.is_kind_based:
+            line = _filter_known_constants_from_decl(
+                line, target_mode, complex_names=complex_names,
+            )
+        return line
+
     real_target = target_mode.real_type
     complex_target = target_mode.complex_type
 
@@ -75,50 +121,32 @@ def replace_type_decls(
 
     # Longest patterns first to avoid partial matches.
     if promote_k8:
-        line = re.sub(r'DOUBLE\s+PRECISION', real_target, line, flags=re.IGNORECASE)
-        line = re.sub(r'DOUBLE\s+COMPLEX', complex_target, line, flags=re.IGNORECASE)
-        line = re.sub(r'COMPLEX\*16', complex_target, line, flags=re.IGNORECASE)
-        line = re.sub(r'REAL\*8', real_target, line, flags=re.IGNORECASE)
+        line = _TD_DBL_PREC.sub(real_target, line)
+        line = _TD_DBL_CMPLX.sub(complex_target, line)
+        line = _TD_CMPLX_STAR16.sub(complex_target, line)
+        line = _TD_REAL_STAR8.sub(real_target, line)
     if promote_k4:
-        line = re.sub(r'COMPLEX\*8', complex_target, line, flags=re.IGNORECASE)
-        line = re.sub(r'REAL\*4', real_target, line, flags=re.IGNORECASE)
+        line = _TD_CMPLX_STAR8.sub(complex_target, line)
+        line = _TD_REAL_STAR4.sub(real_target, line)
     # ``REAL(kind(0.E0))`` (single, kind4) / ``REAL(kind(0.D0))`` (double, kind8)
     # — an older idiom that predates F90's REAL*N form. MUMPS's
     # dmumps_struc.h uses ``REAL(kind(0.E0))`` for single-precision
     # fields. Gate by source kind so a kind4 source half preserves
     # ``REAL(kind(0.D0))`` references and vice versa.
     if promote_k4:
-        line = re.sub(
-            r'REAL\s*\(\s*kind\s*\(\s*0\.[Ee]0\s*\)\s*\)',
-            real_target, line, flags=re.IGNORECASE,
-        )
-        line = re.sub(
-            r'COMPLEX\s*\(\s*kind\s*\(\s*0\.[Ee]0\s*\)\s*\)',
-            complex_target, line, flags=re.IGNORECASE,
-        )
+        line = _TD_REAL_KIND_E0.sub(real_target, line)
+        line = _TD_CMPLX_KIND_E0.sub(complex_target, line)
     if promote_k8:
-        line = re.sub(
-            r'REAL\s*\(\s*kind\s*\(\s*0\.[Dd]0\s*\)\s*\)',
-            real_target, line, flags=re.IGNORECASE,
-        )
-        line = re.sub(
-            r'COMPLEX\s*\(\s*kind\s*\(\s*0\.[Dd]0\s*\)\s*\)',
-            complex_target, line, flags=re.IGNORECASE,
-        )
+        line = _TD_REAL_KIND_D0.sub(real_target, line)
+        line = _TD_CMPLX_KIND_D0.sub(complex_target, line)
     # ``REAL(KIND=WP)`` / ``REAL(WP)`` / ``COMPLEX(KIND=WP)`` etc.
     # appear in newer-style LAPACK files (e.g. DGEDMD, DGEDMDQ). The
     # ``wp`` parameter declaration is independently stripped earlier
     # in the pipeline, so the bare ``KIND=WP`` reference would dangle.
     # WP is by convention the half's working precision, so always
     # promote regardless of source_kind.
-    line = re.sub(
-        r'REAL\s*\(\s*(?:KIND\s*=\s*)?WP\s*\)',
-        real_target, line, flags=re.IGNORECASE,
-    )
-    line = re.sub(
-        r'COMPLEX\s*\(\s*(?:KIND\s*=\s*)?WP\s*\)',
-        complex_target, line, flags=re.IGNORECASE,
-    )
+    line = _TD_REAL_KIND_WP.sub(real_target, line)
+    line = _TD_CMPLX_KIND_WP.sub(complex_target, line)
     # Explicit numeric kinds on working-precision-like types. MUMPS's
     # z-half uses ``COMPLEX(kind=8) A(LA)`` where its s/c/d siblings
     # say ``REAL``/``COMPLEX``/``DOUBLE PRECISION``; rewrite all four
@@ -130,25 +158,12 @@ def replace_type_decls(
     # list). This excludes expression-context ``real(4)`` / ``real(8)``
     # intrinsic calls (e.g. ``real(4)*real(KMAX)``) which have the same
     # token shape but take the integer as an argument, not a kind.
-    _decl_tail = r'(?=\s+[A-Za-z_]|\s*::|\s*,)'
     if promote_k4:
-        line = re.sub(
-            r'REAL\s*\(\s*(?:KIND\s*=\s*)?4\s*\)' + _decl_tail,
-            real_target, line, flags=re.IGNORECASE,
-        )
-        line = re.sub(
-            r'COMPLEX\s*\(\s*(?:KIND\s*=\s*)?4\s*\)' + _decl_tail,
-            complex_target, line, flags=re.IGNORECASE,
-        )
+        line = _TD_REAL_KIND_4.sub(real_target, line)
+        line = _TD_CMPLX_KIND_4.sub(complex_target, line)
     if promote_k8:
-        line = re.sub(
-            r'REAL\s*\(\s*(?:KIND\s*=\s*)?8\s*\)' + _decl_tail,
-            real_target, line, flags=re.IGNORECASE,
-        )
-        line = re.sub(
-            r'COMPLEX\s*\(\s*(?:KIND\s*=\s*)?8\s*\)' + _decl_tail,
-            complex_target, line, flags=re.IGNORECASE,
-        )
+        line = _TD_REAL_KIND_8.sub(real_target, line)
+        line = _TD_CMPLX_KIND_8.sub(complex_target, line)
 
     if not target_mode.is_kind_based:
         line = _filter_known_constants_from_decl(
