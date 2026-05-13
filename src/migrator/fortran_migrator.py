@@ -23,6 +23,7 @@ Transformations:
   7. XERBLA string arguments
 """
 
+import functools
 import re
 from pathlib import Path
 
@@ -391,6 +392,62 @@ def strip_known_constants_from_decls(
     return ''.join(out), removed
 
 
+# Hoisted patterns reused across hot-path callers (replace_literals,
+# replace_generic_conversions, _rewrite_int_of_complex / _rewrite_int_kind_on_real64x2,
+# _filter_known_constants_from_decl, _unwrap_redundant_constructors). All
+# depend only on constants known at module load time or values that are
+# stable for the duration of a run; rebuilding them per line was the
+# dominant cost in microbenchmarks of the migrator hot loops.
+#
+# ``.EQ.`` / ``.AND.`` etc. operator detector used in ``replace_literals``
+# to mask operator dots out before the bare-literal pass scans for
+# floating-point suffixes.
+_FORTRAN_OP_RE = re.compile(
+    r'\.\s*(EQ|NE|LT|GT|LE|GE|AND|OR|NOT|TRUE|FALSE|EQV|NEQV)\s*\.',
+    re.IGNORECASE,
+)
+# ``REAL(`` / ``CMPLX(`` paren-call detector for ``replace_generic_conversions``.
+_GENERIC_CONV_RE: dict[str, re.Pattern] = {
+    _name: re.compile(rf'(?<=[=+\-*/,(.\0])\s*\b({_name})\s*\(', re.IGNORECASE)
+    for _name in ('REAL', 'CMPLX')
+}
+# ``INT(`` / ``NINT(`` detectors for the two _rewrite_int_* helpers.
+_INT_CALL_RE = re.compile(r'\bINT\s*\(', re.IGNORECASE)
+_NINT_CALL_RE = re.compile(r'\bNINT\s*\(', re.IGNORECASE)
+
+
+@functools.cache
+def _filter_known_decl_re(real_target: str, complex_target: str) -> re.Pattern:
+    """Cache the ``_filter_known_constants_from_decl`` matcher per
+    (real_target, complex_target) pair. Both come from the run's
+    TargetMode and are stable across all per-line invocations."""
+    type_alt = f'(?:{re.escape(real_target)}|{re.escape(complex_target)})'
+    return re.compile(
+        rf'^(\s*)({type_alt})(\s*(?:::)?\s*)(.+?)(\s*(?:!.*)?)$',
+        re.IGNORECASE,
+    )
+
+
+@functools.cache
+def _unwrap_ctor_re(ctor: str) -> re.Pattern:
+    """Cache the ``_unwrap_redundant_constructors`` matcher per
+    constructor name (``target_mode.real_constructor`` is run-stable)."""
+    return re.compile(rf'\b{re.escape(ctor)}\s*\(\s*([A-Za-z_]\w*)\s*\)')
+
+
+@functools.cache
+def _known_constants_pattern(keys: frozenset) -> re.Pattern:
+    """Cache the comma-name alternation in ``replace_known_constants``.
+
+    The ``renames`` dict is invariant for the duration of a file
+    (built once before the per-line loop), so the compiled pattern
+    can be cached. The function is called per source line; rebuilding
+    the alternation on every call was the dominant cost.
+    """
+    names_alt = '|'.join(re.escape(n) for n in sorted(keys, key=len, reverse=True))
+    return re.compile(rf'(?<![A-Za-z0-9_])({names_alt})(?![A-Za-z0-9_])', re.IGNORECASE)
+
+
 def _filter_known_constants_from_decl(
     line: str,
     target_mode: TargetMode,
@@ -415,11 +472,7 @@ def _filter_known_constants_from_decl(
     if complex_names:
         known = known - {n.upper() for n in complex_names}
 
-    type_alt = f'(?:{re.escape(real_target)}|{re.escape(complex_target)})'
-    m = re.match(
-        rf'^(\s*)({type_alt})(\s*(?:::)?\s*)(.+?)(\s*(?:!.*)?)$',
-        line, re.IGNORECASE,
-    )
+    m = _filter_known_decl_re(real_target, complex_target).match(line)
     if not m:
         return line
     indent, type_text, sep, vars_part, trailer = m.groups()
@@ -567,19 +620,9 @@ def replace_literals(line: str, target_mode: TargetMode,
             )
 
     parts = re.split(r"('(?:[^']|'')*'|\"(?:[^\"]|\"\")*\")", line)
-    # Allow internal whitespace between the leading/trailing dots and
-    # the operator word (``. AND .`` is a valid fixed-form spelling of
-    # ``.AND.``; MUMPS uses ``KEEP(50).EQ.0. AND. (...)`` with a space
-    # after the trailing dot of ``0.``). Without the ``\s*`` here, the
-    # bare-literal pass below would consume that trailing dot as part
-    # of ``0.`` and leave a dangling ``AND.`` that gfortran rejects.
-    _FORTRAN_OP = re.compile(
-        r'\.\s*(EQ|NE|LT|GT|LE|GE|AND|OR|NOT|TRUE|FALSE|EQV|NEQV)\s*\.',
-        re.IGNORECASE,
-    )
     for idx in range(0, len(parts), 2):
         seg = parts[idx]
-        masked = _FORTRAN_OP.sub(
+        masked = _FORTRAN_OP_RE.sub(
             lambda m: '\x00' + m.group(1) + '\x00', seg,
         )
 
@@ -823,7 +866,7 @@ def replace_generic_conversions(
         line = line[:5] + '\0' + line[6:]
 
     for name in ('REAL', 'CMPLX'):
-        pattern = re.compile(rf'(?<=[=+\-*/,(.\0])\s*\b({name})\s*\(', re.IGNORECASE)
+        pattern = _GENERIC_CONV_RE[name]
         search_start = 0
         while True:
             m = pattern.search(line, search_start)
@@ -1220,8 +1263,7 @@ def replace_known_constants(
 
     # Mask out string literal interiors in code segment.
     parts = re.split(r"('(?:[^']|'')*'|\"(?:[^\"]|\"\")*\")", code)
-    names_alt = '|'.join(re.escape(n) for n in sorted(renames.keys(), key=len, reverse=True))
-    pattern = re.compile(rf'(?<![A-Za-z0-9_])({names_alt})(?![A-Za-z0-9_])', re.IGNORECASE)
+    pattern = _known_constants_pattern(frozenset(renames.keys()))
 
     def _sub(m):
         return renames[m.group(1).upper()]
@@ -1359,7 +1401,7 @@ def _rewrite_int_kind_on_real64x2(
     real_names_upper = {n.upper() for n in (real_names or ())}
     if 'real64x2' not in lower and not real_names_upper:
         return line
-    pattern = re.compile(r'\bINT\s*\(', re.IGNORECASE)
+    pattern = _INT_CALL_RE
     out: list[str] = []
     i = 0
     while i < len(line):
@@ -1466,8 +1508,8 @@ def _rewrite_int_of_complex(line: str, complex_names: set[str]) -> str:
                 pos = paren_close + 1
         return out
 
-    line = _process(re.compile(r'\bINT\s*\(', re.IGNORECASE), line)
-    line = _process(re.compile(r'\bNINT\s*\(', re.IGNORECASE), line)
+    line = _process(_INT_CALL_RE, line)
+    line = _process(_NINT_CALL_RE, line)
     return line
 
 
@@ -1574,7 +1616,7 @@ def _unwrap_redundant_constructors(
     if target_mode.is_kind_based or not target_mode.real_constructor:
         return line
     ctor = target_mode.real_constructor
-    pattern = re.compile(rf'\b{re.escape(ctor)}\s*\(\s*([A-Za-z_]\w*)\s*\)')
+    pattern = _unwrap_ctor_re(ctor)
 
     def _sub(m):
         name = m.group(1)
