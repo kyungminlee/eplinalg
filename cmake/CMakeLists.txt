@@ -1057,6 +1057,31 @@ endif()
 # variants can coexist in the same install prefix.
 set(_MPI_DEPENDENT_LIBS blacs pblas pbblas scalapack scalapack_c mumps)
 
+
+# install_library_headers(<lib_name>): install any ``*.h`` headers
+# under ``${lib_name}/src/`` to ``include/${lib_name}/`` and extend
+# every related target's INTERFACE include directories so consumers
+# linking against the installed library pick up the include path via
+# ``find_package``. Per-library subdirs are used because some header
+# names collide across libraries (e.g. PBLAS and ScaLAPACK_C both
+# ship a ``pblas.h`` with different contents).
+function(install_library_headers lib_name)
+    set(_src ${CMAKE_CURRENT_SOURCE_DIR}/${lib_name}/src)
+    file(GLOB _hdrs ${_src}/*.h)
+    if(NOT _hdrs)
+        return()
+    endif()
+    foreach(_t ${LIB_PREFIX}${lib_name} ${lib_name} ${lib_name}_common)
+        if(TARGET ${_t})
+            target_include_directories(${_t}
+                INTERFACE $<INSTALL_INTERFACE:include/${lib_name}>)
+        endif()
+    endforeach()
+    install(DIRECTORY ${_src}/
+        DESTINATION include/${lib_name}
+        FILES_MATCHING PATTERN "*.h")
+endfunction()
+
 function(_install_library_pair lib_name)
     set(_precision_target "${LIB_PREFIX}${lib_name}")
     set(_common_target "${lib_name}_common")
@@ -1070,6 +1095,10 @@ function(_install_library_pair lib_name)
     if("${lib_name}" IN_LIST _MPI_DEPENDENT_LIBS)
         set(_install_mpi_arg "MPI")
     endif()
+
+    # Install per-library headers and extend the targets' install-time
+    # include directories before the export captures them.
+    install_library_headers(${lib_name})
 
     # Install precision-specific library
     fortran_install_library(${_precision_target} EXPORT ${_export} ${_install_mpi_arg})
@@ -1100,6 +1129,18 @@ if(NOT BASELINE_BUILD)
     foreach(_lib ${STAGED_LIBRARIES})
         _install_library_pair(${_lib})
     endforeach()
+endif()
+
+# MUMPS additionally ships C-API entry-point headers under
+# ``_mumps_upstream_include/`` (``dmumps_c.h``, ``zmumps_c.h``,
+# ``mumps_compat.h``, ``mumps_c_types.h``, struct definitions).
+# C consumers of qmumps need these alongside the migrated ``mumps/src``
+# headers; install them into the same per-library include subdir.
+if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}mumps
+        AND IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_upstream_include)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_upstream_include/
+        DESTINATION include/mumps
+        FILES_MATCHING PATTERN "*.h")
 endif()
 
 if(NEEDS_MULTIFLOATS)
