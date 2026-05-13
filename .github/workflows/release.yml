@@ -319,6 +319,27 @@ jobs:
           find artifacts -name '*.tar.gz' -exec cp {} release/ \;
           ls -la release/
 
+      - name: Build combined epla tarball
+        # Merge every per-combo tarball into one ``epla-vX.Y.Z-...``
+        # archive that holds all targets × compilers × MPIs in a single
+        # install tree. Per-combo archives stay alongside it for
+        # consumers who only need one variant. Since every library is
+        # tagged with ``-<compiler>[-<mpi>]`` in its filename, the
+        # per-tarball extracts don't collide; the only paths that
+        # overlap across tarballs are CMake Config.cmake files and
+        # mod-format-tagged .mod files, both of which are identical
+        # across the same logical configuration.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARCHIVE="epla-v${VERSION}-linux-x86_64"
+          mkdir -p combined
+          for t in release/*.tar.gz; do
+            echo "  extracting $(basename "$t")"
+            tar -xzf "$t" -C combined
+          done
+          tar -czf "release/${ARCHIVE}.tar.gz" -C combined .
+          ls -lh "release/${ARCHIVE}.tar.gz"
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -328,6 +349,21 @@ jobs:
             ## Extended-precision numerical libraries
 
             Pre-built static libraries for Linux x86-64.
+
+            ### Combined archive
+
+            ``epla-vX.Y.Z-linux-x86_64.tar.gz`` bundles every per-combo
+            archive (target × compiler × MPI) into a single install
+            tree. Every library file is tagged with its compiler tag
+            and (for MPI-dependent libraries) its MPI flavor + version
+            in the filename, so all variants coexist without filename
+            collisions. Extract once and select the variant you want
+            via ``find_package(<lib>)`` — the generated Config.cmake
+            picks the matching targets file by detecting the consumer's
+            compiler and MPI.
+
+            Use the per-combo tarballs when you only need a single
+            variant and want a smaller download.
 
             ### Targets
             | Target | Description | Prefix |
