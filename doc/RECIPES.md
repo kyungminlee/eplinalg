@@ -137,32 +137,26 @@ overrides:
 ```
 
 #### `patches` (list of strings, optional)
-Patch files to apply to the migrated source for complex manual adjustments.
-
-#### `source_overrides` (dict, optional)
-Map of upstream filename → replacement source path (resolved relative
-to the recipe's directory). When the migrator iterates source files
-and encounters a name in this map, it reads from the override path
-instead of `source_dir / name`. The override is written in upstream
-shape (`DOUBLE PRECISION` types, `pd*`/`pz*` symbol names, `dgemm`
-call sites, …) and goes through the normal migration pipeline — so
-a single override produces correctly-renamed/promoted output for
-every target. Used to carry small bug fixes for upstream sources
-without editing `external/`.
+Unified-diff patch files (resolved relative to `recipes/<lib>/patches/`)
+applied to the staged source tree before migration. The patched body
+goes through the normal migration pipeline — so a single upstream-shape
+patch produces correctly-renamed/promoted output for every target.
+Used to carry bug fixes for upstream sources without editing
+`external/`.
 
 ```yaml
-source_overrides:
-  pdlanhs.f: scalapack/source_overrides/pdlanhs.f
-  pzlanhs.f: scalapack/source_overrides/pzlanhs.f
+patches:
+  - pdlanhs.f.patch
+  - pzlanhs.f.patch
 ```
 
-When using `source_overrides` to fix a bug present only in the D/Z
-half (the migrator's default canonical), pin the corresponding
-stem(s) in `prefer_source` so the patched body wins convergence
-against the unpatched C/S sibling — the canonical-rank picker
-doesn't recognize ScaLAPACK's `pd*`/`pz*` two-letter prefix shape
-and would otherwise sort `pclanhs.f` ahead of `pzlanhs.f`. See
-`doc/UPSTREAM_BUGS.md` for the canonical example.
+When a patch fixes a bug present only in the D/Z half (the migrator's
+default canonical), pin the corresponding stem(s) in `prefer_source`
+so the patched body wins convergence against the unpatched C/S
+sibling — the canonical-rank picker doesn't recognize ScaLAPACK's
+`pd*`/`pz*` two-letter prefix shape and would otherwise sort
+`pclanhs.f` ahead of `pzlanhs.f`. See `doc/UPSTREAM_BUGS-*.md` for
+the canonical examples.
 
 #### `extra_renames` (dict, optional)
 Force-rename entries appended to the classifier's rename map after

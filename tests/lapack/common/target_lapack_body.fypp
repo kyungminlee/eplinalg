@@ -15395,16 +15395,15 @@ $:ORBDB_VARIANT_C('unbdb3')
         real(ep), intent(in)    :: Q1(ldq1,*), Q2(ldq2,*)
         integer,  intent(out)   :: info
         ${target_real}$, allocatable :: X1t(:), X2t(:), Q1t(:,:), Q2t(:,:), work(:)
-        ${target_real}$ :: wopt(1)
         integer :: lwork, l1, l2
         l1 = max(1, 1 + (m1-1) * abs(incx1))
         l2 = max(1, 1 + (m2-1) * abs(incx2))
         allocate(X1t(l1), X2t(l2), Q1t(ldq1, n), Q2t(ldq2, n))
         X1t = q2t_r(X1(1:l1)); X2t = q2t_r(X2(1:l2))
         Q1t = q2t_r(Q1(1:ldq1, 1:n)); Q2t = q2t_r(Q2(1:ldq2, 1:n))
-        call ${R}$${VARIANT}$(m1, m2, n, X1t, incx1, X2t, incx2, Q1t, ldq1, Q2t, ldq2, &
-                              wopt, -1, info)
-        lwork = max(1, int(t2q_r(wopt(1)))); allocate(work(lwork))
+        ! orbdb5/orbdb6 have no workspace query; LWORK >= N is the spec.
+        lwork = n
+        allocate(work(lwork))
         call ${R}$${VARIANT}$(m1, m2, n, X1t, incx1, X2t, incx2, Q1t, ldq1, Q2t, ldq2, &
                               work, lwork, info)
         X1(1:l1) = t2q_r(X1t); X2(1:l2) = t2q_r(X2t)
@@ -15418,16 +15417,15 @@ $:ORBDB_VARIANT_C('unbdb3')
         complex(ep), intent(in)    :: Q1(ldq1,*), Q2(ldq2,*)
         integer,     intent(out)   :: info
         ${target_complex}$, allocatable :: X1t(:), X2t(:), Q1t(:,:), Q2t(:,:), work(:)
-        ${target_complex}$ :: wopt(1)
         integer :: lwork, l1, l2
         l1 = max(1, 1 + (m1-1) * abs(incx1))
         l2 = max(1, 1 + (m2-1) * abs(incx2))
         allocate(X1t(l1), X2t(l2), Q1t(ldq1, n), Q2t(ldq2, n))
         X1t = q2t_c(X1(1:l1)); X2t = q2t_c(X2(1:l2))
         Q1t = q2t_c(Q1(1:ldq1, 1:n)); Q2t = q2t_c(Q2(1:ldq2, 1:n))
-        call ${C}$${VARIANT}$(m1, m2, n, X1t, incx1, X2t, incx2, Q1t, ldq1, Q2t, ldq2, &
-                              wopt, -1, info)
-        lwork = max(1, int(real(t2q_c(wopt(1)), ep))); allocate(work(lwork))
+        ! unbdb5/unbdb6 have no workspace query; LWORK >= N is the spec.
+        lwork = n
+        allocate(work(lwork))
         call ${C}$${VARIANT}$(m1, m2, n, X1t, incx1, X2t, incx2, Q1t, ldq1, Q2t, ldq2, &
                               work, lwork, info)
         X1(1:l1) = t2q_c(X1t); X2(1:l2) = t2q_c(X2t)

@@ -1,0 +1,11 @@
+--- a/sggev3.f
++++ b/sggev3.f
+@@ -262,7 +262,7 @@
+       EXTERNAL           SGEQRF, SGGBAK, SGGBAL,
+      $                   SGGHD3, SLAQZ0, SLACPY,
+      $                   SLASCL, SLASET, SORGQR,
+-     $                   SORMQR, STGEVC
++     $                   SORMQR, STGEVC, XERBLA
+ *     ..
+ *     .. External Functions ..
+       LOGICAL            LSAME

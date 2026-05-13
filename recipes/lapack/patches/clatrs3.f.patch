@@ -1,0 +1,10 @@
+--- a/clatrs3.f
++++ b/clatrs3.f
+@@ -275,6 +275,6 @@
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL           CLATRS, CSSCAL, XERBLA
++      EXTERNAL           CGEMM, CLATRS, CSSCAL, XERBLA
+ *     ..
+ *     .. Intrinsic Functions ..
+       INTRINSIC          ABS, MAX, MIN

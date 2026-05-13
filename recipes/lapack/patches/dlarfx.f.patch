@@ -1,0 +1,12 @@
+--- a/dlarfx.f
++++ b/dlarfx.f
+@@ -686,8 +686,7 @@
+   400    CONTINUE
+          GO TO 410
+       END IF
+-  410 CONTINUE
+-      RETURN
++  410 RETURN
+ *
+ *     End of DLARFX
+ *

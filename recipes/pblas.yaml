@@ -272,13 +272,22 @@ copy_files:
 
 skip_files: []
 
-# Source overrides for upstream-bug-class issues. The override file
-# is in upstream-shape (it gets renamed for each migration target via
-# the normal pipeline). Each entry is `<upstream basename>: <path
-# under recipe_dir>`.
-source_overrides:
-  pdatrmv_.c: pblas/source_overrides/pdatrmv_.c
-  pzatrmv_.c: pblas/source_overrides/pzatrmv_.c
+# Patches applied to staged sources before migration. Unified diffs
+# vs upstream Netlib; one patch per UPSTREAM_BUGS.md ID. See
+# doc/refactor-20260509.md.
+patches:
+  - S04__atrmv-alpha-hardcoded-one.patch
+
+# Convergence whitelist (Phase D). PBLAS divergence is dominated by
+# a migrator-internal C-pass gap: re-migration leaves K&R fallback
+# blocks (#ifdef __STDC__ / #else …) intact in the S/C halves, while
+# the on-disk canonical has them stripped. Per project_assume_ansi_c
+# the migrator should strip them everywhere, but the converge re-
+# migration path doesn't. All 61 PBLAS divergences (61/61) trace to
+# this; closing the gap is migrator-side work tracked separately,
+# orthogonal to upstream-bug patching. See doc/convergence-20260507.md
+# §pblas.
+defer_all_divergences: true
 
 # Hand-written replacements for the PB_C[dz]typeset typeset functions.
 # The migrated-by-regex versions try to assign the macro ZERO (= 0.0)
@@ -297,3 +306,12 @@ overrides:
       - pblas_mf_bridge.h
       # Overlay header (fallback for pure-C compilation path).
       - pblas_mf_overlay.h
+
+# Patches that touch only one half of the S/D ↔ C/Z precision pair.
+# S04 fixes the D/Z halves of patrmv (real upstream bug); S/C halves
+# carry the same bug upstream but are non-canonical for the migrated
+# archive so we don't ship an S/C patch. When S/C patches are added
+# (to fix the un-migrated standard PBLAS archive too), remove them
+# from this list.
+asymmetric_patches:
+  - S04__atrmv-alpha-hardcoded-one.patch

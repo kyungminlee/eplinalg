@@ -24,27 +24,47 @@ skip_files:
   - XERBLA
   - XERBLA_ARRAY
 
-# Source overrides — patched upstream bodies that go through the normal
-# migration pipeline. dnrm2.f90 / dznrm2.f90 originally embed Blue's
-# scaling constants (tsml/tbig/ssml/sbig) as inline parameter
-# declarations. On the multifloats target the migrator's nuke-rename
-# turns those references into imports of upstream multifloats's
-# DD_TSML/DD_TBIG/DD_SSML/DD_SBIG, which use 1e±100 / 1e±50 magnitudes.
-# Those values cause `(ax * sbig)^2` to overflow at fp64 once
-# ax exceeds ~1e+104, breaking dgesvj's protect-from-underflow
-# up-scaling pass. The overrides re-route the imports through
-# LA_CONSTANTS so the migrator dispatches to LA_CONSTANTS_MF
-# (corrected) / LA_CONSTANTS_EP (already correct) per target.
-source_overrides:
-  dnrm2.f90:  blas/source_overrides/dnrm2.f90
-  dznrm2.f90: blas/source_overrides/dznrm2.f90
-  # drotg/zrotg PARAMETER initializers use `radix(0._wp)**max(...)`
-  # and `sqrt(safmin)`. ** and sqrt are user-defined for the
-  # multifloats target's real64x2 / cmplx64x2 types, so gfortran
-  # rejects them in PARAMETER context. Override moves the constants
-  # to SAVE-then-init-at-first-call. kind10/kind16 are unaffected
-  # (they still get the same numerical values; the PARAMETER vs
-  # SAVE choice only matters for gfortran's PARAMETER-expression
-  # validator).
-  drotg.f90:  blas/source_overrides/drotg.f90
-  zrotg.f90:  blas/source_overrides/zrotg.f90
+# Patches applied to the staged source tree (build/staged-sources/blas/)
+# before migration. Each patch is a unified diff against the upstream
+# source. See doc/refactor-20260509.md.
+#
+# B01: dnrm2/dznrm2 originally embed Blue's scaling constants
+# (tsml/tbig/ssml/sbig) as inline PARAMETER declarations. On the
+# multifloats target the migrator's nuke-rename turns those references
+# into imports of upstream multifloats's DD_TSML/DD_TBIG/DD_SSML/
+# DD_SBIG, which use 1e±100 / 1e±50 magnitudes. Those values cause
+# `(ax * sbig)^2` to overflow at fp64 once ax exceeds ~1e+104,
+# breaking dgesvj's protect-from-underflow up-scaling pass. The
+# rewrite renames the locals to `btsml/btbig/bssml/bsbig` (so the
+# migrator's nuke-rename no longer matches them) and switches them
+# from PARAMETER to SAVE-then-init-at-first-call. drotg/zrotg get the
+# same SAVE-then-init treatment because their PARAMETER initializers
+# use `radix(0._wp)**max(...)` and `sqrt(safmin)` — ** and sqrt are
+# user-defined for multifloats's real64x2 / cmplx64x2, so gfortran
+# rejects them in PARAMETER context. The structural rewrite fires on
+# every target; kind10/kind16 stay numerically equivalent.
+patches:
+  - B01__nrm2-rotg-lazy-init.patch
+  - B01_SC__nrm2-rotg-lazy-init.patch
+
+# Convergence whitelist (Phase D, doc/refactor-20260509.md).
+# Audit in doc/convergence-20260507.md §blas:
+#   DDOT: upstream STEMP/SDOT vs DDOT/DTEMP line-swap (independent
+#     zero-init assignments emitted in different order — semantically
+#     equivalent but textually divergent).
+#   DROTMG: upstream constants drift (different DATA GAM/GAMSQ/RGAMSQ
+#     between S and D halves: 1.67772E7 vs 16777216, 5.96046E-8 vs
+#     5.9604645E-8).
+#   DZASUM: upstream code-shape drift (D delegates to DCABS1, S
+#     inlines ABS+AIMAG).
+expected_divergences:
+  - DDOT
+  - DROTMG
+  - DZASUM
+
+# Symmetric-patch CI escape hatch (Phase D). B01 originally patched
+# only the D/Z half; B01_SC extends it to the S/C halves
+# (snrm2/scnrm2/srotg/crotg) so the lazy-init pattern is applied
+# symmetrically. With both patches landed, the asymmetry list is
+# empty.
+asymmetric_patches: []

@@ -28,7 +28,9 @@ _KNOWN_RECIPE_KEYS: frozenset[str] = frozenset({
     'extra_migrate_files', 'extra_c_dirs', 'extra_fortran_dirs',
     'keep_kind_manifest',
     'c_return_types', 'c_type_aliases', 'c_pointer_cast_aliases',
-    'header_patches', 'overrides', 'source_overrides',
+    'header_patches', 'overrides',
+    'expected_divergences', 'defer_all_divergences',
+    'asymmetric_patches', 'one_sided_cleanup',
 })
 
 
@@ -69,11 +71,13 @@ class RecipeConfig:
     # path to a single ``.f``/``.f90``/``.F90``/``.c``/``.h`` file.
     # Used to pull in targeted leaf sources from shared directories
     # whose other contents belong to a different library — e.g.
-    # LAPACK migrates ``INSTALL/dlamch.f`` and
-    # ``INSTALL/droundup_lwork.f`` without swallowing the timer
-    # variants and test programs that live alongside them; PTZBLAS
-    # pulls in ``TOOLS/zzdotc.f`` and ``TOOLS/zzdotu.f`` without
-    # claiming the rest of ScaLAPACK's TOOLS/.
+    # LAPACK migrates ``INSTALL/dlamch.f`` without swallowing the
+    # timer variants and test programs that live alongside it
+    # (``INSTALL/droundup_lwork.f`` is deliberately not migrated;
+    # the engine's ``_strip_roundup_lwork`` post-pass elides every
+    # call site — see ``recipes/lapack.yaml``); PTZBLAS pulls in
+    # ``TOOLS/zzdotc.f`` and ``TOOLS/zzdotu.f`` without claiming
+    # the rest of ScaLAPACK's TOOLS/.
     extra_migrate_files: list[Path] = field(default_factory=list)
     # Additional C source directories to *migrate* (not just scan) in
     # the same generic-rename-map pass as ``source_dir``. Used by PBLAS
@@ -171,16 +175,40 @@ class RecipeConfig:
     # the upstream (un-migrated) entry points keep their original
     # symbol names and link cleanly alongside the renamed clones.
     extra_renames: dict[str, str] = field(default_factory=dict)
-    # Map of upstream filename → replacement source path (resolved
-    # relative to ``recipe_dir``). When the migrator iterates source
-    # files and encounters a name in this map, it reads from the
-    # override path instead of ``source_dir / name``. The override
-    # file is written in upstream-shape (DOUBLE PRECISION, pd*/dz*
-    # naming, dgemm call sites, etc.) and goes through the normal
-    # migration pipeline — so a single override produces correctly-
-    # renamed/promoted output for every target. Used to carry small
-    # bug fixes for upstream source without touching ``external/``.
-    source_overrides: dict[str, Path] = field(default_factory=dict)
+    # Convergence-report whitelist. Each stem (uppercased, no extension)
+    # names the canonical (D/Z) member of a co-family pair whose
+    # divergence is expected — typically because the two upstream halves
+    # genuinely differ (BLAS sdot line-swap, srotmg constants, MINRGP
+    # tuning split between S and D, etc.) or because a patch covers only
+    # one half by design. Pairs whose canonical stem appears here are
+    # filtered out of the convergence report and do NOT cause CI to fail.
+    # See doc/UPSTREAM_BUGS.md for individual entries.
+    expected_divergences: set[str] = field(default_factory=set)
+    # Coarse-grained whitelist: when True, every divergence in this
+    # library is filtered out. Used for libraries where convergence is
+    # currently dominated by migrator-internal asymmetries (PBLAS K&R
+    # re-emergence, MUMPS kind-promotion, scalapack_c TYPE rename gap)
+    # tracked separately. The fix is migrator-side; once the migrator
+    # gap closes, switch the recipe back to enumerated
+    # ``expected_divergences``.
+    defer_all_divergences: bool = False
+    # Patches under ``recipes/<lib>/patches/`` that touch only one half
+    # of a co-family pair because the upstream sibling carries a
+    # genuinely different bug shape (or no analogous bug). Listed here,
+    # the symmetric-patch CI check (``migrator verify-patches``) skips
+    # them; otherwise it fails when a precision-prefixed file is touched
+    # without its siblings. Use this field for "real bug, S/C may need
+    # its own future patch with a different fix" — periodically review
+    # entries to see whether the sibling situation has changed.
+    asymmetric_patches: list[str] = field(default_factory=list)
+    # Patches that close a D↔S or Z↔C *cosmetic* asymmetry by stripping
+    # upstream dead code (unused PARAMETER blocks, redundant CMPLX
+    # casts, dead INTRINSIC entries, literal-style mismatches). The
+    # sibling half is already in the post-patch shape — no S/C patch
+    # is or will be needed. Same CI semantics as ``asymmetric_patches``
+    # (skipped by symmetric check), but the separate field communicates
+    # intent so reviewers don't waste time hunting for missing siblings.
+    one_sided_cleanup: list[str] = field(default_factory=list)
 
 
 def load_recipe(recipe_path: Path,
@@ -303,8 +331,10 @@ def load_recipe(recipe_path: Path,
             str(k).upper(): str(v)
             for k, v in (data.get('extra_renames') or {}).items()
         },
-        source_overrides={
-            str(k): (recipe_path.parent / str(v)).resolve()
-            for k, v in (data.get('source_overrides') or {}).items()
+        expected_divergences={
+            str(s).upper() for s in (data.get('expected_divergences') or [])
         },
+        defer_all_divergences=bool(data.get('defer_all_divergences', False)),
+        asymmetric_patches=list(data.get('asymmetric_patches') or []),
+        one_sided_cleanup=list(data.get('one_sided_cleanup') or []),
     )

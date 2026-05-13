@@ -18,7 +18,7 @@ program test_zgetsqrhrt
 
     call report_init('zgetsqrhrt', target_name)
     do i = 1, size(ms)
-        m = ms(i); n = ns(i); mb1 = 8; nb1 = 2; nb2 = 2
+        m = ms(i); n = ns(i); mb1 = 2*n; nb1 = 2; nb2 = 2  ! MB1 > N is required
         call gen_matrix_complex(m, n, A0, seed = 23551 + 71 * i)
         allocate(A_ref(m, n), A_got(m, n), T_ref(nb2, n), T_got(nb2, n))
         A_ref = A0; A_got = A0

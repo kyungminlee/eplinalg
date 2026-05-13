@@ -30,83 +30,59 @@ from .target_mode import TargetMode
 #   ...
 #   {C_REAL_TYPE}  → underlying C type (e.g., "__float128")
 
-REAL_CLONE_SUBS = [
-    # Type names (run twice to catch adjacent matches).
-    # Boundary excludes [a-zA-Z_0-9] so we don't re-match inside
-    # replacement types that contain the original as a prefix
-    # (e.g. 'float' inside 'float64x2_t').
-    (r'(^|[^a-zA-Z_0-9])double([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])double([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    # MPI types
-    (r'\bMPI_DOUBLE\b', '{MPI_REAL}'),
-    # Reduction op. For KIND targets {MPI_SUM_REAL} expands to 'MPI_SUM'
-    # so the rule is a textual no-op. For multifloats it expands to
-    # 'MPI_DD_SUM', the user-defined op registered by libmfc.
-    (r'\bMPI_SUM\b', '{MPI_SUM_REAL}'),
-    # Function name prefixes (allow uppercase after prefix for BI_dMPI_* etc.)
-    (r'(?<![A-Za-z0-9_])Cd([a-z])', r'C{RP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_d([a-zA-Z])', r'BI_{RP}\1'),
-]
+# Clone-sub builders. Each table is a flat list of (pattern, replacement)
+# pairs applied in order to one C source line at a time. ``\b`` boundary
+# matches catch adjacent tokens in a single pass (so no "run twice" dup
+# is needed) and exclude underscore-adjacent identifiers like
+# ``float64x2_t``. Prefix rules (``Cd*``/``BI_d*``) use ``(?<![A-Za-z0-9_])``
+# lookbehind rather than ``\b`` because the leading prefix letter is
+# lowercase and may follow a word boundary that ``\b`` would mistake.
+#
+# {MPI_SUM_REAL}/{MPI_SUM_COMPLEX} are textual no-ops for KIND targets
+# (both expand to ``MPI_SUM``); multifloats expands them to its
+# user-defined ops (``MPI_DD_SUM`` / the zz variant) registered by libmfc.
 
-COMPLEX_CLONE_SUBS = [
-    # Complex struct types
-    (r'(^|[^a-zA-Z_0-9])DCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])DCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])SCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])SCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    # Underlying real type
-    (r'(^|[^a-zA-Z_0-9])double([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])double([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    # MPI types (order matters: DOUBLE_COMPLEX before DOUBLE)
-    (r'\bMPI_DOUBLE_COMPLEX\b', '{MPI_COMPLEX}'),
-    (r'\bMPI_DOUBLE\b', '{MPI_REAL}'),
-    (r'MPI_COMPLEX([^a-zA-Z_0-9])', r'{MPI_COMPLEX}\1'),
-    # Reduction op (see REAL_CLONE_SUBS). Complex files use the zz op.
-    (r'\bMPI_SUM\b', '{MPI_SUM_COMPLEX}'),
-    # Function name prefixes (allow uppercase after prefix for BI_zMPI_* etc.)
-    (r'(?<![A-Za-z0-9_])Cz([a-z])', r'C{CP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_z([a-zA-Z])', r'BI_{CP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_d([a-zA-Z])', r'BI_{RP}\1'),
-]
 
-# Convergence-only sub rule sets: mirror of REAL_CLONE_SUBS/COMPLEX_CLONE_SUBS
-# but sourced from S/C sibling files (``float``/``MPI_FLOAT``/``Cs*``/``BI_s*``
-# and ``SCOMPLEX``/``MPI_COMPLEX``/``Cc*``/``BI_c*``). Used by the per-file
-# in-memory migrator to re-derive the Q/X target from the S/C half for
-# convergence checking against the on-disk canonical produced from D/Z.
-SINGLE_CLONE_SUBS = [
-    # Type names (run twice to catch adjacent matches)
-    (r'(^|[^a-zA-Z_0-9])float([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])float([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    # MPI types
-    (r'\bMPI_FLOAT\b', '{MPI_REAL}'),
-    # Reduction op (see REAL_CLONE_SUBS)
-    (r'\bMPI_SUM\b', '{MPI_SUM_REAL}'),
-    # Function name prefixes
-    (r'(?<![A-Za-z0-9_])Cs([a-z])', r'C{RP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_s([a-zA-Z])', r'BI_{RP}\1'),
-]
+def _real_clone_subs(real_keyword: str, src_letter: str) -> list[tuple[str, str]]:
+    mpi_real_src = f'MPI_{real_keyword.upper()}'
+    return [
+        (rf'\b{real_keyword}\b', '{REAL_TYPE}'),
+        (rf'\b{mpi_real_src}\b', '{MPI_REAL}'),
+        (r'\bMPI_SUM\b', '{MPI_SUM_REAL}'),
+        # Function name prefixes (allow uppercase suffix for BI_dMPI_* etc.).
+        (rf'(?<![A-Za-z0-9_])C{src_letter}([a-z])', r'C{RP}\1'),
+        (rf'(?<![A-Za-z0-9_])BI_{src_letter}([a-zA-Z])', r'BI_{RP}\1'),
+    ]
 
-CSINGLE_CLONE_SUBS = [
-    # Complex struct types
-    (r'(^|[^a-zA-Z_0-9])SCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])SCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])DCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])DCOMPLEX([^a-zA-Z_0-9]|$)', r'\1{COMPLEX_TYPE}\2'),
-    # Underlying real type
-    (r'(^|[^a-zA-Z_0-9])float([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    (r'(^|[^a-zA-Z_0-9])float([^a-zA-Z_0-9]|$)', r'\1{REAL_TYPE}\2'),
-    # MPI types (order matters: FLOAT_COMPLEX before FLOAT, MPI_COMPLEX gated)
-    (r'\bMPI_FLOAT_COMPLEX\b', '{MPI_COMPLEX}'),
-    (r'\bMPI_FLOAT\b', '{MPI_REAL}'),
-    (r'MPI_COMPLEX([^a-zA-Z_0-9])', r'{MPI_COMPLEX}\1'),
-    # Reduction op (see REAL_CLONE_SUBS). Complex files use the zz op.
-    (r'\bMPI_SUM\b', '{MPI_SUM_COMPLEX}'),
-    # Function name prefixes
-    (r'(?<![A-Za-z0-9_])Cc([a-z])', r'C{CP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_c([a-zA-Z])', r'BI_{CP}\1'),
-    (r'(?<![A-Za-z0-9_])BI_s([a-zA-Z])', r'BI_{RP}\1'),
-]
+
+def _complex_clone_subs(real_keyword: str, own_struct: str, cross_struct: str,
+                        complex_letter: str, real_letter: str) -> list[tuple[str, str]]:
+    mpi_real_src = f'MPI_{real_keyword.upper()}'
+    mpi_complex_src = f'MPI_{real_keyword.upper()}_COMPLEX'
+    return [
+        (rf'\b{own_struct}\b', '{COMPLEX_TYPE}'),
+        (rf'\b{cross_struct}\b', '{COMPLEX_TYPE}'),
+        (rf'\b{real_keyword}\b', '{REAL_TYPE}'),
+        # MPI types — order matters: <PREC>_COMPLEX before <PREC>.
+        (rf'\b{mpi_complex_src}\b', '{MPI_COMPLEX}'),
+        (rf'\b{mpi_real_src}\b', '{MPI_REAL}'),
+        # Gated MPI_COMPLEX rule (preserved as-is: no leading boundary).
+        (r'MPI_COMPLEX([^a-zA-Z_0-9])', r'{MPI_COMPLEX}\1'),
+        (r'\bMPI_SUM\b', '{MPI_SUM_COMPLEX}'),
+        (rf'(?<![A-Za-z0-9_])C{complex_letter}([a-z])', r'C{CP}\1'),
+        (rf'(?<![A-Za-z0-9_])BI_{complex_letter}([a-zA-Z])', r'BI_{CP}\1'),
+        (rf'(?<![A-Za-z0-9_])BI_{real_letter}([a-zA-Z])', r'BI_{RP}\1'),
+    ]
+
+
+REAL_CLONE_SUBS = _real_clone_subs('double', 'd')
+COMPLEX_CLONE_SUBS = _complex_clone_subs('double', 'DCOMPLEX', 'SCOMPLEX', 'z', 'd')
+# S/C convergence-only mirror tables: re-derive the Q/X target from the
+# S/C half (sources use ``float``/``MPI_FLOAT``/``Cs*``/``Cc*``) so the
+# in-memory result can be compared against the canonical produced from
+# the D/Z half on disk.
+SINGLE_CLONE_SUBS = _real_clone_subs('float', 's')
+CSINGLE_CLONE_SUBS = _complex_clone_subs('float', 'SCOMPLEX', 'DCOMPLEX', 'c', 's')
 
 
 def _build_sub_vars(target_mode: TargetMode) -> dict[str, str]:
@@ -391,7 +367,6 @@ def _convert_kr_to_ansi(text: str) -> str:
                     if name in param_names:
                         param_type_map[name] = f'{base_type} {decl}'
         j = body_start
-        comment_lines: list[str] = []
 
         # Check if all parameter names were resolved
         if len(param_type_map) == len(param_names) and param_names:
@@ -401,7 +376,6 @@ def _convert_kr_to_ansi(text: str) -> str:
             prefix = ' '.join(prefix.split())
             ansi_params = ', '.join(param_type_map[n] for n in param_names)
             result.append(f'{prefix} {ansi_params} )')
-            result.extend(comment_lines)
             # Preserve the body-opening line verbatim — it may carry
             # trailing content (a comment that opens on the same line
             # as ``{``, like ``{/* Rmk: ... */``) that the body needs.
@@ -500,8 +474,7 @@ def migrate_c_directory(src_dir: Path, output_dir: Path,
                         overrides: list[tuple[Path, str]] | None = None,
                         extra_c_dirs: list[Path] | None = None,
                         skip_files: set[str] | None = None,
-                        copy_files: set[str] | None = None,
-                        source_overrides: dict[str, Path] | None = None) -> dict:
+                        copy_files: set[str] | None = None) -> dict:
     """Migrate a C source directory by cloning real/complex variants.
 
     Two modes:
@@ -537,12 +510,10 @@ def migrate_c_directory(src_dir: Path, output_dir: Path,
             extra_c_dirs=extra_c_dirs,
             skip_files=skip_files,
             copy_files=copy_files,
-            source_overrides=source_overrides,
         )
     else:
         result = _migrate_blacs_c_directory(
             src_dir, output_dir, target_mode, copy_originals,
-            source_overrides=source_overrides,
         )
     if overrides:
         applied = _apply_overrides(output_dir, overrides)
@@ -645,41 +616,39 @@ def _apply_overrides(output_dir: Path,
     return applied
 
 
+# C identifier tokenizer used by the rename substituter. Cheap DFA
+# that the regex engine evaluates in one linear pass — replaces the
+# previous 1500+ alternation regex whose backtracking dominated C
+# migration time (90%+ of xblas runtime).
+_C_IDENT_RE = re.compile(r'[A-Za-z_]\w*')
+
+
 def _build_rename_regex(rename_map: dict[str, str]) -> tuple[re.Pattern, dict[str, str]]:
-    """Build a single-pass regex that renames routine names in C text.
+    """Build a tokenizer + lookup map for renaming routine names in C text.
 
-    For each (OLD, NEW) in rename_map we emit four lookup entries:
-    uppercase bare, lowercase bare, uppercase with trailing underscore,
-    lowercase with trailing underscore. Word boundaries prevent false
-    matches inside longer identifiers (e.g. ``DGER`` inside ``PDGER``).
+    Strategy: scan the text for identifier-shaped tokens and dict-look
+    each one up. Returns ``(_C_IDENT_RE, combined)`` where ``combined``
+    maps lowercase token → lowercase replacement (with and without the
+    Fortran-style trailing underscore that the BLACS C bridge appends
+    to call sites).
 
-    Matching is case-insensitive at substitution time (see
-    :func:`_make_rename_substituter`) so PascalCase identifiers like
-    ``PB_Cctypeset`` are also renamed correctly; this dict carries the
-    canonical lowercase form and the replacement is case-transferred
-    from the matched text at callback time.
+    The pre-cleanup form built one giant alternation regex with a
+    ``(?<![.>])\\b...\\b`` boundary; the substituter (see
+    :func:`_make_rename_substituter`) now enforces the same struct-
+    member-access guard by inspecting the character preceding the
+    matched token via ``Match.string`` / ``Match.start``, preserving
+    PBLAS PBTYP_T compatibility where field names like
+    ``TypeStruct.Cgesd2d`` must not be renamed.
 
-    The pattern uses a negative lookbehind to skip C struct member
-    accesses (``foo.Cgesd2d``, ``ptr->Cgesd2d``). PBLAS's PBTYP_T
-    function-pointer struct happens to use field names that collide
-    with BLACS routine names — without this guard the migrator would
-    rewrite ``TypeStruct.Cgesd2d = Cdgesd2d`` to
-    ``TypeStruct.ZZgesd2d = ...``, breaking compilation since the
-    struct definition itself was not renamed.
+    Matching is case-insensitive: the substituter normalizes the
+    matched token to lowercase before looking it up, then transfers
+    each source character's case onto the replacement.
     """
     combined: dict[str, str] = {}
     for old, new in rename_map.items():
-        # Canonical form is lowercase with optional trailing underscore.
-        # The actual replacement case is computed per-match.
         combined[old.lower()] = new.lower()
         combined[old.lower() + '_'] = new.lower() + '_'
-    # Longest keys first so the alternation prefers the underscore forms
-    keys_sorted = sorted(combined.keys(), key=len, reverse=True)
-    pattern = re.compile(
-        r'(?<![.>])\b(' + '|'.join(re.escape(k) for k in keys_sorted) + r')\b',
-        re.IGNORECASE,
-    )
-    return pattern, combined
+    return _C_IDENT_RE, combined
 
 
 def _make_rename_substituter(pattern: re.Pattern, combined: dict[str, str]):
@@ -706,7 +675,14 @@ def _make_rename_substituter(pattern: re.Pattern, combined: dict[str, str]):
     """
     def _sub(m: re.Match) -> str:
         src = m.group(0)
-        new_lower = combined[src.lower()]
+        # Honor the original ``(?<![.>])`` lookbehind: skip identifier
+        # tokens preceded by ``.`` or ``->`` (struct field access).
+        start = m.start()
+        if start > 0 and m.string[start - 1] in '.>':
+            return src
+        new_lower = combined.get(src.lower())
+        if new_lower is None:
+            return src
 
         if len(src) == len(new_lower):
             # Equal-length: positional case transfer.
@@ -1114,8 +1090,7 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
                                  header_patches: list[dict] | None = None,
                                  extra_c_dirs: list[Path] | None = None,
                                  skip_files: set[str] | None = None,
-                                 copy_files: set[str] | None = None,
-                                 source_overrides: dict[str, Path] | None = None) -> dict:
+                                 copy_files: set[str] | None = None) -> dict:
     """Rename-map-driven C migration for ScaLAPACK-style libraries.
 
     A file ``foo_.c`` is cloned iff its routine ``FOO`` is a D- or
@@ -1135,20 +1110,6 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
     all_src_dirs: list[Path] = [src_dir]
     if extra_c_dirs:
         all_src_dirs.extend(extra_c_dirs)
-
-    # ``source_overrides`` swaps the upstream copy of a named file with
-    # a recipe-supplied replacement at the start of the migration
-    # pipeline. The override is in upstream shape (S/D/C/Z naming,
-    # ``double`` types, etc.) and goes through the normal C migration
-    # so it produces correctly-renamed output for every target. Used
-    # for upstream-bug patches that affect specific routines in the
-    # SRC tree — e.g. ScaLAPACK PBLAS p[dz]atrmv_.c's missing ALPHA
-    # in the L,T branch (commit 4b2d5ee fixed the test driver; the
-    # migrator-side fix lives here).
-    _source_overrides = source_overrides or {}
-
-    def _apply_src_override(p: Path) -> Path:
-        return _source_overrides.get(p.name, p)
 
     # Copy all originals first (keeps S/D/C/Z entry points available).
     # When extra_c_dirs sources contain `#include "../foo.h"` paths
@@ -1173,7 +1134,7 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
     # archive's untouched ``(double*)`` copies would corrupt strides
     # when the migrated entry points dispatch through them.
     for d in all_src_dirs:
-        for f in (_apply_src_override(p) for p in sorted(d.iterdir())):
+        for f in (p for p in sorted(d.iterdir())):
             stem_upper = (f.stem[:-1] if f.stem.endswith('_')
                           else f.stem).upper()
             # Also consider the decoration-stripped stem for skip
@@ -1313,8 +1274,7 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
 
     all_c_files: list[Path] = []
     for d in all_src_dirs:
-        all_c_files.extend(_apply_src_override(f)
-                            for f in d.iterdir()
+        all_c_files.extend(f for f in d.iterdir()
                             if f.suffix.lower() == '.c')
     entries = sorted(
         all_c_files,
@@ -1419,19 +1379,10 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
 
 
 def _migrate_blacs_c_directory(src_dir: Path, output_dir: Path,
-                                 target_mode: TargetMode, copy_originals: bool,
-                                 source_overrides: dict[str, Path] | None = None) -> dict:
+                                 target_mode: TargetMode, copy_originals: bool) -> dict:
     """BLACS-specific C migration (original behavior).
 
-    ``source_overrides`` maps upstream basenames to recipe-relative
-    replacement paths. A name that exists upstream is swapped for the
-    replacement before the copy / clone passes — so the override goes
-    through the same d→{rp} / z→{cp} substitution as the original.
-    A name that does not exist upstream is added as a new source (used
-    for sibling files like ``BI_dMPI_sum.c`` that have no upstream
-    counterpart). Same semantics as the generic-path
-    ``source_overrides`` field, but adapted to BLACS's hand-rolled
-    file walk.
+    Reads from ``src_dir`` (the staged source tree, already patched).
     """
     template_vars = _build_sub_vars(target_mode)
     rp = template_vars['RP']
@@ -1439,20 +1390,7 @@ def _migrate_blacs_c_directory(src_dir: Path, output_dir: Path,
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    _overrides = source_overrides or {}
-
-    # Build the effective source list: every upstream file (with the
-    # override path swapped in if its name is overridden), plus any
-    # override-only files not present upstream. The override file's
-    # ``Path.name`` is used downstream for prefix detection and clone
-    # naming, so override files must keep the upstream-shape basename.
-    upstream_by_name = {p.name: p for p in src_dir.iterdir()}
-    sources: list[Path] = []
-    for name in sorted(upstream_by_name):
-        sources.append(_overrides.get(name, upstream_by_name[name]))
-    for name in sorted(_overrides):
-        if name not in upstream_by_name:
-            sources.append(_overrides[name])
+    sources = sorted(src_dir.iterdir())
 
     # Copy headers always; copy precision-prefixed .c originals only
     # when copy_originals; copy precision-independent dispatcher .c

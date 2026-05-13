@@ -1,0 +1,11 @@
+--- a/zlanht.f
++++ b/zlanht.f
+@@ -130,7 +130,7 @@
+       EXTERNAL           DLASSQ, ZLASSQ
+ *     ..
+ *     .. Intrinsic Functions ..
+-      INTRINSIC          ABS, MAX, SQRT
++      INTRINSIC          ABS, SQRT
+ *     ..
+ *     .. Executable Statements ..
+ *

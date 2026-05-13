@@ -1,0 +1,391 @@
+--- a/snrm2.f90
++++ b/snrm2.f90
+@@ -85,7 +85,35 @@
+ !> \endverbatim
+ !>
+ !  =====================================================================
+-function SNRM2( n, x, incx ) 
++!
++!  Override of upstream LAPACK 3.12.1's BLAS/SRC/snrm2.f90.
++!
++!  Two diffs from upstream, both target the multifloats build:
++!
++!  1. Blue's scaling constants are renamed `tsml/tbig/ssml/sbig` ->
++!     `btsml/btbig/bssml/bsbig`. Reason: the migrator's "nuke-rename"
++!     pass strips `tsml/tbig/ssml/sbig` parameter declarations and
++!     substitutes imports of upstream multifloats's
++!     `DD_TSML/DD_TBIG/DD_SSML/DD_SBIG` — those use 1e±100 / 1e±50
++!     magnitudes (DD_SBIG > 1 is a SCALE-UP factor, opposite to
++!     LAPACK's convention) and overflow `(ax * sbig)**2` once `ax`
++!     exceeds ~1e+104, breaking dgesvj's protect-from-underflow
++!     up-scaling pass. The renamed locals dodge the nuke-rename match
++!     so the LAPACK formula survives intact.
++!
++!  2. The four scaling constants are SAVE locals initialized at first
++!     call rather than PARAMETERs. Reason: on multifloats the migrator
++!     turns `real(radix(0._wp), wp)**N` into
++!     `real64x2(radix(...))**N`, which dispatches to the user-defined
++!     `dd_pow_int` operator — gfortran rejects user functions in
++!     PARAMETER initializer expressions. Runtime init at first call
++!     ages the cost across the entire program, not per call.
++!
++!  Both diffs are no-ops on kind10/kind16 targets: the ** operator on
++!  intrinsic real(KIND=10/16) is a builtin, so the SAVE form runs
++!  exactly once per process at first call, after which the values
++!  are read-only.
++function SNRM2( n, x, incx )
+    integer, parameter :: wp = kind(1.e0)
+    real(wp) :: SNRM2
+ !
+@@ -97,17 +125,16 @@
+ !  .. Constants ..
+    real(wp), parameter :: zero = 0.0_wp
+    real(wp), parameter :: one  = 1.0_wp
+-   real(wp), parameter :: maxN = huge(0.0_wp)
+ !  ..
+-!  .. Blue's scaling constants ..
+-   real(wp), parameter :: tsml = real(radix(0._wp), wp)**ceiling( &
+-       (minexponent(0._wp) - 1) * 0.5_wp)
+-   real(wp), parameter :: tbig = real(radix(0._wp), wp)**floor( &
+-       (maxexponent(0._wp) - digits(0._wp) + 1) * 0.5_wp)
+-   real(wp), parameter :: ssml = real(radix(0._wp), wp)**( - floor( &
+-       (minexponent(0._wp) - digits(0._wp)) * 0.5_wp))
+-   real(wp), parameter :: sbig = real(radix(0._wp), wp)**( - ceiling( &
+-       (maxexponent(0._wp) + digits(0._wp) - 1) * 0.5_wp))
++!  .. Blue's scaling constants + maxN (SAVE; init at first call below).
++!     maxN is a SAVE rather than PARAMETER because the multifloats target
++!     overloads `huge` for `real64x2`, and gfortran rejects user-defined
++!     functions in PARAMETER initializer expressions.
++   real(wp), save :: maxN
++   real(wp), save :: btsml, btbig, bssml, bsbig
++   logical, save :: blue_initialized = .false.
++   real(wp) :: r_radix, half_wp
++   integer  :: minexp_w, maxexp_w, digits_w
+ !  ..
+ !  .. Scalar Arguments ..
+    integer :: incx, n
+@@ -120,6 +147,26 @@
+    logical :: notbig
+    real(wp) :: abig, amed, asml, ax, scl, sumsq, ymax, ymin
+ !
++!  First-call init of Blue's scaling constants. Cheap: one branch
++!  + 4 integer-power evaluations once per process. Intermediate
++!  variables keep each line under gfortran's free-form 132-column
++!  limit after the migrator's multifloats wrap (which expands
++!  `0._wp` to `real64x2(limbs=[0.E0, 0.0_8])` etc.).
++!
++   if (.not. blue_initialized) then
++      r_radix  = real(radix(0._wp), wp)
++      half_wp  = 0.5_wp
++      minexp_w = minexponent(0._wp)
++      maxexp_w = maxexponent(0._wp)
++      digits_w = digits(0._wp)
++      btsml = r_radix**ceiling((minexp_w - 1) * half_wp)
++      btbig = r_radix**floor((maxexp_w - digits_w + 1) * half_wp)
++      bssml = r_radix**(-floor((minexp_w - digits_w) * half_wp))
++      bsbig = r_radix**(-ceiling((maxexp_w + digits_w - 1) * half_wp))
++      maxN = huge(0._wp)
++      blue_initialized = .true.
++   end if
++!
+ !  Quick return if possible
+ !
+    SNRM2 = zero
+@@ -133,8 +180,8 @@
+ !     asml -- sums of squares scaled up to avoid underflow
+ !     amed -- sums of squares that do not require scaling
+ !  The thresholds and multipliers are
+-!     tbig -- values bigger than this are scaled down by sbig
+-!     tsml -- values smaller than this are scaled up by ssml
++!     btbig -- values bigger than this are scaled down by bsbig
++!     btsml -- values smaller than this are scaled up by bssml
+ !
+    notbig = .true.
+    asml = zero
+@@ -144,11 +191,11 @@
+    if( incx < 0 ) ix = 1 - (n-1)*incx
+    do i = 1, n
+       ax = abs(x(ix))
+-      if (ax > tbig) then
+-         abig = abig + (ax*sbig)**2
++      if (ax > btbig) then
++         abig = abig + (ax*bsbig)**2
+          notbig = .false.
+-      else if (ax < tsml) then
+-         if (notbig) asml = asml + (ax*ssml)**2
++      else if (ax < btsml) then
++         if (notbig) asml = asml + (ax*bssml)**2
+       else
+          amed = amed + ax**2
+       end if
+@@ -163,9 +210,9 @@
+ !     Combine abig and amed if abig > 0.
+ !
+       if ( (amed > zero) .or. (amed > maxN) .or. (amed /= amed) ) then
+-         abig = abig + (amed*sbig)*sbig
++         abig = abig + (amed*bsbig)*bsbig
+       end if
+-      scl = one / sbig
++      scl = one / bsbig
+       sumsq = abig
+    else if (asml > zero) then
+ !
+@@ -173,7 +220,7 @@
+ !
+       if ( (amed > zero) .or. (amed > maxN) .or. (amed /= amed) ) then
+          amed = sqrt(amed)
+-         asml = sqrt(asml) / ssml
++         asml = sqrt(asml) / bssml
+          if (asml > amed) then
+             ymin = amed
+             ymax = asml
+@@ -184,7 +231,7 @@
+          scl = one
+          sumsq = ymax**2*( one + (ymin/ymax)**2 )
+       else
+-         scl = one / ssml
++         scl = one / bssml
+          sumsq = asml
+       end if
+    else
+--- a/scnrm2.f90
++++ b/scnrm2.f90
+@@ -86,7 +86,15 @@
+ !> \endverbatim
+ !>
+ !  =====================================================================
+-function SCNRM2( n, x, incx ) 
++!
++!  Override of upstream LAPACK 3.12.1's BLAS/SRC/scnrm2.f90. See the
++!  matching snrm2.f90 override for the full rationale: Blue's scaling
++!  constants are renamed `tsml/tbig/ssml/sbig` -> `btsml/btbig/bssml/bsbig`
++!  (avoids the multifloats-target nuke-rename that imports broken
++!  `DD_T*BIG / DD_S*ML` values), and they are SAVE locals init'd at
++!  first call rather than PARAMETERs (multifloats `**` operator is
++!  user-defined and not allowed in initializer expressions).
++function SCNRM2( n, x, incx )
+    integer, parameter :: wp = kind(1.e0)
+    real(wp) :: SCNRM2
+ !
+@@ -98,17 +106,16 @@
+ !  .. Constants ..
+    real(wp), parameter :: zero = 0.0_wp
+    real(wp), parameter :: one  = 1.0_wp
+-   real(wp), parameter :: maxN = huge(0.0_wp)
+ !  ..
+-!  .. Blue's scaling constants ..
+-   real(wp), parameter :: tsml = real(radix(0._wp), wp)**ceiling( &
+-       (minexponent(0._wp) - 1) * 0.5_wp)
+-   real(wp), parameter :: tbig = real(radix(0._wp), wp)**floor( &
+-       (maxexponent(0._wp) - digits(0._wp) + 1) * 0.5_wp)
+-   real(wp), parameter :: ssml = real(radix(0._wp), wp)**( - floor( &
+-       (minexponent(0._wp) - digits(0._wp)) * 0.5_wp))
+-   real(wp), parameter :: sbig = real(radix(0._wp), wp)**( - ceiling( &
+-       (maxexponent(0._wp) + digits(0._wp) - 1) * 0.5_wp))
++!  .. Blue's scaling constants + maxN (SAVE; init at first call below).
++!     maxN is a SAVE rather than PARAMETER because the multifloats target
++!     overloads `huge` for `real64x2`, and gfortran rejects user-defined
++!     functions in PARAMETER initializer expressions.
++   real(wp), save :: maxN
++   real(wp), save :: btsml, btbig, bssml, bsbig
++   logical, save :: blue_initialized = .false.
++   real(wp) :: r_radix, half_wp
++   integer  :: minexp_w, maxexp_w, digits_w
+ !  ..
+ !  .. Scalar Arguments ..
+    integer :: incx, n
+@@ -121,6 +128,22 @@
+    logical :: notbig
+    real(wp) :: abig, amed, asml, ax, scl, sumsq, ymax, ymin
+ !
++!  First-call init of Blue's scaling constants (see snrm2 override).
++!
++   if (.not. blue_initialized) then
++      r_radix  = real(radix(0._wp), wp)
++      half_wp  = 0.5_wp
++      minexp_w = minexponent(0._wp)
++      maxexp_w = maxexponent(0._wp)
++      digits_w = digits(0._wp)
++      btsml = r_radix**ceiling((minexp_w - 1) * half_wp)
++      btbig = r_radix**floor((maxexp_w - digits_w + 1) * half_wp)
++      bssml = r_radix**(-floor((minexp_w - digits_w) * half_wp))
++      bsbig = r_radix**(-ceiling((maxexp_w + digits_w - 1) * half_wp))
++      maxN = huge(0._wp)
++      blue_initialized = .true.
++   end if
++!
+ !  Quick return if possible
+ !
+    SCNRM2 = zero
+@@ -134,8 +157,8 @@
+ !     asml -- sums of squares scaled up to avoid underflow
+ !     amed -- sums of squares that do not require scaling
+ !  The thresholds and multipliers are
+-!     tbig -- values bigger than this are scaled down by sbig
+-!     tsml -- values smaller than this are scaled up by ssml
++!     btbig -- values bigger than this are scaled down by bsbig
++!     btsml -- values smaller than this are scaled up by bssml
+ !
+    notbig = .true.
+    asml = zero
+@@ -145,20 +168,20 @@
+    if( incx < 0 ) ix = 1 - (n-1)*incx
+    do i = 1, n
+       ax = abs(real(x(ix)))
+-      if (ax > tbig) then
+-         abig = abig + (ax*sbig)**2
++      if (ax > btbig) then
++         abig = abig + (ax*bsbig)**2
+          notbig = .false.
+-      else if (ax < tsml) then
+-         if (notbig) asml = asml + (ax*ssml)**2
++      else if (ax < btsml) then
++         if (notbig) asml = asml + (ax*bssml)**2
+       else
+          amed = amed + ax**2
+       end if
+       ax = abs(aimag(x(ix)))
+-      if (ax > tbig) then
+-         abig = abig + (ax*sbig)**2
++      if (ax > btbig) then
++         abig = abig + (ax*bsbig)**2
+          notbig = .false.
+-      else if (ax < tsml) then
+-         if (notbig) asml = asml + (ax*ssml)**2
++      else if (ax < btsml) then
++         if (notbig) asml = asml + (ax*bssml)**2
+       else
+          amed = amed + ax**2
+       end if
+@@ -173,9 +196,9 @@
+ !     Combine abig and amed if abig > 0.
+ !
+       if ( (amed > zero) .or. (amed > maxN) .or. (amed /= amed) ) then
+-         abig = abig + (amed*sbig)*sbig
++         abig = abig + (amed*bsbig)*bsbig
+       end if
+-      scl = one / sbig
++      scl = one / bsbig
+       sumsq = abig
+    else if (asml > zero) then
+ !
+@@ -183,7 +206,7 @@
+ !
+       if ( (amed > zero) .or. (amed > maxN) .or. (amed /= amed) ) then
+          amed = sqrt(amed)
+-         asml = sqrt(asml) / ssml
++         asml = sqrt(asml) / bssml
+          if (asml > amed) then
+             ymin = amed
+             ymax = asml
+@@ -194,7 +217,7 @@
+          scl = one
+          sumsq = ymax**2*( one + (ymin/ymax)**2 )
+       else
+-         scl = one / ssml
++         scl = one / bssml
+          sumsq = asml
+       end if
+    else
+--- a/srotg.f90
++++ b/srotg.f90
+@@ -99,15 +99,14 @@
+    real(wp), parameter :: zero = 0.0_wp
+    real(wp), parameter :: one  = 1.0_wp
+ !  ..
+-!  .. Scaling constants ..
+-   real(wp), parameter :: safmin = real(radix(0._wp),wp)**max( &
+-      minexponent(0._wp)-1, &
+-      1-maxexponent(0._wp) &
+-   )
+-   real(wp), parameter :: safmax = real(radix(0._wp),wp)**max( &
+-      1-minexponent(0._wp), &
+-      maxexponent(0._wp)-1 &
+-   )
++!  .. Scaling constants (SAVE; init at first call below). The
++!     multifloats target overloads `**` for `real64x2`, and gfortran
++!     rejects user-defined operators in PARAMETER initializer
++!     expressions. Switching from PARAMETER to SAVE-then-init at
++!     first call gives identical numerical behaviour with one cheap
++!     branch per process.
++   real(wp), save :: safmin, safmax
++   logical, save :: safscale_initialized = .false.
+ !  ..
+ !  .. Scalar Arguments ..
+    real(wp) :: a, b, c, s
+@@ -115,6 +114,17 @@
+ !  .. Local Scalars ..
+    real(wp) :: anorm, bnorm, scl, sigma, r, z
+ !  ..
++   if (.not. safscale_initialized) then
++      safmin = real(radix(0._wp),wp)**max( &
++         minexponent(0._wp)-1, &
++         1-maxexponent(0._wp) &
++      )
++      safmax = real(radix(0._wp),wp)**max( &
++         1-minexponent(0._wp), &
++         maxexponent(0._wp)-1 &
++      )
++      safscale_initialized = .true.
++   end if
+    anorm = abs(a)
+    bnorm = abs(b)
+    if( bnorm == zero ) then
+--- a/crotg.f90
++++ b/crotg.f90
+@@ -95,18 +95,20 @@
+ !  .. Constants ..
+    real(wp), parameter :: zero = 0.0_wp
+    real(wp), parameter :: one  = 1.0_wp
+-   complex(wp), parameter :: czero  = 0.0_wp
+-!  ..
+-!  .. Scaling constants ..
+-   real(wp), parameter :: safmin = real(radix(0._wp),wp)**max( &
+-      minexponent(0._wp)-1, &
+-      1-maxexponent(0._wp) &
+-   )
+-   real(wp), parameter :: safmax = real(radix(0._wp),wp)**max( &
+-      1-minexponent(0._wp), &
+-      maxexponent(0._wp)-1 &
+-   )
+-   real(wp), parameter :: rtmin = sqrt( safmin )
++!  .. czero is set at first call below; the multifloats target's
++!  cmplx64x2 type cannot be initialized from a real literal in
++!  PARAMETER context.
++   complex(wp), save :: czero
++   logical, save :: czero_initialized = .false.
++!  ..
++!  .. Scaling constants (SAVE; init at first call below). The
++!     multifloats target overloads `**` and `sqrt` for `real64x2`,
++!     and gfortran rejects user-defined operators / functions in
++!     PARAMETER initializer expressions. Switching from PARAMETER to
++!     SAVE-then-init at first call gives identical numerical
++!     behaviour with one cheap branch per process.
++   real(wp), save :: safmin, safmax, rtmin
++   logical, save :: safscale_initialized = .false.
+ !  ..
+ !  .. Scalar Arguments ..
+    real(wp) :: c
+@@ -127,6 +129,22 @@
+ !  ..
+ !  .. Executable Statements ..
+ !
++   if (.not. safscale_initialized) then
++      safmin = real(radix(0._wp),wp)**max( &
++         minexponent(0._wp)-1, &
++         1-maxexponent(0._wp) &
++      )
++      safmax = real(radix(0._wp),wp)**max( &
++         1-minexponent(0._wp), &
++         maxexponent(0._wp)-1 &
++      )
++      rtmin  = sqrt( safmin )
++      safscale_initialized = .true.
++   end if
++   if (.not. czero_initialized) then
++      czero = 0.0_wp
++      czero_initialized = .true.
++   end if
+    f = a
+    g = b
+    if( g == czero ) then

@@ -1,0 +1,11 @@
+--- a/slaqr2.f
++++ b/slaqr2.f
+@@ -312,7 +312,7 @@
+ *     .. External Subroutines ..
+       EXTERNAL           SCOPY, SGEHRD, SGEMM, SLACPY,
+      $                   SLAHQR,
+-     $                   SLANV2, SLARF1L, SLARFG, SLASET, SORMHR,
++     $                   SLANV2, SLARF1F, SLARFG, SLASET, SORMHR,
+      $                   STREXC
+ *     ..
+ *     .. Intrinsic Functions ..

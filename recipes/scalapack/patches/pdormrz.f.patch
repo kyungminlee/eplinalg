@@ -1,0 +1,34 @@
+--- a/pdormrz.f
++++ b/pdormrz.f
+@@ -314,7 +314,8 @@
+                INFO = -2
+             ELSE IF( K.LT.0 .OR. K.GT.NQ ) THEN
+                INFO = -5
+-            ELSE IF( K.LT.0 .OR. K.GT.NQ ) THEN
++            ELSE IF( L.LT.0 .OR.( LEFT .AND. L.GT.M ) .OR.
++     $              ( .NOT.LEFT .AND. L.GT.N ) ) THEN
+                INFO = -6
+             ELSE IF( LEFT .AND. DESCA( NB_ ).NE.DESCC( MB_ ) ) THEN
+                INFO = -(1000+NB_)
+@@ -455,8 +456,19 @@
+      $                 WORK( IPW ) )
+    10 CONTINUE
+ *
+-      IF( ( LEFT .AND. .NOT.NOTRAN ) .OR.
+-     $    ( .NOT.LEFT .AND. NOTRAN ) ) THEN
++*     UPSTREAM BUG FIX (vs ScaLAPACK 2.2.3): the post-loop condition
++*     was a copy-paste of the pre-loop condition above (line 416-417),
++*     so for SIDE/TRANS combinations (LEFT,NOTRAN) and (RIGHT,TRANS) —
++*     where the pre-loop is *not* supposed to fire — neither pre nor
++*     post fires, leaving the leftover block (the trailing partial-MB
++*     reflectors not covered by the main DO loop) unapplied. The
++*     correct post-loop condition is the complement of the pre-loop:
++*     `(LEFT .AND. NOTRAN) .OR. (.NOT.LEFT .AND. .NOT.NOTRAN)`, which
++*     mirrors PDORMRQ's structure (pdormrq.f:454: "(RIGHT .AND. TRAN)
++*     .OR. (LEFT .AND. NOTRAN)"). Documented in doc/UPSTREAM_BUGS.md.
++*
++      IF( ( LEFT .AND. NOTRAN ) .OR.
++     $    ( .NOT.LEFT .AND. .NOT.NOTRAN ) ) THEN
+          IB = I2 - IA
+          IF( LEFT ) THEN
+             MI = M

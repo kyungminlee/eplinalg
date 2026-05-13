@@ -1,0 +1,10 @@
+--- a/claqz2.f
++++ b/claqz2.f
+@@ -287,6 +287,6 @@
+          RETURN
+       ELSE IF ( LWORK .LT. LWORKREQ ) THEN
+-         INFO = -26
++         INFO = -25
+       END IF
+ 
+       IF( INFO.NE.0 ) THEN

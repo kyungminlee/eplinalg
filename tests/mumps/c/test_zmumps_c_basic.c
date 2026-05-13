@@ -42,18 +42,24 @@ static void report_init_c(const char *test_name, const char *target_name)
 
 static void report_case_c(const char *case_label, test_real max_rel, test_real tol)
 {
-    char relbuf[64], tolbuf[64];
+    char relbuf[64], tolbuf[64], digbuf[64];
     int passed = (max_rel <= tol);
     if (!passed) gAnyFail = 1;
     test_real_snprintf(relbuf, sizeof relbuf, max_rel);
     test_real_snprintf(tolbuf, sizeof tolbuf, tol);
+    double digits = (max_rel > (test_real)0)
+                        ? -log10((double)max_rel)
+                        : 99.0;
+    snprintf(digbuf, sizeof digbuf, "%.2f", digits);
     if (gCaseCount > 0) fprintf(gJson, "    ,\n");
     gCaseCount++;
     fprintf(gJson,
             "    {\n      \"case\":        \"%s\",\n"
             "      \"max_rel_err\": %s,\n      \"tolerance\":   %s,\n"
+            "      \"digits\":      %s,\n"
             "      \"passed\":      %s\n    }\n",
-            case_label, relbuf, tolbuf, passed ? "true" : "false");
+            case_label, relbuf, tolbuf, digbuf,
+            passed ? "true" : "false");
     printf("  test_zmumps_c_basic [%s] max_rel_err=%s  %s\n",
            case_label, relbuf, passed ? "PASS" : "FAIL");
 }

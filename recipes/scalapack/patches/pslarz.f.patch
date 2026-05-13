@@ -1,0 +1,172 @@
+--- a/pslarz.f
++++ b/pslarz.f
+@@ -318,6 +318,15 @@
+          NQC2 = NUMROC( N+ICOFFC2, DESCC( NB_ ), MYCOL, ICCOL2, NPCOL )
+          IF( MYCOL.EQ.ICCOL2 )
+      $      NQC2 = NQC2 - ICOFFC2
++*        MPV must equal the local row count of sub(C2) (L rows distributed
++*        from procrow ICROW2 with offset IROFFC2), since PBSTRNV transposes
++*        V into a column at ICROW2 and SGEMV/SGER below act on sub(C2).
++*        The earlier MPV from V's distribution (IVROW/IROFFV/MB_V) only
++*        coincides with this when the alignment restriction holds, which
++*        PDORMR3 may violate as it iterates IV across blocks.
++         MPV = NUMROC( L+IROFFC2, DESCC( MB_ ), MYROW, ICROW2, NPROW )
++         IF( MYROW.EQ.ICROW2 )
++     $      MPV = MPV - IROFFC2
+       ELSE
+          CALL INFOG2L( IC, JC+N-L, DESCC, NPROW, NPCOL, MYROW, MYCOL,
+      $                 IIC2, JJC2, ICROW2, ICCOL2 )
+@@ -326,6 +335,16 @@
+          IF( MYROW.EQ.ICROW2 )
+      $      MPC2 = MPC2 - IROFFC2
+          ICOFFC2 = MOD( JC+N-L-1, DESCC( NB_ ) )
++*        Symmetric fix to the SIDE='L' MPV correction: NQV must be the
++*        local col count of sub(C2) (L cols distributed from proccol
++*        ICCOL2 with offset ICOFFC2), since the col-V SIDE='R' PBSTRNV
++*        calls transpose V into a row at ICCOL2 and the downstream
++*        SGEMV/SGER act on sub(C2).  In the row-V SIDE='R' branch this
++*        is a no-op when callers honour the alignment restriction
++*        (V's local cols = sub(C2)'s local cols).
++         NQV = NUMROC( L+ICOFFC2, DESCC( NB_ ), MYCOL, ICCOL2, NPCOL )
++         IF( MYCOL.EQ.ICCOL2 )
++     $      NQV = NQV - ICOFFC2
+       END IF
+       IIC2 = MIN( IIC2, LDC )
+       JJC2 = MIN( JJC2, NCC )
+@@ -356,7 +375,7 @@
+ *              Transpose row vector V (ICOFFV = IROFFC2)
+ *
+                IPW = MPV+1
+-               CALL PBSTRNV( ICTXT, 'Rowwise', 'Transpose', M,
++               CALL PBSTRNV( ICTXT, 'Rowwise', 'Transpose', L,
+      $                       DESCV( NB_ ), IROFFC2, V( IOFFV ), LDV,
+      $                       ZERO,
+      $                       WORK, 1, IVROW, IVCOL, ICROW2, ICCOL2,
+@@ -391,9 +410,18 @@
+                         CALL SLASET( 'All', NQC2, 1, ZERO, ZERO,
+      $                               WORK( IPW ), MAX( 1, NQC2 ) )
+                      END IF
++*                    UPSTREAM BUG FIX (vs ScaLAPACK 2.2.3): all six
++*                    SAXPY calls in PSLARZ that target WORK / WORK(IPW)
++*                    used INCY = MAX(1,NQC2) (a leading dimension), but
++*                    WORK is a contiguous vector — the correct stride
++*                    is 1 (cf. LAPACK's DLARZ: SAXPY(N,-TAU,WORK,1,...).
++*                    With NQC2>1 the previous stride skipped elements
++*                    and could read/write past the buffer. Fixed in all
++*                    six occurrences below; documented in
++*                    doc/UPSTREAM_BUGS.md.
+                      IF( MYROW.EQ.ICROW1 )
+      $                  CALL SAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                              WORK( IPW ), MAX( 1, NQC2 ) )
++     $                              WORK( IPW ), 1 )
+ *
+                      CALL SGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                             WORK( IPW ), MAX( 1, NQC2 ), RDEST,
+@@ -403,7 +431,7 @@
+ *
+                      IF( MYROW.EQ.ICROW1 )
+      $                  CALL SAXPY( NQC2, -TAULOC( 1 ), WORK( IPW ),
+-     $                              MAX( 1, NQC2 ), C( IOFFC1 ), LDC )
++     $                              1, C( IOFFC1 ), LDC )
+                      CALL SGER( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
+      $                          WORK( IPW ), 1, C( IOFFC2 ), LDC )
+                   END IF
+@@ -436,7 +464,7 @@
+                         END IF
+                         IF( MYROW.EQ.ICROW1 )
+      $                     CALL SAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                                 WORK, MAX( 1, NQC2 ) )
++     $                                 WORK, 1 )
+ *
+                         CALL SGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                                WORK, MAX( 1, NQC2 ), RDEST,
+@@ -446,7 +474,7 @@
+ *
+                         IF( MYROW.EQ.ICROW1 )
+      $                     CALL SAXPY( NQC2, -TAULOC( 1 ), WORK,
+-     $                                 MAX( 1, NQC2 ), C( IOFFC1 ),
++     $                                 1, C( IOFFC1 ),
+      $                                 LDC )
+                         CALL SGER( MPV, NQC2, -TAULOC( 1 ), V( IOFFV ),
+      $                             1, WORK, 1, C( IOFFC2 ), LDC )
+@@ -487,7 +515,7 @@
+                         END IF
+                         IF( MYROW.EQ.ICROW1 )
+      $                     CALL SAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                                 WORK( IPW ), MAX( 1, NQC2 ) )
++     $                                 WORK( IPW ), 1 )
+ *
+                         CALL SGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                                WORK( IPW ), MAX( 1, NQC2 ),
+@@ -497,7 +525,7 @@
+ *
+                         IF( MYROW.EQ.ICROW1 )
+      $                     CALL SAXPY( NQC2, -TAULOC( 1 ), WORK( IPW ),
+-     $                                 MAX( 1, NQC2 ), C( IOFFC1 ),
++     $                                 1, C( IOFFC1 ),
+      $                                 LDC )
+                         CALL SGER( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
+      $                             WORK( IPW ), 1, C( IOFFC2 ), LDC )
+@@ -518,7 +546,7 @@
+ *              Transpose and broadcast row vector V (ICOFFV=IROFFC2)
+ *
+                IPW = MPV+1
+-               CALL PBSTRNV( ICTXT, 'Rowwise', 'Transpose', M,
++               CALL PBSTRNV( ICTXT, 'Rowwise', 'Transpose', L,
+      $                       DESCV( NB_ ), IROFFC2, V( IOFFV ), LDV,
+      $                       ZERO,
+      $                       WORK, 1, IVROW, IVCOL, ICROW2, -1,
+@@ -553,7 +581,7 @@
+                   END IF
+                   IF( MYROW.EQ.ICROW1 )
+      $               CALL SAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                           WORK( IPW ), MAX( 1, NQC2 ) )
++     $                           WORK( IPW ), 1 )
+ *
+                   CALL SGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                          WORK( IPW ), MAX( 1, NQC2 ), RDEST,
+@@ -563,7 +591,7 @@
+ *
+                   IF( MYROW.EQ.ICROW1 )
+      $               CALL SAXPY( NQC2, -TAULOC( 1 ), WORK( IPW ),
+-     $                           MAX( 1, NQC2 ), C( IOFFC1 ), LDC )
++     $                           1, C( IOFFC1 ), LDC )
+                   CALL SGER( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
+      $                       WORK( IPW ), 1, C( IOFFC2 ), LDC )
+                END IF
+@@ -605,7 +633,7 @@
+                   END IF
+                   IF( MYROW.EQ.ICROW1 )
+      $               CALL SAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                           WORK( IPW ), MAX( 1, NQC2 ) )
++     $                           WORK( IPW ), 1 )
+ *
+                   CALL SGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                          WORK( IPW ), MAX( 1, NQC2 ), RDEST,
+@@ -615,7 +643,7 @@
+ *
+                   IF( MYROW.EQ.ICROW1 )
+      $               CALL SAXPY( NQC2, -TAULOC( 1 ), WORK( IPW ),
+-     $                           MAX( 1, NQC2 ), C( IOFFC1 ), LDC )
++     $                           1, C( IOFFC1 ), LDC )
+                   CALL SGER( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
+      $                       WORK( IPW ), 1, C( IOFFC2 ), LDC )
+                END IF
+@@ -738,7 +766,7 @@
+ *              Transpose column vector V (IROFFV = ICOFFC2)
+ *
+                IPW = NQV+1
+-               CALL PBSTRNV( ICTXT, 'Columnwise', 'Transpose', N,
++               CALL PBSTRNV( ICTXT, 'Columnwise', 'Transpose', L,
+      $                       DESCV( MB_ ), ICOFFC2, V( IOFFV ), 1, ZERO,
+      $                       WORK, 1, IVROW, IVCOL, ICROW2, ICCOL2,
+      $                       WORK( IPW ) )
+@@ -854,7 +882,7 @@
+ *              Transpose and broadcast column vector V (ICOFFC2=IROFFV)
+ *
+                IPW = NQV+1
+-               CALL PBSTRNV( ICTXT, 'Columnwise', 'Transpose', N,
++               CALL PBSTRNV( ICTXT, 'Columnwise', 'Transpose', L,
+      $                       DESCV( MB_ ), ICOFFC2, V( IOFFV ), 1, ZERO,
+      $                       WORK, 1, IVROW, IVCOL, -1, ICCOL2,
+      $                       WORK( IPW ) )

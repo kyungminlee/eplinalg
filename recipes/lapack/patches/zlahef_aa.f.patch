@@ -1,0 +1,11 @@
+--- a/zlahef_aa.f
++++ b/zlahef_aa.f
+@@ -172,7 +172,7 @@
+       EXTERNAL     LSAME, ILAENV, IZAMAX
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL     ZGEMM, ZGEMV, ZAXPY, ZLACGV, ZCOPY, ZSCAL,
++      EXTERNAL     ZGEMV, ZAXPY, ZLACGV, ZCOPY, ZSCAL,
+      $             ZSWAP, ZLASET, XERBLA
+ *     ..
+ *     .. Intrinsic Functions ..

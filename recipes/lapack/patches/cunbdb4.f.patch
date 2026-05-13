@@ -1,0 +1,9 @@
+--- a/cunbdb4.f
++++ b/cunbdb4.f
+@@ -281,5 +281,5 @@
+          IF( LWORK .LT. LWORKMIN .AND. .NOT.LQUERY ) THEN
+-           INFO = -14
++           INFO = -15
+          END IF
+       END IF
+       IF( INFO .NE. 0 ) THEN

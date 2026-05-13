@@ -1,0 +1,14 @@
+--- a/pzlascl.f
++++ b/pzlascl.f
+@@ -191,9 +191,9 @@
+             IF( ITYPE.EQ.-1 ) THEN
+                INFO = -1
+             ELSE IF( CFROM.EQ.ZERO .OR. DISNAN(CFROM) ) THEN
+-               INFO = -4
++               INFO = -2
+             ELSE IF( DISNAN(CTO) ) THEN
+-               INFO = -5
++               INFO = -3
+             END IF
+          END IF
+       END IF

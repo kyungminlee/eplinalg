@@ -1,0 +1,206 @@
+--- a/pzlarzc.f
++++ b/pzlarzc.f
+@@ -257,8 +257,8 @@
+ *     .. External Subroutines ..
+       EXTERNAL           BLACS_GRIDINFO, INFOG2L, PB_TOPGET, PBZTRNV,
+      $                   ZAXPY, ZCOPY, ZGEBR2D, ZGEBS2D,
+-     $                   ZGEMV, ZGERC, ZGERV2D, ZGESD2D,
+-     $                   ZGSUM2D, ZLASET
++     $                   ZGEMV, ZGERC, ZGERU, ZGERV2D, ZGESD2D,
++     $                   ZGSUM2D, ZLACGV, ZLASET
+ *     ..
+ *     .. External Functions ..
+       LOGICAL            LSAME
+@@ -319,6 +319,17 @@
+          NQC2 = NUMROC( N+ICOFFC2, DESCC( NB_ ), MYCOL, ICCOL2, NPCOL )
+          IF( MYCOL.EQ.ICCOL2 )
+      $      NQC2 = NQC2 - ICOFFC2
++*        UPSTREAM BUG FIX (vs ScaLAPACK 2.2.3): MPV must equal the local
++*        row count of sub(C2) (L rows distributed from procrow ICROW2
++*        with offset IROFFC2), since PBZTRNV transposes V into a column
++*        at ICROW2 and ZGEMV/ZGERC below act on sub(C2). The upstream
++*        MPV (line ~288) computed from V's distribution only coincides
++*        when the alignment restriction holds, which PZUNMR3 may
++*        violate as it iterates IV across blocks. Documented in
++*        doc/UPSTREAM_BUGS.md.
++         MPV = NUMROC( L+IROFFC2, DESCC( MB_ ), MYROW, ICROW2, NPROW )
++         IF( MYROW.EQ.ICROW2 )
++     $      MPV = MPV - IROFFC2
+       ELSE
+          CALL INFOG2L( IC, JC+N-L, DESCC, NPROW, NPCOL, MYROW, MYCOL,
+      $                 IIC2, JJC2, ICROW2, ICCOL2 )
+@@ -327,6 +338,15 @@
+          IF( MYROW.EQ.ICROW2 )
+      $      MPC2 = MPC2 - IROFFC2
+          ICOFFC2 = MOD( JC+N-L-1, DESCC( NB_ ) )
++*        UPSTREAM BUG FIX (vs ScaLAPACK 2.2.3): symmetric to SIDE='L'
++*        MPV correction. NQV must be the local col count of sub(C2)
++*        (L cols distributed from proccol ICCOL2 with offset ICOFFC2),
++*        since the col-V SIDE='R' PBZTRNV transposes V into a row at
++*        ICCOL2. No-op in row-V branches when callers honour the
++*        alignment restriction. Documented in doc/UPSTREAM_BUGS.md.
++         NQV = NUMROC( L+ICOFFC2, DESCC( NB_ ), MYCOL, ICCOL2, NPCOL )
++         IF( MYCOL.EQ.ICCOL2 )
++     $      NQV = NQV - ICOFFC2
+       END IF
+       IIC2 = MIN( IIC2, LDC )
+       JJC2 = MIN( JJC2, NCC )
+@@ -357,7 +377,7 @@
+ *              Transpose row vector V (ICOFFV = IROFFC2)
+ *
+                IPW = MPV+1
+-               CALL PBZTRNV( ICTXT, 'Rowwise', 'Transpose', M,
++               CALL PBZTRNV( ICTXT, 'Rowwise', 'Transpose', L,
+      $                       DESCV( NB_ ), IROFFC2, V( IOFFV ), LDV,
+      $                       ZERO,
+      $                       WORK, 1, IVROW, IVCOL, ICROW2, ICCOL2,
+@@ -393,9 +413,16 @@
+                         CALL ZLASET( 'All', NQC2, 1, ZERO, ZERO,
+      $                               WORK( IPW ), MAX( 1, NQC2 ) )
+                      END IF
++*                    UPSTREAM BUG FIX (vs ScaLAPACK 2.2.3): all five
++*                    pairs of ZAXPY calls in PZLARZC that target
++*                    WORK / WORK(IPW) used INCY = MAX(1,NQC2) (a leading
++*                    dimension) where WORK is a contiguous vector — the
++*                    correct stride is 1, matching LAPACK's ZLARZ. Same
++*                    fix applied in pzlarz.f / pdlarz.f overrides.
++                     CALL ZLACGV( NQC2, WORK( IPW ), 1 )
+                      IF( MYROW.EQ.ICROW1 )
+      $                  CALL ZAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                              WORK( IPW ), MAX( 1, NQC2 ) )
++     $                              WORK( IPW ), 1 )
+ *
+                      CALL ZGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                             WORK( IPW ), MAX( 1, NQC2 ), RDEST,
+@@ -405,8 +432,8 @@
+ *
+                      IF( MYROW.EQ.ICROW1 )
+      $                  CALL ZAXPY( NQC2, -TAULOC( 1 ), WORK( IPW ),
+-     $                              MAX( 1, NQC2 ), C( IOFFC1 ), LDC )
+-                     CALL ZGERC( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
++     $                              1, C( IOFFC1 ), LDC )
++                     CALL ZGERU( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
+      $                           WORK( IPW ), 1, C( IOFFC2 ), LDC )
+                   END IF
+ *
+@@ -436,9 +463,10 @@
+                            CALL ZLASET( 'All', NQC2, 1, ZERO, ZERO,
+      $                                  WORK, MAX( 1, NQC2 ) )
+                         END IF
++                        CALL ZLACGV( NQC2, WORK, 1 )
+                         IF( MYROW.EQ.ICROW1 )
+      $                     CALL ZAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                                 WORK, MAX( 1, NQC2 ) )
++     $                                 WORK, 1 )
+ *
+                         CALL ZGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                                WORK, MAX( 1, NQC2 ), RDEST,
+@@ -448,9 +476,9 @@
+ *
+                         IF( MYROW.EQ.ICROW1 )
+      $                     CALL ZAXPY( NQC2, -TAULOC( 1 ), WORK,
+-     $                                 MAX( 1, NQC2 ), C( IOFFC1 ),
++     $                                 1, C( IOFFC1 ),
+      $                                 LDC )
+-                        CALL ZGERC( MPV, NQC2, -TAULOC( 1 ), V( IOFFV ),
++                        CALL ZGERU( MPV, NQC2, -TAULOC( 1 ), V( IOFFV ),
+      $                              1, WORK, 1, C( IOFFC2 ), LDC )
+                      END IF
+ *
+@@ -487,9 +515,10 @@
+                            CALL ZLASET( 'All', NQC2, 1, ZERO, ZERO,
+      $                                  WORK( IPW ), MAX( 1, NQC2 ) )
+                         END IF
++                        CALL ZLACGV( NQC2, WORK( IPW ), 1 )
+                         IF( MYROW.EQ.ICROW1 )
+      $                     CALL ZAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                                 WORK( IPW ), MAX( 1, NQC2 ) )
++     $                                 WORK( IPW ), 1 )
+ *
+                         CALL ZGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                                WORK( IPW ), MAX( 1, NQC2 ),
+@@ -499,9 +528,9 @@
+ *
+                         IF( MYROW.EQ.ICROW1 )
+      $                     CALL ZAXPY( NQC2, -TAULOC( 1 ), WORK( IPW ),
+-     $                                 MAX( 1, NQC2 ), C( IOFFC1 ),
++     $                                 1, C( IOFFC1 ),
+      $                                 LDC )
+-                        CALL ZGERC( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
++                        CALL ZGERU( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
+      $                              WORK( IPW ), 1, C( IOFFC2 ), LDC )
+                      END IF
+ *
+@@ -520,7 +549,7 @@
+ *              Transpose and broadcast row vector V (ICOFFV=IROFFC2)
+ *
+                IPW = MPV+1
+-               CALL PBZTRNV( ICTXT, 'Rowwise', 'Transpose', M,
++               CALL PBZTRNV( ICTXT, 'Rowwise', 'Transpose', L,
+      $                       DESCV( NB_ ), IROFFC2, V( IOFFV ), LDV,
+      $                       ZERO,
+      $                       WORK, 1, IVROW, IVCOL, ICROW2, -1,
+@@ -554,9 +583,10 @@
+                      CALL ZLASET( 'All', NQC2, 1, ZERO, ZERO,
+      $                            WORK( IPW ), MAX( 1, NQC2 ) )
+                   END IF
++                  CALL ZLACGV( NQC2, WORK( IPW ), 1 )
+                   IF( MYROW.EQ.ICROW1 )
+      $               CALL ZAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                           WORK( IPW ), MAX( 1, NQC2 ) )
++     $                           WORK( IPW ), 1 )
+ *
+                   CALL ZGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                          WORK( IPW ), MAX( 1, NQC2 ), RDEST,
+@@ -566,8 +596,8 @@
+ *
+                   IF( MYROW.EQ.ICROW1 )
+      $               CALL ZAXPY( NQC2, -TAULOC( 1 ), WORK( IPW ),
+-     $                           MAX( 1, NQC2 ), C( IOFFC1 ), LDC )
+-                  CALL ZGERC( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
++     $                           1, C( IOFFC1 ), LDC )
++                  CALL ZGERU( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
+      $                        WORK( IPW ), 1, C( IOFFC2 ), LDC )
+                END IF
+ *
+@@ -606,9 +636,10 @@
+                      CALL ZLASET( 'All', NQC2, 1, ZERO, ZERO,
+      $                            WORK( IPW ), MAX( 1, NQC2 ) )
+                   END IF
++                  CALL ZLACGV( NQC2, WORK( IPW ), 1 )
+                   IF( MYROW.EQ.ICROW1 )
+      $               CALL ZAXPY( NQC2, ONE, C( IOFFC1 ), LDC,
+-     $                           WORK( IPW ), MAX( 1, NQC2 ) )
++     $                           WORK( IPW ), 1 )
+ *
+                   CALL ZGSUM2D( ICTXT, 'Columnwise', ' ', NQC2, 1,
+      $                          WORK( IPW ), MAX( 1, NQC2 ), RDEST,
+@@ -618,8 +649,8 @@
+ *
+                   IF( MYROW.EQ.ICROW1 )
+      $               CALL ZAXPY( NQC2, -TAULOC( 1 ), WORK( IPW ),
+-     $                           MAX( 1, NQC2 ), C( IOFFC1 ), LDC )
+-                  CALL ZGERC( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
++     $                           1, C( IOFFC1 ), LDC )
++                  CALL ZGERU( MPV, NQC2, -TAULOC( 1 ), WORK, 1,
+      $                        WORK( IPW ), 1, C( IOFFC2 ), LDC )
+                END IF
+ *
+@@ -740,7 +771,7 @@
+ *              Transpose column vector V (IROFFV = ICOFFC2)
+ *
+                IPW = NQV+1
+-               CALL PBZTRNV( ICTXT, 'Columnwise', 'Transpose', N,
++               CALL PBZTRNV( ICTXT, 'Columnwise', 'Transpose', L,
+      $                       DESCV( MB_ ), ICOFFC2, V( IOFFV ), 1, ZERO,
+      $                       WORK, 1, IVROW, IVCOL, ICROW2, ICCOL2,
+      $                       WORK( IPW ) )
+@@ -857,7 +888,7 @@
+ *              Transpose and broadcast column vector V (ICOFFC2=IROFFV)
+ *
+                IPW = NQV+1
+-               CALL PBZTRNV( ICTXT, 'Columnwise', 'Transpose', N,
++               CALL PBZTRNV( ICTXT, 'Columnwise', 'Transpose', L,
+      $                       DESCV( MB_ ), ICOFFC2, V( IOFFV ), 1, ZERO,
+      $                       WORK, 1, IVROW, IVCOL, -1, ICCOL2,
+      $                       WORK( IPW ) )

@@ -18,11 +18,23 @@ from pathlib import Path
 
 from .config import load_recipe
 from .pipeline import (
-    run_convergence_report, run_divergence_report, run_migration,
+    run_divergence_report, run_migration,
 )
+from .prepare import prepare_recipe, run_prepare, verify_patches
 from .prefix_classifier import classify_symbols
 from .symbol_scanner import scan_symbols
 from .target_mode import load_target
+
+# BLACS-style dual-entry-point detector used by ``cmd_stage`` to
+# identify C sources that switch their public symbol via the
+# ``INTFACE == C_CALL`` / ``CallFromC`` macros. Hoisted to module scope
+# so it's compiled once instead of per-library in the cmd_stage loop.
+_DUAL_ENTRY_C_RE = re.compile(
+    r'#\s*if\s*\(?\s*INTFACE\s*==\s*C_CALL\b'
+    r'|#\s*ifdef\s+CallFromC\b'
+    r'|#\s*if\s+defined\s*\(\s*CallFromC\s*\)',
+)
+
 
 def _get_target_mode(args):
     """Construct TargetMode based on CLI arguments."""
@@ -34,6 +46,39 @@ def _parser_args(args):
     parser = getattr(args, 'parser', None)
     parser_cmd = getattr(args, 'parser_cmd', None)
     return parser, parser_cmd
+
+
+def cmd_verify_patches(args):
+    """Symmetric-patch CI check.
+
+    Exits non-zero with one error per patch whose hunks touch a
+    precision-prefixed file without touching all four siblings.
+    Allow-list patches that should stay asymmetric in the recipe's
+    ``asymmetric_patches:`` field.
+    """
+    errors = verify_patches(args.recipe, project_root=args.project_root)
+    if errors:
+        for e in errors:
+            print(e, file=sys.stderr)
+        return 1
+    print(f'{args.recipe.name}: all patches symmetric')
+    return 0
+
+
+def cmd_prepare(args):
+    """Stage upstream sources and apply the recipe's patch list.
+
+    Output goes to ``<project_root>/build/staged-sources/<library>/`` and
+    is idempotent: a ``.prepared.stamp`` file inside the staged tree
+    short-circuits when no listed patch is newer than the stamp. Pass
+    ``--rebuild`` to wipe and re-stage.
+    """
+    staged_root = run_prepare(
+        recipe_path=args.recipe,
+        project_root=args.project_root,
+        rebuild=args.rebuild,
+    )
+    print(f'Staged: {staged_root}')
 
 
 def cmd_migrate(args):
@@ -61,6 +106,7 @@ def cmd_diverge(args):
         project_root=args.project_root,
         parser=parser,
         parser_cmd=parser_cmd,
+        apply_whitelist=not getattr(args, 'no_whitelist', False),
     )
     total = len(report)
     # Optional filtering on diff content.
@@ -92,59 +138,6 @@ def cmd_diverge(args):
     else:
         print(f'{total} divergent pairs')
     return 1 if total else 0
-
-
-def cmd_converge(args):
-    """Verify that migrated files on disk converge."""
-    parser, parser_cmd = _parser_args(args)
-    target = _get_target_mode(args)
-    report = run_convergence_report(
-        recipe_path=args.recipe,
-        output_dir=args.output_dir,
-        target_mode=target,
-        project_root=args.project_root,
-        parser=parser,
-        parser_cmd=parser_cmd,
-    )
-    total = len(report)
-    try:
-        if args.grep:
-            pat = re.compile(args.grep, re.IGNORECASE)
-            report = [r for r in report if any(pat.search(l) for l in r['diff'])]
-        if args.exclude:
-            pat = re.compile(args.exclude, re.IGNORECASE)
-            report = [r for r in report if not any(pat.search(l) for l in r['diff'])]
-    except re.error as exc:
-        print(f'error: invalid regex: {exc}', file=sys.stderr)
-        return 2
-
-    for entry in report:
-        if entry['status'] == 'missing':
-            print(f'### MISSING {entry["target"]} '
-                  f'(expected from {entry["canonical"]})')
-            print()
-            continue
-        header = (f'### {entry["other"]} vs {entry["canonical"]}'
-                  f' → {entry["target"]} (+{len(entry["diff"])})')
-        print(header)
-        diff = entry['diff'] if args.full else entry['diff'][:args.context]
-        for line in diff:
-            print(line[:args.max_width])
-        if not args.full and len(entry['diff']) > args.context:
-            print(f'  ...{len(entry["diff"]) - args.context} more')
-        print()
-
-    diverged = sum(1 for r in report if r['status'] == 'diverged')
-    missing = sum(1 for r in report if r['status'] == 'missing')
-    shown = len(report)
-    summary_total = sum(1 for _ in range(total))  # == total
-    if args.grep or args.exclude:
-        print(f'{shown} shown / {summary_total} entries '
-              f'({diverged} diverged, {missing} missing on disk)')
-    else:
-        print(f'{diverged} diverged, {missing} missing on disk')
-    # Non-zero exit when there are real problems so CI gates on this.
-    return 1 if (diverged or missing) else 0
 
 
 def _is_fixed_form_comment(line: str) -> bool:
@@ -277,6 +270,90 @@ def _patch_libseq_mpi_f(path: Path) -> None:
     path.write_text(src)
 
 
+# Files to exclude from the *standard*-precision sibling archive that
+# the embedded Fortran template (and ``cmake/CMakeLists.txt``) builds
+# alongside the migrated one. Same EXCLUDE_REGEX semantics as the
+# shared ``add_standard_fortran_library`` calls — stems matched
+# case-insensitively against the file basename minus its extension.
+#
+# blas:   ``dsdot`` / ``sdsdot`` are cross-precision (mixed S+D) and
+#         not migratable; the migrator also drops them.
+# lapack: cross-precision routines (``dsgesv`` / ``zcposv`` / …) and
+#         the migrator-introduced extended-precision helpers
+#         (``la_constants_ep`` / ``la_xisnan_mf`` / …) — those are
+#         migrated content, not upstream content, and don't belong
+#         in the standard archive.
+_REF_EXCLUDE_STEMS: dict[str, set[str]] = {
+    'blas': {'dsdot', 'sdsdot'},
+    'lapack': {
+        'dsgesv', 'zcgesv', 'dsposv', 'zcposv', 'dsgels', 'zcgels',
+        'dlag2s', 'slag2d', 'zlag2c', 'clag2z', 'dlat2s', 'zlat2c',
+        'la_constants_ep', 'la_constants_mf',
+        'la_xisnan_ep', 'la_xisnan_mf',
+    },
+}
+
+# Libraries for which the embedded template emits a standard-precision
+# sibling archive. Matches the ``add_standard_fortran_library`` /
+# ``add_standard_c_library`` set in ``cmake/CMakeLists.txt``. Other
+# Fortran recipes (mumps, scalapack_tools, xblas) intentionally don't
+# get a sibling: mumps's sources need extra include directories the
+# embedded template doesn't wire; scalapack_tools' three helpers are
+# already inside the std scalapack archive; xblas is C-only and the C
+# template doesn't ship a sibling.
+_REF_LIBRARIES: set[str] = {
+    'blas', 'lapack', 'ptzblas', 'pbblas', 'scalapack',
+}
+
+
+def _collect_ref_sources(config) -> list[Path]:
+    """Collect upstream Fortran sources for the standard-precision
+    sibling archive built alongside the migrated one.
+
+    Globs ``config.source_dir`` for ``.f``/``.F``/``.f90``/``.F90``
+    files, pulls in any ``extra_migrate_files`` rooted under
+    ``external/`` (so LAPACK picks up ``INSTALL/dlamch.f``), then
+    applies the per-library exclude list above.
+
+    Returns ``[]`` for non-Fortran recipes — the C templates don't
+    build a sibling archive (yet) — and for recipes outside
+    ``_REF_LIBRARIES`` (mumps in particular has Fortran sources that
+    INCLUDE per-arithmetic headers from a sibling directory the
+    embedded template doesn't wire onto the std-archive's include
+    path). Callers treat an empty list as "no standard archive
+    emitted".
+    """
+    if config.language != 'fortran':
+        return []
+    if config.library not in _REF_LIBRARIES:
+        return []
+    fortran_exts = {'.f', '.f90'}  # case-insensitive match below
+    sources: list[Path] = []
+    if config.source_dir.is_dir():
+        for f in config.source_dir.iterdir():
+            if f.is_file() and f.suffix.lower() in fortran_exts:
+                sources.append(f)
+    for p in config.extra_migrate_files:
+        p = Path(p) if not isinstance(p, Path) else p
+        if 'external' in p.parts and p.suffix.lower() in fortran_exts and p.is_file():
+            sources.append(p)
+    excl = _REF_EXCLUDE_STEMS.get(config.library, set())
+    sources = [p for p in sources if p.stem.lower() not in excl]
+    # Dedupe + stable order. Resolve to absolute paths so the
+    # generated CMakeLists.txt finds them regardless of where the
+    # build directory lives.
+    seen: dict[tuple, Path] = {}
+    for f in sources:
+        f = f.resolve()
+        try:
+            st = f.stat()
+            key = (st.st_dev, st.st_ino)
+        except OSError:
+            key = ('missing', str(f))
+        seen.setdefault(key, f)
+    return sorted(seen.values())
+
+
 def _collect_source_files(src_dir: Path, language: str) -> list[Path]:
     """Discover migrated source files in ``src_dir`` for the given language.
 
@@ -318,6 +395,13 @@ def cmd_verify(args):
     print(f'Verifying {len(all_files)} files in {src_dir}')
     print()
 
+    # Read each file once and cache the splitlines result. Without this
+    # cache cmd_verify did 3-4 separate read_text passes over every
+    # source file in src_dir, dominating wall-time on big libraries.
+    file_lines: dict[Path, list[str]] = {
+        f: f.read_text(errors='replace').splitlines() for f in all_files
+    }
+
     # Determine if the target uses module-based constructors
     is_constructor_based = target_mode.real_constructor is not None
 
@@ -325,7 +409,7 @@ def cmd_verify(args):
     print('Residual precision types (code lines):')
     residuals = 0
     for f in f_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_fixed_form_comment(line):
                 continue
             if re.search(r'DOUBLE\s+PRECISION|COMPLEX\*16|COMPLEX\*8|DOUBLE\s+COMPLEX|REAL\*[48]',
@@ -333,7 +417,7 @@ def cmd_verify(args):
                 print(f'  {f.name}:{i}: {line.strip()}')
                 residuals += 1
     for f in f90_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_free_form_comment(line):
                 continue
             if re.search(r'kind\s*\(\s*1\.[de]0\s*\)', line, re.IGNORECASE):
@@ -366,7 +450,7 @@ def cmd_verify(args):
     print('Residual D-exponent literals (code lines):')
     d_lits = 0
     for f in f_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_fixed_form_comment(line):
                 continue
             cleaned_line = _strip_constructors(line)
@@ -374,7 +458,7 @@ def cmd_verify(args):
                 print(f'  {f.name}:{i}: {line.strip()}')
                 d_lits += 1
     for f in f90_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_free_form_comment(line):
                 continue
             cleaned_line = _strip_constructors(line)
@@ -395,9 +479,8 @@ def cmd_verify(args):
         print('Residual FP PARAMETER/DATA (code lines):')
         leftover = 0
         for f in all_files:
-            text = f.read_text(errors='replace')
             is_fixed = f.suffix.lower() == '.f'
-            for i, line in enumerate(text.splitlines(), 1):
+            for i, line in enumerate(file_lines[f], 1):
                 if is_fixed and _is_fixed_form_comment(line):
                     continue
                 if not is_fixed and _is_free_form_comment(line):
@@ -419,7 +502,7 @@ def cmd_verify(args):
     print('Column overflow (code lines > 72 chars):')
     overflows = 0
     for f in f_files:
-        for i, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+        for i, line in enumerate(file_lines[f], 1):
             if _is_fixed_form_comment(line):
                 continue
             if len(line) > 72:
@@ -441,7 +524,8 @@ def cmd_verify(args):
 def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
                     common_files: list[str], precision_files: list[str],
                     language: str = 'fortran',
-                    project_root: Path | None = None):
+                    project_root: Path | None = None,
+                    ref_sources: list[Path] | None = None):
     """Generate a self-contained CMakeLists.txt in the output directory."""
     pmap = target_mode.prefix_map
     real_pfx = pmap['R'].lower()
@@ -450,6 +534,7 @@ def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
 
     common_list = '\n    '.join(sorted(common_files))
     precision_list = '\n    '.join(sorted(precision_files))
+    ref_list = '\n    '.join(f'"{p}"' for p in (ref_sources or []))
 
     # Default path to the vendored Intel MPI headers. ``project_root``
     # is resolved at generation time, so the generated CMakeLists.txt
@@ -458,9 +543,110 @@ def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
                          / 'external' / 'impi-headers').resolve())
 
     if language == 'c':
+        # When targeting multifloats, the migrated C sources `#include
+        # "multifloats_bridge.h"`. Copy + patch the bridge header into
+        # the output dir so the migrated sources find it on the include
+        # path, mirroring what cmd_stage does for the shared driver.
+        c_mf_link = ''
+        c_mf_deps = ''
+        if target_mode.module_name is not None:
+            _root = project_root or Path.cwd()
+            mf_local = _root / 'external' / 'multifloats-mpi'
+            bridge_h_src = mf_local / 'multifloats_bridge.h'
+            if bridge_h_src.is_file():
+                helpers_dst = output_dir / '_helpers'
+                helpers_dst.mkdir(exist_ok=True)
+                staged = helpers_dst / bridge_h_src.name
+                shutil.copy2(bridge_h_src, staged)
+                # Guard the bridge header's `#include <mpi.h>` against
+                # the C++ MPI bindings — without it, scalapack_c's
+                # C-as-C++ build pulls thousands of mpicxx.h templates
+                # into the migrator-injected ``extern "C" { … }`` wrap
+                # and fails to link. Same patch cmd_stage applies.
+                text = staged.read_text()
+                if 'MPICH_SKIP_MPICXX' not in text:
+                    text = text.replace(
+                        '#include <mpi.h>',
+                        '#define MPICH_SKIP_MPICXX 1\n'
+                        '#define OMPI_SKIP_MPICXX 1\n'
+                        '#include <mpi.h>',
+                        1,
+                    )
+                    staged.write_text(text)
+            c_mf_link = """
+# multifloats: FetchContent (or local via -DMULTIFLOATS_DIR) so the
+# migrated sources can link against ``libmultifloats.a`` (C++) and
+# include ``multifloats_bridge.h`` (staged into ./_helpers/).
+set(BUILD_TESTING OFF CACHE BOOL "Disable tests in fetched multifloats" FORCE)
+set(MULTIFLOATS_BUILD_BENCH OFF CACHE BOOL "Disable benches in fetched multifloats" FORCE)
+if(DEFINED MULTIFLOATS_DIR)
+    message(STATUS "Using local multifloats: ${MULTIFLOATS_DIR}")
+    add_subdirectory(${MULTIFLOATS_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
+else()
+    include(FetchContent)
+    set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
+        CACHE STRING "Git URL for the multifloats library")
+    set(MULTIFLOATS_GIT_TAG "v0.6.0"
+        CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
+    FetchContent_Declare(multifloats_fetch
+        GIT_REPOSITORY ${MULTIFLOATS_GIT_REPO}
+        GIT_TAG        ${MULTIFLOATS_GIT_TAG}
+    )
+    FetchContent_Populate(multifloats_fetch)
+    add_subdirectory(
+        ${multifloats_fetch_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
+endif()
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/_helpers)
+"""
+            c_mf_deps = f"""
+if(TARGET multifloats)
+    target_link_libraries({precision_lib} PUBLIC multifloats)
+    if(TARGET {common_lib})
+        target_link_libraries({common_lib} PUBLIC multifloats)
+    endif()
+endif()
+# multifloats's bridge header (multifloats_bridge.h) uses C++ ``using``
+# declarations to expose ``float64x2`` at file scope. Migrated .c
+# bodies need a C++ translation unit for those typedefs to resolve.
+# Reclassify the migrated sources to LANGUAGE CXX so they go through
+# the C++ compiler while keeping their .c extension on disk.
+set_source_files_properties(${{PRECISION_SOURCES}} PROPERTIES LANGUAGE CXX)
+if(COMMON_SOURCES)
+    set_source_files_properties(${{COMMON_SOURCES}} PROPERTIES LANGUAGE CXX)
+endif()
+# C-as-C++ flags (mirror add_migrated_c_library in the shared driver):
+#   - cxx_std_17: multifloats requires it.
+#   - -fpermissive: BLACS/PBLAS bodies have implicit ``void *`` →
+#     ``char *`` casts (e.g. BI_iMPI_amn.c:12) that C accepts and C++
+#     rejects. Tolerated on g++; clang++ does NOT honor this flag,
+#     so a clang-based multifloats build still needs the explicit-cast
+#     overrides in ``recipes/<lib>/mfc_overrides/``.
+#   - -Wno-write-strings: silences `const char[]` -> `char *` literals.
+#   - MPICH_SKIP_MPICXX / OMPI_SKIP_MPICXX: keep mpicxx.h's templates
+#     out of the migrator-injected ``extern "C" {{ ... }}`` wrap.
+target_compile_features({precision_lib} PRIVATE cxx_std_17)
+target_compile_options({precision_lib} PRIVATE -fpermissive -Wno-write-strings)
+target_compile_definitions({precision_lib} PRIVATE
+    MPICH_SKIP_MPICXX OMPI_SKIP_MPICXX)
+if(TARGET {common_lib})
+    target_compile_features({common_lib} PRIVATE cxx_std_17)
+    target_compile_options({common_lib} PRIVATE -fpermissive -Wno-write-strings)
+    target_compile_definitions({common_lib} PRIVATE
+        MPICH_SKIP_MPICXX OMPI_SKIP_MPICXX)
+endif()
+"""
+
+        # Add CXX to project() languages when multifloats is in play —
+        # multifloats's targets request cxx_std_17 features from the
+        # embedding project. Harmless on KIND targets (small detect
+        # cost, no sources compiled as C++).
+        project_langs = 'C CXX' if target_mode.module_name is not None else 'C'
+
         cmake = f"""\
 cmake_minimum_required(VERSION 3.20)
-project({precision_lib} C)
+project({precision_lib} {project_langs})
 
 # --- Compiler flags ---
 set(CMAKE_C_FLAGS "${{CMAKE_C_FLAGS}} -w")
@@ -478,7 +664,7 @@ if(NOT DEFINED IMPI_HEADERS)
 endif()
 include_directories(${{IMPI_HEADERS}})
 find_package(MPI COMPONENTS C QUIET)
-
+{c_mf_link}
 # --- Common (type-independent) library ---
 set(COMMON_SOURCES
     {common_list}
@@ -500,7 +686,7 @@ add_library({precision_lib} STATIC ${{PRECISION_SOURCES}})
 if(TARGET {common_lib})
     target_link_libraries({precision_lib} PUBLIC {common_lib})
 endif()
-
+{c_mf_deps}
 # --- Install rules ---
 install(TARGETS {precision_lib} ARCHIVE DESTINATION lib)
 if(TARGET {common_lib})
@@ -516,8 +702,19 @@ endif()
         if target_mode.module_name is not None:
             # Resolve absolute paths to external dependencies so the
             # generated CMakeLists.txt works from any output directory.
+            # MF helpers (la_constants_mf.f90 / la_xisnan_mf.f90) live
+            # under recipes/<lib>/mf_helpers/. Prefer the per-recipe
+            # directory if present; otherwise fall back to the upstream
+            # SRC dir which (historically) shipped the EP helpers.
             _root = project_root or Path.cwd()
-            _helpers_default = str((_root / 'external' / 'lapack-3.12.1' / 'SRC').resolve())
+            _per_recipe_mf = _root / 'recipes' / lib_name / 'mf_helpers'
+            if _per_recipe_mf.is_dir():
+                _helpers_default = str(_per_recipe_mf.resolve())
+            else:
+                _helpers_default = str((_root / 'external' / 'lapack-3.12.1' / 'SRC').resolve())
+            # multifloats-mpi extras: Fortran-side MPI handle module
+            # used by MUMPS (``USE multifloats_mpi_f``).
+            _mf_mpi_dir = (_root / 'external' / 'multifloats-mpi').resolve()
             mf_link = f"""
 # Fetch the multifloats library from GitHub (default) or use a local
 # checkout via -DMULTIFLOATS_DIR=/path/to/multifloats. We add the
@@ -535,8 +732,11 @@ else()
     include(FetchContent)
     set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
         CACHE STRING "Git URL for the multifloats library")
-    set(MULTIFLOATS_GIT_TAG "main"
-        CACHE STRING "Git tag/branch/commit for multifloats")
+    # multifloats v0.6.0 fixed the ${{CMAKE_SOURCE_DIR}} include-path
+    # leak (upstream issue #23). Earlier tags fail at configure when
+    # add_subdirectory'd; don't drop below this floor.
+    set(MULTIFLOATS_GIT_TAG "v0.6.0"
+        CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
     message(STATUS "Fetching multifloats from ${{MULTIFLOATS_GIT_REPO}} (${{MULTIFLOATS_GIT_TAG}})")
     FetchContent_Declare(multifloats_fetch
         GIT_REPOSITORY ${{MULTIFLOATS_GIT_REPO}}
@@ -561,6 +761,13 @@ if(EXISTS "${{MF_HELPERS_DIR}}/la_constants_mf.f90")
         Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
     target_include_directories(la_constants_mf PUBLIC
         $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
+    # la_constants_mf.f90 does ``use multifloats, only: real64x2`` —
+    # the Fortran module lives in ``multifloatsf`` (the Fortran half),
+    # not the C++ ``multifloats`` target.
+    if(TARGET multifloatsf)
+        target_link_libraries(la_constants_mf PUBLIC
+            $<BUILD_INTERFACE:multifloatsf>)
+    endif()
     if(TARGET multifloats)
         target_link_libraries(la_constants_mf PUBLIC multifloats)
     endif()
@@ -572,8 +779,30 @@ if(EXISTS "${{MF_HELPERS_DIR}}/la_xisnan_mf.f90")
         Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
     target_include_directories(la_xisnan_mf PUBLIC
         $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
+    if(TARGET multifloatsf)
+        target_link_libraries(la_xisnan_mf PUBLIC
+            $<BUILD_INTERFACE:multifloatsf>)
+    endif()
     if(TARGET multifloats)
         target_link_libraries(la_xisnan_mf PUBLIC multifloats)
+    endif()
+endif()
+
+# multifloats_mpi_f.f90: Fortran module exposing the C-side MPI
+# datatype handles (MPI_FLOAT64X2 / MPI_DD_SUM / ...) via bind(c).
+# MUMPS's migrated source `USE multifloats_mpi_f` requires the .mod;
+# other libraries route MPI through C and don't need this target.
+set(MF_MPI_DIR "{_mf_mpi_dir}"
+    CACHE PATH "Directory containing multifloats_mpi_f.f90")
+if(EXISTS "${{MF_MPI_DIR}}/multifloats_mpi_f.f90")
+    add_library(multifloats_mpi_f STATIC
+        "${{MF_MPI_DIR}}/multifloats_mpi_f.f90")
+    set_target_properties(multifloats_mpi_f PROPERTIES
+        Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
+    target_include_directories(multifloats_mpi_f PUBLIC
+        $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
+    if(MPI_Fortran_FOUND)
+        target_link_libraries(multifloats_mpi_f PUBLIC MPI::MPI_Fortran)
     endif()
 endif()
 """
@@ -581,17 +810,29 @@ endif()
 if(TARGET multifloats)
     target_link_libraries({precision_lib} PUBLIC multifloats)
 endif()
+# multifloatsf is the Fortran half of multifloats — provides the
+# ``multifloats.mod`` module that the migrated source's ``use
+# multifloats`` clauses resolve against. Wrap in $<BUILD_INTERFACE:>
+# because multifloats owns its own install/export set; we just need
+# the .mod path during this build.
+if(TARGET multifloatsf)
+    target_link_libraries({precision_lib} PUBLIC
+        $<BUILD_INTERFACE:multifloatsf>)
+endif()
 if(TARGET la_constants_mf)
     target_link_libraries({precision_lib} PUBLIC la_constants_mf)
 endif()
 if(TARGET la_xisnan_mf)
     target_link_libraries({precision_lib} PUBLIC la_xisnan_mf)
 endif()
+if(TARGET multifloats_mpi_f)
+    target_link_libraries({precision_lib} PUBLIC multifloats_mpi_f)
+endif()
 """
 
         cmake = f"""\
 cmake_minimum_required(VERSION 3.20)
-project({precision_lib} Fortran)
+project({precision_lib} Fortran C CXX)
 
 # --- Compiler flags ---
 set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} -w")
@@ -614,21 +855,42 @@ endif()
 include_directories(${{IMPI_HEADERS}})
 find_package(MPI COMPONENTS Fortran QUIET)
 
-# Detect 80-bit extended precision (KIND=10) support
-if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
-    include(CheckFortranSourceCompiles)
-    check_fortran_source_compiles("
-        program test_real10
-        integer, parameter :: ep = selected_real_kind(18, 4931)
-        real(ep) :: x
-        x = 1.0_ep
-        end program
-    " HAVE_REAL10 SRC_EXT F90)
-    if(HAVE_REAL10)
-        add_compile_definitions(HAVE_REAL10)
+# Detect extended-precision (KIND=10 / KIND=16) support.
+# Shared probe sits in cmake/DetectExtendedPrecision.cmake; copied
+# next to this CMakeLists.txt at generation time so the staging
+# tree stays self-contained.
+include(${{CMAKE_CURRENT_SOURCE_DIR}}/DetectExtendedPrecision.cmake)
+{mf_link}
+# --- Standard-precision sibling archive ---
+# Built from upstream Fortran sources alongside the migrated archive.
+# Carries the original S/D/C/Z entry points and the precision-
+# independent helpers (LSAME, XERBLA, LA_XISNAN module, ...) that
+# the migrated archive's bodies reference but don't ship themselves.
+# The migrated archive PUBLIC-links this so downstreams resolve both
+# symbol families through one link line. Modules also flow to the
+# migrated build via the shared module directory (e.g. la_xisnan.mod
+# from std-precision is what la_xisnan_ep.F90 `use`s).
+set(REF_SOURCES
+    {ref_list}
+)
+
+if(REF_SOURCES)
+    add_library({lib_name} STATIC ${{REF_SOURCES}})
+    set_target_properties({lib_name} PROPERTIES
+        Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
+    target_include_directories({lib_name} PUBLIC
+        $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
+    # The migrator can lengthen tokens (e.g. MPI_DOUBLE_COMPLEX →
+    # MPI_C_LONG_DOUBLE_COMPLEX), pushing fixed-form .F lines past
+    # column 72. Disable the line-length limit on the standard
+    # archive too — same flag as the precision archive — so the
+    # build stays consistent across the pair.
+    if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
+        target_compile_options({lib_name} PRIVATE
+            $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>)
     endif()
 endif()
-{mf_link}
+
 # --- Common (type-independent) library ---
 set(COMMON_SOURCES
     {common_list}
@@ -653,13 +915,23 @@ set_target_properties({precision_lib} PROPERTIES
 target_include_directories({precision_lib} PUBLIC
     $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>
     $<BUILD_INTERFACE:${{CMAKE_CURRENT_SOURCE_DIR}}>)
+if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
+    target_compile_options({precision_lib} PRIVATE
+        $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>)
+endif()
 if(TARGET {common_lib})
     target_link_libraries({precision_lib} PUBLIC {common_lib})
+endif()
+if(TARGET {lib_name})
+    target_link_libraries({precision_lib} PUBLIC {lib_name})
 endif()
 if(MPI_Fortran_FOUND)
     target_link_libraries({precision_lib} PUBLIC MPI::MPI_Fortran)
     if(TARGET {common_lib})
         target_link_libraries({common_lib} PUBLIC MPI::MPI_Fortran)
+    endif()
+    if(TARGET {lib_name})
+        target_link_libraries({lib_name} PUBLIC MPI::MPI_Fortran)
     endif()
 endif()
 {mf_deps}
@@ -669,8 +941,21 @@ install(TARGETS {precision_lib} ARCHIVE DESTINATION lib)
 if(TARGET {common_lib})
     install(TARGETS {common_lib} ARCHIVE DESTINATION lib)
 endif()
+if(TARGET {lib_name})
+    install(TARGETS {lib_name} ARCHIVE DESTINATION lib)
+endif()
 """
     (output_dir / 'CMakeLists.txt').write_text(cmake)
+
+    # Ship the shared extended-precision probe alongside the generated
+    # CMakeLists.txt. The Fortran template ``include(...)``s it; the C
+    # template doesn't need it but the file is cheap to copy and keeps
+    # the staging tree self-contained.
+    if language != 'c':
+        _root = project_root or Path.cwd()
+        probe = _root / 'cmake' / 'DetectExtendedPrecision.cmake'
+        if probe.exists():
+            shutil.copy2(probe, output_dir / probe.name)
 
 
 def cmd_build(args):
@@ -681,7 +966,7 @@ def cmd_build(args):
     if not src_dir.is_dir():
         src_dir = output_dir
 
-    config = load_recipe(args.recipe, args.project_root)
+    config = prepare_recipe(args.recipe, args.project_root)
     lib_name = config.library
 
     # Classify source files into common vs precision-specific
@@ -721,13 +1006,18 @@ def cmd_build(args):
         else:
             precision_files.append(str(rel))
 
+    ref_sources = _collect_ref_sources(config)
+
     print(f'Generating CMake project in {output_dir}/')
     print(f'  Common:    {len(common_files)} files')
     print(f'  Precision: {len(precision_files)} files')
+    if ref_sources:
+        print(f'  Reference: {len(ref_sources)} files (standard-precision sibling)')
 
     proj_root = (args.project_root or args.recipe.resolve().parent.parent)
     _generate_cmake(output_dir, lib_name, target_mode, common_files, precision_files,
-                    language=config.language, project_root=proj_root)
+                    language=config.language, project_root=proj_root,
+                    ref_sources=ref_sources)
 
     # Configure and build
     build_dir = output_dir / '_build'
@@ -784,9 +1074,10 @@ def cmd_build(args):
     real_pfx = pmap['R'].lower()
     precision_lib_name = f'lib{real_pfx}{lib_name}.a'
     common_lib_name = f'lib{lib_name}_common.a'
+    ref_lib_name = f'lib{lib_name}.a'
 
     print(f'\nBuild succeeded:')
-    for name in [common_lib_name, precision_lib_name]:
+    for name in [common_lib_name, ref_lib_name, precision_lib_name]:
         matches = list(build_dir.rglob(name))
         if matches:
             p = matches[0]
@@ -797,7 +1088,7 @@ def cmd_build(args):
 
 
 def cmd_run(args):
-    """Run the full pipeline: migrate → converge → verify → build."""
+    """Run the full pipeline: migrate → diverge → verify → build."""
     work_dir = args.work_dir
     output_dir = work_dir / 'output'
     src_dir = output_dir / 'src'
@@ -812,10 +1103,9 @@ def cmd_run(args):
 
     print()
     print('=' * 60)
-    print('  Step 2: Convergence')
+    print('  Step 2: Divergence')
     print('=' * 60)
     args.output_dir = src_dir
-    # Set defaults for convergence report display options
     if not hasattr(args, 'grep'):
         args.grep = None
     if not hasattr(args, 'exclude'):
@@ -826,7 +1116,7 @@ def cmd_run(args):
         args.full = False
     if not hasattr(args, 'max_width'):
         args.max_width = 200
-    rc_converge = cmd_converge(args) or 0
+    rc_diverge = cmd_diverge(args) or 0
 
     print()
     print('=' * 60)
@@ -848,7 +1138,7 @@ def cmd_run(args):
     args.output_dir = output_dir
     rc_build = cmd_build(args) or 0
 
-    return rc_build or rc_verify or rc_converge
+    return rc_build or rc_verify or rc_diverge
 
 
 # Topologically sorted library build order for the unified CMake project.
@@ -929,7 +1219,7 @@ def cmd_stage(args):
         )
 
         # Classify files into common vs precision-specific
-        config = load_recipe(recipe_path, proj_root)
+        config = prepare_recipe(recipe_path, proj_root)
         symbols = scan_symbols(config.source_dir, config.language,
                                config.extensions, config.library_path,
                                extra_c_return_types=tuple(config.c_return_types))
@@ -978,11 +1268,6 @@ def cmd_stage(args):
         # twice so the final static library ships both entry points.
         # Detection is a cheap regex scan of the staged source; any
         # library that does not use the pattern emits an empty list.
-        dual_re = re.compile(
-            r'#\s*if\s*\(?\s*INTFACE\s*==\s*C_CALL\b'
-            r'|#\s*ifdef\s+CallFromC\b'
-            r'|#\s*if\s+defined\s*\(\s*CallFromC\s*\)',
-        )
         dual_files = []
         if config.language == 'c':
             for f in files:
@@ -992,7 +1277,7 @@ def cmd_stage(args):
                     text = f.read_text(errors='replace')
                 except OSError:
                     continue
-                if dual_re.search(text):
+                if _DUAL_ENTRY_C_RE.search(text):
                     dual_files.append(f'src/{f.name}')
 
         # Write manifest.cmake
@@ -1091,6 +1376,7 @@ set(STAGED_LIBRARIES {staged_list})
     # tree without having to re-discover Intel MPI's wrapper paths.
     cmake_dir = proj_root / 'cmake'
     for cmake_file in ['CMakeLists.txt', 'FortranCompiler.cmake',
+                       'DetectExtendedPrecision.cmake',
                        'CMakePresets.json',
                        'mpiseq_qx_stubs.f',
                        'mpiseq_mw_stubs.f90',
@@ -1266,6 +1552,7 @@ def _stage_baseline(args, target_name: str):
     # mpiseq stubs). Same files cmd_stage copies; baseline reuses them.
     cmake_dir = proj_root / 'cmake'
     for cmake_file in ['CMakeLists.txt', 'FortranCompiler.cmake',
+                       'DetectExtendedPrecision.cmake',
                        'CMakePresets.json',
                        'mpiseq_qx_stubs.f',
                        'mpiseq_mw_stubs.f90',
@@ -1288,50 +1575,61 @@ def _stage_baseline(args, target_name: str):
             shutil.rmtree(tests_dst)
         shutil.copytree(tests_src, tests_dst)
 
-    # Upstream BLAS / LAPACK source (also used by the kind16 quad
-    # reference, but here serving as the *primary* library under test).
-    netlib_blas_src = proj_root / 'external' / 'lapack-3.12.1' / 'BLAS' / 'SRC'
-    if netlib_blas_src.is_dir():
-        refblas_dst = staging_dir / '_refblas_src'
-        if refblas_dst.exists():
-            shutil.rmtree(refblas_dst)
-        shutil.copytree(netlib_blas_src, refblas_dst)
+    # Upstream BLAS / LAPACK / ScaLAPACK / PBLAS / BLACS / MUMPS sources.
+    # For libraries with a recipe we stage from build/staged-sources/<lib>/
+    # so the baseline column links against the patched archives (closing
+    # the gap the kind4/kind8 column previously had — patched in migrated
+    # archive but broken in baseline). Libraries without a recipe
+    # (TOOLS / REDIST / libseq / MUMPS include/) come straight from
+    # external/.
+    recipes_dir = proj_root / 'recipes'
 
-    netlib_lapack_src = proj_root / 'external' / 'lapack-3.12.1' / 'SRC'
-    if netlib_lapack_src.is_dir():
-        reflapack_dst = staging_dir / '_reflapack_src'
-        if reflapack_dst.exists():
-            shutil.rmtree(reflapack_dst)
-        shutil.copytree(netlib_lapack_src, reflapack_dst)
+    def _staged_or_external(rel_src: str, recipe_name: str | None) -> Path:
+        if recipe_name:
+            recipe_path = recipes_dir / f'{recipe_name}.yaml'
+            if recipe_path.exists():
+                return run_prepare(recipe_path, project_root=proj_root)
+        return proj_root / 'external' / rel_src
+
+    def _stage_dst(dst_name: str, src: Path) -> None:
+        if not src.is_dir():
+            return
+        dst = staging_dir / dst_name
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns('.prepared.stamp'))
+
+    _stage_dst('_refblas_src',
+               _staged_or_external('lapack-3.12.1/BLAS/SRC', 'blas'))
+
+    reflapack_src = _staged_or_external('lapack-3.12.1/SRC', 'lapack')
+    _stage_dst('_reflapack_src', reflapack_src)
+    if reflapack_src.is_dir():
+        # Pull dlamch / slamch / droundup_lwork / sroundup_lwork from
+        # external/INSTALL (these aren't in any recipe's source_dir, so
+        # they don't get staged; baseline needs them alongside SRC).
         install_src = proj_root / 'external' / 'lapack-3.12.1' / 'INSTALL'
+        reflapack_dst = staging_dir / '_reflapack_src'
         for fname in ('dlamch.f', 'droundup_lwork.f', 'slamch.f',
                       'sroundup_lwork.f'):
             src = install_src / fname
             if src.is_file():
                 shutil.copy2(src, reflapack_dst / fname)
 
-    # ScaLAPACK / PBLAS / BLACS / MUMPS upstream — same _std_dirs list
-    # cmd_stage uses, so the std archives can build identically.
-    _std_dirs = [
-        ('_blacs_src',     'scalapack-2.2.3/BLACS/SRC'),
-        ('_pblas_src',     'scalapack-2.2.3/PBLAS/SRC'),
-        ('_ptzblas_src',   'scalapack-2.2.3/PBLAS/SRC/PTZBLAS'),
-        ('_pbblas_src',    'scalapack-2.2.3/PBLAS/SRC/PBBLAS'),
-        ('_scalapack_src', 'scalapack-2.2.3/SRC'),
-        ('_scalapack_tools_src', 'scalapack-2.2.3/TOOLS'),
-        ('_scalapack_redist_src', 'scalapack-2.2.3/REDIST/SRC'),
-        ('_mpiseq_src',    'MUMPS_5.8.2/libseq'),
-        ('_mumps_upstream_src',     'MUMPS_5.8.2/src'),
-        ('_mumps_upstream_include', 'MUMPS_5.8.2/include'),
+    _std_dirs: list[tuple[str, str, str | None]] = [
+        ('_blacs_src',            'scalapack-2.2.3/BLACS/SRC',         'blacs'),
+        ('_pblas_src',            'scalapack-2.2.3/PBLAS/SRC',         'pblas'),
+        ('_ptzblas_src',          'scalapack-2.2.3/PBLAS/SRC/PTZBLAS', 'ptzblas'),
+        ('_pbblas_src',           'scalapack-2.2.3/PBLAS/SRC/PBBLAS',  'pbblas'),
+        ('_scalapack_src',        'scalapack-2.2.3/SRC',               'scalapack'),
+        ('_scalapack_tools_src',  'scalapack-2.2.3/TOOLS',             None),
+        ('_scalapack_redist_src', 'scalapack-2.2.3/REDIST/SRC',        None),
+        ('_mpiseq_src',           'MUMPS_5.8.2/libseq',                None),
+        ('_mumps_upstream_src',   'MUMPS_5.8.2/src',                   'mumps'),
+        ('_mumps_upstream_include', 'MUMPS_5.8.2/include',             None),
     ]
-    for dst_name, rel_src in _std_dirs:
-        src = proj_root / 'external' / rel_src
-        if not src.is_dir():
-            continue
-        dst = staging_dir / dst_name
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst)
+    for dst_name, rel_src, recipe_name in _std_dirs:
+        _stage_dst(dst_name, _staged_or_external(rel_src, recipe_name))
 
     print(f'  Output:  {staging_dir}')
     print(f'\nTo build:')
@@ -1363,6 +1661,28 @@ def main():
     )
     sub = parser.add_subparsers(dest='command', required=True)
 
+    # --- prepare ---
+    p = sub.add_parser(
+        'prepare',
+        help='Stage upstream sources for a recipe and apply its patch list',
+    )
+    p.add_argument('recipe', type=Path, help='Recipe YAML file')
+    p.add_argument('--project-root', type=Path, default=None)
+    p.add_argument('--rebuild', action='store_true',
+                   help='Wipe and re-stage even if the cache stamp is fresh')
+    p.set_defaults(func=cmd_prepare)
+
+    # --- verify-patches ---
+    p = sub.add_parser(
+        'verify-patches',
+        help='CI check: every patch that touches a precision-prefixed file '
+             'must touch all four siblings (or be listed in '
+             'asymmetric_patches:)',
+    )
+    p.add_argument('recipe', type=Path, help='Recipe YAML file')
+    p.add_argument('--project-root', type=Path, default=None)
+    p.set_defaults(func=cmd_verify_patches)
+
     # --- migrate ---
     p = sub.add_parser('migrate', help='Migrate source files')
     p.add_argument('recipe', type=Path, help='Recipe YAML file')
@@ -1389,30 +1709,11 @@ def main():
                    help='Print full diff per entry (ignores --context)')
     p.add_argument('--max-width', type=int, default=200,
                    help='Truncate each diff line to this many chars')
+    p.add_argument('--no-whitelist', action='store_true',
+                   help='Bypass expected_divergences / defer_all_divergences '
+                        'whitelist for this run')
     _add_parser_args(p)
     p.set_defaults(func=cmd_diverge)
-
-    # --- converge ---
-    p = sub.add_parser('converge',
-                       help='Post-migration verification against on-disk '
-                            'files with a light whitespace-only normalizer')
-    p.add_argument('recipe', type=Path, help='Recipe YAML file')
-    p.add_argument('output_dir', type=Path,
-                   help='Directory holding migrated output')
-    _add_target_args(p)
-    p.add_argument('--project-root', type=Path, default=None)
-    p.add_argument('--grep', default=None,
-                   help='Regex: only show entries with diff matching')
-    p.add_argument('--exclude', default=None,
-                   help='Regex: drop entries whose diff matches')
-    p.add_argument('--context', type=int, default=8,
-                   help='Max diff lines per entry (default 8)')
-    p.add_argument('--full', action='store_true',
-                   help='Print full diff per entry (ignores --context)')
-    p.add_argument('--max-width', type=int, default=200,
-                   help='Truncate each diff line to this many chars')
-    _add_parser_args(p)
-    p.set_defaults(func=cmd_converge)
 
     # --- verify ---
     p = sub.add_parser('verify', help='Verify migrated output')

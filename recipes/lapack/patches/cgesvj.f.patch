@@ -1,0 +1,13 @@
+--- a/cgesvj.f
++++ b/cgesvj.f
+@@ -509,8 +509,8 @@
+       SFMIN = SLAMCH( 'SafeMinimum' )
+       ROOTSFMIN = SQRT( SFMIN )
+       SMALL = SFMIN / EPSLN
+-*      BIG = SLAMCH( 'Overflow' )
+-      BIG     = ONE  / SFMIN
++      BIG = SLAMCH( 'Overflow' )
++*     BIG     = ONE  / SFMIN
+       ROOTBIG = ONE / ROOTSFMIN
+ *     LARGE = BIG / SQRT( REAL( M*N ) )
+       BIGTHETA = ONE / ROOTEPS

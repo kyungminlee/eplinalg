@@ -88,7 +88,7 @@ def worst_digits(report: dict) -> tuple[str | None, bool]:
     if not cases:
         return None, True
     worst = max(cases, key=lambda c: c['max_rel_err'])
-    return fmt_digits(worst['digits']), all(c['passed'] for c in cases)
+    return fmt_digits(worst.get('digits')), all(c['passed'] for c in cases)
 
 
 def render_library(name: str, entries: list[str],

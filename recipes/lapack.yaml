@@ -24,14 +24,19 @@ depends:
 extra_symbol_dirs:
   - external/lapack-3.12.1/INSTALL
 
-# dlamch / droundup_lwork are called from dozens of LAPACK SRC routines
-# (dlascl, dsyev, dgesvd, dgetrf2, …). The files themselves live in
+# dlamch is called from dozens of LAPACK SRC routines
+# (dlascl, dsyev, dgesvd, dgetrf2, …). The file lives in
 # INSTALL/ alongside test programs, timer-routine variants, and an
-# already-in-BLAS copy of lsame.f — so we pull just these two into the
+# already-in-BLAS copy of lsame.f — so we pull just this one into the
 # migrated library instead of sweeping the whole directory.
+#
+# droundup_lwork.f is intentionally NOT migrated: at any kind ≥ 8 the
+# wrapper is dead code (the float→int round-trip bug it guards only
+# bites at kind4, where 32-bit LWORK can exceed the 24-bit mantissa).
+# The migrator's _strip_roundup_lwork post-pass elides every call
+# site, so no LAPACK routine references the symbol after retarget.
 extra_migrate_files:
   - external/lapack-3.12.1/INSTALL/dlamch.f
-  - external/lapack-3.12.1/INSTALL/droundup_lwork.f
   # ILAENV_EP / ILAENV2STAGE_EP / IPARAM2STAGE_EP — extended-precision-
   # aware variants of the LAPACK environmental-inquiry helpers. Lives
   # under recipes/lapack/extras/ rather than external/ because they
@@ -48,23 +53,162 @@ extra_migrate_files:
 prefix:
   style: direct
 
-# Source overrides — patched upstream bodies that go through the normal
-# migration pipeline. Overrides displace the same-named upstream files
-# in source_dir before the migrator scans them.
-#
-# {s,d,c,z}orbdb3 / unbdb3: upstream LAPACK 3.12.1 passes LDX11 as the
-# INCY argument to the early DROT/SROT/CSROT/ZDROT call inside the
-# I=2..M-P main loop. The rotated row sits in X21, so INCY must be
-# LDX21. When LDX11 /= LDX21 (typical when M-P < P, the actual orbdb3
-# regime) the upstream form strides past the X21 buffer and corrupts
-# heap — manifests as munmap_chunk: invalid pointer on the next free.
-# Identical bug across all four precision variants. Patches change
-# only that single argument.
-source_overrides:
-  dorbdb3.f: lapack/source_overrides/dorbdb3.f
-  sorbdb3.f: lapack/source_overrides/sorbdb3.f
-  zunbdb3.f: lapack/source_overrides/zunbdb3.f
-  cunbdb3.f: lapack/source_overrides/cunbdb3.f
+# Patches applied to staged sources before migration. Unified diffs
+# vs upstream Netlib LAPACK 3.12.1. See doc/UPSTREAM_BUGS-LAPACK.md
+# for the bug catalogue (prose section titles) and
+# doc/refactor-20260509.md for the patch-file convention.
+patches:
+  #  ?orbdb3 ?ROT INCY uses LDX11 where it should be LDX21
+  - dorbdb3.f.patch
+  - sorbdb3.f.patch
+  - zunbdb3.f.patch
+  - cunbdb3.f.patch
+  # Upstream typo: zupmtr declares EXTERNAL ZLARF1 but calls ZLARF1L
+  - zupmtr.f.patch
+  # Dead ONE PARAMETER block on D/Z halves (cosmetic D/Z↔S/C convergence)
+  - zgehd2.f.patch
+  - zgelq2.f.patch
+  - zgeql2.f.patch
+  - zgeqr2.f.patch
+  - zgeqr2p.f.patch
+  - zgerq2.f.patch
+  - zunm2l.f.patch
+  - zunm2r.f.patch
+  - zunml2.f.patch
+  - zunmr2.f.patch
+  - dgehd2.f.patch
+  - dgelq2.f.patch
+  - dgeql2.f.patch
+  - dgeqr2.f.patch
+  - dgeqr2p.f.patch
+  - dgerq2.f.patch
+  - dorm2l.f.patch
+  - dorm2r.f.patch
+  - dorml2.f.patch
+  # Literal-style mismatch in geqrt2/geqrt3 (1.0D+00 vs 1.0)
+  - dgeqrt2.f.patch
+  - dgeqrt3.f.patch
+  - zgeqrt2.f.patch
+  - zgeqrt3.f.patch
+  # ggbak: strip dead INT from INTRINSIC list
+  - zggbak.f.patch
+  - dggbak.f.patch
+  # lansf/lanht: strip dead MAX from INTRINSIC
+  - dlansf.f.patch
+  - zlanht.f.patch
+  # *bevd_2stage / hgeqz: strip redundant CMPLX cast (C halves)
+  - chbevd_2stage.f.patch
+  - cheevd_2stage.f.patch
+  - chgeqz.f.patch
+  # larfx: collapse "410 CONTINUE / RETURN" to single-line form
+  - dlarfx.f.patch
+  - zlarfx.f.patch
+  #  zla_syrfsx_extended XERBLA reports ZLA_HERFSX_EXTENDED
+  - zla_syrfsx_extended.f.patch
+  #  dgejsv inner DGESVJ workspace size off by N
+  - dgejsv.f.patch
+  #  ?trsyl3 LIWORK / LDSWORK validation gap
+  - dtrsyl3.f.patch
+  - ztrsyl3.f.patch
+  - ctrsyl3.f.patch
+  #  stale/missing EXTERNAL declarations
+  - zlarf1f.f.patch
+  - clarf1f.f.patch       # sibling (C half also missing CAXPY, plus CGER → CGERC typo)
+  - dlaqp2.f.patch
+  - zlahef_aa.f.patch
+  - zhetrf_aa.f.patch
+  - zgbrfsx.f.patch
+  #  dlaswlq accepts NB=0 (slaswlq rejects)
+  - dlaswlq.f.patch
+  #  ?orbdb / ?unbdb XERBLA placeholder 'xORBDB' unsubstituted (all 4 halves)
+  - dorbdb.f.patch
+  - sorbdb.f.patch
+  - zunbdb.f.patch
+  - cunbdb.f.patch
+  #  8 EXTERNAL-vs-CALL drifts (D/Z + symmetric S/C siblings)
+  - dlarf1l.f.patch       # +DAXPY,DSCAL
+  - zlarf1l.f.patch       # +ZAXPY
+  - clarf1l.f.patch       # sibling: +CAXPY
+  - dlatrs3.f.patch       # +DGEMM
+  - zlatrs3.f.patch       # +ZGEMM
+  - clatrs3.f.patch       # sibling: +CGEMM
+  - slatrs3.f.patch       # sibling: +SGEMM
+  - zgelss.f.patch        # +ZUNMQR (cgelss already correct upstream)
+  - dorbdb4.f.patch       # DLARF→DLARF1F (also LWORK INFO -14 → -15)
+  - sorbdb4.f.patch       # sibling: same fix
+  - dorgr2.f.patch        # DLARF→DLARF1L (sorgr2 already correct upstream)
+  - zrscl.f.patch         # +ZSCAL, \brief ZDRSCL→ZRSCL
+  - crscl.f.patch         # sibling: doc-header "real" → "complex"
+  #  ?unbdb4 LWORK INFO -14 → -15
+  - zunbdb4.f.patch
+  - cunbdb4.f.patch       # sibling: same fix
+  #  ?ggsvd3 LWORK INFO -24 → -22 (all 4 halves)
+  - dggsvd3.f.patch
+  - sggsvd3.f.patch
+  - zggsvd3.f.patch
+  - cggsvd3.f.patch
+  #  ?orcsd / ?uncsd LWORK INFO -22 → -28;  zuncsd LRWORK -24 → -30
+  - dorcsd.f.patch
+  - sorcsd.f.patch        # sibling: same fix (no LRWORK)
+  - zuncsd.f.patch
+  - cuncsd.f.patch
+  #  ?laqz0 LWORK INFO -19 → -18
+  - zlaqz0.f.patch
+  - claqz0.f.patch        # sibling: same fix
+  #  clahef upper-branch loop condition J.LE.N should be J.LT.N
+  # (audit 2026-05-11; slasyf/dlasyf/zlahef all use J.LT.N at the
+  # same location — clahef is the odd one out, one extra iteration
+  # of the IPIV-undo loop; same fix in lower branch: J.GE.1 → J.GT.1)
+  - clahef.f.patch
+  #  clahef_rk EXTERNAL lists CGEMM but actually CALLs CGEMMTR
+  # (audit 2026-05-11; slasyf_rk / dlasyf_rk / zlahef_rk all
+  # correctly declare GEMMTR)
+  - clahef_rk.f.patch
+  #  dopmtr / dormr2 use deprecated DLARF where sopmtr / sormr2
+  # and the complex siblings (zunmr2 / cunmr2) all use DLARF1F /
+  # DLARF1L. dopmtr also missing EXTERNAL DLARF1L for its other call
+  # site. (audit 2026-05-11)
+  - dopmtr.f.patch
+  - dormr2.f.patch
+  #  cgesvj uses ONE/SFMIN for BIG instead of SLAMCH('Overflow')
+  # (audit 2026-05-11; sgesvj / dgesvj / zgesvj all use LAMCH form)
+  - cgesvj.f.patch
+  #  sgeesx IWORK(1) = SDIM*(N-SDIM) can be 0; dgeesx wraps in
+  # MAX(1, ...) which is the convention per LAPACK API.
+  - sgeesx.f.patch
+  #  zgemlq stores LW in WORK(1) instead of LWMIN
+  # (audit 2026-05-11; sgemlq / cgemlq / dgemlq all use LWMIN)
+  - zgemlq.f.patch
+  #  stgex2 LWORK check and WORK(1) report missing the MAX(1,...)
+  # guard that dtgex2 has. Without it, LWORK<0 prints INFO=-16 only
+  # when N*M>0, and WORK(1) can be 0 for empty subblocks.
+  - stgex2.f.patch
+  #  cheevx LWKOPT formula missing the MAX(1,...) guard that
+  # zheevx has. (audit 2026-05-11)
+  - cheevx.f.patch
+  #  sggev3 EXTERNAL list missing XERBLA. sggev3 calls XERBLA
+  # at line 359 but doesn't declare it; dggev3 declares it. (audit
+  # 2026-05-11)
+  - sggev3.f.patch
+  #  slaqr2 EXTERNAL declares SLARF1L but actually CALLs SLARF1F
+  # (3 times). dlaqr2 declares the right one. slaqr3 already
+  # correct upstream. (audit 2026-05-11)
+  - slaqr2.f.patch
+  #  slaqr5 line 604 uses T2*VT(3) where every other site (slaqr5
+  # and dlaqr5 both) and dlaqr5's line 604 use T1*VT(3). T1 is the
+  # tau from SLARFG; T2 = T1*VT(2), T3 should be T1*VT(3). The S
+  # half's T3 = T2*VT(3) = T1*VT(2)*VT(3) introduces a stray VT(2)
+  # factor that affects the bulge-start tolerance test at line 608.
+  - slaqr5.f.patch
+  #  sgges EXTERNAL list missing XERBLA (mirror of the sggev3 fix
+  # above). sgges calls XERBLA at error path but doesn't declare it.
+  # (audit 2026-05-11)
+  - sgges.f.patch
+  #  ?laqz2 LWORK INFO -26 → -25
+  - zlaqz2.f.patch
+  - claqz2.f.patch        # sibling: same fix
+  # 2026-05-12 B? deep-dive promotion:
+  - cgedmdq.f90.patch     # LQUERY missing LZWORK==-1; ZWORK(1)/(2) init; inner CGEDMD query call args
 
 # Files dropped from the migrated archive:
 #  - ZC*/DS* mixed-precision iterative-refinement drivers and
@@ -132,3 +276,214 @@ extra_renames:
   ILAENV: ILAENV_EP
   ILAENV2STAGE: ILAENV2STAGE_EP
   IPARAM2STAGE: IPARAM2STAGE_EP
+
+# Convergence whitelist (Phase D, doc/refactor-20260509.md).
+# Co-family pairs whose normalized texts disagree post-patch. Most
+# are upstream S/D drift the migrator cannot reconcile (header doc
+# paraphrasing, INTRINSIC list ordering, workspace-formula choices,
+# label numbering, dead-code asymmetry) — listed in
+# doc/convergence-20260507.md §lapack as the known cosmetic cohort.
+# The patches above address the bug subset; remaining drift is
+# upstream design.
+#
+# When a patch is added that closes one of these stems AND
+# ``migrator converge`` confirms convergence, REMOVE the stem from
+# this list. Stems whose divergence is genuinely upstream-asymmetric
+# (cosmetic/dead/refactor — see doc/lapack-residual-divergence-
+# categorization.md) stay listed even after patching; flag them with
+# an inline comment so reviewers know not to chase a converge.
+expected_divergences:
+  - DBDSDC
+  - DGBRFSX
+  - DGBSVXX
+  - DGEBAK
+  - DGEBD2
+  - DGEDMD
+  - DGEDMDQ
+  - DGEESX
+  - DGEJSV
+  - DGELQT
+  - DGELSD
+  - DGELSS
+  - DGEQRFP
+  - DGERFSX
+  - DGESVD
+  - DGESVDQ
+  - DGESVX
+  - DGETSLS
+  - DGGES
+  - DGGES3
+  - DGGEV3
+  - DGGEVX
+  - DGGQRF
+  - DGGRQF
+  - DLAEXC
+  - DLALN2
+  - DLAMSWLQ
+  - DLAQR2
+  - DLAQR3
+  - DLAQR5
+  - DLAQZ0
+  - DLAQZ3
+  - DLAQZ4
+  - DLARF1F
+  - DLARF1L           # upstream algorithmic asymmetry (FIRSTV / LASTV guards on D, not S)
+  - DLARRE
+  - DLARRF
+  - DLASQ2
+  - DLASWLQ
+  - DLASYF_RK
+  - DLATRS3
+  - DOPMTR
+  - DORBDB
+  - DORBDB1
+  - DORBDB2
+  - DORBDB3
+  - DORBDB4
+  - DORCSD
+  - DORG2L
+  - DORGR2
+  - DORMR2
+  - DORMRZ
+  - DPORFSX
+  - DSTEMR
+  - DSTERF
+  - DSTEVR
+  - DSYEQUB
+  - DSYEVR
+  - DSYEVR_2STAGE
+  - DSYRFSX
+  - DSYSV_AA
+  - DSYTRD_SY2SB
+  - DSYTRF_AA_2STAGE
+  - DSYTRI2
+  - DSYTRS_3
+  - DSYTRS_AA
+  - DTGEX2
+  - DTGSYL
+  - DTRSYL3
+  - ILADLR
+  - ZGBRFSX
+  - ZGEDMD
+  - ZGEDMDQ
+  - ZGEJSV
+  - ZGEMLQ
+  - ZGEMQR
+  - ZGERFSX
+  - ZGESVD
+  - ZGESVDX
+  - ZGESVJ
+  - ZGETF2
+  - ZGGBAL
+  - ZGGEV3
+  - ZGSVJ1
+  - ZHEEQUB
+  - ZHEEVX
+  - ZHERFSX
+  - ZHESV_AA_2STAGE
+  - ZHETRF_AA_2STAGE
+  - ZHETRI_3
+  - ZHETRS_AA
+  - ZHSEIN
+  - ZLAHEF
+  - ZLAHEF_RK
+  - ZLAMSWLQ
+  - ZLAQP2
+  - ZLAQP2RK
+  - ZLAQZ2
+  - ZLARF1F
+  - ZLARF1L
+  - ZLARTG
+  - ZLASWLQ
+  - ZLATRS3
+  - ZLAUNHR_COL_GETRFNP2
+  - ZPFTRI
+  - ZPORFSX
+  - ZPOTF2
+  - ZPPTRF
+  - ZRSCL
+  - ZSTEMR
+  - ZSYEQUB
+  - ZSYRFSX
+  - ZSYSV_AA_2STAGE
+  - ZSYSWAPR
+  - ZSYTRF_AA_2STAGE
+  - ZTGSEN
+  - ZUNBDB
+  - ZUNBDB1
+  - ZUNBDB2
+  - ZUNBDB3
+  - ZUNBDB4
+  - ZUNCSD
+  - ZUNCSD2BY1
+  - ZUNGR2
+  - ZUNMLQ
+  - ZUNMRZ
+
+# Patches whose sibling half upstream is genuinely correct or has a
+# different bug shape — periodically review whether a sibling patch
+# could be added. See doc/refactor-20260509.md.
+asymmetric_patches:
+  # Patches whose S/C sibling is already correct upstream (bug only
+  # exists on D/Z half). Audited 2026-05-11; verified by inspecting
+  # the sibling's source.
+  - dgejsv.f.patch         # sgejsv already has LWORK-N
+  - dtrsyl3.f.patch        # strsyl3 has no equivalent
+  - ztrsyl3.f.patch        # (and ctrsyl3 had its own patch)
+  - ctrsyl3.f.patch        # (and ztrsyl3 had its own patch)
+  - dlaqp2.f.patch         # slaqp2 already correct
+  - zhetrf_aa.f.patch      # chetrf_aa already correct (no CGEMV)
+  - zlahef_aa.f.patch      # clahef_aa already correct (no CGEMM)
+  - zgbrfsx.f.patch        # cgbrfsx already correct
+  - dlaswlq.f.patch        # slaswlq already correct
+  - zla_syrfsx_extended.f.patch  # cla_syrfsx_extended already correct
+  - dorgr2.f.patch         # sorgr2 already correct
+  - zgelss.f.patch         # cgelss already correct
+
+# Patches that close a D↔S or Z↔C cosmetic asymmetry (dead PARAMETER
+# blocks, redundant CMPLX casts, dead INTRINSIC entries, literal-style
+# differences) where the sibling half is already in the post-patch
+# shape upstream. No S/C sibling is or will be needed. CI semantics
+# match asymmetric_patches: (skipped by symmetric check) but the
+# separate field communicates intent.
+one_sided_cleanup:
+  # Dead PARAMETER ONE block strip (D/Z have it, S/C omit)
+  - dgehd2.f.patch
+  - dgelq2.f.patch
+  - dgeql2.f.patch
+  - dgeqr2.f.patch
+  - dgeqr2p.f.patch
+  - dgerq2.f.patch
+  - dorm2l.f.patch
+  - dorm2r.f.patch
+  - dorml2.f.patch
+  - zgehd2.f.patch
+  - zgelq2.f.patch
+  - zgeql2.f.patch
+  - zgeqr2.f.patch
+  - zgeqr2p.f.patch
+  - zgerq2.f.patch
+  - zunm2l.f.patch
+  - zunm2r.f.patch
+  - zunml2.f.patch
+  - zunmr2.f.patch
+  # Literal-style mismatch (D/Z write 1.0D+00, S/C use 1.0)
+  - dgeqrt2.f.patch
+  - dgeqrt3.f.patch
+  - zgeqrt2.f.patch
+  - zgeqrt3.f.patch
+  # Strip dead INT from INTRINSIC list
+  - dggbak.f.patch
+  - zggbak.f.patch
+  # Strip dead MAX from INTRINSIC list
+  - dlansf.f.patch
+  - zlanht.f.patch
+  # Strip redundant CMPLX cast on C halves (Z writes bare integer)
+  - chbevd_2stage.f.patch
+  - cheevd_2stage.f.patch
+  - chgeqz.f.patch
+  # Collapse "410 CONTINUE / RETURN" to single-line "410 RETURN"
+  - dlarfx.f.patch
+  - zlarfx.f.patch
+  # Fix EXTERNAL ZLARF1 typo (call site is ZLARF1L) — Z-only typo
+  - zupmtr.f.patch

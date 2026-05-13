@@ -1,0 +1,20 @@
+--- a/pzpbtrsv.f
++++ b/pzpbtrsv.f
+@@ -494,7 +494,7 @@
+       END IF
+ *
+       IF( LWORK .LT. -1) THEN
+-         INFO = -14
++         INFO = -15
+       ELSE IF ( LWORK .EQ. -1 ) THEN
+          IDUM3 = -1
+       ELSE
+@@ -570,7 +570,7 @@
+ *
+       IF( LWORK .LT. WORK_SIZE_MIN ) THEN
+          IF( LWORK .NE. -1 ) THEN
+-         INFO = -14
++         INFO = -15
+          CALL PXERBLA( ICTXT,
+      $      'PZPBTRSV: worksize error',
+      $      -INFO )

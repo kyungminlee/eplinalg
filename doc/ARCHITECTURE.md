@@ -103,26 +103,26 @@ modules (`pipeline`, `__main__`) orchestrate.
 | `flang_parser.py` | Subprocess wrapper around `flang-new -fc1`'s JSON parse-tree dump. Extracts symbols, types, and call-site positions. |
 | `gfortran_parser.py` | Subprocess wrapper around `gfortran -fdump-fortran-original`'s text tree-dump. Used when LLVM Flang isn't available or when its parse fails. |
 | `symbol_scanner.py` | Scans source trees (Fortran or C) for SUBROUTINE / FUNCTION / `void foo(...)` definitions; also can run `nm` over compiled archives if a recipe specifies `symbols.method: nm_library`. |
-| `config.py` | YAML recipe loader. `RecipeConfig` dataclass (~25 fields) defines the per-library schema: `library`, `language`, `source_dir`, `extensions`, `depends`, `skip_files`, `copy_files`, `prefer_source`, `extra_renames`, `local_renames`, `extra_migrate_files`, `extra_c_dirs`, `extra_fortran_dirs`, `c_return_types`, `c_type_aliases`, `c_pointer_cast_aliases`, `header_patches`, `overrides`, `keep_kind_lines`, `module_renames`, `source_overrides`. |
+| `config.py` | YAML recipe loader. `RecipeConfig` dataclass defines the per-library schema: `library`, `language`, `source_dir`, `extensions`, `depends`, `skip_files`, `copy_files`, `prefer_source`, `extra_renames`, `local_renames`, `extra_migrate_files`, `extra_c_dirs`, `extra_fortran_dirs`, `c_return_types`, `c_type_aliases`, `c_pointer_cast_aliases`, `header_patches`, `overrides`, `keep_kind_lines`, `module_renames`, `patches`, `asymmetric_patches`, `one_sided_cleanup`. |
 | `target_mode.py` | YAML target loader. `TargetMode` dataclass: prefix map, intrinsic mode (`add_kind` for kind10/kind16, `wrap_constructor` for multifloats), known constants, la_constants_map, module_type_names, MPI datatype names. |
 | `__init__.py` | Package marker. |
 
 ### Recipes — `recipes/<lib>.yaml`
 
 Eleven libraries. Each recipe declares the source layout, file
-extensions, dependency chain, skip lists, source overrides, and
+extensions, dependency chain, skip lists, patches, and
 target-mode-specific knobs.
 
 | Recipe | depends | one-line description |
 |---|---|---|
-| `blas.yaml` | (none) | BLAS Levels 1-3 from Netlib LAPACK 3.12.1's `BLAS/SRC/`. Two source overrides for `dnrm2`/`dznrm2` (multifloats safe-summation). |
-| `xblas.yaml` | blas | Extra-Precise BLAS from Netlib XBLAS 1.0.248. Auto-generated 402-entry `skip_files` list excludes mixed-precision variants unreachable from LAPACK. Header patches inject quad/multifloats typedefs into `blas_extended_proto.h`. |
+| `blas.yaml` | (none) | BLAS Levels 1-3 from Netlib LAPACK 3.12.1's `BLAS/SRC/`. Two patches on `dnrm2`/`dznrm2` (multifloats safe-summation). |
+| `xblas.yaml` | blas | Extra-Precise BLAS from Netlib XBLAS 1.0.248. Auto-generated 402-entry `skip_files` list excludes mixed-precision variants unreachable from LAPACK. Header patches inject quad/multifloats typedefs into `blas_enum.h` (the umbrella header `blas_extended.h` and every `*-f2c.c` bridge transitively include it). |
 | `lapack.yaml` | blas, **xblas** | LAPACK 3.12.1 `SRC/`. Three `extra_renames` (ILAENV/ILAENV2STAGE/IPARAM2STAGE → `_EP` variants) route around the upstream gate-bug that returns uninitialized for migrated names. The xblas dep (added in commit `9938731`) brings `BLAS_{S,D,C,Z}*_X` symbols into the classifier's universe so position-5 precision-letter renames Just Work. |
 | `blacs.yaml` | (none) | BLACS C library from ScaLAPACK 2.2.3. Multifloats-specific overrides (compiled as C++ for operator overloading) live in `recipes/blacs/mfc_overrides/`. |
 | `pblas.yaml` | blas, blacs | Parallel BLAS C library. Includes PBLAS PTOOLS sources via `extra_c_dirs`. |
 | `pbblas.yaml` | blas, blacs | Parallel-banded BLAS Fortran helpers. |
 | `ptzblas.yaml` | blas | Parallel transpose-on-demand BLAS Fortran helpers. Pulls `ZZDOTC`/`ZZDOTU` from `_scalapack_tools_src/` via `extra_symbol_dirs`. |
-| `scalapack.yaml` | lapack, blacs, pblas | ScaLAPACK Fortran. Two source overrides for `pdlanhs`/`pzlanhs` (NPROW=1 norm bug, see `doc/UPSTREAM_BUGS.md`). Four `extra_renames` (`PJLAENV`/`PILAENVX` and `PDLAIECTB`/`PDLAIECTL`). |
+| `scalapack.yaml` | lapack, blacs, pblas | ScaLAPACK Fortran. Patches for `pdlanhs`/`pzlanhs` (NPROW=1 norm bug, see `doc/UPSTREAM_BUGS-ScaLAPACK.md`). Four `extra_renames` (`PJLAENV`/`PILAENVX` and `PDLAIECTB`/`PDLAIECTL`). |
 | `scalapack_c.yaml` | lapack, blacs, pblas, scalapack | ScaLAPACK C-side wrappers. Mirrors `scalapack`'s `PDLAIECTB`/`PDLAIECTL` renames. |
 | `mumps.yaml` | blas, lapack, scalapack | MUMPS 5.8.2 sparse direct solver. 32-entry `skip_files` (C headers, GPU code), 8-entry `copy_files` (integer-only helpers), per-line `keep_kind_lines` manifest preserving `DOUBLE PRECISION` declarations that mean "wall-clock seconds" rather than "working precision". |
 
@@ -247,14 +247,15 @@ test driver.
 ## Out of band: upstream bug tracking
 
 Upstream Netlib bugs that require in-tree workarounds are tracked
-in `doc/UPSTREAM_BUGS.md`. Two mechanisms route around them:
+in `doc/UPSTREAM_BUGS-{LAPACK,ScaLAPACK,MUMPS}.md`. Two mechanisms
+route around them:
 
-- `source_overrides` (recipe field): replace one upstream `.f` /
-  `.f90` / `.c` file with a patched copy from
-  `recipes/<lib>/source_overrides/`. The migrator then runs the
-  override through its normal pipeline so the patched source still
-  emits the per-target migrated name. Used for ScaLAPACK
-  `pdlanhs.f` / `pzlanhs.f` (NPROW=1 norm bug).
+- `patches` (recipe field): a unified-diff `<basename>.patch` file
+  under `recipes/<lib>/patches/` is applied to the staged upstream
+  source before migration. The patched body still goes through the
+  normal pipeline so it emits the per-target migrated name. Used
+  for ScaLAPACK `pdlanhs.f` / `pzlanhs.f` (NPROW=1 norm bug),
+  LAPACK `cheevx.f` (LWKOPT min guard), and dozens of others.
 - `tests/lapack/reflapack/overrides/<file>.f90`: replace the
   upstream source in the **reference** build only. Used for
   `zgedmd.f90` (gfortran `-freal-8-real-16` `CMPLX(…,KIND=8)`
@@ -295,12 +296,9 @@ fortran-migrator/
 │   ├── RECIPES.md       # Recipe YAML schema
 │   ├── PROCEDURES.md    # Generated routine cross-reference
 │   ├── INTRINSICS.md    # Generic-intrinsic table (manual reference)
-│   ├── UPSTREAM_BUGS.md # Tracked upstream bugs
+│   ├── UPSTREAM_BUGS*.md# Tracked upstream bugs (LAPACK / ScaLAPACK / MUMPS)
 │   ├── DEVELOPER.md     # Developer onboarding
 │   ├── NOTE.md          # Misc design notes
-│   ├── AUDIT-*.md       # Periodic snapshot audits
-│   ├── archive/         # Historical planning docs
-│   └── projects/        # Per-project work logs (test-todo-drain, etc.)
 ├── scripts/             # Manual helpers (compile_*.sh, sweep tools)
 ├── tools/               # Build artifacts (gen_procedures.py)
 ├── pyproject.toml       # uv-managed; runtime: pyyaml, tqdm; dev: fypp, pytest
@@ -317,10 +315,10 @@ fortran-migrator/
   unmigrated archive; PUBLIC linkage handles symbol visibility for
   helpers like `LSAME` and `XERBLA` that aren't precision-renamed.
 - **Push fixups out of the engine, into recipes.** When upstream has
-  a bug that affects only one half of a precision pair, prefer
-  `source_overrides` over engine special-cases. When a routine needs
-  a different rename (e.g., extended-precision suffix `_EP`), prefer
-  `extra_renames` over hard-coding.
+  a bug that affects only one half of a precision pair, prefer a
+  `patches/<basename>.patch` over engine special-cases. When a
+  routine needs a different rename (e.g., extended-precision suffix
+  `_EP`), prefer `extra_renames` over hard-coding.
 - **Discovery, not configuration.** The classifier discovers
   precision families by scanning the symbol universe. Recipes
   rarely need to declare per-routine prefixes — the classifier

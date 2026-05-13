@@ -1,0 +1,11 @@
+--- a/zlarf1l.f
++++ b/zlarf1l.f
+@@ -155,7 +155,7 @@
+       INTEGER            I, J, LASTV, LASTC, FIRSTV
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL           ZGEMV, ZGERC, ZSCAL
++      EXTERNAL           ZAXPY, ZGEMV, ZGERC, ZSCAL
+ *     ..
+ *     .. Intrinsic Functions ..
+       INTRINSIC          DCONJG

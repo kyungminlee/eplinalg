@@ -17,7 +17,7 @@ program test_dgetsqrhrt
 
     call report_init('dgetsqrhrt', target_name)
     do i = 1, size(ms)
-        m = ms(i); n = ns(i); mb1 = 8; nb1 = 2; nb2 = 2
+        m = ms(i); n = ns(i); mb1 = 2*n; nb1 = 2; nb2 = 2  ! MB1 > N is required
         call gen_matrix_quad(m, n, A0, seed = 23501 + 67 * i)
         allocate(A_ref(m, n), A_got(m, n), T_ref(nb2, n), T_got(nb2, n))
         A_ref = A0; A_got = A0

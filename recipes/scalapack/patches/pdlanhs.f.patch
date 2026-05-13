@@ -1,0 +1,134 @@
+--- a/pdlanhs.f
++++ b/pdlanhs.f
+@@ -221,6 +221,14 @@
+                JJ = JJ + JB
+             END IF
+ *
++*           Bug fix (vs upstream ScaLAPACK 2.2.3): the NPROW=1 path
++*           failed to advance II after the first column block, so the
++*           inner-loop bound II+LL-JJ+1 collapsed once JJ moved past
++*           the first MB. M-norm passed by luck (max element typically
++*           lay in the kept range); 1/F/I norms underestimated by
++*           10-20%. Mirror the II = II + JB update that the NPROW>1
++*           branch already performs after its first-block code.
++            II = II + JB
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -272,7 +280,7 @@
+             IF( MYROW.EQ.IAROW )
+      $         II = II + JB
+             IAROW = INXTROW
+-            IAROW = MOD( IAROW+1, NPROW )
++            INXTROW = MOD( INXTROW+1, NPROW )
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -305,7 +313,7 @@
+                IF( MYROW.EQ.IAROW )
+      $            II = II + JB
+                IAROW = INXTROW
+-               IAROW = MOD( IAROW+1, NPROW )
++               INXTROW = MOD( INXTROW+1, NPROW )
+                IACOL = MOD( IACOL+1, NPCOL )
+ *
+   140       CONTINUE
+@@ -343,6 +351,14 @@
+                JJ = JJ + JB
+             END IF
+ *
++*           Bug fix (vs upstream ScaLAPACK 2.2.3): the NPROW=1 path
++*           failed to advance II after the first column block, so the
++*           inner-loop bound II+LL-JJ+1 collapsed once JJ moved past
++*           the first MB. M-norm passed by luck (max element typically
++*           lay in the kept range); 1/F/I norms underestimated by
++*           10-20%. Mirror the II = II + JB update that the NPROW>1
++*           branch already performs after its first-block code.
++            II = II + JB
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -401,7 +417,7 @@
+             IF( MYROW.EQ.IAROW )
+      $         II = II + JB
+             IAROW = INXTROW
+-            IAROW = MOD( IAROW+1, NPROW )
++            INXTROW = MOD( INXTROW+1, NPROW )
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -438,7 +454,7 @@
+                IF( MYROW.EQ.IAROW )
+      $            II = II + JB
+                IAROW = INXTROW
+-               IAROW = MOD( IAROW+1, NPROW )
++               INXTROW = MOD( INXTROW+1, NPROW )
+                IACOL = MOD( IACOL+1, NPCOL )
+ *
+   280       CONTINUE
+@@ -491,6 +507,14 @@
+                JJ = JJ + JB
+             END IF
+ *
++*           Bug fix (vs upstream ScaLAPACK 2.2.3): the NPROW=1 path
++*           failed to advance II after the first column block, so the
++*           inner-loop bound II+LL-JJ+1 collapsed once JJ moved past
++*           the first MB. M-norm passed by luck (max element typically
++*           lay in the kept range); 1/F/I norms underestimated by
++*           10-20%. Mirror the II = II + JB update that the NPROW>1
++*           branch already performs after its first-block code.
++            II = II + JB
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -546,7 +570,7 @@
+             IF( MYROW.EQ.IAROW )
+      $         II = II + JB
+             IAROW = INXTROW
+-            IAROW = MOD( IAROW+1, NPROW )
++            INXTROW = MOD( INXTROW+1, NPROW )
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -581,7 +605,7 @@
+                IF( MYROW.EQ.IAROW )
+      $            II = II + JB
+                IAROW = INXTROW
+-               IAROW = MOD( IAROW+1, NPROW )
++               INXTROW = MOD( INXTROW+1, NPROW )
+                IACOL = MOD( IACOL+1, NPCOL )
+ *
+   430       CONTINUE
+@@ -630,6 +654,14 @@
+                JJ = JJ + JB
+             END IF
+ *
++*           Bug fix (vs upstream ScaLAPACK 2.2.3): the NPROW=1 path
++*           failed to advance II after the first column block, so the
++*           inner-loop bound II+LL-JJ+1 collapsed once JJ moved past
++*           the first MB. M-norm passed by luck (max element typically
++*           lay in the kept range); 1/F/I norms underestimated by
++*           10-20%. Mirror the II = II + JB update that the NPROW>1
++*           branch already performs after its first-block code.
++            II = II + JB
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -679,7 +711,7 @@
+             IF( MYROW.EQ.IAROW )
+      $         II = II + JB
+             IAROW = INXTROW
+-            IAROW = MOD( IAROW+1, NPROW )
++            INXTROW = MOD( INXTROW+1, NPROW )
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -710,7 +742,7 @@
+                IF( MYROW.EQ.IAROW )
+      $            II = II + JB
+                IAROW = INXTROW
+-               IAROW = MOD( IAROW+1, NPROW )
++               INXTROW = MOD( INXTROW+1, NPROW )
+                IACOL = MOD( IACOL+1, NPCOL )
+ *
+   510       CONTINUE

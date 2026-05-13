@@ -1,0 +1,8 @@
+--- a/crscl.f
++++ b/crscl.f
+@@ -1,4 +1,4 @@
+-*> \brief \b CRSCL multiplies a vector by the reciprocal of a real scalar.
++*> \brief \b CRSCL multiplies a vector by the reciprocal of a complex scalar.
+ *
+ *  =========== DOCUMENTATION ===========
+ *

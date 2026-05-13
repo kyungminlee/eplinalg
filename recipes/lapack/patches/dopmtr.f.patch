@@ -1,0 +1,20 @@
+--- a/dopmtr.f
++++ b/dopmtr.f
+@@ -177,7 +177,7 @@
+       EXTERNAL           LSAME
+ *     ..
+ *     .. External Subroutines ..
+-      EXTERNAL           DLARF, XERBLA
++      EXTERNAL           DLARF1F, DLARF1L, XERBLA
+ *     ..
+ *     .. Intrinsic Functions ..
+       INTRINSIC          MAX
+@@ -317,7 +317,7 @@
+ *
+ *           Apply H(i)
+ *
+-            CALL DLARF( SIDE, MI, NI, AP( II ), 1, TAU( I ),
++            CALL DLARF1F( SIDE, MI, NI, AP( II ), 1, TAU( I ),
+      $                  C( IC, JC ), LDC, WORK )
+             AP( II ) = AII
+ *

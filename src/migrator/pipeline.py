@@ -12,8 +12,61 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from .config import RecipeConfig, load_recipe
+from .prepare import prepare_recipe
+
+
+def _stem_upper(filename: str) -> str:
+    """Uppercase stem with extension stripped (handles .f, .f90, .c, etc.)."""
+    return Path(filename).stem.upper()
+
+
+def _build_module_rename_pairs(
+    config: RecipeConfig,
+) -> list[tuple[re.Pattern[str], str]]:
+    """Compile the recipe's ``module_renames:`` map into regex pairs.
+
+    The pattern matches ``USE <OLD_MODULE>`` (case-insensitive, both
+    bare ``USE`` and ``USE …, ONLY: …`` forms) and rewrites the module
+    name to the new one. Same shape used by ``run_fortran_migration``
+    when emitting the canonical text — surfacing this helper lets
+    convergence re-migration apply the identical rule, keeping the
+    on-disk canonical and the re-migrated sibling on equal footing.
+    """
+    pairs: list[tuple[re.Pattern[str], str]] = []
+    for old_mod, new_mod in (config.module_renames or {}).items():
+        pat = re.compile(r'(?i)(\bUSE\s+)' + re.escape(old_mod) + r'\b')
+        pairs.append((pat, r'\g<1>' + new_mod))
+    return pairs
+
+
+def _apply_module_renames(
+    text: str,
+    pairs: list[tuple[re.Pattern[str], str]],
+) -> str:
+    for pat, repl in pairs:
+        text = pat.sub(repl, text)
+    return text
+
+
+def _filter_expected_divergences(report: list[dict],
+                                  config: RecipeConfig) -> list[dict]:
+    """Drop entries whose canonical stem is whitelisted as expected.
+
+    Two whitelist forms (Phase D, ``doc/refactor-20260509.md``):
+    - ``defer_all_divergences: true`` — drop every entry.
+    - ``expected_divergences: [STEM, ...]`` — drop entries whose
+      canonical stem (case-insensitive, no extension) matches.
+    """
+    if config.defer_all_divergences:
+        return []
+    if not config.expected_divergences:
+        return report
+    return [
+        r for r in report
+        if _stem_upper(r['canonical']) not in config.expected_divergences
+    ]
 from .symbol_scanner import scan_symbols
-from .prefix_classifier import classify_symbols, build_rename_map
+from .prefix_classifier import classify_symbols
 from .fortran_migrator import (
     _find_inline_bang,
     migrate_file,
@@ -110,6 +163,26 @@ def _strip_fortran_comments(text: str, ext: str) -> str:
 
 def _strip_inline_bang(line: str) -> str:
     return line[:_find_inline_bang(line)]
+
+
+def _prec_neutral_key(name: str) -> str:
+    """Sort key that maps S↔D and C↔Z to the same character so
+    precision-equivalent locals (CI vs ZI) sort to the same position."""
+    return name.replace('S', 'D').replace('C', 'Z')
+
+
+def _sort_decl_match(match: re.Match, key=None, sep: str = ',') -> str:
+    """Sort the comma-separated identifier list in a regex match.
+
+    Group 1 is the leading keyword (e.g. ``INTRINSIC``, ``EXTERNAL``);
+    group 2 is the comma-separated body. Items are stripped before
+    sorting and rejoined with ``sep``. Pass ``key=_prec_neutral_key``
+    to sort with S↔D / C↔Z folded together.
+    """
+    kw = match.group(1)
+    items = [s.strip() for s in match.group(2).split(',')]
+    items = sorted(items, key=key) if key else sorted(items)
+    return f'{kw} ' + sep.join(items)
 
 
 def _strip_real_cmplx_casts(text: str) -> str:
@@ -250,137 +323,57 @@ def _split_top_level_comma(s: str) -> list[str]:
     return out
 
 
-def _light_normalize(text: str) -> str:
-    """Minimal normalization for post-migration convergence checking.
+_LABEL_PATTERN = re.compile(
+    # Statement-label definition at line start (followed by space + non-digit).
+    r'(?m)^[ \t]*(\d+)(?=[ \t]+\S)|'
+    # DO label reference.
+    r'\bDO[ \t]*(\d+)\b|'
+    # GO TO single-label reference.
+    r'\bGO[ \t]*TO[ \t]*(\d+)\b|'
+    # I/O specifier (END=, ERR=, EOR=).
+    r'\b(?:END|ERR|EOR)[ \t]*=[ \t]*(\d+)\b|'
+    # ASSIGN <label> TO <var> (legacy F77).
+    r'\bASSIGN[ \t]+(\d+)[ \t]+TO\b|'
+    # Computed GO TO list (a body of comma-separated label numbers).
+    r'\bGO[ \t]*TO[ \t]*\(([\d,\s]+)\)'
+)
 
-    Applies ONLY cosmetic rules that are never the migrator's job:
 
-    * uppercase everything (Fortran is case-insensitive)
-    * collapse runs of horizontal whitespace to a single space
-    * strip whitespace adjacent to punctuation (commas, parens,
-      arithmetic/relational operators)
-    * merge ``END IF``/``END DO``/... → ``ENDIF``/``ENDDO``/...
-    * sort ``INTRINSIC``/``EXTERNAL`` argument lists (cross-precision
-      co-family halves routinely list the same names in different
-      orders — purely cosmetic upstream drift)
-    * drop blank lines and trailing whitespace
+def _canonicalize_labels(text: str) -> str:
+    """Re-number all Fortran statement labels in canonical order.
 
-    No prefix collapse, no literal-form rewrites, no type-cast
-    stripping — convergence here means the migrator got it right and
-    the co-family halves already agree on identifiers, literal kinds,
-    and casts.
+    Walks every label position (statement-label definitions and
+    references via ``DO``, ``GO TO``, computed ``GO TO``, I/O
+    ``END=``/``ERR=``/``EOR=``, and legacy ``ASSIGN``). Each distinct
+    label is mapped to ``1, 2, 3, ...`` in order of first appearance,
+    then all occurrences are rewritten.
+
+    Both halves of a co-family pair encounter labels in the same
+    source order if they share the same logical structure (the
+    typical case for upstream label-number drift between LAPACK S/D
+    or C/Z halves), so the renumbering produces identical canonical
+    text. A two-pass placeholder strategy avoids in-place rename
+    collisions: first map each label to ``\\x01L<canonical>\\x01``,
+    then replace placeholders with bare digits.
     """
-    text = text.upper()
-    text = re.sub(
-        r'\bEND\s+('
-        r'IF|DO|SELECT|WHERE|FORALL|SUBROUTINE|FUNCTION|'
-        r'MODULE|INTERFACE|PROGRAM|TYPE|BLOCK|ASSOCIATE'
-        r')\b',
-        r'END\1', text,
-    )
-    text = re.sub(r'[ \t]+', ' ', text)
-    # Horizontal whitespace only ([ \t], not \s) so that a Fortran
-    # fixed-form DATA statement ``DATA Z,T/0.E0_16,2.E0_16/`` never
-    # gets glued onto the next line via its trailing ``/``.
-    text = re.sub(r'[ \t]*([*+\-/=])[ \t]*', r'\1', text)
-    text = re.sub(r'[ \t]*\([ \t]*', '(', text)
-    text = re.sub(r'[ \t]*\)', ')', text)
-    text = re.sub(r'[ \t]*,[ \t]*', ',', text)
+    label_map: dict[str, str] = {}
 
-    # Strip per-line whitespace *before* sorting declarations so the
-    # ``^`` anchor sees the statement keyword at the line start.
-    text = '\n'.join(ln.strip() for ln in text.split('\n'))
+    def assign(n: str) -> str:
+        if n not in label_map:
+            label_map[n] = f'\x01L{len(label_map) + 1}\x01'
+        return label_map[n]
 
-    # Sort INTRINSIC / EXTERNAL argument lists. The ordering of these
-    # declarations varies between co-family halves (e.g. C sources
-    # list ``INTRINSIC CONJG,MAX,MIN,REAL`` while Z sources write
-    # ``INTRINSIC REAL,CONJG,MAX,MIN``) but is semantically irrelevant.
-    def _sort_decl(m):
-        return f'{m.group(1)} ' + ','.join(sorted(m.group(2).split(',')))
+    def replace(m: re.Match[str]) -> str:
+        for gi in (1, 2, 3, 4, 5):
+            if m.group(gi) is not None:
+                return m.group(0).replace(m.group(gi), assign(m.group(gi)), 1)
+        # Computed GO TO body — renumber each digit literal in the list.
+        body = m.group(6)
+        new = re.sub(r'\d+', lambda dm: assign(dm.group()), body)
+        return m.group(0).replace(body, new, 1)
 
-    text = re.sub(
-        r'\b(INTRINSIC|EXTERNAL)\s+([A-Z_][A-Z0-9_]*(?:,[A-Z_][A-Z0-9_]*)*)',
-        _sort_decl, text,
-    )
-
-    # Sort bare-identifier lists after a simple type-spec. Co-family
-    # halves reorder symbols between their ``INTEGER``/``REAL(KIND=N)``
-    # declarations of named external functions (``REAL(KIND=16)
-    # XLANGB,XLANTB,QLAMCH`` vs ``QLAMCH,XLANGB,XLANTB``). Match only
-    # pure name lists — lines with ``=``, ``(``, ``*`` (e.g. array
-    # specs ``A(LDA,*)``) are left alone.
-    def _prec_neutral_key(name: str) -> str:
-        """Sort key that maps S↔D and C↔Z to the same character so
-        precision-equivalent locals (CI vs ZI) sort to the same position."""
-        return name.replace('S', 'D').replace('C', 'Z')
-
-    def _sort_typed_decl(m):
-        type_spec, body = m.group(1), m.group(2)
-        names = body.split(',')
-        return f'{type_spec} ' + ','.join(
-            sorted(names, key=_prec_neutral_key))
-
-    text = re.sub(
-        r'^(INTEGER|LOGICAL|REAL\(KIND=\d+\)|COMPLEX\(KIND=\d+\)|TYPE\(\w+\))\s+'
-        r'([A-Z_][A-Z0-9_]*(?:,[A-Z_][A-Z0-9_]*)+)$',
-        _sort_typed_decl, text, flags=re.MULTILINE,
-    )
-
-    # Sort type-declaration statement lines to eliminate ordering drift
-    # between co-family halves. Only lines that start with a type
-    # keyword are reordered; everything else stays in place.
-    lines = text.split('\n')
-    _DECL_RE = re.compile(
-        r'^\s*(?:INTEGER|LOGICAL|REAL\(|COMPLEX\(|CHARACTER|'
-        r'DOUBLE\s+PRECISION|TYPE\s*\()\b'
-    )
-    decl_indices = [k for k, ln in enumerate(lines) if _DECL_RE.match(ln)]
-    if decl_indices:
-        decl_contents = sorted(
-            (lines[k] for k in decl_indices),
-            key=_prec_neutral_key,
-        )
-        for idx, k in enumerate(decl_indices):
-            lines[k] = decl_contents[idx]
-
-    lines = [ln.strip() for ln in lines]
-    return '\n'.join(ln for ln in lines if ln)
-
-
-def _apply_local_renames(text: str, renames: dict[str, str]) -> str:
-    """Apply recipe-declared local-variable equivalence folds.
-
-    ``renames`` declares equivalence classes: each key is a local
-    identifier that should be treated as identical to its value for
-    convergence-report purposes only. Applied **to both halves** of
-    every pair (D/Z canonical read from disk and S/C other migrated
-    in-memory) before light-normalized comparison, so ScaLAPACK's
-    S-half ``CR`` / ``CI`` folds onto Z-half ``ZR`` / ``ZI`` in
-    pzlattrs AND a D-half file that already uses ``CR`` still
-    converges with its S-half sibling. Neither the on-disk canonical
-    nor the recipe source is modified; this is comparison-only.
-    Matching is case-insensitive; replacement casing tracks the
-    source match.
-    """
-    if not renames:
-        return text
-    keys = sorted(renames.keys(), key=len, reverse=True)
-    pattern = re.compile(
-        r'\b(' + '|'.join(re.escape(k) for k in keys) + r')\b',
-        re.IGNORECASE,
-    )
-    upper_map = {k.upper(): v.upper() for k, v in renames.items()}
-
-    def _sub(m: re.Match) -> str:
-        src = m.group(0)
-        new = upper_map[src.upper()]
-        if src.isupper():
-            return new
-        if src.islower():
-            return new.lower()
-        return new
-
-    return pattern.sub(_sub, text)
+    text = _LABEL_PATTERN.sub(replace, text)
+    return re.sub(r'\x01L(\d+)\x01', r'\1', text)
 
 
 _PRECISION_PAIRS = frozenset({
@@ -462,25 +455,6 @@ def _filter_precision_drift(lines_a: list[str],
             diff_lines.append(f'+{line}')
     return diff_lines
 
-
-def _light_normalize_c(text: str) -> str:
-    """Minimal C normalization for post-migration convergence checking.
-
-    Mirrors :func:`_light_normalize` for Fortran. Assumes the migrator
-    has already rewritten identifiers, types, and MPI constants — the
-    only drift tolerated here is whitespace around tokens and blank
-    lines. Preserves case (C is case-sensitive) but collapses runs of
-    horizontal whitespace and strips whitespace adjacent to common
-    punctuation, so column-aligned declarations like ``float
-    *A,`` vs ``QREAL          *A,`` converge.
-    """
-    # Tokenize each line into words and single non-whitespace chars,
-    # then rejoin with a single space. This collapses column padding
-    # and incidental space drift around punctuation uniformly.
-    lines = [' '.join(re.findall(r'\w+|\S', ln)) for ln in text.split('\n')]
-    return '\n'.join(ln for ln in lines if ln)
-
-
 def _canonicalize_for_compare(text: str) -> str:
     """Normalize text to ignore cosmetic precision-specific differences
     that remain after migration.
@@ -492,8 +466,12 @@ def _canonicalize_for_compare(text: str) -> str:
     text = re.sub(r"\b(\w*\d\w*)\s*\(\s*'([^']+)'\s*\)", r"\2", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(\w*\d\w*)\s*\(([^)]+)\)", r"\2", text, flags=re.IGNORECASE)
 
-    # 1. d/D exponent → E in numeric literals
-    text = re.sub(r'(\d)[dD]([+-]?\d)', r'\1E\2', text)
+    # 1. d/D exponent → E in numeric literals. The leading character may
+    #    be a digit or a ``.`` (Fortran allows ``1.D0`` as a typed-real
+    #    literal) — needed to fold ``1.D0`` ↔ ``1`` cosmetic drift between
+    #    MUMPS S/D halves (sana_aux_par writes ``SYMMETRY = 1.D0`` while
+    #    dana_aux_par writes ``SYMMETRY = 1``).
+    text = re.sub(r'([\d.])[dD]([+-]?\d)', r'\1E\2', text)
     # 2. Strip _N kind suffixes on literals (suffix after a digit)
     text = re.sub(r'(\d)_\d+\b', r'\1', text)
     # 3. Drop insignificant exponents (E0/E+0/e-0/E00 ...)
@@ -504,6 +482,24 @@ def _canonicalize_for_compare(text: str) -> str:
     text = _strip_real_cmplx_casts(text)
     # 4c. Canonicalize numeric literal forms.
     text = re.sub(r'(\d)\.0*(?![\deEdD_])', r'\1', text)
+    # 4c2. Collapse scientific-notation literals that name an integer
+    #     to that integer's decimal form. ScaLAPACK's ``bslaexc.f``
+    #     writes ``PARAMETER(TEN=1.0E1)`` while ``bdlaexc.f`` writes
+    #     ``PARAMETER(TEN=10)``; both name the same value but as
+    #     different literal forms. Match ``<int>.<zeros?>E<+?<int>``
+    #     and re-render as the expanded integer when the result fits
+    #     in a reasonable size (exp ≤ 18, the precision limit of
+    #     double-precision integer reproduction).
+    def _expand_int_exponent(m: re.Match) -> str:
+        mantissa = int(m.group(1))
+        exp = int(m.group(2))
+        if exp > 18:
+            return m.group(0)
+        return str(mantissa * (10 ** exp))
+    text = re.sub(
+        r'\b(\d+)\.0*[eE]\+?(\d+)\b',
+        _expand_int_exponent, text,
+    )
     # 4d. Strip ``(KIND=N)`` suffix or TYPE(...) specifier.
     text = re.sub(
         r'\bREAL\s*\(\s*KIND\s*=\s*\d+\s*\)',
@@ -519,9 +515,28 @@ def _canonicalize_for_compare(text: str) -> str:
         r'\bTYPE\s*\(\s*\w+\s*\)',
         r'REAL', text, flags=re.IGNORECASE)
     
+    # 4e. Canonicalize numeric labels. Must run before the
+    #     ``[sdczSDCZ]→@`` substitution at step 5, which would turn
+    #     ``DO 100`` into ``@O 100`` and defeat the ``\bDO\b`` part of
+    #     the label pattern. Uppercase first so the pattern (which
+    #     expects uppercase ``DO``/``GO TO``) matches mixed-case input.
+    text = _canonicalize_labels(text.upper())
     # 5. Canonicalize prefix-dependent identifiers
     text = re.sub(
         r'(?<![A-Za-z0-9])[sdczSDCZ]+(?=[A-Za-z])', '@', text,
+    )
+    # 5_str. The previous rule requires a non-alphanumeric lookbehind so
+    #     it doesn't fold the ``D`` inside ``DBLE`` or the ``S`` inside
+    #     ``STOP``. But MUMPS error strings embed routine names directly
+    #     after a leading word with no separator (e.g.
+    #     ``"... message inSMUMPS_BUF_SEND_BLOCFACTO"`` vs
+    #     ``"... message inDMUMPS_BUF_..."``). Collapse the precision
+    #     letter immediately preceding the library-specific roots
+    #     ``MUMPS_``, ``LAPACK``, ``BLAS``, ``BLACS``, ``SCALAPACK`` so
+    #     these literal-embedded names converge regardless of context.
+    text = re.sub(
+        r'[sdczSDCZ](?=MUMPS_|LAPACK|BLAS|BLACS|SCALAPACK)',
+        '@', text,
     )
     # 5a. iso_fortran_env kind imports: ``only: real32`` vs
     #     ``only: real64`` survive as an unused import (after the
@@ -538,6 +553,30 @@ def _canonicalize_for_compare(text: str) -> str:
     #     precision halves.
     text = re.sub(r'\bEND\s+(IF|DO|SELECT|WHERE|FORALL|SUBROUTINE|FUNCTION|MODULE|INTERFACE|PROGRAM|TYPE|BLOCK|ASSOCIATE)\b',
                   r'END\1', text)
+    # 5c2. Merge ``ELSE IF`` → ``ELSEIF`` and ``GO TO`` → ``GOTO``.
+    #      Same upstream-style asymmetry as END+keyword.
+    text = re.sub(r'\bELSE\s+IF\b', 'ELSEIF', text)
+    text = re.sub(r'\bGO\s+TO\b', 'GOTO', text)
+    # 5c3. ``DOUBLE PRECISION`` keyword: equate to ``REAL``. After
+    #      migration both halves' real-typed locals get the same
+    #      kind, but the keyword may survive as-is on each side.
+    text = re.sub(r'\bDOUBLE\s+PRECISION\b', 'REAL', text)
+    # 5c4. ``COMPLEX*16`` → ``COMPLEX`` for the same reason.
+    text = re.sub(r'\bCOMPLEX\s*\*\s*16\b', 'COMPLEX', text)
+    # 5c5. Collapse empty / single-space string literals — LAPACK has
+    #      ``ILAENV(..., '', ...)`` vs ``ILAENV(..., ' ', ...)`` and
+    #      ``XERBLA('NAME', ...)`` vs ``XERBLA('NAME ', ...)``. The
+    #      trailing spaces inside ``'...'`` (a Fortran CHARACTER literal)
+    #      affect the callee's interpretation only via LEN_TRIM, which
+    #      for LAPACK's ROUTINE / OPTS string args is always done — so
+    #      ``''`` and ``' '`` and ``'  '`` all behave identically.
+    text = re.sub(r"'( *)'",
+                  lambda m: "''" if not m.group(1) else "' '", text)
+    # 5c6. Strip trailing spaces inside XERBLA first-arg literals so
+    #      ``XERBLA('NAME ', ...)`` matches ``XERBLA('NAME', ...)``.
+    text = re.sub(
+        r"(XERBLA\s*\(\s*'[A-Z0-9_]+) +(')",
+        r'\1\2', text)
     # 5d. Strip bare ``IMPLICIT NONE`` (or any other IMPLICIT spec).
     #     Some S/D halves have it and others don't; it has no bearing
     #     on the migrated numerics.
@@ -558,12 +597,50 @@ def _canonicalize_for_compare(text: str) -> str:
     #     ``F(X)``, ``IF (X)`` vs ``IF(X)``).
     text = re.sub(r'\s*\(\s*', '(', text)
     text = re.sub(r'\s*\)', ')', text)
+    # 6c2. Strip whitespace around ``::`` (F90 attribute-list separator)
+    #      so ``REAL :: X`` and ``REAL::X`` compare equal.
+    text = re.sub(r'\s*::\s*', '::', text)
+    # 6c3. Strip whitespace before ``THEN``: ``IF(X)THEN`` and
+    #      ``IF(X) THEN`` are equivalent. ``\)THEN`` and ``)THEN``
+    #      should collapse, but the prior parens rule already strips
+    #      space inside the parens — what remains is a possibly-empty
+    #      gap between the closing ``)`` and ``THEN``.
+    text = re.sub(r'\)\s+THEN\b', ')THEN', text)
     # 6d. Strip whitespace around commas. LAPACK formats complex
     #     literals and argument lists as ``(1.0, 0.0)`` vs
     #     ``(1.0,0.0)`` inconsistently between S/C and D/Z halves,
     #     and occasionally leaves a stray space before the comma
     #     (``1 ,WORK``).
     text = re.sub(r'\s*,\s*', ',', text)
+    # 6d2. Strip whitespace around Fortran word operators
+    #      (``.AND.``, ``.OR.``, ``.NOT.``, ``.NE.``, etc.). LAPACK
+    #      halves format ``LWMIN .AND. X`` vs ``LWMIN.AND.X``
+    #      arbitrarily; the arithmetic-op rule at 6b does not cover
+    #      these because they are bracketed by ``.``.
+    text = re.sub(
+        r'\s*(\.(?:AND|OR|NOT|NE|EQ|LT|LE|GT|GE|EQV|NEQV)\.)\s*',
+        r'\1', text)
+    # 6e. Drop redundant parens around RHS of assignments:
+    #     ``WORK(1)=(EXPR)`` vs ``WORK(1)=EXPR``. The outer ``(...)``
+    #     is stripped only if its matching ``)`` lands at end-of-line
+    #     (or end-of-text) — i.e. the parens wrap the entire RHS.
+    #     Nested parens inside ``EXPR`` are tolerated via depth-walk.
+    def _strip_rhs_parens(line: str) -> str:
+        i = line.find('=(')
+        if i < 0:
+            return line
+        depth = 1
+        j = i + 2
+        while j < len(line) and depth > 0:
+            if line[j] == '(':
+                depth += 1
+            elif line[j] == ')':
+                depth -= 1
+            j += 1
+        if depth == 0 and j == len(line):
+            return line[:i + 1] + line[i + 2:j - 1]
+        return line
+    text = '\n'.join(_strip_rhs_parens(ln) for ln in text.split('\n'))
     # 6e. Collapse doubled parens ``((X))`` → ``(X)``. LAPACK
     #     occasionally wraps a boolean / logical expression in an
     #     extra redundant paren on one half.
@@ -577,29 +654,20 @@ def _canonicalize_for_compare(text: str) -> str:
     #    arbitrary (often precision-specific) order — e.g., S source
     #    writes "INTRINSIC REAL, CONJG, MAX" while Z source writes
     #    "INTRINSIC CONJG, MAX, MIN, REAL".
-    def _sort_decl(match: re.Match) -> str:
-        kw = match.group(1)
-        items = [s.strip() for s in match.group(2).split(',')]
-        return f'{kw} ' + ', '.join(sorted(items))
+    # Sort declaration-list bodies with a precision-neutral key so
+    # co-family halves whose local-variable names differ only at an
+    # S↔D / C↔Z position (``WPSLANGE`` vs ``WPDLANGE``,
+    # ``SIZEPZHETRD`` vs ``SIZEPCHETRD``) land in the same order.
+    # Without the neutral key the post-sort positions diverge and
+    # ``_filter_precision_drift`` no longer recognizes the pair as
+    # token-aligned.
     text = re.sub(
         r'\b(INTRINSIC|EXTERNAL|INTEGER|LOGICAL|COMPLEX|REAL)\s+'
         r'([A-Za-z_@][A-Za-z0-9_@,\s]*?)(?=$)',
-        _sort_decl, text, flags=re.MULTILINE,
+        lambda m: _sort_decl_match(m, key=_prec_neutral_key, sep=', '),
+        text, flags=re.MULTILINE,
     )
     return text
-
-
-def _strip_c_comments(text: str) -> str:
-    """Strip // and /* */ comments plus blank/whitespace-only lines."""
-    # Remove /* ... */ block comments (possibly multi-line)
-    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
-    # Remove // line comments
-    text = re.sub(r'//[^\n]*', '', text)
-    # Collapse blank/whitespace-only lines and trim trailing spaces
-    lines = [ln.rstrip() for ln in text.split('\n')]
-    lines = [ln for ln in lines if ln.strip()]
-    return '\n'.join(lines)
-
 
 def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
                           output_dir: Path, target_mode: TargetMode,
@@ -652,17 +720,6 @@ def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
     src_files = sorted(set(src_files).union(
         p for p in extra_migrate if p.is_file()
     ))
-    # Swap any upstream source whose filename matches a recipe-level
-    # override. The override file is in upstream shape (DOUBLE PRECISION,
-    # pd*/dz* naming, etc.) and goes through the normal migration
-    # pipeline so it produces correctly-renamed output for every target.
-    if config.source_overrides:
-        src_files = [
-            (config.source_overrides[p.name]
-             if p.name in config.source_overrides else p)
-            for p in src_files
-        ]
-
     # Convergence buffer: first writer of each output name stores its
     # text; subsequent writers must agree or we record a divergence.
     # D/Z sources are preferred as the canonical text: when a pair
@@ -692,15 +749,7 @@ def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
     # Build module-rename regex pairs once. Applied post-migration to
     # every migrated file (copy_files are deliberately untouched so the
     # verbatim upstream module keeps its original name).
-    module_rename_pairs: list[tuple[re.Pattern[str], str]] = []
-    for old_mod, new_mod in (config.module_renames or {}).items():
-        pat = re.compile(r'(?i)(\bUSE\s+)' + re.escape(old_mod) + r'\b')
-        module_rename_pairs.append((pat, r'\g<1>' + new_mod))
-
-    def _apply_module_renames(text: str) -> str:
-        for pat, repl in module_rename_pairs:
-            text = pat.sub(repl, text)
-        return text
+    module_rename_pairs = _build_module_rename_pairs(config)
 
     # Partition: copy/skip/dry-run decisions stay in the main process;
     # only the Flang-bound migration is dispatched to workers.
@@ -762,7 +811,7 @@ def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
             skipped.append(src_path.name)
             continue
         out_name, migrated = result
-        migrated = _apply_module_renames(migrated)
+        migrated = _apply_module_renames(migrated, module_rename_pairs)
         normalized = _canonicalize_for_compare(
             _strip_fortran_comments(migrated, src_path.suffix)
         )
@@ -855,7 +904,8 @@ def _collect_all_symbols(config: RecipeConfig,
 def run_divergence_report(recipe_path: Path, target_mode=None,
                            project_root: Path | None = None,
                            parser: str | None = None,
-                           parser_cmd: str | None = None) -> list[dict]:
+                           parser_cmd: str | None = None,
+                           apply_whitelist: bool = True) -> list[dict]:
     """Migrate every co-family source pair in-memory and return the
     normalized diff for each pair whose members disagree.
 
@@ -865,7 +915,7 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
     canonicalized texts.
     """
     import difflib
-    config = load_recipe(recipe_path, project_root)
+    config = prepare_recipe(recipe_path, project_root)
 
     symbols = _collect_all_symbols(config, project_root)
     classification = classify_symbols(symbols)
@@ -903,6 +953,7 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
     all_paths = {p for pair in pairs for p in pair}
     texts: dict[Path, str] = {}
     workers = max(1, (os.cpu_count() or 4))
+    module_rename_pairs = _build_module_rename_pairs(config)
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futures = {
             ex.submit(migrate_file_to_string, p, rename_map, target_mode,
@@ -919,29 +970,37 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
                 if res is None:
                     continue
                 _, migrated = res
-                texts[p] = migrated
+                texts[p] = _apply_module_renames(migrated, module_rename_pairs)
             except Exception as exc:
                 print(f'  warning: migration crashed on {p.name}: '
                       f'{type(exc).__name__}: {exc}', file=sys.stderr)
+
+    # Memoize the normalized text per path. A 4-member precision
+    # family produces 3 pairs that all share the same canonical;
+    # without this cache the canonical's _canonicalize_for_compare +
+    # _strip_fortran_comments pipeline ran once per pair.
+    normalized: dict[Path, str] = {}
+
+    def _normalize(p: Path) -> str:
+        n = normalized.get(p)
+        if n is None:
+            n = _canonicalize_for_compare(
+                _strip_fortran_comments(texts[p], p.suffix))
+            normalized[p] = n
+        return n
 
     report: list[dict] = []
     for canonical, other in pairs:
         if canonical not in texts or other not in texts:
             continue
-        n_can = _canonicalize_for_compare(
-            _strip_fortran_comments(texts[canonical], canonical.suffix))
-        n_oth = _canonicalize_for_compare(
-            _strip_fortran_comments(texts[other], other.suffix))
+        n_can = _normalize(canonical)
+        n_oth = _normalize(other)
         if n_can == n_oth:
             continue
-        diff = [
-            line for line in difflib.unified_diff(
-                n_oth.splitlines(), n_can.splitlines(),
-                lineterm='', n=0,
-            )
-            if line.startswith(('-', '+'))
-            and not line.startswith(('---', '+++'))
-        ]
+        diff = _filter_precision_drift(
+            n_oth.splitlines(), n_can.splitlines())
+        if not diff:
+            continue
         report.append({
             'target': target_filename(canonical.name, rename_map, target_mode),
             'canonical': canonical.name,
@@ -949,254 +1008,10 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
             'diff': diff,
         })
     report.sort(key=lambda r: (r['other'], r['canonical']))
-    return report
+    if not apply_whitelist:
+        return report
+    return _filter_expected_divergences(report, config)
 
-
-def run_convergence_report(recipe_path: Path, output_dir: Path,
-                            target_mode=None,
-                            project_root: Path | None = None,
-                            parser: str | None = None,
-                            parser_cmd: str | None = None) -> list[dict]:
-    """Verify that already-migrated files converge with a fresh
-    migration of their S/C co-family siblings.
-
-    Reads each pair's canonical (D/Z-derived) target from
-    ``output_dir``, re-migrates the S/C member in memory, then
-    compares the two with :func:`_light_normalize` — whitespace,
-    case, and ``END KEYWORD`` merging only. All semantic
-    transforms (identifier renames, literal kinds, casts, typedef
-    substitutions) are the migrator's responsibility; this report
-    flags anything that slipped through.
-
-    Returns ``[{'target', 'canonical', 'other', 'diff', 'status'}]``
-    where ``status`` is ``'diverged'`` for normalized mismatches and
-    ``'missing'`` for pairs whose on-disk canonical is absent.
-    """
-    import difflib
-    config = load_recipe(recipe_path, project_root)
-
-    if config.language == 'c':
-        return run_c_convergence_report(
-            recipe_path, output_dir, target_mode, project_root
-        )
-    if config.language != 'fortran':
-        print(f'  (converge currently only supports Fortran/C recipes; '
-              f'{config.library} is {config.language} — skipping)')
-        return []
-
-    symbols = _collect_all_symbols(config, project_root)
-    classification = classify_symbols(symbols)
-    rename_map = classification.build_rename_map(target_mode)
-    rename_map = _apply_extra_renames(rename_map, config, target_mode)
-
-    src_files = sorted(
-        p for p in config.source_dir.iterdir()
-        if p.suffix.lower() in config.extensions
-    )
-    by_target: dict[str, list[Path]] = {}
-    for p in src_files:
-        stem_u = p.stem.upper()
-        if stem_u in config.skip_files or stem_u in config.copy_files:
-            continue
-        if stem_u in classification.independent:
-            continue
-        by_target.setdefault(target_filename(p.name, rename_map, target_mode), []).append(p)
-
-    pairs: list[tuple[Path, Path]] = []
-    for tn, members in by_target.items():
-        if len(members) < 2:
-            continue
-        members.sort(key=lambda p: (
-            0 if p.stem.upper() in config.prefer_source
-            else (1 if p.stem and p.stem[0].upper() in ('D', 'Z') else 2),
-            p.name,
-        ))
-        canonical = members[0]
-        for other in members[1:]:
-            pairs.append((canonical, other))
-
-    # Only the S/C (other) halves need re-migration; the D/Z
-    # canonical is already on disk.
-    others_to_migrate = {other for _, other in pairs}
-    texts: dict[Path, str] = {}
-    workers = max(1, (os.cpu_count() or 4))
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        futures = {
-            ex.submit(migrate_file_to_string, p, rename_map, target_mode,
-                      parser, parser_cmd,
-                      config.keep_kind_lines.get(p.name)): p
-            for p in others_to_migrate
-        }
-        for fut in tqdm(as_completed(futures), total=len(futures),
-                        desc='  Re-migrating S/C', unit='file',
-                        mininterval=1.0, miniters=10):
-            p = futures[fut]
-            try:
-                res = fut.result()
-                if res is None:
-                    continue
-                _, migrated = res
-                texts[p] = migrated
-            except Exception as exc:
-                print(f'  warning: re-migration crashed on {p.name}: '
-                      f'{type(exc).__name__}: {exc}', file=sys.stderr)
-
-    report: list[dict] = []
-    for canonical, other in pairs:
-        target_name = target_filename(canonical.name, rename_map, target_mode)
-        on_disk = output_dir / target_name
-        if not on_disk.is_file():
-            report.append({
-                'target': target_name,
-                'canonical': canonical.name,
-                'other': other.name,
-                'diff': [],
-                'status': 'missing',
-            })
-            continue
-        if other not in texts:
-            continue
-        disk_text = on_disk.read_text(errors='replace')
-        other_text = texts[other]
-        # Apply any remaining recipe-level local renames (for non-precision
-        # cases like CONJTOPH→TTOPH that aren't S↔D / C↔Z swaps).
-        if config.local_renames:
-            disk_text = _apply_local_renames(disk_text, config.local_renames)
-            other_text = _apply_local_renames(other_text,
-                                              config.local_renames)
-        n_can = _light_normalize(
-            _strip_fortran_comments(disk_text, canonical.suffix))
-        n_oth = _light_normalize(
-            _strip_fortran_comments(other_text, other.suffix))
-        if n_can == n_oth:
-            continue
-        # Filter out precision-prefix local-variable drift (S↔D, C↔Z).
-        # Any properly-classified symbol has the same migrated name in
-        # both halves, so precision-prefix differences in the diff can
-        # only come from locals not in the rename map.
-        diff = _filter_precision_drift(
-            n_oth.splitlines(), n_can.splitlines())
-        if not diff:
-            continue
-        report.append({
-            'target': target_name,
-            'canonical': canonical.name,
-            'other': other.name,
-            'diff': diff,
-            'status': 'diverged',
-        })
-    report.sort(key=lambda r: (r['status'], r['other'], r['canonical']))
-    return report
-
-
-def run_c_convergence_report(recipe_path: Path, output_dir: Path,
-                              target_mode=None,
-                              project_root: Path | None = None) -> list[dict]:
-    """Verify that migrated C files on disk converge with a fresh
-    migration of their S/C co-family siblings.
-
-    C counterpart of :func:`run_convergence_report`. Each eligible
-    source ``.c`` file in ``config.source_dir`` is migrated in memory
-    via :func:`migrate_c_file_to_string` to discover its target name;
-    files that collide on a target form co-family groups. The D/Z
-    member is the canonical (read from disk at ``output_dir``); each
-    S/C sibling's in-memory migration result is compared with
-    :func:`_light_normalize_c` after stripping C comments.
-
-    Supports both scalapack-style recipes (rename-map driven, e.g.
-    PBLAS) and direct-style recipes (prefix driven, e.g. BLACS).
-    """
-    import difflib
-    config = load_recipe(recipe_path, project_root)
-
-    if config.language != 'c':
-        print(f'  (run_c_convergence_report called on non-C recipe '
-              f'{config.library} — skipping)')
-        return []
-
-    rename_map: dict[str, str] | None = None
-    classification = None
-    # Every C recipe except BLACS uses the rename-map-driven path —
-    # see the matching gate in run_migration().
-    if config.library != 'blacs':
-        symbols = _collect_all_symbols(config, project_root)
-        classification = classify_symbols(symbols)
-        rename_map = classification.build_rename_map(target_mode)
-        rename_map = _apply_extra_renames(rename_map, config, target_mode)
-
-    src_files = sorted(
-        p for p in config.source_dir.iterdir()
-        if p.suffix.lower() == '.c'
-    )
-
-    # Migrate every source in memory and group by target filename. For
-    # BLACS the target-computing cost is trivial; for PBLAS we'd save
-    # work by skipping D/Z here, but the rename_map regex build is the
-    # hot part and unavoidable either way.
-    by_target: dict[str, list[tuple[Path, str]]] = {}
-    for p in tqdm(src_files, desc='  Re-migrating C sources', unit='file',
-                  mininterval=1.0, miniters=10):
-        try:
-            res = migrate_c_file_to_string(
-                p, target_mode,
-                rename_map=rename_map,
-                classification=classification,
-                c_type_aliases=config.c_type_aliases,
-            )
-        except Exception as exc:
-            print(f'  warning: C re-migration crashed on {p.name}: '
-                  f'{type(exc).__name__}: {exc}', file=sys.stderr)
-            continue
-        if res is None:
-            continue
-        target_name, text = res
-        by_target.setdefault(target_name, []).append((p, text))
-
-    def _is_dz(src_path: Path) -> bool:
-        stem = src_path.stem
-        base = stem[3:] if stem.startswith('BI_') else stem
-        return bool(base) and base[0].lower() in ('d', 'z')
-
-    report: list[dict] = []
-    for target_name, members in by_target.items():
-        if len(members) < 2:
-            continue
-        members.sort(key=lambda m: (not _is_dz(m[0]), m[0].name))
-        canonical_path, _ = members[0]
-        on_disk = output_dir / target_name
-        if not on_disk.is_file():
-            for other_path, _ in members[1:]:
-                report.append({
-                    'target': target_name,
-                    'canonical': canonical_path.name,
-                    'other': other_path.name,
-                    'diff': [],
-                    'status': 'missing',
-                })
-            continue
-        disk_text = on_disk.read_text(errors='replace')
-        n_can = _light_normalize_c(_strip_c_comments(disk_text))
-        for other_path, other_text in members[1:]:
-            n_oth = _light_normalize_c(_strip_c_comments(other_text))
-            if n_can == n_oth:
-                continue
-            diff = [
-                line for line in difflib.unified_diff(
-                    n_oth.splitlines(), n_can.splitlines(),
-                    lineterm='', n=0,
-                )
-                if line.startswith(('-', '+'))
-                and not line.startswith(('---', '+++'))
-            ]
-            report.append({
-                'target': target_name,
-                'canonical': canonical_path.name,
-                'other': other_path.name,
-                'diff': diff,
-                'status': 'diverged',
-            })
-    report.sort(key=lambda r: (r['status'], r['other'], r['canonical']))
-    return report
 
 
 def run_c_migration(config: RecipeConfig, output_dir: Path,
@@ -1227,7 +1042,6 @@ def run_c_migration(config: RecipeConfig, output_dir: Path,
         extra_c_dirs=config.extra_c_dirs,
         skip_files=config.skip_files,
         copy_files=config.copy_files,
-        source_overrides=config.source_overrides,
     )
     return result
 
@@ -1288,7 +1102,7 @@ def run_migration(recipe_path: Path, output_dir: Path,
     Returns:
         Summary dict with migration statistics.
     """
-    config = load_recipe(recipe_path, project_root)
+    config = prepare_recipe(recipe_path, project_root)
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 

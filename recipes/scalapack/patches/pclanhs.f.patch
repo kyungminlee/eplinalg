@@ -1,0 +1,110 @@
+--- a/pclanhs.f
++++ b/pclanhs.f
+@@ -222,6 +222,8 @@
+                JJ = JJ + JB
+             END IF
+ *
++*           Bug fix (vs upstream ScaLAPACK 2.2.3): see pdlanhs.f.
++            II = II + JB
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -273,7 +275,7 @@
+             IF( MYROW.EQ.IAROW )
+      $         II = II + JB
+             IAROW = INXTROW
+-            IAROW = MOD( IAROW+1, NPROW )
++            INXTROW = MOD( INXTROW+1, NPROW )
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -306,7 +308,7 @@
+                IF( MYROW.EQ.IAROW )
+      $            II = II + JB
+                IAROW = INXTROW
+-               IAROW = MOD( IAROW+1, NPROW )
++               INXTROW = MOD( INXTROW+1, NPROW )
+                IACOL = MOD( IACOL+1, NPCOL )
+ *
+   140       CONTINUE
+@@ -344,6 +346,8 @@
+                JJ = JJ + JB
+             END IF
+ *
++*           Bug fix (vs upstream ScaLAPACK 2.2.3): see pdlanhs.f.
++            II = II + JB
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -402,7 +406,7 @@
+             IF( MYROW.EQ.IAROW )
+      $         II = II + JB
+             IAROW = INXTROW
+-            IAROW = MOD( IAROW+1, NPROW )
++            INXTROW = MOD( INXTROW+1, NPROW )
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -439,7 +443,7 @@
+                IF( MYROW.EQ.IAROW )
+      $            II = II + JB
+                IAROW = INXTROW
+-               IAROW = MOD( IAROW+1, NPROW )
++               INXTROW = MOD( INXTROW+1, NPROW )
+                IACOL = MOD( IACOL+1, NPCOL )
+ *
+   280       CONTINUE
+@@ -492,6 +496,8 @@
+                JJ = JJ + JB
+             END IF
+ *
++*           Bug fix (vs upstream ScaLAPACK 2.2.3): see pdlanhs.f.
++            II = II + JB
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -547,7 +553,7 @@
+             IF( MYROW.EQ.IAROW )
+      $         II = II + JB
+             IAROW = INXTROW
+-            IAROW = MOD( IAROW+1, NPROW )
++            INXTROW = MOD( INXTROW+1, NPROW )
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -582,7 +588,7 @@
+                IF( MYROW.EQ.IAROW )
+      $            II = II + JB
+                IAROW = INXTROW
+-               IAROW = MOD( IAROW+1, NPROW )
++               INXTROW = MOD( INXTROW+1, NPROW )
+                IACOL = MOD( IACOL+1, NPCOL )
+ *
+   430       CONTINUE
+@@ -631,6 +637,8 @@
+                JJ = JJ + JB
+             END IF
+ *
++*           Bug fix (vs upstream ScaLAPACK 2.2.3): see pdlanhs.f.
++            II = II + JB
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -680,7 +688,7 @@
+             IF( MYROW.EQ.IAROW )
+      $         II = II + JB
+             IAROW = INXTROW
+-            IAROW = MOD( IAROW+1, NPROW )
++            INXTROW = MOD( INXTROW+1, NPROW )
+             IACOL = MOD( IACOL+1, NPCOL )
+ *
+ *           Loop over remaining block of columns
+@@ -711,7 +719,7 @@
+                IF( MYROW.EQ.IAROW )
+      $            II = II + JB
+                IAROW = INXTROW
+-               IAROW = MOD( IAROW+1, NPROW )
++               INXTROW = MOD( INXTROW+1, NPROW )
+                IACOL = MOD( IACOL+1, NPCOL )
+ *
+   510       CONTINUE

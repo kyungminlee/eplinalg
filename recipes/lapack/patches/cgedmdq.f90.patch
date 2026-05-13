@@ -1,0 +1,31 @@
+--- a/cgedmdq.f90
++++ b/cgedmdq.f90
+@@ -635,7 +635,7 @@
+       WNTTRF = LSAME(JOBT,'R')
+       MINMN  = MIN(M,N)
+       INFO = 0
+-      LQUERY = ( ( LWORK == -1 ) .OR. ( LIWORK == -1 ) )
++      LQUERY = ( (LZWORK == -1) .OR. (LWORK == -1) .OR. (LIWORK == -1) )
+ !
+       IF ( .NOT. (SCCOLX .OR. SCCOLY .OR.                &
+                                   LSAME(JOBS,'N')) )  THEN
+@@ -698,6 +698,8 @@
+              ! the minimal workspace lengths are returned.
+             IF ( LQUERY ) THEN
+                IWORK(1) = 1
++               ZWORK(1) = 2
++               ZWORK(2) = 2
+                 WORK(1) = 2
+                 WORK(2) = 2
+             ELSE
+@@ -722,8 +724,8 @@
+          CALL CGEDMD( JOBS, JOBVL, JOBR, JOBF, WHTSVD, MINMN,&
+                       N-1, X, LDX, Y, LDY, NRNK, TOL, K,     &
+                       EIGS, Z, LDZ, RES,  B, LDB, V, LDV,    &
+-                      S, LDS, ZWORK, LZWORK, WORK, -1, IWORK,&
+-                      LIWORK, INFO1 )
++                      S, LDS, ZWORK, -1, WORK, -1, IWORK,    &
++                      -1, INFO1 )
+          MLWDMD = INT(ZWORK(1))
+          MLWORK = MAX(MLWORK, MINMN + MLWDMD)
+          MLRWRK = MAX(MLRWRK, INT(WORK(1)))

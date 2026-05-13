@@ -1,0 +1,20 @@
+--- a/pzheevd.f
++++ b/pzheevd.f
+@@ -262,6 +262,8 @@
+                INFO = -14
+             ELSE IF( LRWORK.LT.LRWMIN .AND. LRWORK.NE.-1 ) THEN
+                INFO = -16
++            ELSE IF( LIWORK.LT.LIWMIN .AND. LIWORK.NE.-1 ) THEN
++               INFO = -18
+             ELSE IF( IROFFA.NE.0 ) THEN
+                INFO = -4
+             ELSE IF( DESCA( MB_ ).NE.DESCA( NB_ ) ) THEN
+@@ -297,7 +299,7 @@
+          END IF
+          IDUM2( 2 ) = 14
+          CALL PCHK2MAT( N, 3, N, 3, IA, JA, DESCA, 7, N, 3, N, 3, IZ,
+-     $                  JZ, DESCZ, 11, 2, IDUM1, IDUM2, INFO )
++     $                  JZ, DESCZ, 12, 2, IDUM1, IDUM2, INFO )
+       END IF
+ *
+       IF( INFO.NE.0 ) THEN

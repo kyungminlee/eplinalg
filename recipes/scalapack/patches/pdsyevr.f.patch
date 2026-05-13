@@ -1,0 +1,11 @@
+--- a/pdsyevr.f
++++ b/pdsyevr.f
+@@ -536,7 +536,7 @@
+          IF( WANTZ ) THEN
+             IDUM1( 1 ) = ICHAR( 'V' )
+             CALL PCHK2MAT( N, 4, N, 4, IA, JA, DESCA, 8, N, 4, N, 4, IZ,
+-     $                     JZ, DESCZ, 21, 4, IDUM1, IDUM2, INFO )
++     $                     JZ, DESCZ, 19, 4, IDUM1, IDUM2, INFO )
+          ELSE
+             IDUM1( 1 ) = ICHAR( 'N' )
+             CALL PCHK1MAT( N, 4, N, 4, IA, JA, DESCA, 8, 4, IDUM1,

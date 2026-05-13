@@ -1,0 +1,11 @@
+--- a/sgeesx.f
++++ b/sgeesx.f
+@@ -645,7 +645,7 @@
+ *
+       WORK( 1 ) = SROUNDUP_LWORK(MAXWRK)
+       IF( WANTSV .OR. WANTSB ) THEN
+-         IWORK( 1 ) = SDIM*(N-SDIM)
++         IWORK( 1 ) = MAX( 1, SDIM*( N-SDIM ) )
+       ELSE
+          IWORK( 1 ) = 1
+       END IF

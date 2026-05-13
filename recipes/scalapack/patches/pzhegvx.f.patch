@@ -1,0 +1,14 @@
+--- a/pzhegvx.f
++++ b/pzhegvx.f
+@@ -749,9 +749,9 @@
+             IDUM1( 5 ) = 1
+          END IF
+          IDUM2( 5 ) = 5
+-         CALL PCHK2MAT( N, 4, N, 4, IA, JA, DESCA, 9, N, 4, N, 4, IB,
++         CALL PCHK2MAT( N, 5, N, 5, IA, JA, DESCA, 9, N, 5, N, 5, IB,
+      $                  JB, DESCB, 13, 5, IDUM1, IDUM2, INFO )
+-         CALL PCHK1MAT( N, 4, N, 4, IZ, JZ, DESCZ, 26, 0, IDUM1, IDUM2,
++         CALL PCHK1MAT( N, 5, N, 5, IZ, JZ, DESCZ, 26, 0, IDUM1, IDUM2,
+      $                  INFO )
+       END IF
+ *

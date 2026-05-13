@@ -1,0 +1,52 @@
+--- a/pdposvx.f
++++ b/pdposvx.f
+@@ -366,6 +366,7 @@
+      $                   IROFF, IROFFA, IROFFAF, IROFFB, IROFFX, IXCOL,
+      $                   IXROW, J, JJA, JJB, JJX, LDB, LDX, LIWMIN,
+      $                   LWMIN, MYCOL, MYROW, NP, NPCOL, NPROW, NRHSQ,
++     $                   NPMOD, NQMOD,
+      $                   NQ
+       DOUBLE PRECISION   AMAX, ANORM, BIGNUM, SCOND, SMAX, SMIN, SMLNUM
+ *     ..
+@@ -381,9 +382,9 @@
+ *     ..
+ *     .. External Functions ..
+       LOGICAL            LSAME
+-      INTEGER            INDXG2P, NUMROC
++      INTEGER            ICEIL, INDXG2P, NUMROC
+       DOUBLE PRECISION   PDLAMCH, PDLANSY
+-      EXTERNAL           PDLAMCH, INDXG2P, LSAME, NUMROC, PDLANSY
++      EXTERNAL           ICEIL, PDLAMCH, INDXG2P, LSAME, NUMROC, PDLANSY
+ *     ..
+ *     .. Intrinsic Functions ..
+       INTRINSIC          ICHAR, MAX, MIN, MOD
+@@ -427,7 +428,28 @@
+             NQ = NUMROC( N+ICOFFA, DESCA( NB_ ), MYCOL, IACOL, NPCOL )
+             IF( MYCOL.EQ.IACOL )
+      $         NQ = NQ-ICOFFA
+-            LWMIN = 3*DESCA( LLD_ )
++*           Upstream bug fix: LWMIN must accommodate the internal
++*           PDPOCON / PDPORFS calls (see comment at line 311 of the
++*           upstream prologue documenting the intended formula).
++*           Upstream sets LWMIN = 3*DESCA(LLD_), which is insufficient
++*           and causes PDPOCON to abort with INFO=-10.
++*           PDPOCON LWMIN  = 2*NPMOD + 2*NQMOD +
++*                            MAX(2, MAX(NB*ICEIL(NPROW-1,NPCOL),
++*                                       NQMOD + NB*ICEIL(NPCOL-1,NPROW)))
++*           PDPORFS LWMIN  = 3*NPMOD
++*           NPMOD/NQMOD are the unadjusted NUMROCs (PDPOCON's
++*           definition), independent of which row/col owns the offset.
++            NPMOD = NUMROC( N+IROFFA, DESCA( MB_ ), MYROW, IAROW,
++     $                      NPROW )
++            NQMOD = NUMROC( N+ICOFFA, DESCA( NB_ ), MYCOL, IACOL,
++     $                      NPCOL )
++            LWMIN = MAX(
++     $              2*NPMOD + 2*NQMOD +
++     $              MAX( 2, MAX( DESCA( NB_ )*
++     $                   MAX( 1, ICEIL( NPROW-1, NPCOL ) ),
++     $                   NQMOD + DESCA( NB_ )*
++     $                   MAX( 1, ICEIL( NPCOL-1, NPROW ) ) ) ),
++     $              3*NPMOD )
+             LIWMIN = NP
+             NOFACT = LSAME( FACT, 'N' )
+             EQUIL = LSAME( FACT, 'E' )
