@@ -951,7 +951,7 @@ def _dedup_intrinsic_stmts(text: str, target_mode: TargetMode | None = None) -> 
         j = i + 1
         while j < len(lines):
             next_line = lines[j]
-            is_fixed_cont = (len(next_line) > 6 and next_line[:5] == '     ' and next_line[5] not in (' ', '0', '') and next_line[0] not in ('C', 'c', '*', '!'))
+            is_fixed_cont = (len(next_line) > 6 and next_line[:5] == '     ' and next_line[5] not in (' ', '0') and next_line[0] not in ('C', 'c', '*', '!'))
             if is_fixed_cont:
                 stmt_lines.append(next_line)
                 j += 1
@@ -2440,8 +2440,13 @@ def insert_use_multifloats(source: str, target_mode: TargetMode,
         r'(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE(?!\s+PROCEDURE\b)|BLOCK\s+DATA)\b',
         re.IGNORECASE
     )
+    # ``END SUBROUTINE FOO``, ``END FUNCTION``, plain ``END``. Crucially
+    # NOT ``END IF`` / ``END DO`` / ``END SELECT`` — those would cut off
+    # the scan partway through the procedure. The keyword whitelist must
+    # be required if any word follows ``END``.
     end_proc_re = re.compile(
-        r'^\s*END\s*(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE|BLOCK\s*DATA)?\s*\w*\s*$',
+        r'^\s*END(?:\s+(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE|BLOCK\s*DATA)'
+        r'(?:\s+\w+)?)?\s*$',
         re.IGNORECASE,
     )
 
@@ -2908,7 +2913,7 @@ def _segment_fixed_form_statements(
             else:
                 ntext, nterm = nxt, ''
             if (len(ntext) > 5 and ntext[:1] != '\t' and ntext[:5] == '     '
-                    and ntext[5:6] not in (' ', '0', '\t', '')):
+                    and ntext[5:6] not in (' ', '0', '\t')):
                 lines.append(ntext)
                 terms.append(nterm)
                 # Strip the previous segment's inline ``!`` comment
@@ -3464,9 +3469,6 @@ def _strip_roundup_lwork(source: str, target_mode) -> str:
                 # constrained).
                 # Keep leading whitespace from original line for cosmetics.
                 lead = _re.match(r'^(\s*)', group[0]).group(1)
-                rebuilt = head.lstrip() if False else head  # head already has lead
-                # If first physical line was fixed-form, head already
-                # carries leading 6-space indent; otherwise just rebuild.
                 new_logical = head + ', '.join(keep) + '\n'
                 # Preserve original leading indent from first phys line.
                 # head may not have leading whitespace; ensure it does:
@@ -3764,7 +3766,6 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
     migrated = _strip_roundup_lwork(migrated, target_mode)
 
     out_name = target_filename(src_path.name, rename_map, target_mode)
-    import re
 
     # Type-conversion intrinsics frequently drift asymmetrically between
     # co-family halves: D/Z-half upstream tends to declare ``REAL`` /
@@ -3900,11 +3901,11 @@ def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], targe
         # KIND. Catches `1.0D+0` / `1.0e0` / `0.0` style literals.
         if re.search(r'(?<![\[\d])\d+\.\d*[DdEe][+-]?\d+', source):
             has_real_literals = True
-    if ext in ('.f90', '.f95', '.F90'): return _migrate_free_form_flang(source, file_rename_map, target_mode, has_float_types)
-    return _migrate_fixed_form_flang(source, file_rename_map, target_mode, has_float_types, has_real_literals)
+    if ext in ('.f90', '.f95', '.F90'): return _migrate_free_form_flang(source, file_rename_map, target_mode, has_float_types, source_kind=source_kind)
+    return _migrate_fixed_form_flang(source, file_rename_map, target_mode, has_float_types, has_real_literals, source_kind=source_kind)
 
 
-def _migrate_fixed_form_flang(source: str, rename_map: dict[str, str], target_mode: TargetMode, has_float_types: bool, has_real_literals: bool) -> str:
+def _migrate_fixed_form_flang(source: str, rename_map: dict[str, str], target_mode: TargetMode, has_float_types: bool, has_real_literals: bool, source_kind: int | None = None) -> str:
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
     source = fix_misdeclared_statement_functions(source, source_kind=source_kind)
@@ -3982,7 +3983,7 @@ def _migrate_fixed_form_flang(source: str, rename_map: dict[str, str], target_mo
     return source
 
 
-def _migrate_free_form_flang(source: str, rename_map: dict[str, str], target_mode: TargetMode, has_float_types: bool) -> str:
+def _migrate_free_form_flang(source: str, rename_map: dict[str, str], target_mode: TargetMode, has_float_types: bool, source_kind: int | None = None) -> str:
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
     source = rewrite_la_constants_use(source, target_mode)

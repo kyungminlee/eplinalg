@@ -66,7 +66,7 @@ def _filter_expected_divergences(report: list[dict],
         if _stem_upper(r['canonical']) not in config.expected_divergences
     ]
 from .symbol_scanner import scan_symbols
-from .prefix_classifier import classify_symbols, build_rename_map
+from .prefix_classifier import classify_symbols
 from .fortran_migrator import (
     _find_inline_bang,
     migrate_file,
