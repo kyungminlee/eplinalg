@@ -616,41 +616,39 @@ def _apply_overrides(output_dir: Path,
     return applied
 
 
+# C identifier tokenizer used by the rename substituter. Cheap DFA
+# that the regex engine evaluates in one linear pass — replaces the
+# previous 1500+ alternation regex whose backtracking dominated C
+# migration time (90%+ of xblas runtime).
+_C_IDENT_RE = re.compile(r'[A-Za-z_]\w*')
+
+
 def _build_rename_regex(rename_map: dict[str, str]) -> tuple[re.Pattern, dict[str, str]]:
-    """Build a single-pass regex that renames routine names in C text.
+    """Build a tokenizer + lookup map for renaming routine names in C text.
 
-    For each (OLD, NEW) in rename_map we emit four lookup entries:
-    uppercase bare, lowercase bare, uppercase with trailing underscore,
-    lowercase with trailing underscore. Word boundaries prevent false
-    matches inside longer identifiers (e.g. ``DGER`` inside ``PDGER``).
+    Strategy: scan the text for identifier-shaped tokens and dict-look
+    each one up. Returns ``(_C_IDENT_RE, combined)`` where ``combined``
+    maps lowercase token → lowercase replacement (with and without the
+    Fortran-style trailing underscore that the BLACS C bridge appends
+    to call sites).
 
-    Matching is case-insensitive at substitution time (see
-    :func:`_make_rename_substituter`) so PascalCase identifiers like
-    ``PB_Cctypeset`` are also renamed correctly; this dict carries the
-    canonical lowercase form and the replacement is case-transferred
-    from the matched text at callback time.
+    The pre-cleanup form built one giant alternation regex with a
+    ``(?<![.>])\\b...\\b`` boundary; the substituter (see
+    :func:`_make_rename_substituter`) now enforces the same struct-
+    member-access guard by inspecting the character preceding the
+    matched token via ``Match.string`` / ``Match.start``, preserving
+    PBLAS PBTYP_T compatibility where field names like
+    ``TypeStruct.Cgesd2d`` must not be renamed.
 
-    The pattern uses a negative lookbehind to skip C struct member
-    accesses (``foo.Cgesd2d``, ``ptr->Cgesd2d``). PBLAS's PBTYP_T
-    function-pointer struct happens to use field names that collide
-    with BLACS routine names — without this guard the migrator would
-    rewrite ``TypeStruct.Cgesd2d = Cdgesd2d`` to
-    ``TypeStruct.ZZgesd2d = ...``, breaking compilation since the
-    struct definition itself was not renamed.
+    Matching is case-insensitive: the substituter normalizes the
+    matched token to lowercase before looking it up, then transfers
+    each source character's case onto the replacement.
     """
     combined: dict[str, str] = {}
     for old, new in rename_map.items():
-        # Canonical form is lowercase with optional trailing underscore.
-        # The actual replacement case is computed per-match.
         combined[old.lower()] = new.lower()
         combined[old.lower() + '_'] = new.lower() + '_'
-    # Longest keys first so the alternation prefers the underscore forms
-    keys_sorted = sorted(combined.keys(), key=len, reverse=True)
-    pattern = re.compile(
-        r'(?<![.>])\b(' + '|'.join(re.escape(k) for k in keys_sorted) + r')\b',
-        re.IGNORECASE,
-    )
-    return pattern, combined
+    return _C_IDENT_RE, combined
 
 
 def _make_rename_substituter(pattern: re.Pattern, combined: dict[str, str]):
@@ -677,7 +675,14 @@ def _make_rename_substituter(pattern: re.Pattern, combined: dict[str, str]):
     """
     def _sub(m: re.Match) -> str:
         src = m.group(0)
-        new_lower = combined[src.lower()]
+        # Honor the original ``(?<![.>])`` lookbehind: skip identifier
+        # tokens preceded by ``.`` or ``->`` (struct field access).
+        start = m.start()
+        if start > 0 and m.string[start - 1] in '.>':
+            return src
+        new_lower = combined.get(src.lower())
+        if new_lower is None:
+            return src
 
         if len(src) == len(new_lower):
             # Equal-length: positional case transfer.
