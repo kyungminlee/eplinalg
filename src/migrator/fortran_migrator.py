@@ -670,6 +670,20 @@ def replace_literals(line: str, target_mode: TargetMode,
 # Intrinsic function replacement
 # ---------------------------------------------------------------------------
 
+# Precompiled once per process — INTRINSIC_MAP keys are static so the
+# per-name patterns never vary. ``replace_intrinsic_calls`` is on the
+# hot path (called per statement from migrate_*_form), so rebuilding
+# 74 patterns per call was wasteful.
+_INTRINSIC_CALL_RE: dict[str, re.Pattern] = {
+    _name: re.compile(rf'\b{_name}\s*\(', re.IGNORECASE)
+    for _name in INTRINSIC_MAP
+}
+_INTRINSIC_CALL_RE_REPL: dict[str, re.Pattern] = {
+    _name: re.compile(rf'\b({_name})(\s*\()', re.IGNORECASE)
+    for _name in INTRINSIC_MAP
+}
+
+
 def replace_intrinsic_calls(
     line: str,
     target_mode: TargetMode,
@@ -678,7 +692,7 @@ def replace_intrinsic_calls(
 ) -> str:
     """Replace type-specific intrinsic function calls."""
     for old_name, (new_name, needs_kind) in INTRINSIC_MAP.items():
-        pattern = re.compile(rf'\b{old_name}\s*\(', re.IGNORECASE)
+        pattern = _INTRINSIC_CALL_RE[old_name]
         if needs_kind:
             search_start = 0
             while True:
@@ -793,7 +807,7 @@ def replace_intrinsic_calls(
                 rest = m.group(2)
                 return (_new.upper() if matched_name.isupper() else _new.lower()) + rest
 
-            line = re.sub(rf'\b({old_name})(\s*\()', _call_replace, line, flags=re.IGNORECASE)
+            line = _INTRINSIC_CALL_RE_REPL[old_name].sub(_call_replace, line)
     return line
 
 
