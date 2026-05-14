@@ -439,6 +439,36 @@ asymmetric_patches:
   - zla_syrfsx_extended.f.patch  # cla_syrfsx_extended already correct
   - dorgr2.f.patch         # sorgr2 already correct
   - zgelss.f.patch         # cgelss already correct
+  # C-only bugs (S/D/Z halves correct upstream):
+  - clahef.f.patch         # slasyf/dlasyf/zlahef all use J.LT.N
+  - clahef_rk.f.patch      # slasyf_rk/dlasyf_rk/zlahef_rk already correct
+  - cgesvj.f.patch         # sgesvj/dgesvj/zgesvj all use LAMCH form
+  - cheevx.f.patch         # zheevx already has MAX(1,...) guard
+  - cgedmdq.f90.patch      # 2026-05-12 B? deep-dive — C-half workspace-query bugs
+  # D-only bugs (S correct upstream):
+  - dopmtr.f.patch         # sopmtr/zunmr2/cunmr2 use DLARF1F/DLARF1L
+  - dormr2.f.patch         # sormr2 already correct
+  # C+Z-pair bugs (S+D siblings correct upstream):
+  - dlarf1l.f.patch        # no slarf1l patch shipped; S-half non-canonical
+  - zlarf1l.f.patch        # ditto — paired with dlarf1l/clarf1l
+  - clarf1l.f.patch        # ditto
+  - zlarf1f.f.patch        # no slarf1f/dlarf1f patch shipped
+  - clarf1f.f.patch        # ditto
+  - zrscl.f.patch          # no srscl/drscl patch shipped (real halves already correct)
+  - crscl.f.patch          # ditto (doc-header only)
+  - zlaqz0.f.patch         # no slaqz0/dlaqz0 patch shipped
+  - claqz0.f.patch         # ditto
+  - zlaqz2.f.patch         # no slaqz2/dlaqz2 patch shipped
+  - claqz2.f.patch         # ditto
+  # S-only bugs (D correct upstream):
+  - sgeesx.f.patch         # dgeesx wraps in MAX(1,...)
+  - sgges.f.patch          # dgges declares XERBLA
+  - sggev3.f.patch         # dggev3 declares XERBLA
+  - slaqr2.f.patch         # dlaqr2 declares correct EXTERNAL
+  - slaqr5.f.patch         # dlaqr5 uses T1*VT(3) (not T2*VT(3))
+  - stgex2.f.patch         # dtgex2 has the MAX(1,...) guard
+  # Z-only bugs (S/C/D correct upstream):
+  - zgemlq.f.patch         # sgemlq/cgemlq/dgemlq all use LWMIN
 
 # Patches that close a D↔S or Z↔C cosmetic asymmetry (dead PARAMETER
 # blocks, redundant CMPLX casts, dead INTRINSIC entries, literal-style

@@ -357,3 +357,8 @@ asymmetric_patches:
   # pzunmbr fixes PCHK1MAT→PCHK2MAT in EXTERNAL list; pcunmbr already
   # has PCHK2MAT upstream, so no sibling patch is needed.
   - pzunmbr.f.patch
+  # 2026-05-11 audit one-sided fixes (sibling half is correct upstream):
+  - pzungql.f.patch    # pcungql already has PB_TOPSET
+  - pzunml2.f.patch    # pcunml2 already has PB_TOPSET
+  - pdsyevd.f.patch    # pssyevd already has LIWORK.EQ.-1 branch
+  - pslaed3.f.patch    # pdlaed3 already has INFO init + guard
