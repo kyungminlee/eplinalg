@@ -13,8 +13,8 @@
 # (${LIB_PREFIX}lapack etc.) link the serial migrated archive only.
 # This is the knob for A/B'ing overall perf.
 
-option(PARALLEL_BLAS
-    "Wire parallel BLAS overlay into the public \${LIB_PREFIX}blas target" ON)
+# PARALLEL_BLAS option is declared at the top of cmake/CMakeLists.txt
+# so the BLAS section there can branch on it before this subdir runs.
 
 if(BASELINE_BUILD)
     message(STATUS "parallel_blas: skipping under BASELINE_BUILD (no migrated target)")

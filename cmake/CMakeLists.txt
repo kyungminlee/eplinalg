@@ -28,6 +28,16 @@ endif()
 
 project(${TARGET_NAME}_libraries Fortran C CXX)
 
+# Parallel-BLAS overlay master switch. Declared early so the BLAS
+# section (which runs before add_subdirectory(parallel_blas)) can
+# branch on it. The overlay archive itself is ALWAYS built when the
+# parallel_blas/ subtree is present in staging; this option only
+# governs whether the public ${LIB_PREFIX}blas target is rewired as
+# an INTERFACE composite linking the overlay before the serial
+# migrated archive. See doc/parallel-blas-20260513.md §1.
+option(PARALLEL_BLAS
+    "Wire parallel BLAS overlay into the public \${LIB_PREFIX}blas target" ON)
+
 # ── Compiler-aware install infrastructure ────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
 include(FortranCompiler)
@@ -608,6 +618,56 @@ if(NOT BASELINE_BUILD)
         endif()
         target_link_libraries(${LIB_PREFIX}blas INTERFACE
             ${LIB_PREFIX}blas_serial)
+
+        # ── Renamed migrated archive for consistency tests ───────────
+        # `lib${LIB_PREFIX}blas_migrated.a` is the _serial archive with
+        # overlay-covered routines (and their internal call sites)
+        # renamed `${prefix}<routine>_` → `${prefix}<routine>_migrated_`
+        # via objcopy --redefine-syms. Lets a single test binary link
+        # both the composite eblas (overlay's egemm_) AND the renamed
+        # archive (egemm_migrated_) and diff them at REAL(KIND=10) —
+        # the primary consistency oracle (10 ulp rel err).
+        #
+        # NOT linked into the public composite — would collide on
+        # non-renamed entry points (eaxpy_, edot_, ...). Test
+        # executables link this archive directly. Archive semantics
+        # ensure only the .o's referenced by name (i.e. *_migrated_
+        # ones) are pulled in.
+        # Routines with overlay implementations — full prefixed lower-
+        # case names (matching the C kernel filenames under
+        # src/parallel_blas/${TARGET_NAME}/). Default is target-specific;
+        # callers can override on the cmake command line to grow the
+        # set when new kernels land.
+        if(NOT DEFINED PARALLEL_BLAS_OVERLAY_ROUTINES)
+            set(PARALLEL_BLAS_OVERLAY_ROUTINES "egemm")
+        endif()
+
+        message(STATUS "parallel_blas: wiring ${LIB_PREFIX}blas_migrated archive (objcopy) "
+                       "routines=${PARALLEL_BLAS_OVERLAY_ROUTINES}")
+        set(_redef_file ${CMAKE_CURRENT_BINARY_DIR}/${LIB_PREFIX}blas_migrated.redef)
+        set(_redef_content "")
+        foreach(_r ${PARALLEL_BLAS_OVERLAY_ROUTINES})
+            string(APPEND _redef_content "${_r}_ ${_r}_migrated_\n")
+        endforeach()
+        file(GENERATE OUTPUT ${_redef_file} CONTENT "${_redef_content}")
+
+        set(_migrated_archive
+            ${CMAKE_CURRENT_BINARY_DIR}/lib${LIB_PREFIX}blas_migrated.a)
+        add_custom_command(
+            OUTPUT ${_migrated_archive}
+            COMMAND ${CMAKE_OBJCOPY} --redefine-syms=${_redef_file}
+                    $<TARGET_FILE:${LIB_PREFIX}blas_serial>
+                    ${_migrated_archive}
+            DEPENDS ${LIB_PREFIX}blas_serial ${_redef_file}
+            COMMENT "objcopy: emitting lib${LIB_PREFIX}blas_migrated.a"
+            VERBATIM)
+        add_custom_target(${LIB_PREFIX}blas_migrated_build
+            DEPENDS ${_migrated_archive})
+        add_library(${LIB_PREFIX}blas_migrated STATIC IMPORTED GLOBAL)
+        set_target_properties(${LIB_PREFIX}blas_migrated PROPERTIES
+            IMPORTED_LOCATION ${_migrated_archive})
+        add_dependencies(${LIB_PREFIX}blas_migrated
+            ${LIB_PREFIX}blas_migrated_build)
     else()
         add_migrated_fortran_library(blas)
         if(TARGET ${LIB_PREFIX}blas AND TARGET blas)
