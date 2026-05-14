@@ -42,6 +42,12 @@ target_link_libraries(${LIB_PREFIX}blas_parallel PUBLIC quadmath)
 # Off by default; flip with -DQBLAS_INLINE_SOFTFP=ON at cmake time.
 option(QBLAS_INLINE_SOFTFP
     "kind16: inline __multf3/__addtf3 from soft-fp headers" OFF)
+option(QBLAS_USE_FMAQ
+    "kind16: use fmaq() instead of separate __multf3 + __addtf3" OFF)
+if(QBLAS_USE_FMAQ)
+    target_compile_definitions(${LIB_PREFIX}blas_parallel PRIVATE
+        QBLAS_USE_FMAQ=1)
+endif()
 if(QBLAS_INLINE_SOFTFP)
     # Soft-fp headers reference each other and the per-arch
     # `sfp-machine.h` via plain `#include "..."`. Add both the root

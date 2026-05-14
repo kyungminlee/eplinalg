@@ -466,9 +466,41 @@ future toolchain version closes the gap (e.g. better register
 allocation in the inlined bodies, or LTO across libgcc), flipping
 the flag is one cmake edit.
 
-Conclusion: kind16 perf is bound by the irreducible cost of
-soft-float quad arithmetic. Real headroom for this precision is in
-hardware (Sapphire Rapids and beyond ship native quad ops) or in a
+### `fmaq()` — tried, much *worse*
+
+The natural next thought is libquadmath's `fmaq(a, b, c) = a*b + c`:
+one function call instead of two (`__multf3` + `__addtf3`) and a
+single rounding, so should be at least as fast.
+
+Replaced `sum += ai[p] * bj[p]` with `sum = fmaq(ai[p], bj[p], sum)`
+(gated on `-DQBLAS_USE_FMAQ=ON`). Bench OMP=1:
+
+| build | GFLOP/s |
+|---|---|
+| call-based (default, two soft-fp ops) | 0.058 |
+| fmaq                                  | 0.0034 |
+
+**~17× slower.** The reason is the inverse of the hardware story.
+In hardware FMA is faster than separate ops because the multiplier
+emits the full double-width intermediate and FMA reuses it
+directly. In software, "single rounding" requires computing the
+**exact 226-bit product** of two 113-bit mantissas, aligning it
+with the 113-bit summand, summing (possibly with massive
+cancellation), and rounding once. The separate-ops path rounds at
+113 bits between mul and add and never materializes the full
+intermediate — much less work.
+
+So IEEE-correct soft-float FMA is more accurate but vastly
+slower. Worth noting because the intuition that "1 call < 2 calls"
+fails completely here.
+
+(Infrastructure kept; gated off by default. Flag: `QBLAS_USE_FMAQ`.)
+
+### Conclusion
+
+kind16 perf is bound by the irreducible cost of soft-float quad
+arithmetic. Real headroom for this precision is in hardware
+(Sapphire Rapids and beyond ship native quad ops) or in a
 specialized arithmetic library (multifloats DD as a faster
 ~32-digit alternative).
 

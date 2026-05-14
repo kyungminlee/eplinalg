@@ -123,14 +123,21 @@ static void inner_kernel(int ib, int jb, int pb, T alpha,
             const T *ai = &Ap[(size_t)i * pb];
             T sum = 0.0Q;
             for (p = 0; p < pb; ++p) {
-#ifdef QBLAS_INLINE_SOFTFP
+#if defined(QBLAS_INLINE_SOFTFP)
                 sum = qadd(sum, qmul(ai[p], bj[p]));
+#elif defined(QBLAS_USE_FMAQ)
+                /* Fused multiply-add: one libquadmath call (fmaq),
+                 * one rounding. Replaces `sum += a*b` (two calls,
+                 * two roundings via __multf3 + __addtf3). */
+                sum = fmaq(ai[p], bj[p], sum);
 #else
                 sum += ai[p] * bj[p];
 #endif
             }
-#ifdef QBLAS_INLINE_SOFTFP
+#if defined(QBLAS_INLINE_SOFTFP)
             cj[i] = qadd(cj[i], qmul(alpha, sum));
+#elif defined(QBLAS_USE_FMAQ)
+            cj[i] = fmaq(alpha, sum, cj[i]);
 #else
             cj[i] += alpha * sum;
 #endif
