@@ -1,31 +1,24 @@
 /*
  * egemm — kind10 (REAL(KIND=10), x86-64 80-bit long double) GEMM overlay.
  *
- * Step 3: cache-blocked + packed implementation for the no-transpose
- * NN case (the LAPACK-dominant code path). The other 8 trans combos
- * fall through to the naive triple-loop reference. Step 4 (next)
- * adds OpenMP across the NC loop.
+ * Goto-style cache-blocked + packed, OpenMP-parallel across the
+ * outer NC loop. All 9 transpose combos go through the same blocked
+ * path; the packers absorb TRANSA / TRANSB orientation so the inner
+ * kernel always sees `Ap (ib × pb)` and `Bp (pb × jb)` in uniform
+ * column-major layout.
  *
- * Why only cache blocking (no register tiling) on kind10:
- *   - x86-64 `long double` lives in the x87 stack — 8 registers, all
- *     of which see frequent spills. A 4x4 register tile that works
- *     beautifully for `double` (16 xmm registers, FMA, AVX2) buys
- *     little here. The dominant win for kind10 is eliminating L1/L2
- *     stride misses via packing.
- *   - We still keep a tight inner loop where the compiler can hoist
- *     the alpha*B(p,j) factor; that gives us roughly the same shape
- *     as a 1xNR register tile.
+ * For real types (kind10) the conjugate-transpose 'C' is identical
+ * to 'T'. We normalize both to 'T' at entry.
  *
- * Layout:
- *   A panel: packed column-major, contiguous within each KC-row band,
- *     contiguous across rows of each MC block. Read sequentially in
- *     the inner kernel.
- *   B block: packed column-major (KC rows × NC cols), so for each
- *     fixed j the K-axis traversal of B is contiguous.
+ * No register tiling on kind10: x86-64 `long double` lives in the
+ * 8-deep x87 stack — a 4×4 register tile spills immediately and
+ * buys little. The dominant win comes from packing (kills L1/L2
+ * stride misses on transposed inputs) and OpenMP across NC.
  *
- * Block sizes (tunable via env at step 3.5 autotune):
- *   MC * KC fits in L2  (kind10: 16 bytes/elt → 64*128 = 128 KiB).
- *   KC * NC fits in L3  (rarely the constraint at the sizes we target).
+ * Block sizes (env-overridable, autotune lands later):
+ *   EBLAS_MC=64   panel rows
+ *   EBLAS_KC=128  panel depth
+ *   EBLAS_NC=256  column band per thread
  *
  * Fortran ABI:
  *   - subroutine name lowercased + trailing underscore: `egemm_`
@@ -44,7 +37,8 @@
 
 typedef long double T;
 
-/* Block sizes. Env-overridable for autotune (step 3.5). */
+/* ── Block sizes ──────────────────────────────────────────────── */
+
 static int env_int(const char *name, int dflt) {
     const char *s = getenv(name);
     if (!s || !*s) return dflt;
@@ -63,117 +57,93 @@ static void init_blocks(void) {
 static int trans_code(const char *p, size_t len) {
     (void)len;
     char c = (char)toupper((unsigned char)*p);
-    return c;
+    /* For real types, 'C' is identical to 'T'. */
+    return (c == 'C') ? 'T' : c;
 }
 
-/* ── Naive reference for non-NN paths and tiny problems ────────── */
-
-static void naive_nn(int m, int n, int k, T alpha,
-                     const T *a, int lda, const T *b, int ldb,
-                     T beta, T *c, int ldc)
-{
-    int i, j, p;
-    for (j = 0; j < n; ++j) {
-        T *cj = &c[(size_t)j * ldc];
-        if (beta == 0.0L)      for (i = 0; i < m; ++i) cj[i]  = 0.0L;
-        else if (beta != 1.0L) for (i = 0; i < m; ++i) cj[i] *= beta;
-        const T *bj = &b[(size_t)j * ldb];
-        for (p = 0; p < k; ++p) {
-            const T t = alpha * bj[p];
-            const T *ap = &a[(size_t)p * lda];
-            for (i = 0; i < m; ++i) cj[i] += t * ap[i];
-        }
-    }
-}
-
-static void naive_other(int ta, int tb, int m, int n, int k, T alpha,
-                        const T *a, int lda, const T *b, int ldb,
-                        T beta, T *c, int ldc)
-{
-    int i, j, p;
-    for (j = 0; j < n; ++j) {
-        T *cj = &c[(size_t)j * ldc];
-        if (beta == 0.0L)      for (i = 0; i < m; ++i) cj[i]  = 0.0L;
-        else if (beta != 1.0L) for (i = 0; i < m; ++i) cj[i] *= beta;
-    }
-    if (ta == 'N' && tb != 'N') {
-        for (j = 0; j < n; ++j) {
-            T *cj = &c[(size_t)j * ldc];
-            for (p = 0; p < k; ++p) {
-                const T t = alpha * b[(size_t)p * ldb + j];
-                const T *ap = &a[(size_t)p * lda];
-                for (i = 0; i < m; ++i) cj[i] += t * ap[i];
-            }
-        }
-    } else if (ta != 'N' && tb == 'N') {
-        for (j = 0; j < n; ++j) {
-            T *cj = &c[(size_t)j * ldc];
-            const T *bj = &b[(size_t)j * ldb];
-            for (i = 0; i < m; ++i) {
-                const T *ai = &a[(size_t)i * lda];
-                T acc = 0.0L;
-                for (p = 0; p < k; ++p) acc += ai[p] * bj[p];
-                cj[i] += alpha * acc;
-            }
-        }
-    } else {
-        for (j = 0; j < n; ++j) {
-            T *cj = &c[(size_t)j * ldc];
-            for (i = 0; i < m; ++i) {
-                const T *ai = &a[(size_t)i * lda];
-                T acc = 0.0L;
-                for (p = 0; p < k; ++p) acc += ai[p] * b[(size_t)p * ldb + j];
-                cj[i] += alpha * acc;
-            }
-        }
-    }
-}
-
-/* ── Packed + blocked NN ──────────────────────────────────────── */
+/* ── Packers ──────────────────────────────────────────────────── */
 
 /*
- * Pack A(ic:ic+ib, pc:pc+pb) into Ap, column-major MR×KC stripes.
- * Inner kernel reads Ap[p*ib + i], i.e. column-major (ib, pb). We
- * keep it that simple — no MR-row stripes — because the inner loop
- * over i is already cache-line-friendly after packing.
+ * Pack op(A)(ic:ic+ib, pc:pc+pb) into Ap, column-major (ib, pb).
+ *
+ *   ta == 'N':  op(A)[i, p] = A[ic+i, pc+p]
+ *               source stride in i: 1 (contiguous)
+ *               source stride in p: lda
+ *
+ *   ta == 'T':  op(A)[i, p] = A[pc+p, ic+i]
+ *               source stride in i: lda
+ *               source stride in p: 1
+ *
+ * Pack output is always: Ap[p*ib + i] = op(A)[i, p].
  */
-static void pack_A_nn(const T *restrict A, int lda,
-                      int ic, int pc, int ib, int pb,
-                      T *restrict Ap)
+static void pack_A(const T *restrict A, int lda,
+                   int ic, int pc, int ib, int pb,
+                   int ta, T *restrict Ap)
 {
     int i, p;
-    for (p = 0; p < pb; ++p) {
-        const T *src = &A[(size_t)(pc + p) * lda + ic];
-        T *dst = &Ap[(size_t)p * ib];
-        for (i = 0; i < ib; ++i) dst[i] = src[i];
+    if (ta == 'N') {
+        for (p = 0; p < pb; ++p) {
+            const T *src = &A[(size_t)(pc + p) * lda + ic];
+            T *dst = &Ap[(size_t)p * ib];
+            for (i = 0; i < ib; ++i) dst[i] = src[i];
+        }
+    } else {
+        /* Read across rows of source A (stride lda), writing into one
+         * column of Ap. The outer i-loop walks distinct rows of
+         * source, the inner p-loop walks contiguous values per row. */
+        for (i = 0; i < ib; ++i) {
+            const T *src = &A[(size_t)(ic + i) * lda + pc];
+            for (p = 0; p < pb; ++p) Ap[(size_t)p * ib + i] = src[p];
+        }
     }
 }
 
 /*
- * Pack B(pc:pc+pb, jc:jc+jb) into Bp, column-major (pb, jb).
- * Same layout as the source — copy is for L2 locality, not reshape.
+ * Pack op(B)(pc:pc+pb, jc:jc+jb) into Bp, column-major (pb, jb).
+ *
+ *   tb == 'N':  op(B)[p, j] = B[pc+p, jc+j]
+ *               source stride in p: 1
+ *               source stride in j: ldb
+ *
+ *   tb == 'T':  op(B)[p, j] = B[jc+j, pc+p]
+ *               source stride in p: ldb
+ *               source stride in j: 1
+ *
+ * Pack output is always: Bp[j*pb + p] = op(B)[p, j].
  */
-static void pack_B_nn(const T *restrict B, int ldb,
-                      int pc, int jc, int pb, int jb,
-                      T *restrict Bp)
+static void pack_B(const T *restrict B, int ldb,
+                   int pc, int jc, int pb, int jb,
+                   int tb, T *restrict Bp)
 {
     int p, j;
-    for (j = 0; j < jb; ++j) {
-        const T *src = &B[(size_t)(jc + j) * ldb + pc];
-        T *dst = &Bp[(size_t)j * pb];
-        for (p = 0; p < pb; ++p) dst[p] = src[p];
+    if (tb == 'N') {
+        for (j = 0; j < jb; ++j) {
+            const T *src = &B[(size_t)(jc + j) * ldb + pc];
+            T *dst = &Bp[(size_t)j * pb];
+            for (p = 0; p < pb; ++p) dst[p] = src[p];
+        }
+    } else {
+        /* Walk row p of source B (stride ldb), scattering across
+         * the j-axis of Bp. Outer p loop iterates ldb-stride rows. */
+        for (p = 0; p < pb; ++p) {
+            const T *src = &B[(size_t)(pc + p) * ldb + jc];
+            for (j = 0; j < jb; ++j) Bp[(size_t)j * pb + p] = src[j];
+        }
     }
 }
+
+/* ── Inner kernel ─────────────────────────────────────────────── */
 
 /*
  * C(ic:ic+ib, jc:jc+jb) += alpha * Ap[ib, pb] * Bp[pb, jb].
  * Ap is (ib × pb) column-major; Bp is (pb × jb) column-major.
+ * Layout is uniform across all 4 transpose paths after packing.
  * The outer-j loop hoists alpha * Bp[p, j] into a scalar; the inner
- * i loop is one contiguous Ap stripe per p.
+ * i-loop reads one contiguous Ap stripe per p.
  */
-static void inner_kernel_nn(int ib, int jb, int pb, T alpha,
-                            const T *restrict Ap, const T *restrict Bp,
-                            T *restrict C, int ldc)
+static void inner_kernel(int ib, int jb, int pb, T alpha,
+                         const T *restrict Ap, const T *restrict Bp,
+                         T *restrict C, int ldc)
 {
     int i, j, p;
     for (j = 0; j < jb; ++j) {
@@ -187,14 +157,31 @@ static void inner_kernel_nn(int ib, int jb, int pb, T alpha,
     }
 }
 
-static void blocked_nn(int M, int N, int K, T alpha,
-                       const T *A, int lda, const T *B, int ldb,
-                       T beta, T *C, int ldc)
+/* ── Entry point ──────────────────────────────────────────────── */
+
+void egemm_(
+    const char *transa, const char *transb,
+    const int *m_, const int *n_, const int *k_,
+    const T *alpha_,
+    const T *a, const int *lda_,
+    const T *b, const int *ldb_,
+    const T *beta_,
+    T *c, const int *ldc_,
+    size_t transa_len, size_t transb_len)
 {
-    /* Apply beta to C up front. */
+    const int M = *m_, N = *n_, K = *k_;
+    const int lda = *lda_, ldb = *ldb_, ldc = *ldc_;
+    const T alpha = *alpha_, beta = *beta_;
+    const int ta = trans_code(transa, transa_len);
+    const int tb = trans_code(transb, transb_len);
+
+    if (M <= 0 || N <= 0) return;
+
+    /* Apply beta to C up front. Handles K==0 / alpha==0 paths in one
+     * place — after this, the body computes only the matmul update. */
     int i, j;
     for (j = 0; j < N; ++j) {
-        T *cj = &C[(size_t)j * ldc];
+        T *cj = &c[(size_t)j * ldc];
         if (beta == 0.0L)      for (i = 0; i < M; ++i) cj[i]  = 0.0L;
         else if (beta != 1.0L) for (i = 0; i < M; ++i) cj[i] *= beta;
     }
@@ -207,7 +194,7 @@ static void blocked_nn(int M, int N, int K, T alpha,
      * Parallelize the NC loop: each thread takes a disjoint column
      * band of C. Per-thread packing scratch (Ap, Bp) — no sharing,
      * no atomics, no critical sections. Reduction order differs
-     * across thread counts; that's accepted by the 10-ulp consistency
+     * across thread counts; accepted by the 10-ulp consistency
      * tolerance (see doc/parallel-blas-20260513.md §8).
      */
 #ifdef _OPENMP
@@ -225,44 +212,17 @@ static void blocked_nn(int M, int N, int K, T alpha,
                 const int jb = (N - jc < NC) ? (N - jc) : NC;
                 for (pc = 0; pc < K; pc += KC) {
                     const int pb = (K - pc < KC) ? (K - pc) : KC;
-                    pack_B_nn(B, ldb, pc, jc, pb, jb, Bp);
+                    pack_B(b, ldb, pc, jc, pb, jb, tb, Bp);
                     for (ic = 0; ic < M; ic += MC) {
                         const int ib = (M - ic < MC) ? (M - ic) : MC;
-                        pack_A_nn(A, lda, ic, pc, ib, pb, Ap);
-                        inner_kernel_nn(ib, jb, pb, alpha, Ap, Bp,
-                                        &C[(size_t)jc * ldc + ic], ldc);
+                        pack_A(a, lda, ic, pc, ib, pb, ta, Ap);
+                        inner_kernel(ib, jb, pb, alpha, Ap, Bp,
+                                     &c[(size_t)jc * ldc + ic], ldc);
                     }
                 }
             }
         }
         free(Ap);
         free(Bp);
-    }
-}
-
-/* ── Entry point ──────────────────────────────────────────────── */
-
-void egemm_(
-    const char *transa, const char *transb,
-    const int *m_, const int *n_, const int *k_,
-    const T *alpha_,
-    const T *a, const int *lda_,
-    const T *b, const int *ldb_,
-    const T *beta_,
-    T *c, const int *ldc_,
-    size_t transa_len, size_t transb_len)
-{
-    const int m = *m_, n = *n_, k = *k_;
-    const int lda = *lda_, ldb = *ldb_, ldc = *ldc_;
-    const T alpha = *alpha_, beta = *beta_;
-    const int ta = trans_code(transa, transa_len);
-    const int tb = trans_code(transb, transb_len);
-
-    if (m <= 0 || n <= 0) return;
-
-    if (ta == 'N' && tb == 'N') {
-        blocked_nn(m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-    } else {
-        naive_other(ta, tb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
     }
 }

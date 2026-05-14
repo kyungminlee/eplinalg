@@ -10,8 +10,10 @@
 !   6. Calls overlay egemm_ (resolved via composite eblas → C kernel)
 !      and migrated egemm_migrated_ (resolved via the renamed archive,
 !      Fortran kernel) on identical inputs.
-!   7. Asserts max_rel_err ≤ 10 * eps10 (≈ 1.08e-18). Fails with the
-!      seed printed so the case is reproducible.
+!   7. Asserts max_rel_err ≤ max(10, 4*K) * eps10 — Wilkinson-style
+!      bound, since reduction order differs between blocked-parallel
+!      and unblocked-serial summation. Fails print the seed so the
+!      case is reproducible.
 !
 ! Knobs (env):
 !   BLAS_FUZZ_SEED   — integer; default time-derived (printed at start)
@@ -54,14 +56,17 @@ program fuzz_egemm
     ncases = read_cases()
     print '(a,i0,a,i0)', 'fuzz_egemm: seed=', seed, '  cases=', ncases
     call seed_rng(seed)
-    tol = 10.0_rk10 * eps10
-    print '(a,es10.2)', 'fuzz_egemm: tol=', tol
 
     fails = 0
     do i = 1, ncases
         m = rand_int_log(1, 256)
         n = rand_int_log(1, 256)
         k = rand_int_log(1, 256)
+        ! Tolerance scales with K: a length-K dot product (the inner
+        ! reduction of GEMM) can legitimately differ between
+        ! summation orders by up to ~2*K*eps (Wilkinson). Use a
+        ! 4*K*eps envelope with a 10-ulp absolute floor for small K.
+        tol = max(10.0_rk10, 4.0_rk10 * real(k, rk10)) * eps10
         ta = rand_trans()
         tb = rand_trans()
         call rand_alpha_beta(alpha, beta)
