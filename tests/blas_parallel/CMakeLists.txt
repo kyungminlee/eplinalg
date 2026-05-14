@@ -44,6 +44,7 @@ function(add_consistency_test driver_src)
 endfunction()
 
 add_consistency_test(consistency/fuzz_egemm.f90)
+add_consistency_test(consistency/fuzz_ygemm.f90)
 
 # Benchmarks. Not run by default (skipped via SKIP_REGULAR_EXPRESSION
 # style — actually we just gate via a LABELS=bench filter so a bare

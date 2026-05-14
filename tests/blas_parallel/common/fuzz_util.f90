@@ -17,8 +17,9 @@ module fuzz_util
     implicit none
     private
     public :: read_seed, read_cases, seed_rng
-    public :: rand_int_log, rand_trans, rand_alpha_beta
+    public :: rand_int_log, rand_trans, rand_trans_complex, rand_alpha_beta
     public :: fill_matrix_10, max_rel_err_10
+    public :: rand_alpha_beta_c10, fill_matrix_c10, max_rel_err_c10
     public :: rk10, eps10
 
     integer, parameter :: rk10 = 10
@@ -93,6 +94,14 @@ contains
         end if
     end function rand_trans
 
+    ! For complex routines 'C' is distinct (conjugate transpose).
+    ! Same distribution as rand_trans — kept separate to make intent
+    ! at call sites explicit.
+    function rand_trans_complex() result(c)
+        character :: c
+        c = rand_trans()
+    end function rand_trans_complex
+
     subroutine rand_alpha_beta(alpha, beta)
         real(rk10), intent(out) :: alpha, beta
         real(8) :: u
@@ -166,5 +175,79 @@ contains
             err = diff_max / ref_max
         end if
     end function max_rel_err_10
+
+    subroutine rand_alpha_beta_c10(alpha, beta)
+        complex(rk10), intent(out) :: alpha, beta
+        real(8) :: ur, ui, u
+        ! Same corner-case shape as the real version: ~30% chance of
+        ! {0, 1, -1} for either part, else uniform in unit disc.
+        call random_number(u)
+        if (u < 0.10_8) then
+            alpha = (0.0_rk10, 0.0_rk10)
+        else if (u < 0.20_8) then
+            alpha = (1.0_rk10, 0.0_rk10)
+        else if (u < 0.30_8) then
+            alpha = (-1.0_rk10, 0.0_rk10)
+        else
+            call random_number(ur); call random_number(ui)
+            alpha = cmplx(real(2.0_8*ur-1.0_8, rk10), &
+                          real(2.0_8*ui-1.0_8, rk10), rk10)
+        end if
+        call random_number(u)
+        if (u < 0.10_8) then
+            beta = (0.0_rk10, 0.0_rk10)
+        else if (u < 0.20_8) then
+            beta = (1.0_rk10, 0.0_rk10)
+        else if (u < 0.30_8) then
+            beta = (-1.0_rk10, 0.0_rk10)
+        else
+            call random_number(ur); call random_number(ui)
+            beta = cmplx(real(2.0_8*ur-1.0_8, rk10), &
+                         real(2.0_8*ui-1.0_8, rk10), rk10)
+        end if
+    end subroutine rand_alpha_beta_c10
+
+    subroutine fill_matrix_c10(A, m, n, lda)
+        complex(rk10), intent(out) :: A(:)
+        integer, intent(in) :: m, n, lda
+        real(8) :: ur, ui
+        integer :: i, j, idx
+        do j = 1, n
+            do i = 1, m
+                idx = (j - 1) * lda + i
+                call random_number(ur); call random_number(ui)
+                A(idx) = cmplx(real(2.0_8*ur-1.0_8, rk10), &
+                               real(2.0_8*ui-1.0_8, rk10), rk10)
+            end do
+            do i = m + 1, lda
+                idx = (j - 1) * lda + i
+                A(idx) = cmplx(-99.0_rk10, -99.0_rk10, rk10)
+            end do
+        end do
+    end subroutine fill_matrix_c10
+
+    function max_rel_err_c10(C_out, C_ref, m, n, ldc) result(err)
+        complex(rk10), intent(in) :: C_out(:), C_ref(:)
+        integer, intent(in) :: m, n, ldc
+        real(rk10) :: err
+        real(rk10) :: a, ref_max, diff_max
+        integer :: i, j, idx
+        diff_max = 0.0_rk10
+        ref_max  = 0.0_rk10
+        do j = 1, n
+            do i = 1, m
+                idx = (j - 1) * ldc + i
+                a = abs(C_ref(idx))
+                if (a > ref_max) ref_max = a
+                a = abs(C_out(idx) - C_ref(idx))
+                if (a > diff_max) diff_max = a
+            end do
+        end do
+        if (ref_max < tiny(1.0_rk10)) then
+            err = diff_max
+        else
+            err = diff_max / ref_max
+        end if
+    end function max_rel_err_c10
 
 end module fuzz_util

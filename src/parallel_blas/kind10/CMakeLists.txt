@@ -14,6 +14,7 @@
 
 set(_kernels
     egemm.c
+    ygemm.c
 )
 
 add_library(${LIB_PREFIX}blas_parallel STATIC ${_kernels})

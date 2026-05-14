@@ -659,7 +659,7 @@ if(NOT BASELINE_BUILD)
         # callers can override on the cmake command line to grow the
         # set when new kernels land.
         if(NOT DEFINED PARALLEL_BLAS_OVERLAY_ROUTINES)
-            set(PARALLEL_BLAS_OVERLAY_ROUTINES "egemm")
+            set(PARALLEL_BLAS_OVERLAY_ROUTINES "egemm" "ygemm")
         endif()
 
         message(STATUS "parallel_blas: wiring ${LIB_PREFIX}blas_migrated archive (objcopy) "
