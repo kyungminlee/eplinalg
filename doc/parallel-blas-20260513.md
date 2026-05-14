@@ -499,10 +499,19 @@ fails completely here.
 ### Conclusion
 
 kind16 perf is bound by the irreducible cost of soft-float quad
-arithmetic. Real headroom for this precision is in hardware
-(Sapphire Rapids and beyond ship native quad ops) or in a
-specialized arithmetic library (multifloats DD as a faster
-~32-digit alternative).
+arithmetic. Real headroom for this precision is hardware support
+— Sapphire Rapids (avx10 / `_Float128` natively) and beyond ship
+native quad ops; portable headroom is essentially zero.
+
+Worth nailing down what is *not* a path: replacing `__float128`
+with multifloats DD is sometimes proposed as a "faster quad", but
+**DD has double's exponent range** (~10⁻³⁰⁸ … 10³⁰⁸, 11-bit
+exponent) while `__float128` carries a 15-bit exponent (~10⁻⁴⁹³²
+… 10⁴⁹³²). Any code that takes magnitudes outside double's range
+— which is exactly what users reach for extended precision
+*for* — would silently overflow/underflow under DD where
+`__float128` rounds normally. DD is a different precision, not a
+faster quad.
 
 Conclusion: register tiling is the right answer for IEEE
 double-precision GEMM on hardware with abundant SIMD registers and
