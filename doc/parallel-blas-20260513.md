@@ -250,7 +250,49 @@ after step 5 lands and is green.
 | Fortran ABI           | gfortran lowercase + trailing-`_` mangling, no `iso_c_binding` shim |
 | symbol-aliasing trick | `objcopy --redefine-syms`; fallback `-Wl,--wrap` if it misbehaves |
 
-## 10. References
+## 10. Measured performance
+
+Box: 4C/8T, gfortran-13 / gcc-13. `bench_*gemm` median of 2–3 timed
+iterations after one warmup.
+
+### Single-thread (`OMP_NUM_THREADS=1`)
+
+| target | type | size | overlay GFLOP/s | migrated GFLOP/s | overlay/migrated |
+|---|---|---|---|---|---|
+| kind10 | `long double` (x87) | 1024 | 1.33 | 1.31 | **1.02×** |
+| kind16 | `__float128` (quadmath) | 512 | 0.056 | 0.058 | **0.97×** |
+| multifloats | DD (C++ inlined) | 512 | 0.50 | 0.12 | **4.13×** |
+
+Reading:
+- **kind10 / kind16**: overlay roughly ties the migrated archive
+  single-threaded. Both precisions are arithmetic-bound on this
+  hardware (x87 80-bit on a shared FPU; libquadmath function calls
+  per op). Cache blocking + packing don't recover cycles the FPU /
+  libquadmath doesn't have. Overlay's value here is the OMP scaling
+  the migrated Fortran version can't access.
+- **multifloats**: overlay **4× faster at OMP=1**. Two stacked
+  effects: (a) the C++ kernel inlines `multifloats::float64x2`'s
+  overloaded `operator*` / `operator+` (and their underlying
+  error-free transforms) directly in the hot loop, whereas the
+  migrated Fortran archive routes every DD op through gfortran's
+  elemental wrappers — one function-call boundary per element;
+  (b) cache blocking + packing pays for a 16-byte scalar type at
+  typical L1/L2 footprints.
+
+### Parallel scaling (`OMP_NUM_THREADS=4`, N=1024 unless noted)
+
+| target | overlay GFLOP/s | migrated GFLOP/s | overlay vs serial migrated |
+|---|---|---|---|
+| kind10 | 5.3 | 1.27 | **4.2×** |
+| kind16 | 0.14 | 0.059 | **2.3×** |
+| multifloats | not measured (defaults; expect ~16× from 4× serial × ~4× threads) | | |
+
+kind10 hits near-linear scaling (4× on 4 cores). kind16 caps at ~2.3×
+because the static schedule on NC=256 with N=1024 yields only 4
+chunks — fine-grained autotune of NC would help. multifloats
+scaling not yet measured at OMP=4.
+
+## 11. References
 
 - Project memory: [project-parallel-blas-design](../../../.claude/projects/-home-kyungminlee-Code-fortran-migrator/memory/project_parallel_blas_design.md)
 - Goto, K., van de Geijn, R. — *Anatomy of High-Performance Matrix
@@ -258,3 +300,6 @@ after step 5 lands and is green.
   MC/KC/NC + pack-A / pack-B layout.
 - BLIS framework — practical reference implementation of the same
   algorithm, in C, for arbitrary scalar types.
+
+(Inadvertent section numbering: §11 above is the references; §10
+inserted with measured perf.)
