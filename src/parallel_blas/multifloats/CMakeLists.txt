@@ -12,6 +12,7 @@ set(_kernels
     mgemm.cpp
     wgemm.cpp
     mtrsm.cpp
+    wtrsm.cpp
 )
 
 set(_routines "")
