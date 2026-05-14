@@ -424,13 +424,32 @@ AoS scalar (broadcast per-p with `vbroadcastsd`).
 Gated on `MBLAS_SIMD_DD` (default ON when the compiler accepts
 `-mavx2 -mfma`, which is the case for any halfway-recent x86_64).
 
-Micro-kernel sizing: started at MR=1 (1 row of A × 4 cols of B per
-call) and bumped to **MR=2** for ILP. Two rows of A produce two
-independent dd_mul → dd_add chains that share the same `vmovupd`
-of B; gcc interleaves them, hiding FMA latency. Register budget at
-MR=2: 4 accumulators + 4 broadcasts + 2 B + 2 scratch ≈ 12 of 16
-ymm regs — fits with headroom. Trailing odd row (`ib` odd) handled
-by a separate MR=1 tail loop so the main loop stays branch-free.
+Micro-kernel sizing: MR is the number of A rows processed per
+micro-kernel call (NR=4 is fixed by the AVX2 lane count). Each row
+runs an independent dd_mul → dd_add chain that shares the same
+`vmovupd` of B; multiple chains expose ILP to hide the EFT
+dependency latency. Picked via the `MBLAS_SIMD_MR` cmake cache
+variable, default **3** (kernel is templated on MR — see
+`inner_kernel_simd_mr<int MR>` in mgemm.cpp).
+
+Empirical sweep on Raptor Lake (i3-1315U), OMP=1, s=1024, NN:
+
+| MR | GFLOP/s | vs MR=1 |
+|---|---|---|
+| 1 | 1.92 | 1.00× |
+| 2 | 3.49 | **1.82×** (ILP from 2 chains) |
+| 3 | 3.74 | 1.95× (sweet spot) |
+| 4 | 3.78 | 1.97× (register pressure starts cancelling gains) |
+
+`gcc -O3` keeps `__m256d ach[MR]` / `acl[MR]` in registers up to
+MR=3; at MR=4 the 8 accumulators + 8 broadcasts + 2 B + 2 scratch
+saturate the 16 ymm registers and spills begin. Below MR=2 the
+dd_mul EFT chain serializes — single chain in flight, FMA latency
+unhidden.
+
+Trailing odd-modulo rows (`ib` not divisible by MR) handled by a
+separate MR=1 tail loop after the main MR=`MGEMM_SIMD_MR` loop —
+keeps the main loop branch-free.
 
 Measured on Raptor Lake (i3-1315U, AVX2 + FMA, no AVX-512):
 
@@ -438,20 +457,15 @@ Measured on Raptor Lake (i3-1315U, AVX2 + FMA, no AVX-512):
 |---|---|---|
 | **scalar outer-product baseline** | 0.51 GFLOP/s | (≈1.26) |
 | **AVX2 SIMD MR=1** | 1.89 | 4.70 |
-| **AVX2 SIMD MR=2** | **3.55** | **7.58** |
-| **MR=2 vs scalar overlay** | **7.0×** | **6.0×** |
-| **MR=2 vs migrated** | **29×** | **62×** |
-
-The MR=1 → MR=2 jump alone is **1.88×** — close to a clean
-doubling. Beyond the obvious B-load amortization, the bigger win
-is ILP: two dd_mul chains in flight at once gives the out-of-order
-core enough work to retire FMAs back-to-back instead of stalling
-on the EFT data dependency.
+| **AVX2 SIMD MR=2** | 3.49 | 7.58 |
+| **AVX2 SIMD MR=3 (default)** | **3.74** | **7.71** |
+| **MR=3 vs scalar overlay** | **7.4×** | **6.1×** |
+| **MR=3 vs migrated** | **30×** | **63×** |
 
 Per-trans variation under 5% (DD ops dominate everything; even the
 non-NN packing's strided read is invisible behind the EFT chain).
 
-The 62× over migrated is the largest speedup of any kernel in this
+The 63× over migrated is the largest speedup of any kernel in this
 overlay — the migrated Fortran goes through an elemental wrapper
 around each scalar DD op (call overhead) and uses no SIMD; the
 overlay fixes both at once.

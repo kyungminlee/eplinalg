@@ -61,4 +61,15 @@ if(MBLAS_SIMD_DD)
         MBLAS_SIMD_DD=1)
     target_compile_options(${LIB_PREFIX}blas_parallel PRIVATE
         -mavx2 -mfma)
+    # MR — register-tile rows for the SIMD micro-kernel.
+    # Empirical sweep on Raptor Lake (i3-1315U) at OMP=1 s=1024:
+    #   MR=1: 1.92 GFLOP/s            (baseline, 1 chain)
+    #   MR=2: 3.49     (+82%, ILP win — two independent dd_mul chains)
+    #   MR=3: 3.74     (+7%, sweet spot)
+    #   MR=4: 3.78     (+1%, register pressure cancels parallelism gain)
+    # Choose 3 by default — gains plateau there.
+    set(MBLAS_SIMD_MR 3 CACHE STRING
+        "multifloats: SIMD micro-kernel register-tile rows MR (1..4)")
+    target_compile_definitions(${LIB_PREFIX}blas_parallel PRIVATE
+        MGEMM_SIMD_MR=${MBLAS_SIMD_MR})
 endif()

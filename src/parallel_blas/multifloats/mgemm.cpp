@@ -187,22 +187,26 @@ simd_writeback(__m256d alpha_h, __m256d alpha_l,
 }
 
 /*
- * SIMD inner kernel — MR=2 register tile.
- * 2 rows of A × NR=4 cols of B per micro-kernel call. The two rows'
- * dd_mul/dd_add chains run in parallel — same B load amortized across
- * both, gcc gets to interleave 8 FMAs per p iteration for ILP.
+ * Templated SIMD inner micro-kernel: MR rows of A × NR=4 cols of B
+ * per call. The MR-loop is constexpr-bounded so gcc unrolls it and
+ * keeps `ach[]`, `acl[]` in registers as long as MR is small enough
+ * for the AVX2 register budget (16 ymm). Spills occur somewhere
+ * around MR=4 (8 acc + 2*MR broadcasts + 2 B + 2 scratch ≈ 20+).
  *
- * Register budget: 4 acc (ach0/acl0/ach1/acl1) + 4 broadcasts
- * (ah0/al0/ah1/al1) + 2 B (bh/bl) + scratch ≈ 12 of 16 ymm regs.
- *
- * Trailing odd row (ib odd) handled by a separate MR=1 tail loop —
- * keeps the main loop branch-free.
+ * MGEMM_SIMD_MR (CMake cache var → -DMGEMM_SIMD_MR=N) picks the
+ * compile-time MR. Default 2.
  */
-void inner_kernel_simd(int ib, int jb, int pb, T alpha,
-                       const T * __restrict__ Ap,
-                       const double * __restrict__ Bp_hi,
-                       const double * __restrict__ Bp_lo,
-                       T * __restrict__ C, int ldc)
+#ifndef MGEMM_SIMD_MR
+#define MGEMM_SIMD_MR 2
+#endif
+
+template <int MR>
+static __attribute__((noinline)) void
+inner_kernel_simd_mr(int ib, int jb, int pb, T alpha,
+                     const T * __restrict__ Ap,
+                     const double * __restrict__ Bp_hi,
+                     const double * __restrict__ Bp_lo,
+                     T * __restrict__ C, int ldc)
 {
     constexpr int NR = simd_dd::NR;
     const int j_panels = (jb + NR - 1) / NR;
@@ -214,31 +218,34 @@ void inner_kernel_simd(int ib, int jb, int pb, T alpha,
         const double *Bp_h_panel = &Bp_hi[static_cast<std::size_t>(jp) * pb * NR];
         const double *Bp_l_panel = &Bp_lo[static_cast<std::size_t>(jp) * pb * NR];
         int i = 0;
-        /* MR=2 main loop */
-        for (; i + 1 < ib; i += 2) {
-            __m256d ach0 = _mm256_setzero_pd(), acl0 = _mm256_setzero_pd();
-            __m256d ach1 = _mm256_setzero_pd(), acl1 = _mm256_setzero_pd();
+        /* MR-row main loop */
+        for (; i + MR <= ib; i += MR) {
+            __m256d ach[MR], acl[MR];
+            #pragma GCC unroll 16
+            for (int k = 0; k < MR; ++k) {
+                ach[k] = _mm256_setzero_pd();
+                acl[k] = _mm256_setzero_pd();
+            }
             for (int p = 0; p < pb; ++p) {
                 __m256d bh = _mm256_loadu_pd(&Bp_h_panel[p * NR]);
                 __m256d bl = _mm256_loadu_pd(&Bp_l_panel[p * NR]);
-                const T &a0 = Ap[static_cast<std::size_t>(p) * ib + i];
-                const T &a1 = Ap[static_cast<std::size_t>(p) * ib + i + 1];
-                __m256d ah0 = _mm256_set1_pd(a0.limbs[0]);
-                __m256d al0 = _mm256_set1_pd(a0.limbs[1]);
-                __m256d ah1 = _mm256_set1_pd(a1.limbs[0]);
-                __m256d al1 = _mm256_set1_pd(a1.limbs[1]);
-                __m256d rh0, rl0, rh1, rl1;
-                simd_dd::dd_mul(ah0, al0, bh, bl, rh0, rl0);
-                simd_dd::dd_mul(ah1, al1, bh, bl, rh1, rl1);
-                simd_dd::dd_add(ach0, acl0, rh0, rl0, ach0, acl0);
-                simd_dd::dd_add(ach1, acl1, rh1, rl1, ach1, acl1);
+                #pragma GCC unroll 16
+                for (int k = 0; k < MR; ++k) {
+                    const T &aval = Ap[static_cast<std::size_t>(p) * ib + i + k];
+                    __m256d ah = _mm256_set1_pd(aval.limbs[0]);
+                    __m256d al = _mm256_set1_pd(aval.limbs[1]);
+                    __m256d rh, rl;
+                    simd_dd::dd_mul(ah, al, bh, bl, rh, rl);
+                    simd_dd::dd_add(ach[k], acl[k], rh, rl, ach[k], acl[k]);
+                }
             }
-            simd_writeback(alpha_h, alpha_l, ach0, acl0,
-                           &C[i],     ldc, j0, nr_eff);
-            simd_writeback(alpha_h, alpha_l, ach1, acl1,
-                           &C[i + 1], ldc, j0, nr_eff);
+            #pragma GCC unroll 16
+            for (int k = 0; k < MR; ++k) {
+                simd_writeback(alpha_h, alpha_l, ach[k], acl[k],
+                               &C[i + k], ldc, j0, nr_eff);
+            }
         }
-        /* MR=1 tail (only fires when ib is odd) */
+        /* MR=1 tail */
         for (; i < ib; ++i) {
             __m256d acc_h = _mm256_setzero_pd();
             __m256d acc_l = _mm256_setzero_pd();
@@ -256,6 +263,15 @@ void inner_kernel_simd(int ib, int jb, int pb, T alpha,
                            &C[i], ldc, j0, nr_eff);
         }
     }
+}
+
+void inner_kernel_simd(int ib, int jb, int pb, T alpha,
+                       const T * __restrict__ Ap,
+                       const double * __restrict__ Bp_hi,
+                       const double * __restrict__ Bp_lo,
+                       T * __restrict__ C, int ldc)
+{
+    inner_kernel_simd_mr<MGEMM_SIMD_MR>(ib, jb, pb, alpha, Ap, Bp_hi, Bp_lo, C, ldc);
 }
 
 #endif /* MBLAS_SIMD_DD */
