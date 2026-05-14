@@ -30,6 +30,32 @@
 
 typedef long double T;
 
+/* Block size for the SIDE='L' blocked path. Env-tunable; default
+ * picked empirically to match egemm's natural panel sizing. */
+static int env_int(const char *name, int dflt) {
+    const char *s = getenv(name);
+    if (!s || !*s) return dflt;
+    int v = atoi(s);
+    return v > 0 ? v : dflt;
+}
+static int g_nb_trsm = 0;
+static int trsm_nb(void) {
+    if (g_nb_trsm == 0) g_nb_trsm = env_int("ETRSM_NB", 64);
+    return g_nb_trsm;
+}
+
+/* Local egemm declaration (the overlay's own egemm_ — symbol is in
+ * our static archive). We call it for trailing-matrix updates. */
+extern void egemm_(
+    const char *transa, const char *transb,
+    const int *m, const int *n, const int *k,
+    const T *alpha,
+    const T *a, const int *lda,
+    const T *b, const int *ldb,
+    const T *beta,
+    T *c, const int *ldc,
+    size_t transa_len, size_t transb_len);
+
 static inline char up(const char *p) {
     return (char)toupper((unsigned char)*p);
 }
@@ -101,6 +127,136 @@ static void trsm_lut(int M, int N, T alpha,
             if (nounit) t /= A_(i, i);
             B_(i, j) = t;
         }
+    }
+}
+
+/* ── Blocked SIDE='L' variants: alpha pre-scaling + egemm trailing
+ * updates. The unblocked subkernels above are reused for each
+ * `nb × nb` diagonal block. The flop savings come from doing the
+ * trailing update via the optimized egemm rather than the
+ * unblocked rank-1 update form. */
+
+static void prescale_B(int M, int N, T alpha, T *b, int ldb)
+{
+    if (alpha == 1.0L) return;
+    if (alpha == 0.0L) {
+        for (int j = 0; j < N; ++j)
+            for (int i = 0; i < M; ++i) B_(i, j) = 0.0L;
+        return;
+    }
+    for (int j = 0; j < N; ++j)
+        for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
+}
+
+/* (L, L, N) blocked: forward sub.
+ *   For ic in 0, nb, 2nb, ...:
+ *     B[ic:ic+ib, :] -= A[ic:ic+ib, 0:ic] · B[0:ic, :]   (egemm)
+ *     solve A[ic:ic+ib, ic:ic+ib] · X = B[ic:ic+ib, :]   (unblocked)
+ */
+static void blocked_lln(int M, int N, T alpha,
+                        const T *a, int lda, T *b, int ldb, int nounit)
+{
+    const int nb = trsm_nb();
+    prescale_B(M, N, alpha, b, ldb);
+    const T m_one = -1.0L, one = 1.0L;
+    const char NN[1] = {'N'};
+    for (int ic = 0; ic < M; ic += nb) {
+        const int ib = (M - ic < nb) ? (M - ic) : nb;
+        if (ic > 0) {
+            /* B[ic:ic+ib, :] -= A[ic:ic+ib, 0:ic] · B[0:ic, :] */
+            egemm_(NN, NN, &ib, &N, &ic, &m_one,
+                   &A_(ic, 0), &lda,
+                   &B_(0, 0), &ldb, &one,
+                   &B_(ic, 0), &ldb, 1, 1);
+        }
+        trsm_lln(ib, N, 1.0L, &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+    }
+}
+
+/* (L, U, N) blocked: back sub.
+ *   For ic in M-nb..0 step -nb:
+ *     B[ic:ic+ib, :] -= A[ic:ic+ib, ic+ib:M] · B[ic+ib:M, :]
+ *     solve A[ic:ic+ib, ic:ic+ib] · X = B[ic:ic+ib, :]
+ */
+static void blocked_lun(int M, int N, T alpha,
+                        const T *a, int lda, T *b, int ldb, int nounit)
+{
+    const int nb = trsm_nb();
+    prescale_B(M, N, alpha, b, ldb);
+    const T m_one = -1.0L, one = 1.0L;
+    const char NN[1] = {'N'};
+    int ic = ((M - 1) / nb) * nb;     /* start of last block */
+    while (ic >= 0) {
+        const int ib = (M - ic < nb) ? (M - ic) : nb;
+        const int trailing_rows = M - (ic + ib);
+        if (trailing_rows > 0) {
+            const int j0 = ic + ib;
+            egemm_(NN, NN, &ib, &N, &trailing_rows, &m_one,
+                   &A_(ic, j0), &lda,
+                   &B_(j0, 0), &ldb, &one,
+                   &B_(ic, 0), &ldb, 1, 1);
+        }
+        trsm_lun(ib, N, 1.0L, &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+        ic -= nb;
+    }
+}
+
+/* (L, L, T) blocked: solve Aᵀ X = α B on lower-tri A.
+ * Aᵀ is upper-tri; iterate top to bottom — back-sub-like but on Aᵀ.
+ *   For ic in M-nb..0 step -nb:
+ *     B[ic:ic+ib, :] -= Aᵀ[ic:ic+ib, ic+ib:M] · B[ic+ib:M, :]
+ *                    = A[ic+ib:M, ic:ic+ib]ᵀ · B[ic+ib:M, :]
+ *     solve Aᵀ[ic:ic+ib, ic:ic+ib] · X = B[ic:ic+ib, :]
+ */
+static void blocked_llt(int M, int N, T alpha,
+                        const T *a, int lda, T *b, int ldb, int nounit)
+{
+    const int nb = trsm_nb();
+    prescale_B(M, N, alpha, b, ldb);
+    const T m_one = -1.0L, one = 1.0L;
+    const char TN[1] = {'T'};
+    const char NN[1] = {'N'};
+    int ic = ((M - 1) / nb) * nb;
+    while (ic >= 0) {
+        const int ib = (M - ic < nb) ? (M - ic) : nb;
+        const int trailing_rows = M - (ic + ib);
+        if (trailing_rows > 0) {
+            const int i0 = ic + ib;
+            /* GEMM with TRANSA='T': egemm('T','N', ib, N, trailing,
+             *   -1, A[i0, ic] (k×m), lda, B[i0, 0], ldb, 1, B[ic,0], ldb)
+             * Note the (k, m) shape because we're feeding A^T. */
+            egemm_(TN, NN, &ib, &N, &trailing_rows, &m_one,
+                   &A_(i0, ic), &lda,
+                   &B_(i0, 0), &ldb, &one,
+                   &B_(ic, 0), &ldb, 1, 1);
+        }
+        trsm_llt(ib, N, 1.0L, &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+        ic -= nb;
+    }
+}
+
+/* (L, U, T) blocked: solve Aᵀ X = α B on upper-tri A.
+ * Aᵀ is lower-tri; iterate top to bottom — forward-sub-like on Aᵀ.
+ */
+static void blocked_lut(int M, int N, T alpha,
+                        const T *a, int lda, T *b, int ldb, int nounit)
+{
+    const int nb = trsm_nb();
+    prescale_B(M, N, alpha, b, ldb);
+    const T m_one = -1.0L, one = 1.0L;
+    const char TN[1] = {'T'};
+    const char NN[1] = {'N'};
+    for (int ic = 0; ic < M; ic += nb) {
+        const int ib = (M - ic < nb) ? (M - ic) : nb;
+        if (ic > 0) {
+            /* B[ic:ic+ib, :] -= Aᵀ[ic:ic+ib, 0:ic] · B[0:ic, :]
+             *                 = A[0:ic, ic:ic+ib]ᵀ · B[0:ic, :] */
+            egemm_(TN, NN, &ib, &N, &ic, &m_one,
+                   &A_(0, ic), &lda,
+                   &B_(0, 0), &ldb, &one,
+                   &B_(ic, 0), &ldb, 1, 1);
+        }
+        trsm_lut(ib, N, 1.0L, &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
     }
 }
 
@@ -218,12 +374,26 @@ void etrsm_(
     }
 
     if (SIDE == 'L') {
+        /* Blocked path when M is large enough to amortize the egemm
+         * call overhead. Threshold is twice the block size — below
+         * that, blocking only adds noise. */
+        const int use_blocked = (M >= 2 * trsm_nb());
         if (TR == 'N') {
-            if (UPLO == 'L') trsm_lln(M, N, alpha, a, lda, b, ldb, nounit);
-            else             trsm_lun(M, N, alpha, a, lda, b, ldb, nounit);
+            if (UPLO == 'L') {
+                if (use_blocked) blocked_lln(M, N, alpha, a, lda, b, ldb, nounit);
+                else             trsm_lln(M, N, alpha, a, lda, b, ldb, nounit);
+            } else {
+                if (use_blocked) blocked_lun(M, N, alpha, a, lda, b, ldb, nounit);
+                else             trsm_lun(M, N, alpha, a, lda, b, ldb, nounit);
+            }
         } else {
-            if (UPLO == 'L') trsm_llt(M, N, alpha, a, lda, b, ldb, nounit);
-            else             trsm_lut(M, N, alpha, a, lda, b, ldb, nounit);
+            if (UPLO == 'L') {
+                if (use_blocked) blocked_llt(M, N, alpha, a, lda, b, ldb, nounit);
+                else             trsm_llt(M, N, alpha, a, lda, b, ldb, nounit);
+            } else {
+                if (use_blocked) blocked_lut(M, N, alpha, a, lda, b, ldb, nounit);
+                else             trsm_lut(M, N, alpha, a, lda, b, ldb, nounit);
+            }
         }
     } else {
         if (TR == 'N') {
