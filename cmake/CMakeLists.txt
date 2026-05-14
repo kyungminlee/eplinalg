@@ -342,6 +342,14 @@ endfunction()
 
 
 function(add_migrated_fortran_library lib_name)
+    # Optional kwarg TARGET_NAME <name> overrides the default
+    # ${LIB_PREFIX}${lib_name} target name. Used by the parallel-BLAS
+    # overlay to publish the migrated archive as ${LIB_PREFIX}blas_serial
+    # so the public name ${LIB_PREFIX}blas can be redefined as an
+    # INTERFACE composite over (serial, parallel). See
+    # doc/parallel-blas-20260513.md §1.
+    cmake_parse_arguments(AMFL "" "TARGET_NAME" "" ${ARGN})
+
     set(_dir ${CMAKE_CURRENT_SOURCE_DIR}/${lib_name})
     if(NOT EXISTS "${_dir}/manifest.cmake")
         return()
@@ -359,7 +367,11 @@ function(add_migrated_fortran_library lib_name)
     endforeach()
 
     set(_common_target "${lib_name}_common")
-    set(_precision_target "${LIB_PREFIX}${lib_name}")
+    if(AMFL_TARGET_NAME)
+        set(_precision_target "${AMFL_TARGET_NAME}")
+    else()
+        set(_precision_target "${LIB_PREFIX}${lib_name}")
+    endif()
 
     if(_common)
         add_library(${_common_target} STATIC ${_common})
@@ -562,9 +574,45 @@ add_standard_fortran_library(blas
     ${CMAKE_CURRENT_SOURCE_DIR}/_refblas_src
     EXCLUDE_REGEX "/(dsdot|sdsdot)\\.f9?0?$")
 if(NOT BASELINE_BUILD)
-    add_migrated_fortran_library(blas)
-    if(TARGET ${LIB_PREFIX}blas AND TARGET blas)
-        target_link_libraries(${LIB_PREFIX}blas PUBLIC blas)
+    # Parallel-BLAS overlay (opt-in): the public CMake target
+    # ${LIB_PREFIX}blas becomes an INTERFACE composite that links
+    # _parallel before _serial, so every downstream consumer
+    # (${LIB_PREFIX}lapack, scalapack, mumps, downstream apps)
+    # transparently picks up overlay symbols at link time. See
+    # doc/parallel-blas-20260513.md §1.
+    if(PARALLEL_BLAS)
+        add_migrated_fortran_library(blas
+            TARGET_NAME ${LIB_PREFIX}blas_serial)
+        if(TARGET ${LIB_PREFIX}blas_serial AND TARGET blas)
+            target_link_libraries(${LIB_PREFIX}blas_serial PUBLIC blas)
+        endif()
+        # Composite. The _parallel target is created later by
+        # add_subdirectory(parallel_blas); link it in if/when it
+        # exists. We add both link deps unconditionally — if the
+        # overlay subdir was skipped (e.g. no kernels for this
+        # target), _parallel simply won't be a target and the link
+        # is a no-op.
+        add_library(${LIB_PREFIX}blas INTERFACE)
+        if(TARGET ${LIB_PREFIX}blas_parallel)
+            # WHOLE_ARCHIVE is mandatory: a static archive's members
+            # are normally only extracted to satisfy unresolved
+            # symbols, so overlay objects (egemm.c.o etc.) would be
+            # silently dropped when `_serial` already defines the
+            # same Fortran symbols. WHOLE_ARCHIVE forces every overlay
+            # object into the link, where its definitions take
+            # precedence over the serial archive's (linker picks the
+            # first definition seen — overlay listed first below).
+            # CMake 3.24+ generator expression.
+            target_link_libraries(${LIB_PREFIX}blas INTERFACE
+                "$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_PREFIX}blas_parallel>")
+        endif()
+        target_link_libraries(${LIB_PREFIX}blas INTERFACE
+            ${LIB_PREFIX}blas_serial)
+    else()
+        add_migrated_fortran_library(blas)
+        if(TARGET ${LIB_PREFIX}blas AND TARGET blas)
+            target_link_libraries(${LIB_PREFIX}blas PUBLIC blas)
+        endif()
     endif()
 endif()
 
@@ -1160,6 +1208,15 @@ if(NEEDS_MULTIFLOATS)
             endif()
         endif()
     endforeach()
+endif()
+
+# ── Parallel BLAS overlay (opt-in) ───────────────────────────────────
+# Adds hand-written, thread-parallel BLAS overlay archive(s).
+# Default OFF; gate inside parallel_blas/CMakeLists.txt. When the
+# directory is missing (staging tree built without the overlay
+# sources), this is a no-op.
+if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parallel_blas)
+    add_subdirectory(parallel_blas)
 endif()
 
 # ── Tests ────────────────────────────────────────────────────────────
