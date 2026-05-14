@@ -55,21 +55,23 @@ static int trans_code(const char *p, size_t len) {
 
 /* ── Packers ──────────────────────────────────────────────────── */
 
+/* Row-major Ap layout for inner-product (DDOT) kernel: see egemm.c. */
 static void pack_A(const T *restrict A, int lda,
                    int ic, int pc, int ib, int pb,
                    int ta, T *restrict Ap)
 {
     int i, p;
     if (ta == 'N') {
-        for (p = 0; p < pb; ++p) {
-            const T *src = &A[(size_t)(pc + p) * lda + ic];
-            T *dst = &Ap[(size_t)p * ib];
-            for (i = 0; i < ib; ++i) dst[i] = src[i];
+        for (i = 0; i < ib; ++i) {
+            T *dst = &Ap[(size_t)i * pb];
+            for (p = 0; p < pb; ++p)
+                dst[p] = A[(size_t)(pc + p) * lda + (ic + i)];
         }
     } else {
         for (i = 0; i < ib; ++i) {
             const T *src = &A[(size_t)(ic + i) * lda + pc];
-            for (p = 0; p < pb; ++p) Ap[(size_t)p * ib + i] = src[p];
+            T *dst = &Ap[(size_t)i * pb];
+            for (p = 0; p < pb; ++p) dst[p] = src[p];
         }
     }
 }
@@ -95,6 +97,8 @@ static void pack_B(const T *restrict B, int ldb,
 
 /* ── Inner kernel ─────────────────────────────────────────────── */
 
+/* Inner-product micro-kernel: Ap row-major, Bp col-major; one dot
+ * product per (i,j) with accumulator in register. */
 static void inner_kernel(int ib, int jb, int pb, T alpha,
                          const T *restrict Ap, const T *restrict Bp,
                          T *restrict C, int ldc)
@@ -103,10 +107,11 @@ static void inner_kernel(int ib, int jb, int pb, T alpha,
     for (j = 0; j < jb; ++j) {
         T *cj = &C[(size_t)j * ldc];
         const T *bj = &Bp[(size_t)j * pb];
-        for (p = 0; p < pb; ++p) {
-            const T t = alpha * bj[p];
-            const T *ap = &Ap[(size_t)p * ib];
-            for (i = 0; i < ib; ++i) cj[i] += t * ap[i];
+        for (i = 0; i < ib; ++i) {
+            const T *ai = &Ap[(size_t)i * pb];
+            T sum = 0.0Q;
+            for (p = 0; p < pb; ++p) sum += ai[p] * bj[p];
+            cj[i] += alpha * sum;
         }
     }
 }

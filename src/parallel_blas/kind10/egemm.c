@@ -3,9 +3,15 @@
  *
  * Goto-style cache-blocked + packed, OpenMP-parallel across the
  * outer NC loop. All 9 transpose combos go through the same blocked
- * path; the packers absorb TRANSA / TRANSB orientation so the inner
- * kernel always sees `Ap (ib × pb)` and `Bp (pb × jb)` in uniform
- * column-major layout.
+ * path; the packers absorb TRANSA / TRANSB orientation.
+ *
+ * Inner-product (DDOT) micro-kernel: Ap is packed in ROW-MAJOR
+ * layout (`Ap[i*pb + p] = op(A)[i,p]`), so the inner contraction
+ * reads one contiguous Ap row and one contiguous Bp column as two
+ * length-pb vectors and accumulates their dot product in a register.
+ * C[i,j] is read+written once per (i,j) — half the C traffic of the
+ * rank-1 outer-product variant. The accumulator can stay in a
+ * register across the contraction.
  *
  * For real types (kind10) the conjugate-transpose 'C' is identical
  * to 'T'. We normalize both to 'T' at entry.
@@ -64,17 +70,15 @@ static int trans_code(const char *p, size_t len) {
 /* ── Packers ──────────────────────────────────────────────────── */
 
 /*
- * Pack op(A)(ic:ic+ib, pc:pc+pb) into Ap, column-major (ib, pb).
+ * Pack op(A)(ic:ic+ib, pc:pc+pb) into Ap in ROW-MAJOR layout
+ * (`Ap[i*pb + p] = op(A)[i,p]`). Each row of Ap is contiguous along
+ * the contraction axis p — what the inner-product kernel reads.
  *
- *   ta == 'N':  op(A)[i, p] = A[ic+i, pc+p]
- *               source stride in i: 1 (contiguous)
- *               source stride in p: lda
+ *   ta == 'N':  op(A)[i,p] = A[ic+i, pc+p].  Source stride in p is
+ *               lda → gather across columns when writing one Ap row.
  *
- *   ta == 'T':  op(A)[i, p] = A[pc+p, ic+i]
- *               source stride in i: lda
- *               source stride in p: 1
- *
- * Pack output is always: Ap[p*ib + i] = op(A)[i, p].
+ *   ta == 'T':  op(A)[i,p] = A[pc+p, ic+i].  Source stride in p is 1
+ *               → straight memcpy per row of Ap.
  */
 static void pack_A(const T *restrict A, int lda,
                    int ic, int pc, int ib, int pb,
@@ -82,18 +86,16 @@ static void pack_A(const T *restrict A, int lda,
 {
     int i, p;
     if (ta == 'N') {
-        for (p = 0; p < pb; ++p) {
-            const T *src = &A[(size_t)(pc + p) * lda + ic];
-            T *dst = &Ap[(size_t)p * ib];
-            for (i = 0; i < ib; ++i) dst[i] = src[i];
+        for (i = 0; i < ib; ++i) {
+            T *dst = &Ap[(size_t)i * pb];
+            for (p = 0; p < pb; ++p)
+                dst[p] = A[(size_t)(pc + p) * lda + (ic + i)];
         }
     } else {
-        /* Read across rows of source A (stride lda), writing into one
-         * column of Ap. The outer i-loop walks distinct rows of
-         * source, the inner p-loop walks contiguous values per row. */
         for (i = 0; i < ib; ++i) {
             const T *src = &A[(size_t)(ic + i) * lda + pc];
-            for (p = 0; p < pb; ++p) Ap[(size_t)p * ib + i] = src[p];
+            T *dst = &Ap[(size_t)i * pb];
+            for (p = 0; p < pb; ++p) dst[p] = src[p];
         }
     }
 }
@@ -135,11 +137,12 @@ static void pack_B(const T *restrict B, int ldb,
 /* ── Inner kernel ─────────────────────────────────────────────── */
 
 /*
- * C(ic:ic+ib, jc:jc+jb) += alpha * Ap[ib, pb] * Bp[pb, jb].
- * Ap is (ib × pb) column-major; Bp is (pb × jb) column-major.
- * Layout is uniform across all 4 transpose paths after packing.
- * The outer-j loop hoists alpha * Bp[p, j] into a scalar; the inner
- * i-loop reads one contiguous Ap stripe per p.
+ * Inner-product micro-kernel.
+ *   Ap row-major: Ap[i*pb + p] = op(A)[i, p]  (length-pb rows)
+ *   Bp col-major: Bp[j*pb + p] = op(B)[p, j]  (length-pb cols)
+ * For each (i, j) compute sum = Σ_p Ap[i,p] · Bp[p,j] in a scalar
+ * accumulator, then C[i,j] += alpha · sum. One read+write of C per
+ * (i,j), instead of one per (i,j,p).
  */
 static void inner_kernel(int ib, int jb, int pb, T alpha,
                          const T *restrict Ap, const T *restrict Bp,
@@ -149,10 +152,11 @@ static void inner_kernel(int ib, int jb, int pb, T alpha,
     for (j = 0; j < jb; ++j) {
         T *cj = &C[(size_t)j * ldc];
         const T *bj = &Bp[(size_t)j * pb];
-        for (p = 0; p < pb; ++p) {
-            const T t = alpha * bj[p];
-            const T *ap = &Ap[(size_t)p * ib];
-            for (i = 0; i < ib; ++i) cj[i] += t * ap[i];
+        for (i = 0; i < ib; ++i) {
+            const T *ai = &Ap[(size_t)i * pb];
+            T sum = 0.0L;
+            for (p = 0; p < pb; ++p) sum += ai[p] * bj[p];
+            cj[i] += alpha * sum;
         }
     }
 }

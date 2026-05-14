@@ -266,36 +266,41 @@ Box caches: per-core L1d=37 KB, L2=1.5 MB; shared L3=10 MB. Element
 size is 16 B for all three precisions, so the per-matrix footprint
 is `s² × 16 B`: s=512 → 4 MB ≈ L2 spill, s=1024 → 16 MB > L3.
 
-#### kind10 (`long double`, x87)
+Kernel choice: **kind10 and kind16 use the inner-product (DDOT)
+micro-kernel**; **multifloats uses the outer-product (rank-1)
+form**. The choice is precision-dependent — see "Kernel structure"
+below.
+
+#### kind10 (`long double`, x87) — inner-product
 
 | s | overlay | migrated | overlay/migrated |
 |---|---|---|---|
-| 128  | 0.78 | 0.83 | 0.94× |
-| 256  | 1.31 | 1.41 | 0.92× |
-| 512  | 1.32 | 1.41 | 0.93× |
-| 1024 | 1.32 | 1.30 | **1.02×** |
-| 2048 | 1.35 | 1.27 | **1.06×** |
+| 128  | 1.80 | 2.50 | 0.72× |
+| 256  | 1.89 | 2.53 | 0.75× |
+| 512  | 1.89 | 2.51 | 0.75× |
+| 1024 | 2.17 | 1.32 | **1.65×** |
+| 2048 | 2.21 | 1.30 | **1.71×** |
 
-Migrated drops ~10% as working set spills L2 → L3 → RAM
-(1.41 → 1.27). Overlay's packing absorbs the stride miss → flat at
-1.32–1.35. Cross-over at N≈1024; serial cache-blocking value is
-real but small until N is large.
+At s ≤ 512 the migrated impl wins — its triple loop fits in cache
+and has zero blocking overhead. At s ≥ 1024 the working set spills
+L2 → L3 → RAM, migrated drops to 1.3 GFLOP/s, and overlay's
+blocking + register accumulator overtake at **1.7×**.
 
-#### kind16 (`__float128`, libquadmath)
+#### kind16 (`__float128`, libquadmath) — inner-product
 
 | s | overlay | migrated | overlay/migrated |
 |---|---|---|---|
-| 128  | 0.054 | 0.055 | 0.98× |
-| 256  | 0.055 | 0.055 | 0.99× |
-| 512  | 0.056 | 0.058 | 0.97× |
-| 1024 | 0.057 | 0.058 | 0.97× |
+| 128  | 0.060 | 0.054 | 1.10× |
+| 256  | 0.060 | 0.056 | 1.06× |
+| 512  | 0.059 | 0.058 | 1.02× |
+| 1024 | 0.060 | 0.059 | 1.01× |
 
-Cache effect invisible. Every op is a libquadmath function call
-(~hundreds of cycles); memory traffic is rounding error. Serial
-overlay essentially ties migrated regardless of N. OMP scaling is
-the only way the overlay differentiates here.
+Cache effect still invisible (libquadmath function-call overhead
+dominates), but inner-product's reduced C traffic and register
+accumulator buy a small edge at every size — overlay slightly
+ahead at all sizes single-threaded.
 
-#### multifloats (DD, C++ inlined)
+#### multifloats (DD, C++ inlined) — outer-product
 
 | s | overlay | migrated | overlay/migrated |
 |---|---|---|---|
@@ -313,8 +318,48 @@ doesn't matter when the inner op is a few inlined doubles.
 
 **Takeaway**: cache blocking pays only when arithmetic is fast
 enough to expose memory traffic. On this box kind10 hits that
-crossover at N≈1024; kind16 and multifloats stay arithmetic-bound
+crossover at s≈1024; kind16 and multifloats stay arithmetic-bound
 across the measured range.
+
+### Kernel structure (outer-product vs inner-product)
+
+After packing, the inner kernel has two natural shapes:
+
+| variant | layout of Ap | inner loop | C traffic | accumulator |
+|---|---|---|---|---|
+| outer-product (rank-1) | col-major | `cj[i] += t · ap[i]`, `t` hoisted from Bp | one read+write per (i, j, p) | none — accumulates straight into memory |
+| inner-product (DDOT)  | row-major | `sum += ai[p] · bj[p]`, accumulator scalar | one read+write per (i, j) | scalar accumulator stays in register across p |
+
+The trade-off:
+- Outer-product gives the compiler many independent `cj[i]`
+  store streams to pipeline → high instruction-level parallelism,
+  but `pb` more C writes than the inner-product form.
+- Inner-product has a tight data dependency through the accumulator
+  → no ILP on the contraction, but the accumulator never touches
+  memory and C is touched once per (i, j).
+
+Empirically on this box:
+
+| target | outer-product OMP=1 | inner-product OMP=1 | choice |
+|---|---|---|---|
+| kind10 @ s=2048 | 1.35 GFLOP/s | 2.21 | **inner-product** (1.6× faster) |
+| kind16 @ s=1024 | 0.058 | 0.060 | **inner-product** (small win) |
+| multifloats @ s=512 | 0.51 | 0.33 | **outer-product** (1.5× faster) |
+
+- kind10's bottleneck at large s is **memory traffic** (long-double
+  C writes touch a 16 MB buffer); halving C traffic helps.
+- multifloats's bottleneck is **the DD accumulator dependency
+  chain** — each `sum += ai[p] * bj[p]` is ~12 inlined hardware FMAs
+  and the next iter waits on the accumulator. Outer-product gives
+  the compiler `ib` independent C-streams to pipeline, lifting ILP.
+- kind16 is in between, with inner-product slightly ahead because
+  libquadmath calls dominate everything else.
+
+So the codebase currently mixes kernel shapes per target. Both
+shapes live as drop-in replacements of the same `inner_kernel` (and
+its matching `pack_A` layout) inside `egemm.c` / `qgemm.c` /
+`mgemm.cpp` respectively. The choice is one local edit per target;
+no shared infra changes.
 
 Reading:
 - **kind10 / kind16**: overlay roughly ties the migrated archive
