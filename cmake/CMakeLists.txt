@@ -1215,6 +1215,20 @@ function(_install_library_pair lib_name)
         fortran_install_modules(${_precision_target})
     endif()
 
+    # Parallel-BLAS overlay: the public ${LIB_PREFIX}blas is an
+    # INTERFACE composite whose link deps (_serial, _parallel) must
+    # also be in the export set, or install(EXPORT) bails.
+    if("${lib_name}" STREQUAL "blas" AND PARALLEL_BLAS)
+        if(TARGET ${LIB_PREFIX}blas_serial)
+            fortran_install_library(${LIB_PREFIX}blas_serial
+                EXPORT ${_export} ${_install_mpi_arg})
+        endif()
+        if(TARGET ${LIB_PREFIX}blas_parallel)
+            fortran_install_library(${LIB_PREFIX}blas_parallel
+                EXPORT ${_export} ${_install_mpi_arg})
+        endif()
+    endif()
+
     # Bundle common library into the same export
     if(TARGET ${_common_target})
         fortran_install_library(${_common_target} EXPORT ${_export} ${_install_mpi_arg})

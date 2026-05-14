@@ -51,4 +51,15 @@ else()
             add_subdirectory(${_lib})
         endif()
     endforeach()
+
+    # Parallel BLAS overlay test suite — consistency (overlay vs
+    # migrated archive at REAL(KIND=10/16/MF)) + fuzz + bench. Gated
+    # on PARALLEL_BLAS and on the presence of the renamed migrated
+    # archive (created by the BLAS section in cmake/CMakeLists.txt).
+    if(PARALLEL_BLAS
+            AND TARGET ${LIB_PREFIX}blas_parallel
+            AND TARGET ${LIB_PREFIX}blas_migrated
+            AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/blas_parallel/CMakeLists.txt)
+        add_subdirectory(blas_parallel)
+    endif()
 endif()
