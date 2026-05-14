@@ -77,4 +77,23 @@ if(MBLAS_SIMD_DD)
     target_compile_definitions(${LIB_PREFIX}blas_parallel PRIVATE
         MGEMM_SIMD_MR=${MBLAS_SIMD_MR}
         MGEMM_SIMD_NR_PAN=${MBLAS_SIMD_NR_PAN})
+
+    # Same SIMD treatment for wgemm (complex DD). Default ON; flips off
+    # together with MBLAS_SIMD_DD if AVX2+FMA isn't supported.
+    option(WBLAS_SIMD_DD
+        "multifloats: AVX2 SIMD kernel for wgemm (complex DD)"
+        ${_HAS_AVX2_FMA_FLAGS})
+    if(WBLAS_SIMD_DD)
+        target_compile_definitions(${LIB_PREFIX}blas_parallel PRIVATE
+            WBLAS_SIMD_DD=1)
+        # Per-cell complex SIMD already has 4-way intra-cell ILP — start
+        # at MR=1, NR_PAN=1 and sweep.
+        set(WBLAS_SIMD_MR 1 CACHE STRING
+            "multifloats: wgemm SIMD micro-kernel rows MR (1..2)")
+        set(WBLAS_SIMD_NR_PAN 1 CACHE STRING
+            "multifloats: wgemm SIMD 4-lane panels per call (1..2)")
+        target_compile_definitions(${LIB_PREFIX}blas_parallel PRIVATE
+            WGEMM_SIMD_MR=${WBLAS_SIMD_MR}
+            WGEMM_SIMD_NR_PAN=${WBLAS_SIMD_NR_PAN})
+    endif()
 endif()

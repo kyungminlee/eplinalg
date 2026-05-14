@@ -486,6 +486,46 @@ overlay — the migrated Fortran goes through an elemental wrapper
 around each scalar DD op (call overhead) and uses no SIMD; the
 overlay fixes both at once.
 
+### AVX2 SIMD wgemm (complex DD)
+
+Complex DD multiplication = 4 dd_muls + 1 dd_sub + 3 dd_adds per
+element. The 4 dd_muls in `(a+bi)·(c+di) = (ac−bd) + (ad+bc)i` are
+**independent within a single complex multiplication** — i.e. the
+inner kernel already has 4-way intra-cell ILP before we add any
+outer MR / NR_PAN parallelism. So the FMA throughput ceiling is
+reached at the smallest tile.
+
+SoA layout: 4 separate arrays per packed B panel (re_hi, re_lo,
+im_hi, im_lo). Conjugate-transpose 'C' folds into pack via
+negating im_h / im_l during the copy.
+
+Sweep, Raptor Lake i3-1315U, OMP=1 NN s=512 (complex GFLOP/s
+= 8·s³/t):
+
+| MR | NR_PAN | chains | GFLOP/s |
+|---|---|---|---|
+| 1 | 1 | 4† | 3.87 |
+| 2 | 1 | 8† | 3.86 |
+| 1 | 2 | 8† | 3.87 |
+| 2 | 2 | 16† | 3.94 |
+
+(† intra-cell parallelism is 4 dd_muls; total chains = 4 · MR · NR_PAN.)
+
+The default (MR=1, NR_PAN=1) is already at the ceiling, ~99% of the
+maximum reached anywhere. Wider configurations give 2% more for
+2-4× the register pressure — not worth the complexity.
+
+Headline at default:
+
+| | OMP=1 NN s=1024 | OMP=4 NN s=1024 |
+|---|---|---|
+| migrated | 0.22 GFLOP/s | 0.22 |
+| **AVX2 SIMD overlay** | ~3.85 | **8.44** |
+| vs migrated | ~18× | **39×** |
+
+Worst-case for the migrated path is CC (conjugate-transpose both
+sides): 0.15 GFLOP/s vs overlay 8.06 → **55×**.
+
 ### Register-tiled (MR × NR) micro-kernel — tried, abandoned
 
 The next natural step after outer-product / inner-product is the
