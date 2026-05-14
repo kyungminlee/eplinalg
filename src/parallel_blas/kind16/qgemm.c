@@ -27,6 +27,13 @@
 #include <omp.h>
 #endif
 
+#ifdef QBLAS_INLINE_SOFTFP
+/* Inline __multf3/__addtf3 via vendored soft-fp template headers
+ * instead of going through libgcc's external entry points. See
+ * src/parallel_blas/kind16/qmath_inline.h. */
+#include "qmath_inline.h"
+#endif
+
 typedef __float128 T;
 
 /* ── Block sizes ──────────────────────────────────────────────── */
@@ -98,7 +105,12 @@ static void pack_B(const T *restrict B, int ldb,
 /* ── Inner kernel ─────────────────────────────────────────────── */
 
 /* Inner-product micro-kernel: Ap row-major, Bp col-major; one dot
- * product per (i,j) with accumulator in register. */
+ * product per (i,j) with accumulator in register.
+ *
+ * Under -DQBLAS_INLINE_SOFTFP the soft-float __multf3/__addtf3
+ * bodies inline (see qmath_inline.h). Without the macro we go
+ * through libgcc's external entry points via the `*`/`+` operators
+ * — matches the historical behavior. */
 static void inner_kernel(int ib, int jb, int pb, T alpha,
                          const T *restrict Ap, const T *restrict Bp,
                          T *restrict C, int ldc)
@@ -110,8 +122,18 @@ static void inner_kernel(int ib, int jb, int pb, T alpha,
         for (i = 0; i < ib; ++i) {
             const T *ai = &Ap[(size_t)i * pb];
             T sum = 0.0Q;
-            for (p = 0; p < pb; ++p) sum += ai[p] * bj[p];
+            for (p = 0; p < pb; ++p) {
+#ifdef QBLAS_INLINE_SOFTFP
+                sum = qadd(sum, qmul(ai[p], bj[p]));
+#else
+                sum += ai[p] * bj[p];
+#endif
+            }
+#ifdef QBLAS_INLINE_SOFTFP
+            cj[i] = qadd(cj[i], qmul(alpha, sum));
+#else
             cj[i] += alpha * sum;
+#endif
         }
     }
 }

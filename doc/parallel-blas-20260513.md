@@ -431,6 +431,47 @@ register tile spills immediately on kind10; libquadmath function
 calls dominate everything on kind16 so the structural change is
 irrelevant.
 
+### Inlining `__multf3` / `__addtf3` — tried, abandoned
+
+These are libgcc's soft-float quad-precision multiply and add — what
+gcc emits for every `__float128` `*` and `+` operator. They live in
+libgcc as external symbols, called via PLT trampoline. Hypothesis:
+inlining the bodies into the hot loop would save the call overhead.
+
+Vendored gcc's `libgcc/soft-fp/` template headers under
+`external/libgcc-softfp/`. Wrote `static inline
+__attribute__((always_inline))` wrappers `qmul`, `qadd`, `qsub` in
+`src/parallel_blas/kind16/qmath_inline.h`. Gated on
+`-DQBLAS_INLINE_SOFTFP=ON`. Verified the expansion lands in the
+binary: `qgemm_._omp_fn.0` body grew from ~250 to ~5000
+instructions (correct: each `qmul` is ~700 insns, each `qadd` is
+~1200).
+
+OMP=4, NN, s=512 head-to-head:
+
+| build | GFLOP/s |
+|---|---|
+| call-based (default) | 0.118 |
+| inline soft-fp        | 0.116 |
+
+**No speedup.** The PLT call overhead (~5–10 cycles) is < 5% of the
+~200–400-cycle soft-float body. Inlining saves that, but the inner
+loop's instruction footprint balloons and L1i fetch latency eats
+back whatever was gained.
+
+The infrastructure (vendored headers, inline shim, cmake flag) is
+kept in place — off by default — so the experiment stays
+reproducible and the negative result is documented in code. If a
+future toolchain version closes the gap (e.g. better register
+allocation in the inlined bodies, or LTO across libgcc), flipping
+the flag is one cmake edit.
+
+Conclusion: kind16 perf is bound by the irreducible cost of
+soft-float quad arithmetic. Real headroom for this precision is in
+hardware (Sapphire Rapids and beyond ship native quad ops) or in a
+specialized arithmetic library (multifloats DD as a faster
+~32-digit alternative).
+
 Conclusion: register tiling is the right answer for IEEE
 double-precision GEMM on hardware with abundant SIMD registers and
 hardware FMA throughput high enough to expose memory traffic. None

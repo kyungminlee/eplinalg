@@ -36,6 +36,35 @@ endif()
 # from libgcc.
 target_link_libraries(${LIB_PREFIX}blas_parallel PUBLIC quadmath)
 
+# Opt-in: inline __multf3/__addtf3 via vendored soft-fp template
+# headers under external/libgcc-softfp/. Saves the libgcc external
+# call but balloons kernel code size (~700+1266 insns per qmul+qadd).
+# Off by default; flip with -DQBLAS_INLINE_SOFTFP=ON at cmake time.
+option(QBLAS_INLINE_SOFTFP
+    "kind16: inline __multf3/__addtf3 from soft-fp headers" OFF)
+if(QBLAS_INLINE_SOFTFP)
+    # Soft-fp headers reference each other and the per-arch
+    # `sfp-machine.h` via plain `#include "..."`. Add both the root
+    # external dir AND the i386/64 subdir to the include path so the
+    # nested includes resolve.
+    set(_softfp_root
+        ${CMAKE_SOURCE_DIR}/external/libgcc-softfp)
+    if(NOT IS_DIRECTORY ${_softfp_root})
+        message(FATAL_ERROR
+            "QBLAS_INLINE_SOFTFP=ON but ${_softfp_root} is missing — "
+            "ensure migrator stage copied external/libgcc-softfp/")
+    endif()
+    target_include_directories(${LIB_PREFIX}blas_parallel PRIVATE
+        ${_softfp_root}
+        ${_softfp_root}/config/i386/64)
+    target_compile_definitions(${LIB_PREFIX}blas_parallel PRIVATE
+        QBLAS_INLINE_SOFTFP=1)
+    # Soft-fp emits ISO-C extensions that warn under strict modes.
+    # Suppress; the headers are upstream LGPL code we don't modify.
+    target_compile_options(${LIB_PREFIX}blas_parallel PRIVATE
+        -Wno-error -w)
+endif()
+
 if(OpenMP_C_FOUND)
     target_link_libraries(${LIB_PREFIX}blas_parallel PUBLIC OpenMP::OpenMP_C)
 endif()
