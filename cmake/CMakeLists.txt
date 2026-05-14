@@ -881,12 +881,16 @@ if(NOT BASELINE_BUILD)
         endif()
         # Reverse dep: ScaLAPACK's Fortran routines call qlamov_/xlamov_
         # (and the redistribution entry points pqgemr2d_/pxgemr2d_) which
-        # live in ${LIB_PREFIX}scalapack_c. Downstream test link cycles
-        # then need only to name ${LIB_PREFIX}scalapack to pick both up.
-        if(TARGET ${LIB_PREFIX}scalapack)
-            target_link_libraries(${LIB_PREFIX}scalapack PUBLIC
-                ${LIB_PREFIX}scalapack_c)
-        endif()
+        # live in ${LIB_PREFIX}scalapack_c. We used to wire this as a
+        # PUBLIC link on ${LIB_PREFIX}scalapack so downstream callers
+        # could link a single library — but that put qscalapack_c into
+        # qscalapack's INTERFACE_LINK_LIBRARIES, creating a cycle with
+        # qscalapack_c → qscalapack. The cycle blocks ``find_package``
+        # because qscalapack's Targets file then fails the
+        # ``_cmake_expected_target`` check before qscalapack_c is
+        # loaded. Consumers calling Fortran ScaLAPACK routines that
+        # internally jump to C-side helpers must now explicitly link
+        # both ``${LIB_PREFIX}scalapack`` and ``${LIB_PREFIX}scalapack_c``.
     endif()
 endif()
 
@@ -931,6 +935,152 @@ if(NOT BASELINE_BUILD)
     endif()
     if(TARGET mumps_common AND MPI_Fortran_FOUND)
         target_link_libraries(mumps_common PRIVATE MPI::MPI_Fortran)
+    endif()
+
+    # ── MUMPS C-side bridge ─────────────────────────────────────────
+    # Builds ``${LIB_PREFIX}mumps_c`` (e.g. ``qmumps_c``), a packaged
+    # C entry-point library that lets C consumers call MUMPS through
+    # the migrated qmumps Fortran. Provides both real (``qmumps_c``)
+    # and complex (``xmumps_c``) entry points by compiling upstream
+    # ``mumps_c.c`` twice with per-arithmetic macro renames, plus
+    # the upstream C runtime (mumps_common.c, IO, save/restore,
+    # thread, numa, flytes, config, metis, pord, scotch).
+    #
+    # Per-target headers (``qmumps_c.h``, ``xmumps_c.h``,
+    # precision-aware ``mumps_c_types.h`` shadow) come from
+    # ``tests/mumps/target_${TARGET_NAME}/c/include/`` — produced by
+    # the migrator at stage time. They install AFTER the upstream
+    # headers so the precision-aware shadow ``mumps_c_types.h``
+    # shadows upstream's plain-``double`` version.
+    #
+    # The same machinery used to live inside tests/mumps/CMakeLists.txt
+    # as the test-only ``mumps_c_bridge`` target; promoting it here
+    # lets ``find_package(qmumps)`` deliver a usable C API instead of
+    # the misleading raw ``dmumps_c.h`` (which expects libdmumps, not
+    # libqmumps).
+    set(_mumps_c_src ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_upstream_src)
+    set(_mumps_c_inc ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_upstream_include)
+    set(_mumps_c_bridge_inc_target
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mumps/target_${TARGET_NAME}/c/include)
+    set(_mumps_c_bridge_inc_shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mumps/c/include)
+    if(TARGET ${LIB_PREFIX}mumps
+            AND IS_DIRECTORY ${_mumps_c_src}
+            AND IS_DIRECTORY ${_mumps_c_inc}
+            AND IS_DIRECTORY ${_mumps_c_bridge_inc_target})
+        string(TOUPPER "${LIB_PREFIX}" _pfx_R)
+        string(TOUPPER "${LIB_PREFIX_COMPLEX}" _pfx_C)
+        # Per-arithmetic OBJECT libraries — compile ``mumps_c.c`` twice
+        # with per-arith macro renames; the ``mumps_c.h`` ↔
+        # ``dmumps_c.h``-style override gives us ``qmumps_c`` (real)
+        # and ``xmumps_c`` (complex) entry points landing in the same
+        # archive.
+        add_library(${LIB_PREFIX}mumps_c_obj OBJECT ${_mumps_c_src}/mumps_c.c)
+        target_include_directories(${LIB_PREFIX}mumps_c_obj PRIVATE
+            ${_mumps_c_bridge_inc_target} ${_mumps_c_bridge_inc_shared}
+            ${_mumps_c_inc} ${_mumps_c_src})
+        target_compile_definitions(${LIB_PREFIX}mumps_c_obj PRIVATE
+            MUMPS_ARITH=MUMPS_ARITH_d Add_
+            dmumps_f77_=${LIB_PREFIX}mumps_f77_
+            dmumps_set_tmp_ptr_=${LIB_PREFIX}mumps_set_tmp_ptr_
+            dmumps_c=${LIB_PREFIX}mumps_c
+            DMUMPS_STRUC_C=${_pfx_R}MUMPS_STRUC_C)
+        target_compile_options(${LIB_PREFIX}mumps_c_obj PRIVATE
+            -include mumps_c_types.h)
+
+        add_library(${LIB_PREFIX_COMPLEX}mumps_c_obj OBJECT ${_mumps_c_src}/mumps_c.c)
+        target_include_directories(${LIB_PREFIX_COMPLEX}mumps_c_obj PRIVATE
+            ${_mumps_c_bridge_inc_target} ${_mumps_c_bridge_inc_shared}
+            ${_mumps_c_inc} ${_mumps_c_src})
+        target_compile_definitions(${LIB_PREFIX_COMPLEX}mumps_c_obj PRIVATE
+            MUMPS_ARITH=MUMPS_ARITH_z Add_
+            zmumps_f77_=${LIB_PREFIX_COMPLEX}mumps_f77_
+            zmumps_set_tmp_ptr_=${LIB_PREFIX_COMPLEX}mumps_set_tmp_ptr_
+            zmumps_c=${LIB_PREFIX_COMPLEX}mumps_c
+            ZMUMPS_STRUC_C=${_pfx_C}MUMPS_STRUC_C)
+        target_compile_options(${LIB_PREFIX_COMPLEX}mumps_c_obj PRIVATE
+            -include mumps_c_types.h)
+
+        # mumps_addr.c stays at upstream double precision (the migrated
+        # Fortran's xtools.F / qtools.F UPDATE_PROGRESS pass DP per
+        # keep-kind manifest — compiling with the shadow types would
+        # corrupt the 8-byte caller buffer).
+        add_library(${LIB_PREFIX}mumps_c_addr_obj OBJECT ${_mumps_c_src}/mumps_addr.c)
+        target_include_directories(${LIB_PREFIX}mumps_c_addr_obj PRIVATE
+            ${_mumps_c_inc} ${_mumps_c_src} ${_mumps_c_bridge_inc_shared})
+        target_compile_definitions(${LIB_PREFIX}mumps_c_addr_obj PRIVATE Add_)
+
+        # Combined STATIC archive. Bundles the per-arithmetic objects
+        # with the type-agnostic upstream runtime into ONE library so
+        # consumers link a single ``${LIB_PREFIX}mumps_c``.
+        add_library(${LIB_PREFIX}mumps_c STATIC
+            $<TARGET_OBJECTS:${LIB_PREFIX}mumps_c_obj>
+            $<TARGET_OBJECTS:${LIB_PREFIX_COMPLEX}mumps_c_obj>
+            $<TARGET_OBJECTS:${LIB_PREFIX}mumps_c_addr_obj>
+            ${_mumps_c_src}/mumps_common.c
+            ${_mumps_c_src}/mumps_io.c
+            ${_mumps_c_src}/mumps_io_basic.c
+            ${_mumps_c_src}/mumps_io_err.c
+            ${_mumps_c_src}/mumps_io_thread.c
+            ${_mumps_c_src}/mumps_save_restore_C.c
+            ${_mumps_c_src}/mumps_register_thread.c
+            ${_mumps_c_src}/mumps_thread.c
+            ${_mumps_c_src}/mumps_thread_affinity.c
+            ${_mumps_c_src}/mumps_numa.c
+            ${_mumps_c_src}/mumps_flytes.c
+            ${_mumps_c_src}/mumps_config_file_C.c
+            ${_mumps_c_src}/mumps_metis.c
+            ${_mumps_c_src}/mumps_metis64.c
+            ${_mumps_c_src}/mumps_metis_int.c
+            ${_mumps_c_src}/mumps_pord.c
+            ${_mumps_c_src}/mumps_scotch.c
+            ${_mumps_c_src}/mumps_scotch64.c
+            ${_mumps_c_src}/mumps_scotch_int.c)
+        target_include_directories(${LIB_PREFIX}mumps_c
+            PUBLIC
+                $<BUILD_INTERFACE:${_mumps_c_bridge_inc_target}>
+                $<BUILD_INTERFACE:${_mumps_c_bridge_inc_shared}>
+                $<BUILD_INTERFACE:${_mumps_c_inc}>
+                $<BUILD_INTERFACE:${_mumps_c_src}>
+                $<INSTALL_INTERFACE:include/mumps>)
+        target_compile_definitions(${LIB_PREFIX}mumps_c PRIVATE Add_)
+        target_compile_options(${LIB_PREFIX}mumps_c PRIVATE
+            -include mumps_c_types.h)
+        if(MPI_C_FOUND)
+            target_link_libraries(${LIB_PREFIX}mumps_c PRIVATE MPI::MPI_C)
+            target_link_libraries(${LIB_PREFIX}mumps_c INTERFACE
+                $<LINK_ONLY:MPI::MPI_C>)
+        endif()
+        # Link against the migrated Fortran archive at consumer time —
+        # qmumps_c's bridge symbols call qmumps_f77_ etc.
+        target_link_libraries(${LIB_PREFIX}mumps_c PUBLIC ${LIB_PREFIX}mumps)
+
+        # Umbrella INTERFACE target. The qmumps Fortran archive and
+        # the qmumps_c bridge are mutually recursive at link time:
+        # qmumps.a references mumps_size_c_ (in qmumps_c.a's
+        # mumps_addr.c) and qmumps_c.a references qmumps_f77_ (in
+        # qmumps.a). A plain left-to-right scan misses one or the
+        # other. The ``${LIB_PREFIX}mumps_full`` target wraps both
+        # archives in a ``LINK_GROUP:RESCAN`` so ld --start-group /
+        # --end-group resolves the cycle automatically. Consumers
+        # who use ``kind16_libraries::${LIB_PREFIX}mumps_full``
+        # don't have to know about the static-archive ordering
+        # subtlety. Requires CMake 3.24+ on the consumer side.
+        add_library(${LIB_PREFIX}mumps_full INTERFACE)
+        # Propagate include directories (mumps_full is a meta-target;
+        # by itself it has no headers, so pull them from qmumps_c
+        # which carries the per-target mumps_c.h shadow path).
+        target_include_directories(${LIB_PREFIX}mumps_full INTERFACE
+            $<INSTALL_INTERFACE:include/mumps>)
+        # ``install(EXPORT)`` rewrites bare target names to
+        # ``${PROJECT_NAME}::name`` in INTERFACE_LINK_LIBRARIES, but
+        # only for top-level items — it doesn't recurse into the
+        # comma-separated arg list of a ``LINK_GROUP`` genex. We
+        # therefore embed the namespace literals here so the
+        # serialized Targets file points at valid imported targets at
+        # consumer time.
+        target_link_libraries(${LIB_PREFIX}mumps_full INTERFACE
+            "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::${LIB_PREFIX}mumps,${PROJECT_NAME}::${LIB_PREFIX}mumps_c>")
     endif()
 endif()
 
@@ -1057,6 +1207,43 @@ endif()
 # variants can coexist in the same install prefix.
 set(_MPI_DEPENDENT_LIBS blacs pblas pbblas scalapack scalapack_c mumps)
 
+
+# install_library_headers(<lib_name>): install any ``*.h`` headers
+# under ``${lib_name}/src/`` to ``include/${lib_name}/`` and extend
+# every related target's INTERFACE include directories so consumers
+# linking against the installed library pick up the include path via
+# ``find_package``. Per-library subdirs are used because some header
+# names collide across libraries (e.g. PBLAS and ScaLAPACK_C both
+# ship a ``pblas.h`` with different contents).
+#
+# BLACS is excluded: ``Bdef.h`` and ``Bconfig.h`` are internal
+# config headers (no user-facing C API ships with upstream BLACS —
+# callers write their own ``extern void Cblacs_*`` declarations).
+# Bdef.h additionally defines ``QCOMPLEX`` with field names that
+# collide with xblas/blas_enum.h's ``QCOMPLEX`` when both are
+# included in the same translation unit. Skipping the install avoids
+# the clash without changing any source.
+set(_HEADER_INSTALL_SKIP blacs)
+function(install_library_headers lib_name)
+    if("${lib_name}" IN_LIST _HEADER_INSTALL_SKIP)
+        return()
+    endif()
+    set(_src ${CMAKE_CURRENT_SOURCE_DIR}/${lib_name}/src)
+    file(GLOB _hdrs ${_src}/*.h)
+    if(NOT _hdrs)
+        return()
+    endif()
+    foreach(_t ${LIB_PREFIX}${lib_name} ${lib_name} ${lib_name}_common)
+        if(TARGET ${_t})
+            target_include_directories(${_t}
+                INTERFACE $<INSTALL_INTERFACE:include/${lib_name}>)
+        endif()
+    endforeach()
+    install(DIRECTORY ${_src}/
+        DESTINATION include/${lib_name}
+        FILES_MATCHING PATTERN "*.h")
+endfunction()
+
 function(_install_library_pair lib_name)
     set(_precision_target "${LIB_PREFIX}${lib_name}")
     set(_common_target "${lib_name}_common")
@@ -1071,11 +1258,31 @@ function(_install_library_pair lib_name)
         set(_install_mpi_arg "MPI")
     endif()
 
-    # Install precision-specific library
+    # Install per-library headers and extend the targets' install-time
+    # include directories before the export captures them.
+    install_library_headers(${lib_name})
+
+    # Install precision-specific library FIRST. fortran_install_library
+    # only writes Config.cmake on the first call per export, scanning
+    # THAT target's INTERFACE_LINK_LIBRARIES for cross-package deps.
+    # The precision target (qmumps) has the canonical dependency set
+    # for find_package consumers; siblings sharing the export
+    # (qmumps_c, mumps_common) follow after.
     fortran_install_library(${_precision_target} EXPORT ${_export} ${_install_mpi_arg})
     get_target_property(_fc_moddir ${_precision_target} Fortran_MODULE_DIRECTORY)
     if(_fc_moddir)
         fortran_install_modules(${_precision_target})
+    endif()
+
+    # MUMPS-special: bundle the C-side bridge (${LIB_PREFIX}mumps_c)
+    # and the umbrella INTERFACE (${LIB_PREFIX}mumps_full) into the
+    # same export so ``find_package(qmumps)`` brings the Fortran
+    # archive, the C-callable entry-points (qmumps_c, xmumps_c),
+    # and the umbrella that wraps them in a LINK_GROUP:RESCAN.
+    if("${lib_name}" STREQUAL "mumps" AND TARGET ${LIB_PREFIX}mumps_c)
+        fortran_install_library(${LIB_PREFIX}mumps_c EXPORT ${_export} MPI)
+        install(TARGETS ${LIB_PREFIX}mumps_full
+            EXPORT ${_export})
     endif()
 
     # Bundle common library into the same export
@@ -1100,6 +1307,39 @@ if(NOT BASELINE_BUILD)
     foreach(_lib ${STAGED_LIBRARIES})
         _install_library_pair(${_lib})
     endforeach()
+endif()
+
+# MUMPS additionally ships C-API entry-point headers in three layers,
+# installed in this order so the precision-aware shadow overrides
+# upstream where both define the same filename:
+#
+#   1. ``_mumps_upstream_include/*.h`` — upstream's dmumps_c.h,
+#      zmumps_c.h, dmumps_struc.h, mumps_compat.h, mumps_c_types.h
+#      (the last is the ``double``-typed version, shadowed below).
+#   2. ``tests/mumps/c/include/mumps_int_def.h`` — fixed 32-bit
+#      MUMPS_INT stub (upstream's is generated from a .in template).
+#   3. ``tests/mumps/target_${TARGET_NAME}/c/include/*.h`` — the
+#      per-target wrappers ``qmumps_c.h`` / ``xmumps_c.h`` plus a
+#      precision-aware ``mumps_c_types.h`` shadow with QREAL fields.
+#      Installed LAST so the shadow overrides upstream's plain-double
+#      ``mumps_c_types.h``. Consumers ``#include <qmumps_c.h>`` get
+#      the right precision via the include order set up in that
+#      wrapper.
+if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}mumps)
+    if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_upstream_include)
+        install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_upstream_include/
+            DESTINATION include/mumps
+            FILES_MATCHING PATTERN "*.h")
+    endif()
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/mumps/c/include/mumps_int_def.h)
+        install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/tests/mumps/c/include/mumps_int_def.h
+            DESTINATION include/mumps)
+    endif()
+    if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/mumps/target_${TARGET_NAME}/c/include)
+        install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/mumps/target_${TARGET_NAME}/c/include/
+            DESTINATION include/mumps
+            FILES_MATCHING PATTERN "*.h")
+    endif()
 endif()
 
 if(NEEDS_MULTIFLOATS)

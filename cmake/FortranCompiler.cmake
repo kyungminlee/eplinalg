@@ -337,12 +337,54 @@ function(fortran_install_library target)
     DESTINATION "${_cmake_install_dir}"
   )
 
+  # Collect cross-package dependencies. INTERFACE_LINK_LIBRARIES at
+  # this point holds raw target names (e.g. ``qlapack``, ``qblacs``)
+  # — namespace prefixes are only added later when CMake serializes
+  # the export. To identify project siblings vs. external targets
+  # (MPI::MPI_C, etc.), check whether each entry is a TARGET in the
+  # current build. The list is emitted into the consumer's
+  # Config.cmake as guarded ``find_dependency`` calls so
+  # ``find_package(qfoo)`` automatically resolves qfoo's siblings.
+  # The guard (``if(EXISTS ...)``) silently skips names that don't
+  # have their own Config.cmake — those are same-export siblings
+  # (e.g. ``scalapack_common`` shares ``qscalapackTargets`` with
+  # ``qscalapack``) and get registered when the Targets file loads.
+  get_target_property(_link_libs ${target} INTERFACE_LINK_LIBRARIES)
+  set(_dep_names "")
+  if(_link_libs)
+    foreach(_l ${_link_libs})
+      # Strip ``$<LINK_ONLY:...>`` wrappers; the inner content is what
+      # ends up in the consumer's link line.
+      string(REGEX REPLACE "^\\$<LINK_ONLY:" "" _peel "${_l}")
+      string(REGEX REPLACE ">$" "" _peel "${_peel}")
+      # Skip externally-namespaced imported targets (``MPI::MPI_C``,
+      # ``Threads::Threads``, etc.). Those are resolved by the
+      # consumer's own ``find_package`` calls, not by our siblings.
+      if(_peel AND NOT _peel MATCHES "::" AND TARGET ${_peel})
+        if(NOT "${_peel}" STREQUAL "${target}")
+          list(APPEND _dep_names "${_peel}")
+        endif()
+      endif()
+    endforeach()
+  endif()
+  list(REMOVE_DUPLICATES _dep_names)
+  set(_dep_list_str "")
+  if(_dep_names)
+    string(JOIN " " _dep_list_str ${_dep_names})
+  endif()
+
   # Generate Config.cmake that finds the right targets file.
   # Strategy: derive the consumer's compiler tag (and MPI tag if this
   # is an MPI-dependent library) and look for an exact match. If no
   # exact match, fail with an informative error listing available builds.
   if(_is_mpi_lib)
     set(_mpi_detect_block "\
+# --- MPI is a required dependency for this library ---
+# Bring MPI::MPI_C / MPI::MPI_Fortran into scope so the Targets file's
+# INTERFACE_LINK_LIBRARIES references resolve. The detection just
+# below re-uses MPI_C_HEADER_DIR / the imported target's interface,
+# both of which find_dependency(MPI) populates.
+find_dependency(MPI COMPONENTS C Fortran)
 # --- Derive consumer's MPI flavor + major.minor tag ---
 find_package(MPI QUIET COMPONENTS C)
 set(_FC_consumer_mpi_tag \"\")
@@ -399,6 +441,24 @@ endif()
 # Module directories are tagged by .mod format version (compile-time compatibility).
 
 cmake_minimum_required(VERSION 3.12)
+
+# --- Resolve sibling packages FIRST ---
+# Sibling Config.cmake files re-use the same ``_FC_*`` variable names
+# we do; they unset them on exit. Running our own tag detection after
+# find_dependency avoids those variables being clobbered between
+# computing ``_FC_targets_file`` and including it. The guard
+# (``EXISTS``) silently skips same-export siblings (e.g.
+# ``scalapack_common`` shares ``qscalapackTargets`` with ``qscalapack``)
+# — they get registered when our own Targets file loads.
+include(CMakeFindDependencyMacro)
+foreach(_FC_dep ${_dep_list_str})
+  set(_FC_dep_cfg \"\${CMAKE_CURRENT_LIST_DIR}/../\${_FC_dep}/\${_FC_dep}Config.cmake\")
+  if(EXISTS \"\${_FC_dep_cfg}\")
+    find_dependency(\${_FC_dep})
+  endif()
+  unset(_FC_dep_cfg)
+endforeach()
+unset(_FC_dep)
 
 # --- Derive consumer's compiler family and ABI version tag ---
 set(_FC_consumer_family \"\")
