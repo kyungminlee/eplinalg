@@ -70,6 +70,11 @@ if(MBLAS_SIMD_DD)
     # Choose 3 by default — gains plateau there.
     set(MBLAS_SIMD_MR 3 CACHE STRING
         "multifloats: SIMD micro-kernel register-tile rows MR (1..4)")
+    # NR_PAN: # of ymm-wide (4-col) panels per micro-kernel call.
+    # 1 → NR=4 (current default). 2 → NR=8 (forces MR≤2 due to regs).
+    set(MBLAS_SIMD_NR_PAN 1 CACHE STRING
+        "multifloats: number of 4-lane B-panels per micro-kernel (1..2)")
     target_compile_definitions(${LIB_PREFIX}blas_parallel PRIVATE
-        MGEMM_SIMD_MR=${MBLAS_SIMD_MR})
+        MGEMM_SIMD_MR=${MBLAS_SIMD_MR}
+        MGEMM_SIMD_NR_PAN=${MBLAS_SIMD_NR_PAN})
 endif()

@@ -432,20 +432,36 @@ dependency latency. Picked via the `MBLAS_SIMD_MR` cmake cache
 variable, default **3** (kernel is templated on MR — see
 `inner_kernel_simd_mr<int MR>` in mgemm.cpp).
 
-Empirical sweep on Raptor Lake (i3-1315U), OMP=1, s=1024, NN:
+Empirical sweep on Raptor Lake (i3-1315U), OMP=1, s=1024, NN.
+Kernel is templated on `(MR, NR_PAN)` where `NR_PAN` is the number
+of stacked 4-lane ymm panels along the j-axis (so NR_PAN=1 → 4
+cols/call, NR_PAN=2 → 8 cols/call).
 
-| MR | GFLOP/s | vs MR=1 |
-|---|---|---|
-| 1 | 1.92 | 1.00× |
-| 2 | 3.49 | **1.82×** (ILP from 2 chains) |
-| 3 | 3.74 | 1.95× (sweet spot) |
-| 4 | 3.78 | 1.97× (register pressure starts cancelling gains) |
+| MR | NR_PAN | parallel chains | GFLOP/s |
+|---|---|---|---|
+| 1 | 1 | 1 | 1.89 |
+| 2 | 1 | 2 | 3.50 |
+| 3 | 1 | 3 | 3.70 |
+| 4 | 1 | 4* | 3.78 (\*spills slightly) |
+| 1 | 2 | 2 | 3.45 |
+| 2 | 2 | 4 | 3.69 |
 
-`gcc -O3` keeps `__m256d ach[MR]` / `acl[MR]` in registers up to
-MR=3; at MR=4 the 8 accumulators + 8 broadcasts + 2 B + 2 scratch
-saturate the 16 ymm registers and spills begin. Below MR=2 the
-dd_mul EFT chain serializes — single chain in flight, FMA latency
-unhidden.
+The relevant quantity is **MR × NR_PAN = number of independent
+dd_mul → dd_add chains in flight**. Going 1 → 2 chains roughly
+doubles throughput; past 3 chains the FMA unit is saturated and
+the ceiling is ~3.7 GFLOP/s regardless of how you spend the
+parallelism budget. (MR=2,NR_PAN=2) and (MR=3,NR_PAN=1) tie.
+
+So **wider NR is not a new lever** — just a different way to spend
+the same MR × NR_PAN budget. The amortization-of-loads benefit
+(fewer pack_B / vmovupd per output cell) doesn't show up because
+loads weren't the bottleneck; the FMA throughput is.
+
+Default kept at **MR=3, NR_PAN=1** (simplest config that reaches
+the FMA ceiling). At MR=4 the 8 ymm accumulators + 8 broadcasts +
+2 B + 2 scratch saturate the 16 ymm registers and gcc starts
+spilling. Below MR×NR_PAN=2 the EFT chain serializes — single chain
+in flight, FMA latency unhidden.
 
 Trailing odd-modulo rows (`ib` not divisible by MR) handled by a
 separate MR=1 tail loop after the main MR=`MGEMM_SIMD_MR` loop —

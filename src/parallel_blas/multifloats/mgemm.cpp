@@ -120,42 +120,43 @@ void inner_kernel(int ib, int jb, int pb, T alpha,
  * can always run the full NR-wide tile; the writeback masks padded
  * lanes.
  */
+/* Panel width W = simd_dd::NR * MGEMM_SIMD_NR_PAN (4 / 8 / …) */
+constexpr int simd_pack_W() { return simd_dd::NR * MGEMM_SIMD_NR_PAN; }
+
 void pack_B_soa(const T * __restrict__ B, int ldb,
                 int pc, int jc, int pb, int jb, int tb,
                 double * __restrict__ Bp_hi, double * __restrict__ Bp_lo)
 {
-    constexpr int NR = simd_dd::NR;
-    const int npanels = (jb + NR - 1) / NR;
+    const int W = simd_pack_W();
+    const int npanels = (jb + W - 1) / W;
     for (int panel = 0; panel < npanels; ++panel) {
-        const int j0 = panel * NR;
-        const int nr_eff = (jb - j0 < NR) ? (jb - j0) : NR;
-        double *dst_hi = &Bp_hi[static_cast<std::size_t>(panel) * pb * NR];
-        double *dst_lo = &Bp_lo[static_cast<std::size_t>(panel) * pb * NR];
+        const int j0 = panel * W;
+        const int w_eff = (jb - j0 < W) ? (jb - j0) : W;
+        double *dst_hi = &Bp_hi[static_cast<std::size_t>(panel) * pb * W];
+        double *dst_lo = &Bp_lo[static_cast<std::size_t>(panel) * pb * W];
         if (tb == 'N') {
-            /* B[pc+p, jc+j0+c] = B[(jc+j0+c)*ldb + (pc+p)] */
-            for (int c = 0; c < nr_eff; ++c) {
+            for (int c = 0; c < w_eff; ++c) {
                 const T *col = &B[static_cast<std::size_t>(jc + j0 + c) * ldb + pc];
                 for (int p = 0; p < pb; ++p) {
-                    dst_hi[p * NR + c] = col[p].limbs[0];
-                    dst_lo[p * NR + c] = col[p].limbs[1];
+                    dst_hi[p * W + c] = col[p].limbs[0];
+                    dst_lo[p * W + c] = col[p].limbs[1];
                 }
             }
-            for (int c = nr_eff; c < NR; ++c)
+            for (int c = w_eff; c < W; ++c)
                 for (int p = 0; p < pb; ++p) {
-                    dst_hi[p * NR + c] = 0.0;
-                    dst_lo[p * NR + c] = 0.0;
+                    dst_hi[p * W + c] = 0.0;
+                    dst_lo[p * W + c] = 0.0;
                 }
         } else {
-            /* op(B)[p, j] = B[jc+j, pc+p] = B[(pc+p)*ldb + (jc+j)] */
             for (int p = 0; p < pb; ++p) {
                 const T *row = &B[static_cast<std::size_t>(pc + p) * ldb + (jc + j0)];
-                for (int c = 0; c < nr_eff; ++c) {
-                    dst_hi[p * NR + c] = row[c].limbs[0];
-                    dst_lo[p * NR + c] = row[c].limbs[1];
+                for (int c = 0; c < w_eff; ++c) {
+                    dst_hi[p * W + c] = row[c].limbs[0];
+                    dst_lo[p * W + c] = row[c].limbs[1];
                 }
-                for (int c = nr_eff; c < NR; ++c) {
-                    dst_hi[p * NR + c] = 0.0;
-                    dst_lo[p * NR + c] = 0.0;
+                for (int c = w_eff; c < W; ++c) {
+                    dst_hi[p * W + c] = 0.0;
+                    dst_lo[p * W + c] = 0.0;
                 }
             }
         }
@@ -187,80 +188,119 @@ simd_writeback(__m256d alpha_h, __m256d alpha_l,
 }
 
 /*
- * Templated SIMD inner micro-kernel: MR rows of A × NR=4 cols of B
- * per call. The MR-loop is constexpr-bounded so gcc unrolls it and
- * keeps `ach[]`, `acl[]` in registers as long as MR is small enough
- * for the AVX2 register budget (16 ymm). Spills occur somewhere
- * around MR=4 (8 acc + 2*MR broadcasts + 2 B + 2 scratch ≈ 20+).
+ * Templated SIMD inner micro-kernel:
+ *   MR rows of A × W=4*NR_PAN cols of B per call.
  *
- * MGEMM_SIMD_MR (CMake cache var → -DMGEMM_SIMD_MR=N) picks the
- * compile-time MR. Default 2.
+ *   NR_PAN = number of 4-lane ymm panels stacked along the j-axis.
+ *     1 → kernel processes NR=4 cols   (1 ymm-wide)
+ *     2 → kernel processes NR=8 cols   (2 ymm-wide)
+ *
+ * Both loops are constexpr-bounded so gcc unrolls them. Each
+ * (row k, panel n) pair gets its own pair of ymm accumulators
+ * (ach[k][n], acl[k][n]) = 2 regs; total acc = 2 * MR * NR_PAN.
+ *
+ * Register budget on AVX2 (16 ymm regs):
+ *   total = 2*MR*NR_PAN (acc) + 2 (broadcasts) + 2*NR_PAN (B loads)
+ *         + 2 (scratch)
+ * For MR=3 NR_PAN=1 → 12, MR=2 NR_PAN=2 → 16, MR=3 NR_PAN=2 → 20 (spills).
+ *
+ * MGEMM_SIMD_MR / MGEMM_SIMD_NR_PAN (cmake cache vars) pick MR and
+ * NR_PAN at compile time.
  */
 #ifndef MGEMM_SIMD_MR
-#define MGEMM_SIMD_MR 2
+#define MGEMM_SIMD_MR 3
+#endif
+#ifndef MGEMM_SIMD_NR_PAN
+#define MGEMM_SIMD_NR_PAN 1
 #endif
 
-template <int MR>
+template <int MR, int NR_PAN>
 static __attribute__((noinline)) void
-inner_kernel_simd_mr(int ib, int jb, int pb, T alpha,
-                     const T * __restrict__ Ap,
-                     const double * __restrict__ Bp_hi,
-                     const double * __restrict__ Bp_lo,
-                     T * __restrict__ C, int ldc)
+inner_kernel_simd_t(int ib, int jb, int pb, T alpha,
+                    const T * __restrict__ Ap,
+                    const double * __restrict__ Bp_hi,
+                    const double * __restrict__ Bp_lo,
+                    T * __restrict__ C, int ldc)
 {
-    constexpr int NR = simd_dd::NR;
-    const int j_panels = (jb + NR - 1) / NR;
+    constexpr int NR_LANE = simd_dd::NR;   /* = 4 (one ymm) */
+    constexpr int W = NR_LANE * NR_PAN;    /* total cols per call */
+    const int j_panels = (jb + W - 1) / W;
     const __m256d alpha_h = _mm256_set1_pd(alpha.limbs[0]);
     const __m256d alpha_l = _mm256_set1_pd(alpha.limbs[1]);
     for (int jp = 0; jp < j_panels; ++jp) {
-        const int j0 = jp * NR;
-        const int nr_eff = (jb - j0 < NR) ? (jb - j0) : NR;
-        const double *Bp_h_panel = &Bp_hi[static_cast<std::size_t>(jp) * pb * NR];
-        const double *Bp_l_panel = &Bp_lo[static_cast<std::size_t>(jp) * pb * NR];
+        const int j0 = jp * W;
+        const int w_eff = (jb - j0 < W) ? (jb - j0) : W;
+        const double *Bp_h_panel = &Bp_hi[static_cast<std::size_t>(jp) * pb * W];
+        const double *Bp_l_panel = &Bp_lo[static_cast<std::size_t>(jp) * pb * W];
         int i = 0;
-        /* MR-row main loop */
+        /* Main MR×NR_PAN tile loop */
         for (; i + MR <= ib; i += MR) {
-            __m256d ach[MR], acl[MR];
-            #pragma GCC unroll 16
-            for (int k = 0; k < MR; ++k) {
-                ach[k] = _mm256_setzero_pd();
-                acl[k] = _mm256_setzero_pd();
-            }
+            __m256d ach[MR][NR_PAN], acl[MR][NR_PAN];
+            #pragma GCC unroll 8
+            for (int k = 0; k < MR; ++k)
+                #pragma GCC unroll 8
+                for (int n = 0; n < NR_PAN; ++n) {
+                    ach[k][n] = _mm256_setzero_pd();
+                    acl[k][n] = _mm256_setzero_pd();
+                }
             for (int p = 0; p < pb; ++p) {
-                __m256d bh = _mm256_loadu_pd(&Bp_h_panel[p * NR]);
-                __m256d bl = _mm256_loadu_pd(&Bp_l_panel[p * NR]);
-                #pragma GCC unroll 16
+                __m256d bh[NR_PAN], bl[NR_PAN];
+                #pragma GCC unroll 8
+                for (int n = 0; n < NR_PAN; ++n) {
+                    bh[n] = _mm256_loadu_pd(&Bp_h_panel[p * W + n * NR_LANE]);
+                    bl[n] = _mm256_loadu_pd(&Bp_l_panel[p * W + n * NR_LANE]);
+                }
+                #pragma GCC unroll 8
                 for (int k = 0; k < MR; ++k) {
                     const T &aval = Ap[static_cast<std::size_t>(p) * ib + i + k];
                     __m256d ah = _mm256_set1_pd(aval.limbs[0]);
                     __m256d al = _mm256_set1_pd(aval.limbs[1]);
-                    __m256d rh, rl;
-                    simd_dd::dd_mul(ah, al, bh, bl, rh, rl);
-                    simd_dd::dd_add(ach[k], acl[k], rh, rl, ach[k], acl[k]);
+                    #pragma GCC unroll 8
+                    for (int n = 0; n < NR_PAN; ++n) {
+                        __m256d rh, rl;
+                        simd_dd::dd_mul(ah, al, bh[n], bl[n], rh, rl);
+                        simd_dd::dd_add(ach[k][n], acl[k][n], rh, rl,
+                                        ach[k][n], acl[k][n]);
+                    }
                 }
             }
-            #pragma GCC unroll 16
+            /* Writeback: NR_PAN ymm-panels per row. */
+            #pragma GCC unroll 8
             for (int k = 0; k < MR; ++k) {
-                simd_writeback(alpha_h, alpha_l, ach[k], acl[k],
-                               &C[i + k], ldc, j0, nr_eff);
+                #pragma GCC unroll 8
+                for (int n = 0; n < NR_PAN; ++n) {
+                    const int panel_j0 = j0 + n * NR_LANE;
+                    const int panel_eff = (w_eff - n * NR_LANE < NR_LANE)
+                        ? (w_eff - n * NR_LANE) : NR_LANE;
+                    if (panel_eff > 0)
+                        simd_writeback(alpha_h, alpha_l, ach[k][n], acl[k][n],
+                                       &C[i + k], ldc, panel_j0, panel_eff);
+                }
             }
         }
-        /* MR=1 tail */
+        /* MR=1, NR_PAN=1 tail (just iterate remaining rows over panel 0). */
         for (; i < ib; ++i) {
-            __m256d acc_h = _mm256_setzero_pd();
-            __m256d acc_l = _mm256_setzero_pd();
-            for (int p = 0; p < pb; ++p) {
-                const T &aval = Ap[static_cast<std::size_t>(p) * ib + i];
-                __m256d ah = _mm256_set1_pd(aval.limbs[0]);
-                __m256d al = _mm256_set1_pd(aval.limbs[1]);
-                __m256d bh = _mm256_loadu_pd(&Bp_h_panel[p * NR]);
-                __m256d bl = _mm256_loadu_pd(&Bp_l_panel[p * NR]);
-                __m256d rh, rl;
-                simd_dd::dd_mul(ah, al, bh, bl, rh, rl);
-                simd_dd::dd_add(acc_h, acc_l, rh, rl, acc_h, acc_l);
+            #pragma GCC unroll 8
+            for (int n = 0; n < NR_PAN; ++n) {
+                const int panel_j0 = j0 + n * NR_LANE;
+                const int panel_eff = (w_eff - n * NR_LANE < NR_LANE)
+                    ? (w_eff - n * NR_LANE) : NR_LANE;
+                if (panel_eff <= 0) continue;
+                __m256d acc_h = _mm256_setzero_pd();
+                __m256d acc_l = _mm256_setzero_pd();
+                for (int p = 0; p < pb; ++p) {
+                    const T &aval = Ap[static_cast<std::size_t>(p) * ib + i];
+                    __m256d ah = _mm256_set1_pd(aval.limbs[0]);
+                    __m256d al = _mm256_set1_pd(aval.limbs[1]);
+                    __m256d bh = _mm256_loadu_pd(&Bp_h_panel[p * W + n * NR_LANE]);
+                    __m256d bl = _mm256_loadu_pd(&Bp_l_panel[p * W + n * NR_LANE]);
+                    __m256d rh, rl;
+                    simd_dd::dd_mul(ah, al, bh, bl, rh, rl);
+                    simd_dd::dd_add(acc_h, acc_l, rh, rl, acc_h, acc_l);
+                }
+                simd_writeback(alpha_h, alpha_l, acc_h, acc_l,
+                               &C[i], ldc, panel_j0, panel_eff);
             }
-            simd_writeback(alpha_h, alpha_l, acc_h, acc_l,
-                           &C[i], ldc, j0, nr_eff);
         }
     }
 }
@@ -271,7 +311,8 @@ void inner_kernel_simd(int ib, int jb, int pb, T alpha,
                        const double * __restrict__ Bp_lo,
                        T * __restrict__ C, int ldc)
 {
-    inner_kernel_simd_mr<MGEMM_SIMD_MR>(ib, jb, pb, alpha, Ap, Bp_hi, Bp_lo, C, ldc);
+    inner_kernel_simd_t<MGEMM_SIMD_MR, MGEMM_SIMD_NR_PAN>(
+        ib, jb, pb, alpha, Ap, Bp_hi, Bp_lo, C, ldc);
 }
 
 #endif /* MBLAS_SIMD_DD */
@@ -319,9 +360,9 @@ extern "C" void mgemm_(
         T *Ap = static_cast<T *>(std::aligned_alloc(
             64, static_cast<std::size_t>(MC) * KC * sizeof(T)));
 #ifdef MBLAS_SIMD_DD
-        /* SoA Bp: round NC up to NR boundary for the trailing panel. */
-        constexpr int NR_simd = simd_dd::NR;
-        const int NC_pad = ((NC + NR_simd - 1) / NR_simd) * NR_simd;
+        /* SoA Bp: round NC up to W = NR_LANE * NR_PAN for the trailing panel. */
+        const int W_simd = simd_pack_W();
+        const int NC_pad = ((NC + W_simd - 1) / W_simd) * W_simd;
         double *Bp_hi = static_cast<double *>(std::aligned_alloc(
             64, static_cast<std::size_t>(KC) * NC_pad * sizeof(double)));
         double *Bp_lo = static_cast<double *>(std::aligned_alloc(
