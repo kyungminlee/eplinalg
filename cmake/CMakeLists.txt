@@ -38,6 +38,16 @@ project(${TARGET_NAME}_libraries Fortran C CXX)
 option(PARALLEL_BLAS
     "Wire parallel BLAS overlay into the public \${LIB_PREFIX}blas target" ON)
 
+# Build the parallel-BLAS overlay subtree EARLY so its `${LIB_PREFIX}blas_parallel`
+# static target exists by the time the BLAS section below tries to
+# wire the public ${LIB_PREFIX}blas composite. (Originally
+# add_subdirectory(parallel_blas) sat at the end of this file; that
+# left the composite linking only `_serial` at evaluation time and
+# silently dropped the overlay from every consumer.)
+if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parallel_blas)
+    add_subdirectory(parallel_blas)
+endif()
+
 # ── Compiler-aware install infrastructure ────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
 include(FortranCompiler)
@@ -603,6 +613,16 @@ if(NOT BASELINE_BUILD)
         # target), _parallel simply won't be a target and the link
         # is a no-op.
         add_library(${LIB_PREFIX}blas INTERFACE)
+        # OpenMP runtime needs to land in every executable that links
+        # the overlay. PUBLIC dep on the parallel kernel target alone
+        # doesn't propagate cleanly through the $<LINK_LIBRARY:
+        # WHOLE_ARCHIVE,...> generator expression (the gen-expr treats
+        # the wrapped target as an object set, not as a full target
+        # dep). Add it directly to the composite's INTERFACE so any
+        # consumer of ${LIB_PREFIX}blas pulls libgomp at link time.
+        if(OpenMP_C_FOUND AND TARGET ${LIB_PREFIX}blas_parallel)
+            target_link_libraries(${LIB_PREFIX}blas INTERFACE OpenMP::OpenMP_C)
+        endif()
         if(TARGET ${LIB_PREFIX}blas_parallel)
             # WHOLE_ARCHIVE is mandatory: a static archive's members
             # are normally only extracted to satisfy unresolved
@@ -1284,14 +1304,7 @@ if(NEEDS_MULTIFLOATS)
     endforeach()
 endif()
 
-# ── Parallel BLAS overlay (opt-in) ───────────────────────────────────
-# Adds hand-written, thread-parallel BLAS overlay archive(s).
-# Default OFF; gate inside parallel_blas/CMakeLists.txt. When the
-# directory is missing (staging tree built without the overlay
-# sources), this is a no-op.
-if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parallel_blas)
-    add_subdirectory(parallel_blas)
-endif()
+# Parallel-BLAS overlay subtree is added early (right after project()).
 
 # ── Tests ────────────────────────────────────────────────────────────
 # Differential precision test suite. Each library has its own subdir

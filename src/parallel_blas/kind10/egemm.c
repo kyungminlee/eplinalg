@@ -38,6 +38,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 typedef long double T;
 
@@ -200,32 +203,41 @@ static void blocked_nn(int M, int N, int K, T alpha,
     init_blocks();
     const int MC = g_mc, KC = g_kc, NC = g_nc;
 
-    T *Ap = aligned_alloc(64, (size_t)MC * KC * sizeof(T));
-    T *Bp = aligned_alloc(64, (size_t)KC * NC * sizeof(T));
-    if (!Ap || !Bp) {
-        /* aligned_alloc failed; fall back to naive. */
-        free(Ap); free(Bp);
-        naive_nn(M, N, K, alpha, A, lda, B, ldb, 1.0L, C, ldc);
-        return;
-    }
-
-    int jc, pc, ic;
-    for (jc = 0; jc < N; jc += NC) {
-        const int jb = (N - jc < NC) ? (N - jc) : NC;
-        for (pc = 0; pc < K; pc += KC) {
-            const int pb = (K - pc < KC) ? (K - pc) : KC;
-            pack_B_nn(B, ldb, pc, jc, pb, jb, Bp);
-            for (ic = 0; ic < M; ic += MC) {
-                const int ib = (M - ic < MC) ? (M - ic) : MC;
-                pack_A_nn(A, lda, ic, pc, ib, pb, Ap);
-                inner_kernel_nn(ib, jb, pb, alpha, Ap, Bp,
-                                &C[(size_t)jc * ldc + ic], ldc);
+    /*
+     * Parallelize the NC loop: each thread takes a disjoint column
+     * band of C. Per-thread packing scratch (Ap, Bp) — no sharing,
+     * no atomics, no critical sections. Reduction order differs
+     * across thread counts; that's accepted by the 10-ulp consistency
+     * tolerance (see doc/parallel-blas-20260513.md §8).
+     */
+#ifdef _OPENMP
+    #pragma omp parallel
+#endif
+    {
+        T *Ap = aligned_alloc(64, (size_t)MC * KC * sizeof(T));
+        T *Bp = aligned_alloc(64, (size_t)KC * NC * sizeof(T));
+        if (Ap && Bp) {
+            int jc, pc, ic;
+#ifdef _OPENMP
+            #pragma omp for schedule(static)
+#endif
+            for (jc = 0; jc < N; jc += NC) {
+                const int jb = (N - jc < NC) ? (N - jc) : NC;
+                for (pc = 0; pc < K; pc += KC) {
+                    const int pb = (K - pc < KC) ? (K - pc) : KC;
+                    pack_B_nn(B, ldb, pc, jc, pb, jb, Bp);
+                    for (ic = 0; ic < M; ic += MC) {
+                        const int ib = (M - ic < MC) ? (M - ic) : MC;
+                        pack_A_nn(A, lda, ic, pc, ib, pb, Ap);
+                        inner_kernel_nn(ib, jb, pb, alpha, Ap, Bp,
+                                        &C[(size_t)jc * ldc + ic], ldc);
+                    }
+                }
             }
         }
+        free(Ap);
+        free(Bp);
     }
-
-    free(Ap);
-    free(Bp);
 }
 
 /* ── Entry point ──────────────────────────────────────────────── */
