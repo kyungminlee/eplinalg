@@ -46,11 +46,10 @@ program fuzz_egemm
 
     integer :: seed, ncases, i
     integer :: m, n, k, lda, ldb, ldc, rows_a, cols_a, rows_b, cols_b
-    integer :: pad_a, pad_b, pad_c, fails
+    integer :: fails, sentinel_fails, bad_ov, bad_mig
     character :: ta, tb
     real(rk10) :: alpha, beta, err, tol
     real(rk10), allocatable :: A(:), B(:), C0(:), C_ov(:), C_mig(:)
-    real(8) :: u
 
     seed = read_seed()
     ncases = read_cases()
@@ -58,6 +57,7 @@ program fuzz_egemm
     call seed_rng(seed)
 
     fails = 0
+    sentinel_fails = 0
     do i = 1, ncases
         m = rand_int_log(1, 256)
         n = rand_int_log(1, 256)
@@ -81,12 +81,9 @@ program fuzz_egemm
         else
             rows_b = n; cols_b = k
         end if
-        call random_number(u); pad_a = int(u * 5.0_8)
-        call random_number(u); pad_b = int(u * 5.0_8)
-        call random_number(u); pad_c = int(u * 5.0_8)
-        lda = rows_a + pad_a
-        ldb = rows_b + pad_b
-        ldc = m       + pad_c
+        lda = rows_a + rand_pad()
+        ldb = rows_b + rand_pad()
+        ldc = m      + rand_pad()
         if (lda < 1) lda = 1
         if (ldb < 1) ldb = 1
         if (ldc < 1) ldc = 1
@@ -105,19 +102,39 @@ program fuzz_egemm
         call egemm(ta, tb, m, n, k, alpha, A, lda, B, ldb, beta, C_ov,  ldc)
         call egemm_migrated(ta, tb, m, n, k, alpha, A, lda, B, ldb, beta, C_mig, ldc)
         err = max_rel_err_10(C_ov, C_mig, m, n, ldc)
+        bad_ov  = check_sentinels_10(C_ov,  m, n, ldc)
+        bad_mig = check_sentinels_10(C_mig, m, n, ldc)
 
         if (err > tol .or. err /= err) then  ! NaN-safe
             fails = fails + 1
-            print '(a,i0,a,2a1,a,3i6,a,2es12.4,a,es12.4)', &
+            print '(a,i0,a,2a1,a,3i6,a,3i6,a,2es12.4,a,es12.4)', &
                 'FAIL case ', i, '  trans=', ta, tb, &
                 '  mnk=', m, n, k, &
+                '  lda/ldb/ldc=', lda, ldb, ldc, &
                 '  a,b=', alpha, beta, '  err=', err
+        end if
+        if (bad_ov /= 0) then
+            sentinel_fails = sentinel_fails + 1
+            print '(a,i0,a,2a1,a,3i6,a,3i6,a,i0)', &
+                'SENTINEL overlay case ', i, '  trans=', ta, tb, &
+                '  mnk=', m, n, k, &
+                '  lda/ldb/ldc=', lda, ldb, ldc, &
+                '  bad col=', bad_ov
+        end if
+        if (bad_mig /= 0) then
+            sentinel_fails = sentinel_fails + 1
+            print '(a,i0,a,2a1,a,3i6,a,3i6,a,i0)', &
+                'SENTINEL migrated case ', i, '  trans=', ta, tb, &
+                '  mnk=', m, n, k, &
+                '  lda/ldb/ldc=', lda, ldb, ldc, &
+                '  bad col=', bad_mig
         end if
 
         deallocate(A, B, C0, C_ov, C_mig)
     end do
 
-    print '(a,i0,a,i0,a,i0)', &
-        'fuzz_egemm: ', ncases - fails, '/', ncases, ' passed; fails=', fails
-    if (fails > 0) error stop 1
+    print '(a,i0,a,i0,a,i0,a,i0)', &
+        'fuzz_egemm: ', ncases - fails, '/', ncases, &
+        ' passed; tol_fails=', fails, ' sentinel_fails=', sentinel_fails
+    if (fails > 0 .or. sentinel_fails > 0) error stop 1
 end program fuzz_egemm

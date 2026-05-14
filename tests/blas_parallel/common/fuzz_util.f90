@@ -18,12 +18,22 @@ module fuzz_util
     private
     public :: read_seed, read_cases, seed_rng
     public :: rand_int_log, rand_trans, rand_trans_complex, rand_alpha_beta
-    public :: fill_matrix_10, max_rel_err_10
+    public :: fill_matrix_10, max_rel_err_10, check_sentinels_10
     public :: rand_alpha_beta_c10, fill_matrix_c10, max_rel_err_c10
-    public :: rk10, eps10
+    public :: check_sentinels_c10
+    public :: rand_pad
+    public :: rk10, eps10, sentinel_real, sentinel_imag
 
     integer, parameter :: rk10 = 10
     real(rk10), parameter :: eps10 = epsilon(1.0_rk10)
+
+    ! Magic values planted in matrix padding rows (i > m). Any kernel
+    ! that writes past row m gets caught by check_sentinels_*. Values
+    ! are deliberately non-tiny / non-typical so even a wild stray
+    ! write is obvious. NaN would be cleaner but trips FP exceptions
+    ! on some flag combinations — sentinels stay as concrete numbers.
+    real(rk10), parameter :: sentinel_real = -7.3737373737e+18_rk10
+    real(rk10), parameter :: sentinel_imag =  4.2424242424e+17_rk10
 
 contains
 
@@ -67,16 +77,21 @@ contains
 
     ! Log-uniform integer in [lo, hi]. Emphasizes small sizes (edge
     ! cases) AND samples large ones — exactly what BLAS fuzz needs.
+    ! Handles lo == 0 by shifting: sample in [1, hi-lo+1] then subtract.
     function rand_int_log(lo, hi) result(k)
         integer, intent(in) :: lo, hi
-        integer :: k
+        integer :: k, lo_s, hi_s, off
         real(8) :: u, t
         if (hi <= lo) then
             k = lo; return
         end if
+        off = 0
+        if (lo < 1) off = 1 - lo
+        lo_s = lo + off
+        hi_s = hi + off
         call random_number(u)
-        t = log(real(lo, 8)) + u * (log(real(hi, 8)) - log(real(lo, 8)))
-        k = int(exp(t))
+        t = log(real(lo_s, 8)) + u * (log(real(hi_s, 8)) - log(real(lo_s, 8)))
+        k = int(exp(t)) - off
         if (k < lo) k = lo
         if (k > hi) k = hi
     end function rand_int_log
@@ -141,14 +156,54 @@ contains
                 call random_number(u)
                 A(idx) = real(2.0_8 * u - 1.0_8, rk10)
             end do
-            ! Fill padding rows [m+1, lda] with a sentinel to expose any
-            ! bug that reads beyond row m.
+            ! Sentinel pad rows [m+1, lda]. check_sentinels_10 will
+            ! flag any kernel that writes here (catches stride-handling
+            ! bugs where the kernel uses LDA but iterates to LDA rows).
             do i = m + 1, lda
                 idx = (j - 1) * lda + i
-                A(idx) = real(-99.0_rk10, rk10)
+                A(idx) = sentinel_real
             end do
         end do
     end subroutine fill_matrix_10
+
+    ! Verify that padding rows [m+1, lda] of a freshly-filled (and
+    ! possibly written-to) column-major matrix still hold the
+    ! sentinel. Returns 0 if clean, otherwise the column index (1-based)
+    ! of the first mismatch.
+    function check_sentinels_10(A, m, n, lda) result(bad_col)
+        real(rk10), intent(in) :: A(:)
+        integer, intent(in) :: m, n, lda
+        integer :: bad_col
+        integer :: i, j, idx
+        bad_col = 0
+        if (lda <= m) return
+        do j = 1, n
+            do i = m + 1, lda
+                idx = (j - 1) * lda + i
+                if (A(idx) /= sentinel_real) then
+                    bad_col = j
+                    return
+                end if
+            end do
+        end do
+    end function check_sentinels_10
+
+    ! Random padding amount with a fat tail. Mix of:
+    !   60% small  : 0..4   (tight strides, common in practice)
+    !   30% medium : 5..32  (cache-line / page boundary stress)
+    !   10% large  : 33..128 (catches kernels that loop to LDA)
+    function rand_pad() result(p)
+        integer :: p
+        real(8) :: u
+        call random_number(u)
+        if (u < 0.6_8) then
+            p = rand_int_log(0, 4)
+        else if (u < 0.9_8) then
+            p = rand_int_log(5, 32)
+        else
+            p = rand_int_log(33, 128)
+        end if
+    end function rand_pad
 
     ! Compute max_i,j |Cout(i,j) - Cref(i,j)| / max(|Cref|_max, tiny)
     ! over the active m x n submatrix (skipping padding rows).
@@ -221,10 +276,30 @@ contains
             end do
             do i = m + 1, lda
                 idx = (j - 1) * lda + i
-                A(idx) = cmplx(-99.0_rk10, -99.0_rk10, rk10)
+                A(idx) = cmplx(sentinel_real, sentinel_imag, rk10)
             end do
         end do
     end subroutine fill_matrix_c10
+
+    function check_sentinels_c10(A, m, n, lda) result(bad_col)
+        complex(rk10), intent(in) :: A(:)
+        integer, intent(in) :: m, n, lda
+        integer :: bad_col
+        complex(rk10) :: sentinel
+        integer :: i, j, idx
+        bad_col = 0
+        if (lda <= m) return
+        sentinel = cmplx(sentinel_real, sentinel_imag, rk10)
+        do j = 1, n
+            do i = m + 1, lda
+                idx = (j - 1) * lda + i
+                if (A(idx) /= sentinel) then
+                    bad_col = j
+                    return
+                end if
+            end do
+        end do
+    end function check_sentinels_c10
 
     function max_rel_err_c10(C_out, C_ref, m, n, ldc) result(err)
         complex(rk10), intent(in) :: C_out(:), C_ref(:)
