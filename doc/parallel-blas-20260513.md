@@ -361,6 +361,43 @@ its matching `pack_A` layout) inside `egemm.c` / `qgemm.c` /
 `mgemm.cpp` respectively. The choice is one local edit per target;
 no shared infra changes.
 
+### Register-tiled (MR × NR) micro-kernel — tried, abandoned
+
+The next natural step after outer-product / inner-product is the
+BLIS-style register-tile: keep an `MR × NR` block of C accumulators
+in registers across the entire `pb` contraction, with one read+write
+of C per tile (not per (i, j)). Tried `MR = 2, NR = 4` for
+multifloats (8 DD accumulators = 16 doubles = 8 SSE regs, well
+within the 16 xmm reg budget).
+
+Head-to-head OMP=4 on this box (overlay GFLOP/s):
+
+| s | outer-product | register-tile (2×4) |
+|---|---|---|
+| 256  | 0.50 | 0.49 |
+| 512  | 0.96 | 0.90 |
+| 1024 | 1.23 | 1.24 |
+| 2048 | 1.26 | 1.25 |
+
+**No improvement.** The outer-product form already has `ib`-way ILP
+(64 independent `cj[i]` streams), so the register tile's MR · NR = 8
+parallel accumulators is a strict subset. The actual bottleneck on
+this precision is the **inlined DD FMA chain depth** — each
+`muldd / adddd` is ~12 hardware ops with internal latency that the
+register tile can't shorten. Both packers and the micro-kernel cost
+more code complexity for zero gain.
+
+Skipped for kind10 / kind16: x87 has only 8 stack slots so a 4×4
+register tile spills immediately on kind10; libquadmath function
+calls dominate everything on kind16 so the structural change is
+irrelevant.
+
+Conclusion: register tiling is the right answer for IEEE
+double-precision GEMM on hardware with abundant SIMD registers and
+hardware FMA throughput high enough to expose memory traffic. None
+of our extended-precision targets sit there; we leave the kernel
+shape at outer- / inner-product as appropriate per target.
+
 Reading:
 - **kind10 / kind16**: overlay roughly ties the migrated archive
   single-threaded. Both precisions are arithmetic-bound on this
