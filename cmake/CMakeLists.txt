@@ -518,7 +518,7 @@ function(add_migrated_c_library lib_name)
             get_filename_component(_ext "${_s}" EXT)
             string(TOLOWER "${_ext}" _ext)
             if(NOT _ext STREQUAL ".f" AND NOT _ext STREQUAL ".f90"
-                AND NOT _ext STREQUAL ".f90" AND NOT _ext STREQUAL ".f03"
+                AND NOT _ext STREQUAL ".f95" AND NOT _ext STREQUAL ".f03"
                 AND NOT _ext STREQUAL ".for")
                 list(APPEND _all_sources "${_s}")
             endif()

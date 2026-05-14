@@ -47,7 +47,7 @@ known-divergent (parallel to the scalapack cosmetic cohort).
 
 1. **D/Z source-override asymmetry (4 files)** — `crotg/zrotg`,
    `srotg/drotg`, `snrm2/dnrm2`, `scnrm2/dznrm2`. The canonical D/Z output
-   is pulled verbatim from `recipes/blas/source_overrides/` (hand-rewritten
+   is pulled verbatim from `recipes/blas/patches/` (hand-rewritten
    to `LOGICAL,SAVE :: …_INITIALIZED=.FALSE.` + lazy first-call init,
    because the multifloats target overloads `**`/`sqrt` and gfortran
    rejects user-defined ops in `PARAMETER` initializers). No parallel

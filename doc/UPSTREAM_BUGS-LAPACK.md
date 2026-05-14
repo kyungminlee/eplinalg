@@ -320,8 +320,8 @@ only whether the heap corruption surfaces immediately or silently.
 
 **Fix.** One-character change: `LDX11` → `LDX21` on the `?ROT` `INCY`
 argument inside the `I .GT. 1` branch. Carried in
-`recipes/lapack/source_overrides/{d,s,z,c}orbdb3.f` and wired via
-`recipes/lapack.yaml`'s `source_overrides:` map. Every migrated target
+`recipes/lapack/patches/{d,s,z,c}orbdb3.f` and wired via
+`recipes/lapack.yaml`'s `patches:` list. Every migrated target
 (kind10, kind16, multifloats) builds against the patched form. The
 `prefer_source` pin isn't needed here — LAPACK's canonical-rank picker
 prefers D over the other halves by default, and the override matches
@@ -334,7 +334,7 @@ so the std `lapack` archive that the baseline links against still has
 the typo. Two of the residual failures in
 `tests/KIND48_BASELINE_STATUS.md` (`zunbdb3`, `dorbdb3`) trace to this
 gap and are parked under `tests/lapack/TODO.md` until the staging path
-overlays `recipes/lapack/source_overrides/` on top of the upstream
+overlays `recipes/lapack/patches/` on top of the upstream
 copy. Confirmed both clear when the override is overlaid.
 
 **Why upstream's tests miss it.** Reference LAPACK's `?orbdb3` test
@@ -383,8 +383,8 @@ the D copy only.
   inner DGESVJ call).
 
 **Fix.** Single-token change `LWORK → LWORK-N` on the 14th argument.
-Carried in `recipes/lapack/source_overrides/dgejsv.f`. Wired via
-`recipes/lapack.yaml`'s `source_overrides:` map. (No `prefer_source`
+Carried in `recipes/lapack/patches/dgejsv.f`. Wired via
+`recipes/lapack.yaml`'s `patches:` list. (No `prefer_source`
 pin needed: D-half is canonical for the migrated archive by default,
 and the S-half value is already correct, so converge folds.)
 
@@ -442,7 +442,7 @@ applies, and `LDSWORK` is at parameter position 14, not 16.)
 
 **Fix.** Insert the two `ELSE IF` branches into D's validation block;
 insert just the `LDSWORK` branch (at parameter position 14) into Z's.
-Carried in `recipes/lapack/source_overrides/dtrsyl3.f` and
+Carried in `recipes/lapack/patches/dtrsyl3.f` and
 `ztrsyl3.f`.
 
 **Why upstream's tests miss it.** Reference LAPACK's `dchktz` /
@@ -475,7 +475,7 @@ at the top of this file) and the ScaLAPACK `pzunmbr.f`
 | `zlahef_aa.f:175` | declares stale `ZGEMM` — body never calls ZGEMM (only ZGEMV). clahef_aa correctly omits CGEMM. | drop `ZGEMM` |
 | `zgbrfsx.f:499` | missing `ILATRANS`. Body calls ILATRANS at lines 511 and 561 (`TRANS_TYPE = ILATRANS(TRANS)` and the `IF(TRANS_TYPE.EQ.-1)` test). The other three rfsx siblings (`sgbrfsx`, `dgbrfsx`, `cgbrfsx`) all declare ILATRANS in their EXTERNAL list. | add `ILATRANS` |
 
-**Carried in:** `recipes/lapack/source_overrides/{dlaqp2,zlarf1f,zhetrf_aa,zlahef_aa,zgbrfsx}.f`,
+**Carried in:** `recipes/lapack/patches/{dlaqp2,zlarf1f,zhetrf_aa,zlahef_aa,zgbrfsx}.f`,
 wired in `recipes/lapack.yaml`.
 
 **Other instances surfaced by the same audit, NOT patched** because
@@ -571,7 +571,7 @@ different routine, ZDRSCL, which zrscl.f *calls* internally (line
 139). The actual routine in zrscl.f is ZRSCL. Auto-generated HTML
 docs at netlib.org would label ZRSCL's docs page as "ZDRSCL" or fail
 to find ZRSCL entirely. Fixed in
-`recipes/lapack/source_overrides/zrscl.f`.
+`recipes/lapack/patches/zrscl.f`.
 
 **Upstream report.** Not yet filed.
 
@@ -596,7 +596,7 @@ files:
 | `dorgr2.f` | EXTERNAL declares `DLARF` (dead). Body calls `DLARF1L`. Fix: replace `DLARF` with `DLARF1L`. |
 | `zrscl.f` | EXTERNAL omits `ZSCAL`. Body calls `ZSCAL` 4×. Fix: add `ZSCAL`. |
 
-Carried as source overrides in `recipes/lapack/source_overrides/`,
+Carried as source overrides in `recipes/lapack/patches/`,
 wired in `recipes/lapack.yaml`.
 
 **Sibling halves with similar drift, NOT patched** (S/C non-canonical;
@@ -655,7 +655,7 @@ validation lost the `=` somewhere during a sync.
 - `external/lapack-3.12.1/SRC/dlaswlq.f` (line 220).
 
 **Fix.** `NB.LT.0 → NB.LE.0`. Carried in
-`recipes/lapack/source_overrides/dlaswlq.f`, wired in
+`recipes/lapack/patches/dlaswlq.f`, wired in
 `recipes/lapack.yaml`.
 
 **Why upstream's tests miss it.** Reference test drivers always pass

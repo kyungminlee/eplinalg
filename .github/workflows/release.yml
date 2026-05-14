@@ -224,17 +224,12 @@ jobs:
   # Build and run the differential-precision test suite for a single
   # representative combination so the release workflow has at least
   # one correctness signal. We pick kind10 + gfortran-15 + intelmpi
-  # because kind10 has a 100% ctest pass rate and Intel MPI is the
-  # canonical MPI for the migrated stack — the libmpiseq path was
-  # written against Intel MPI's handle ABI, so OpenMPI/MPICH-linked
-  # _seq tests fail to resolve ompi_mpi_byte etc. at link time.
-  # Other targets are not run here because:
-  #   - kind16 has 2 known failures pending the P22 reference-side
-  #     override (commit 36f6f24); they pass on a fresh stage but
-  #     CI's caching pattern can drift.
-  #   - multifloats has 3 known failures (L5 gesvj Infinity + P22
-  #     zgedmdq) documented in tests/lapack/TODO.md.
-  # Add more combos here once the failures resolve.
+  # because Intel MPI is the canonical MPI for the migrated stack —
+  # the libmpiseq path was written against Intel MPI's handle ABI,
+  # so OpenMPI/MPICH-linked _seq tests fail to resolve
+  # ``ompi_mpi_byte`` etc. at link time. The non-_seq surface should
+  # work on any MPI; extending the matrix to kind16 / multifloats /
+  # openmpi / mpich is a known follow-up.
   test:
     needs: stage
     runs-on: ubuntu-latest
