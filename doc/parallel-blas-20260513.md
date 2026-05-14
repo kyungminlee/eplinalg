@@ -255,13 +255,66 @@ after step 5 lands and is green.
 Box: 4C/8T, gfortran-13 / gcc-13. `bench_*gemm` median of 2–3 timed
 iterations after one warmup.
 
-### Single-thread (`OMP_NUM_THREADS=1`)
+### Single-thread (`OMP_NUM_THREADS=1`) — cache sweep
 
-| target | type | size | overlay GFLOP/s | migrated GFLOP/s | overlay/migrated |
-|---|---|---|---|---|---|
-| kind10 | `long double` (x87) | 1024 | 1.33 | 1.31 | **1.02×** |
-| kind16 | `__float128` (quadmath) | 512 | 0.056 | 0.058 | **0.97×** |
-| multifloats | DD (C++ inlined) | 512 | 0.50 | 0.12 | **4.13×** |
+Bench measures the square cube case `M = N = K = LDA = LDB = LDC = s`
+(see `bench_gemm_real_body.fypp` — same `s` plugged into all six BLAS
+shape args, no padding). Real LAPACK workloads include rectangular
+panels with `K ≪ N`; perf there isn't covered by these numbers.
+
+Box caches: per-core L1d=37 KB, L2=1.5 MB; shared L3=10 MB. Element
+size is 16 B for all three precisions, so the per-matrix footprint
+is `s² × 16 B`: s=512 → 4 MB ≈ L2 spill, s=1024 → 16 MB > L3.
+
+#### kind10 (`long double`, x87)
+
+| s | overlay | migrated | overlay/migrated |
+|---|---|---|---|
+| 128  | 0.78 | 0.83 | 0.94× |
+| 256  | 1.31 | 1.41 | 0.92× |
+| 512  | 1.32 | 1.41 | 0.93× |
+| 1024 | 1.32 | 1.30 | **1.02×** |
+| 2048 | 1.35 | 1.27 | **1.06×** |
+
+Migrated drops ~10% as working set spills L2 → L3 → RAM
+(1.41 → 1.27). Overlay's packing absorbs the stride miss → flat at
+1.32–1.35. Cross-over at N≈1024; serial cache-blocking value is
+real but small until N is large.
+
+#### kind16 (`__float128`, libquadmath)
+
+| s | overlay | migrated | overlay/migrated |
+|---|---|---|---|
+| 128  | 0.054 | 0.055 | 0.98× |
+| 256  | 0.055 | 0.055 | 0.99× |
+| 512  | 0.056 | 0.058 | 0.97× |
+| 1024 | 0.057 | 0.058 | 0.97× |
+
+Cache effect invisible. Every op is a libquadmath function call
+(~hundreds of cycles); memory traffic is rounding error. Serial
+overlay essentially ties migrated regardless of N. OMP scaling is
+the only way the overlay differentiates here.
+
+#### multifloats (DD, C++ inlined)
+
+| s | overlay | migrated | overlay/migrated |
+|---|---|---|---|
+| 128  | 0.500 | 0.123 | 4.08× |
+| 256  | 0.509 | 0.123 | 4.14× |
+| 512  | 0.507 | 0.122 | 4.16× |
+| 1024 | 0.505 | 0.123 | 4.12× |
+| 2048 | 0.506 | 0.123 | 4.12× |
+
+Also flat across sizes — but at a constant ~4.1× advantage. Neither
+impl is memory-bound; the gap is purely inlining (the C++ kernel
+folds `multifloats::float64x2::operator*` into the inner loop) vs
+gfortran's elemental-wrapper boundary on every element. Cache
+doesn't matter when the inner op is a few inlined doubles.
+
+**Takeaway**: cache blocking pays only when arithmetic is fast
+enough to expose memory traffic. On this box kind10 hits that
+crossover at N≈1024; kind16 and multifloats stay arithmetic-bound
+across the measured range.
 
 Reading:
 - **kind10 / kind16**: overlay roughly ties the migrated archive
