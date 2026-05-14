@@ -36,6 +36,12 @@ target_compile_features(${LIB_PREFIX}blas_parallel PRIVATE c_std_99)
 target_compile_options(${LIB_PREFIX}blas_parallel PRIVATE
     -O3
     -ffp-contract=fast
+    # Use Fortran-style complex arithmetic (skip NaN/Inf checks).
+    # Without this, gcc emits __mulxc3/__divxc3 library calls for
+    # _Complex long double — measurably slower than the gfortran
+    # path used by the migrated archive (e.g. ytrsm OMP=1 was 30%
+    # behind migrated until this flag landed).
+    -fcx-fortran-rules
 )
 # -march comes from src/parallel_blas/CMakeLists.txt (shared knob).
 if(NOT "${PARALLEL_BLAS_MARCH}" STREQUAL "")

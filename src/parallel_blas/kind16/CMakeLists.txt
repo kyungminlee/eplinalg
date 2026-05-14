@@ -27,6 +27,7 @@ target_compile_features(${LIB_PREFIX}blas_parallel PRIVATE c_std_99)
 target_compile_options(${LIB_PREFIX}blas_parallel PRIVATE
     -O3
     -ffp-contract=fast
+    -fcx-fortran-rules  # see note in kind10/CMakeLists.txt
 )
 if(NOT "${PARALLEL_BLAS_MARCH}" STREQUAL "")
     target_compile_options(${LIB_PREFIX}blas_parallel PRIVATE
