@@ -44,3 +44,22 @@ function(add_consistency_test driver_src)
 endfunction()
 
 add_consistency_test(consistency/fuzz_egemm.f90)
+
+# Benchmarks. Not run by default (skipped via SKIP_REGULAR_EXPRESSION
+# style — actually we just gate via a LABELS=bench filter so a bare
+# `ctest` doesn't run them; opt in with `ctest -L bench`).
+function(add_bench_test driver_src)
+    get_filename_component(_name ${driver_src} NAME_WE)
+    add_executable(${_name} ${driver_src})
+    target_link_libraries(${_name} PRIVATE
+        blas_parallel_fuzz_common
+        ${LIB_PREFIX}blas
+        ${LIB_PREFIX}blas_migrated)
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/bench_reports)
+    add_test(NAME blas_parallel_${_name} COMMAND ${_name}
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bench_reports)
+    set_tests_properties(blas_parallel_${_name} PROPERTIES
+        LABELS "bench")
+endfunction()
+
+add_bench_test(bench/bench_egemm.f90)
