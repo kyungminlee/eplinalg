@@ -321,6 +321,45 @@ enough to expose memory traffic. On this box kind10 hits that
 crossover at s≈1024; kind16 and multifloats stay arithmetic-bound
 across the measured range.
 
+#### Single-thread per-transpose (kind10)
+
+Same column-major cache effect that shows up at OMP=4 is already
+visible serially — confirms it's an algorithmic / access-pattern
+fact, not a parallelism artifact.
+
+| trans | overlay s=1024 | migrated s=1024 | overlay s=256 | migrated s=256 |
+|---|---|---|---|---|
+| NN    | 2.18 | 1.25 | 2.20 | 1.34 |
+| NT    | 2.21 | 1.23 | 2.19 | 1.31 |
+| NC    | 2.23 | 1.23 | 2.22 | 1.32 |
+| **TN** | 2.17 | **1.61** | 2.22 | **2.40** |
+| TT    | 2.24 | 0.63 | 2.24 | 1.27 |
+| TC    | 2.19 | 0.62 | 2.21 | 1.13 |
+| **CN** | 2.13 | **1.53** | 2.26 | **2.41** |
+| CT    | 2.24 | 0.61 | 2.15 | 1.31 |
+| CC    | 2.21 | 0.61 | 2.24 | 1.30 |
+
+- Overlay tracks ~2.2 GFLOP/s everywhere.
+- At s=256, migrated TN/CN **beat the overlay** (2.40 vs 2.22 →
+  0.92×) — Netlib's natural loop nest hits two-contiguous-columns
+  dot products with zero blocking overhead, and the problem fits in
+  cache. Overlay catches up at s=1024 once migrated starts spilling.
+- At s=1024, even the migrated TN/CN best case (1.6) lags the
+  overlay (2.2); the worst case (TT/TC/CT/CC) is 3.6× behind.
+
+#### Single-thread per-transpose (kind16, multifloats)
+
+- **kind16** OMP=1, s=512: both impls flat 0.058–0.060 across all
+  9 combos. Overlay 0.93×–1.10× per combo. Transpose dispatch is
+  invisible behind the libquadmath call cost.
+- **multifloats** OMP=1, all sizes: overlay flat 0.50, migrated flat
+  0.12, every combo. Uniform 4.0–4.3× speedup. Inlined DD ops
+  dominate; memory shape is irrelevant.
+
+Per-trans is only an interesting story on kind10 — the one
+precision where compute is fast enough for memory access patterns
+to show up.
+
 ### Kernel structure (outer-product vs inner-product)
 
 After packing, the inner kernel has two natural shapes:
