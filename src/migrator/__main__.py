@@ -16,7 +16,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .config import load_recipe
 from .pipeline import (
     run_divergence_report, run_migration,
 )

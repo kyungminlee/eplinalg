@@ -69,11 +69,10 @@ from .symbol_scanner import scan_symbols
 from .prefix_classifier import classify_symbols
 from .fortran_migrator import (
     _find_inline_bang,
-    migrate_file,
     migrate_file_to_string,
     target_filename,
 )
-from .c_migrator import migrate_c_directory, migrate_c_file_to_string, _build_sub_vars, _expand_template
+from .c_migrator import migrate_c_directory, _build_sub_vars, _expand_template
 from .target_mode import TargetMode
 
 from tqdm import tqdm
@@ -1110,7 +1109,6 @@ def run_migration(recipe_path: Path, output_dir: Path,
     print(f'Language:    {config.language}')
     print(f'Source:      {config.source_dir}')
     print(f'Target:      {target_mode.name}')
-    print(f'Prefix:      {config.prefix_style}')
     print()
 
     # Scan symbols and classify precision families

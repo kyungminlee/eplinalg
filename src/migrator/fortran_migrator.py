@@ -3914,14 +3914,6 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
     return out_name, migrated
 
 
-def migrate_file(src_path: Path, output_dir: Path, rename_map: dict[str, str], target_mode: TargetMode, parser: str | None = None, parser_cmd: str | None = None, keep_kind_lines: frozenset[int] | None = None) -> str | None:
-    result = migrate_file_to_string(src_path, rename_map, target_mode, parser, parser_cmd, keep_kind_lines)
-    if result is None: return None
-    out_name, migrated = result
-    (output_dir / out_name).write_text(migrated)
-    return out_name
-
-
 def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], target_mode: TargetMode, facts,
                          source_kind: int | None = None) -> str:
     # Also include USE-statement module names + every variable's type

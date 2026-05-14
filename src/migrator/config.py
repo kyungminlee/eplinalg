@@ -22,7 +22,7 @@ _KNOWN_RECIPE_KEYS: frozenset[str] = frozenset({
     'library', 'language', 'source_dir', 'extensions',
     'symbols', 'prefix',
     'skip_files', 'copy_files', 'prefer_source',
-    'local_renames', 'module_renames', 'extra_renames',
+    'module_renames', 'extra_renames',
     'copy_all_originals', 'patches',
     'depends', 'extra_symbol_dirs',
     'extra_migrate_files', 'extra_c_dirs', 'extra_fortran_dirs',
@@ -41,9 +41,7 @@ class RecipeConfig:
     language: str                     # "fortran" or "c"
     source_dir: Path
     extensions: list[str]
-    symbols_method: str = 'scan_source'  # "scan_source" or "nm_library"
     library_path: Path | None = None
-    prefix_style: str = 'direct'      # "direct" or "scalapack"
     skip_files: set[str] = field(default_factory=set)
     copy_files: set[str] = field(default_factory=set)  # Copy unchanged (multi-precision utilities)
     # Source stems (uppercase, no extension) whose migrated output
@@ -53,15 +51,6 @@ class RecipeConfig:
     # PZUNGQL / PZUNML2 call PB_TOPGET where they should call
     # PB_TOPSET; PCUNGQL / PCUNML2 have the correct restore).
     prefer_source: set[str] = field(default_factory=set)
-    # Local-variable renames applied to the S/C half of each pair
-    # *before* light-normalized convergence comparison. Each entry
-    # maps an S/C-half identifier to its D/Z-half counterpart (e.g.
-    # ``CR: ZR``, ``SX: DX``, ``STEMP: DTEMP``). Local variables are
-    # not in the symbol table, so the migrator can't rename them —
-    # but they are upstream S/D/C/Z convention drift, not semantic
-    # differences. Applied with word boundaries to the in-memory
-    # migrated S/C text; the on-disk canonical is never modified.
-    local_renames: dict[str, str] = field(default_factory=dict)
     copy_all_originals: bool = False  # For C: copy all files, then add clones
     patches: list[str] = field(default_factory=list)
     depends: list[Path] = field(default_factory=list)  # Dependency recipe paths
@@ -263,10 +252,6 @@ def load_recipe(recipe_path: Path,
     skip = set(s.upper() for s in data.get('skip_files', []))
     copy = set(s.upper() for s in data.get('copy_files', []))
     prefer = set(s.upper() for s in data.get('prefer_source', []))
-    local_renames = {
-        str(k).upper(): str(v).upper()
-        for k, v in (data.get('local_renames') or {}).items()
-    }
 
     # Resolve dependency recipe paths relative to the recipe directory
     depends_raw = data.get('depends', [])
@@ -299,13 +284,10 @@ def load_recipe(recipe_path: Path,
         language=data['language'],
         source_dir=source_dir,
         extensions=[e.lower() for e in data.get('extensions', ['.f', '.f90'])],
-        symbols_method=symbols_cfg.get('method', 'scan_source'),
         library_path=library_path,
-        prefix_style=(data.get('prefix') or {}).get('style', 'direct'),
         skip_files=skip,
         copy_files=copy,
         prefer_source=prefer,
-        local_renames=local_renames,
         copy_all_originals=data.get('copy_all_originals', False),
         patches=data.get('patches', []),
         depends=depends,
