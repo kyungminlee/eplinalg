@@ -1,48 +1,45 @@
-! bench_egemm — wall-clock benchmark of the kind10 egemm overlay vs.
-! the migrated archive at the same precision.
-!
-! Per problem size M=N=K=S the driver runs both impls, takes the
-! median of BLAS_BENCH_ITERS timed runs (after BLAS_BENCH_WARMUP
-! warmup runs that don't count), and writes a JSON record per size.
-!
-! GFLOP/s convention: 2 * M * N * K / median_time (counts FMAs as 2
-! flops, the standard BLAS convention).
-!
-! Env knobs:
-!   BLAS_BENCH_SIZES  — comma-separated, default '64,128,256,512'
-!   BLAS_BENCH_ITERS  — default 5
-!   BLAS_BENCH_WARMUP — default 1
-!   BLAS_BENCH_OUT    — output JSON path, default 'bench_egemm.json'
+#! Wall-clock bench — real GEMM. Per-target shim sets:
+#!   routine    e.g. 'egemm' (kind10), 'qgemm' (kind16)
+#!
+#! Per problem size M=N=K=S the driver runs both impls, takes the
+#! median of BLAS_BENCH_ITERS timed runs (after BLAS_BENCH_WARMUP),
+#! and writes a JSON record per size.
+#!
+#! Env knobs:
+#!   BLAS_BENCH_SIZES  — comma-separated, default '64,128,256,512'
+#!   BLAS_BENCH_ITERS  — default 5
+#!   BLAS_BENCH_WARMUP — default 1
+#!   BLAS_BENCH_OUT    — output JSON path, default 'bench_${routine}.json'
 
-program bench_egemm
-    use fuzz_util, only: rk10, fill_matrix_10
+program bench_${routine}$
+    use fuzz_util, only: rk, fill_matrix_real
     implicit none
 
     interface
-        subroutine egemm(transa, transb, m, n, k, alpha, a, lda, &
-                         b, ldb, beta, c, ldc)
-            import :: rk10
+        subroutine ${routine}$(transa, transb, m, n, k, alpha, a, lda, &
+                               b, ldb, beta, c, ldc)
+            import :: rk
             character, intent(in) :: transa, transb
             integer,   intent(in) :: m, n, k, lda, ldb, ldc
-            real(rk10), intent(in) :: alpha, beta
-            real(rk10), intent(in) :: a(lda, *), b(ldb, *)
-            real(rk10), intent(inout) :: c(ldc, *)
-        end subroutine egemm
-        subroutine egemm_migrated(transa, transb, m, n, k, alpha, a, lda, &
-                                  b, ldb, beta, c, ldc)
-            import :: rk10
+            real(rk), intent(in) :: alpha, beta
+            real(rk), intent(in) :: a(lda, *), b(ldb, *)
+            real(rk), intent(inout) :: c(ldc, *)
+        end subroutine ${routine}$
+        subroutine ${routine}$_migrated(transa, transb, m, n, k, alpha, a, lda, &
+                                        b, ldb, beta, c, ldc)
+            import :: rk
             character, intent(in) :: transa, transb
             integer,   intent(in) :: m, n, k, lda, ldb, ldc
-            real(rk10), intent(in) :: alpha, beta
-            real(rk10), intent(in) :: a(lda, *), b(ldb, *)
-            real(rk10), intent(inout) :: c(ldc, *)
-        end subroutine egemm_migrated
+            real(rk), intent(in) :: alpha, beta
+            real(rk), intent(in) :: a(lda, *), b(ldb, *)
+            real(rk), intent(inout) :: c(ldc, *)
+        end subroutine ${routine}$_migrated
     end interface
 
     integer :: iters, warmup, nsizes, i
     integer, allocatable :: sizes(:)
-    real(rk10), allocatable :: A(:), B(:), C(:)
-    real(rk10) :: alpha, beta
+    real(rk), allocatable :: A(:), B(:), C(:)
+    real(rk) :: alpha, beta
     real(8) :: t_ov, t_mig
     character(len=256) :: out_path
     integer :: ios, jio
@@ -52,14 +49,14 @@ program bench_egemm
     call read_sizes(sizes)
     nsizes = size(sizes)
     call get_environment_variable('BLAS_BENCH_OUT', out_path, status=ios)
-    if (ios /= 0 .or. len_trim(out_path) == 0) out_path = 'bench_egemm.json'
+    if (ios /= 0 .or. len_trim(out_path) == 0) out_path = 'bench_${routine}$.json'
 
-    alpha = 0.7_rk10
-    beta  = 0.3_rk10
+    alpha = 0.7_rk
+    beta  = 0.3_rk
 
     open(newunit=jio, file=trim(out_path), action='write', status='replace')
     write(jio, '(a)') '{'
-    write(jio, '(a)') '  "test": "bench_egemm",'
+    write(jio, '(3a)') '  "test": "bench_${routine}$",'
     write(jio, '(a,i0,a)') '  "iters": ', iters, ','
     write(jio, '(a,i0,a)') '  "warmup": ', warmup, ','
     write(jio, '(a)') '  "results": ['
@@ -101,7 +98,6 @@ contains
             arr = [64, 128, 256, 512]
             return
         end if
-        ! Count comma-delimited tokens, then parse.
         n = 1
         do i = 1, len_trim(buf)
             if (buf(i:i) == ',') n = n + 1
@@ -128,7 +124,7 @@ contains
 
     subroutine run_size(s, alpha, beta, iters, warmup, t_ov, t_mig)
         integer, intent(in) :: s, iters, warmup
-        real(rk10), intent(in) :: alpha, beta
+        real(rk), intent(in) :: alpha, beta
         real(8), intent(out) :: t_ov, t_mig
         integer :: it
         real(8), allocatable :: samples_ov(:), samples_mig(:)
@@ -136,21 +132,21 @@ contains
 
         allocate(A(s * s), B(s * s), C(s * s))
         allocate(samples_ov(iters), samples_mig(iters))
-        call fill_matrix_10(A, s, s, s)
-        call fill_matrix_10(B, s, s, s)
-        call fill_matrix_10(C, s, s, s)
+        call fill_matrix_real(A, s, s, s)
+        call fill_matrix_real(B, s, s, s)
+        call fill_matrix_real(C, s, s, s)
 
         do it = 1, warmup
-            call egemm('N', 'N', s, s, s, alpha, A, s, B, s, beta, C, s)
-            call egemm_migrated('N', 'N', s, s, s, alpha, A, s, B, s, beta, C, s)
+            call ${routine}$('N', 'N', s, s, s, alpha, A, s, B, s, beta, C, s)
+            call ${routine}$_migrated('N', 'N', s, s, s, alpha, A, s, B, s, beta, C, s)
         end do
         do it = 1, iters
             call cpu_clock(t0)
-            call egemm('N', 'N', s, s, s, alpha, A, s, B, s, beta, C, s)
+            call ${routine}$('N', 'N', s, s, s, alpha, A, s, B, s, beta, C, s)
             call cpu_clock(t1)
             samples_ov(it) = t1 - t0
             call cpu_clock(t0)
-            call egemm_migrated('N', 'N', s, s, s, alpha, A, s, B, s, beta, C, s)
+            call ${routine}$_migrated('N', 'N', s, s, s, alpha, A, s, B, s, beta, C, s)
             call cpu_clock(t1)
             samples_mig(it) = t1 - t0
         end do
@@ -232,4 +228,4 @@ contains
         end if
     end subroutine emit_json
 
-end program bench_egemm
+end program bench_${routine}$

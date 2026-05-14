@@ -33,5 +33,9 @@ endif()
 # link OpenMP::OpenMP_C unconditionally if it's needed there.
 find_package(OpenMP COMPONENTS C)
 
+# Shared knob across per-target subdirs.
+set(PARALLEL_BLAS_MARCH "native" CACHE STRING
+    "value passed to -march for parallel BLAS kernels (empty to disable)")
+
 message(STATUS "parallel_blas: building ${LIB_PREFIX}blas_parallel from ${_per_target_dir}")
 add_subdirectory(${_per_target_dir} parallel_blas_${TARGET_NAME})

@@ -1,59 +1,48 @@
-! fuzz_egemm — consistency fuzz test for the kind10 egemm overlay.
-!
-! Each iteration:
-!   1. Picks random M, N, K (log-uniform in [1, 256]).
-!   2. Picks random LDA, LDB, LDC ≥ required, adding 0..4 extra rows
-!      to stress stride handling.
-!   3. Picks random TRANSA, TRANSB ∈ {'N','T','C'}.
-!   4. Picks random ALPHA, BETA (mix of 0, ±1, uniform in [-1,1]).
-!   5. Generates random matrices A, B, C0 in [-1, 1] at REAL(KIND=10).
-!   6. Calls overlay egemm_ (resolved via composite eblas → C kernel)
-!      and migrated egemm_migrated_ (resolved via the renamed archive,
-!      Fortran kernel) on identical inputs.
-!   7. Asserts max_rel_err ≤ max(10, 4*K) * eps10 — Wilkinson-style
-!      bound, since reduction order differs between blocked-parallel
-!      and unblocked-serial summation. Fails print the seed so the
-!      case is reproducible.
-!
-! Knobs (env):
-!   BLAS_FUZZ_SEED   — integer; default time-derived (printed at start)
-!   BLAS_FUZZ_CASES  — number of cases; default 200
+#! Consistency fuzz driver — real GEMM, parameterized by routine name.
+#!
+#! Per-target shim sets:
+#!   routine    e.g. 'egemm' (kind10), 'qgemm' (kind16), 'mgemm' (mf)
+#!
+#! Iterates random shapes/transposes/strides/alpha-beta combos,
+#! calling both <routine>_ (overlay via composite) and
+#! <routine>_migrated_ (renamed migrated archive), then asserts
+#! max_rel_err ≤ max(10, 4*K) * eps (Wilkinson bound).
 
-program fuzz_egemm
+program fuzz_${routine}$
     use fuzz_util
     implicit none
 
     interface
-        subroutine egemm(transa, transb, m, n, k, alpha, a, lda, &
+        subroutine ${routine}$(transa, transb, m, n, k, alpha, a, lda, &
                          b, ldb, beta, c, ldc)
-            import :: rk10
+            import :: rk
             character, intent(in) :: transa, transb
             integer,   intent(in) :: m, n, k, lda, ldb, ldc
-            real(rk10), intent(in) :: alpha, beta
-            real(rk10), intent(in) :: a(lda, *), b(ldb, *)
-            real(rk10), intent(inout) :: c(ldc, *)
-        end subroutine egemm
-        subroutine egemm_migrated(transa, transb, m, n, k, alpha, a, lda, &
+            real(rk), intent(in) :: alpha, beta
+            real(rk), intent(in) :: a(lda, *), b(ldb, *)
+            real(rk), intent(inout) :: c(ldc, *)
+        end subroutine ${routine}$
+        subroutine ${routine}$_migrated(transa, transb, m, n, k, alpha, a, lda, &
                                   b, ldb, beta, c, ldc)
-            import :: rk10
+            import :: rk
             character, intent(in) :: transa, transb
             integer,   intent(in) :: m, n, k, lda, ldb, ldc
-            real(rk10), intent(in) :: alpha, beta
-            real(rk10), intent(in) :: a(lda, *), b(ldb, *)
-            real(rk10), intent(inout) :: c(ldc, *)
-        end subroutine egemm_migrated
+            real(rk), intent(in) :: alpha, beta
+            real(rk), intent(in) :: a(lda, *), b(ldb, *)
+            real(rk), intent(inout) :: c(ldc, *)
+        end subroutine ${routine}$_migrated
     end interface
 
     integer :: seed, ncases, i
     integer :: m, n, k, lda, ldb, ldc, rows_a, cols_a, rows_b, cols_b
     integer :: fails, sentinel_fails, bad_ov, bad_mig
     character :: ta, tb
-    real(rk10) :: alpha, beta, err, tol
-    real(rk10), allocatable :: A(:), B(:), C0(:), C_ov(:), C_mig(:)
+    real(rk) :: alpha, beta, err, tol
+    real(rk), allocatable :: A(:), B(:), C0(:), C_ov(:), C_mig(:)
 
     seed = read_seed()
     ncases = read_cases()
-    print '(a,i0,a,i0)', 'fuzz_egemm: seed=', seed, '  cases=', ncases
+    print '(a,i0,a,i0)', 'fuzz_${routine}$: seed=', seed, '  cases=', ncases
     call seed_rng(seed)
 
     fails = 0
@@ -62,11 +51,7 @@ program fuzz_egemm
         m = rand_int_log(1, 256)
         n = rand_int_log(1, 256)
         k = rand_int_log(1, 256)
-        ! Tolerance scales with K: a length-K dot product (the inner
-        ! reduction of GEMM) can legitimately differ between
-        ! summation orders by up to ~2*K*eps (Wilkinson). Use a
-        ! 4*K*eps envelope with a 10-ulp absolute floor for small K.
-        tol = max(10.0_rk10, 4.0_rk10 * real(k, rk10)) * eps10
+        tol = max(10.0_rk, 4.0_rk * real(k, rk)) * eps
         ta = rand_trans()
         tb = rand_trans()
         call rand_alpha_beta(alpha, beta)
@@ -93,19 +78,19 @@ program fuzz_egemm
         allocate(C0(ldc * n))
         allocate(C_ov(ldc * n))
         allocate(C_mig(ldc * n))
-        call fill_matrix_10(A,  rows_a, cols_a, lda)
-        call fill_matrix_10(B,  rows_b, cols_b, ldb)
-        call fill_matrix_10(C0, m,      n,      ldc)
+        call fill_matrix_real(A,  rows_a, cols_a, lda)
+        call fill_matrix_real(B,  rows_b, cols_b, ldb)
+        call fill_matrix_real(C0, m,      n,      ldc)
         C_ov  = C0
         C_mig = C0
 
-        call egemm(ta, tb, m, n, k, alpha, A, lda, B, ldb, beta, C_ov,  ldc)
-        call egemm_migrated(ta, tb, m, n, k, alpha, A, lda, B, ldb, beta, C_mig, ldc)
-        err = max_rel_err_10(C_ov, C_mig, m, n, ldc)
-        bad_ov  = check_sentinels_10(C_ov,  m, n, ldc)
-        bad_mig = check_sentinels_10(C_mig, m, n, ldc)
+        call ${routine}$(ta, tb, m, n, k, alpha, A, lda, B, ldb, beta, C_ov,  ldc)
+        call ${routine}$_migrated(ta, tb, m, n, k, alpha, A, lda, B, ldb, beta, C_mig, ldc)
+        err = max_rel_err_real(C_ov, C_mig, m, n, ldc)
+        bad_ov  = check_sentinels_real(C_ov,  m, n, ldc)
+        bad_mig = check_sentinels_real(C_mig, m, n, ldc)
 
-        if (err > tol .or. err /= err) then  ! NaN-safe
+        if (err > tol .or. err /= err) then
             fails = fails + 1
             print '(a,i0,a,2a1,a,3i6,a,3i6,a,2es12.4,a,es12.4)', &
                 'FAIL case ', i, '  trans=', ta, tb, &
@@ -134,7 +119,7 @@ program fuzz_egemm
     end do
 
     print '(a,i0,a,i0,a,i0,a,i0)', &
-        'fuzz_egemm: ', ncases - fails, '/', ncases, &
+        'fuzz_${routine}$: ', ncases - fails, '/', ncases, &
         ' passed; tol_fails=', fails, ' sentinel_fails=', sentinel_fails
     if (fails > 0 .or. sentinel_fails > 0) error stop 1
-end program fuzz_egemm
+end program fuzz_${routine}$

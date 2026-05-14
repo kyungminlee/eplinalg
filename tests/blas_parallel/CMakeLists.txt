@@ -1,57 +1,61 @@
 # Parallel BLAS overlay test suite.
 #
-# Two layers (only consistency lands in step 1):
+# Generates per-target fuzz_util + per-(target,routine) fuzz / bench
+# drivers from fypp templates. Naming convention:
+#   common/fuzz_util_body.fypp                  ← module body, parameterized
+#   common/target_<name>/fuzz_util.fypp         ← per-target shim
+#   consistency/fuzz_gemm_{real,complex}_body.fypp
+#   consistency/target_<name>/fuzz_<prefix>gemm.fypp
+#   bench/bench_gemm_real_body.fypp
+#   bench/target_<name>/bench_<prefix>gemm.fypp
 #
-#  1. Consistency / fuzz — `${LIB_PREFIX}blas_parallel` (overlay) vs
-#     `${LIB_PREFIX}blas_migrated` (objcopy-renamed migrated archive)
-#     at the working precision. Tolerance 10 ulp relative error
-#     (target eps × 10, per doc/parallel-blas-20260513.md §4).
-#
-#  2. Bench (step 2) — geometric size sweep, JSON output.
-#
-# Both link the test exe against:
-#   • the composite `${LIB_PREFIX}blas` (so `egemm_` resolves to the
-#     overlay's C kernel) AND
-#   • the renamed `${LIB_PREFIX}blas_migrated` (so `egemm_migrated_`
-#     resolves to the Fortran migrated archive).
-# Archive semantics ensure no symbol collision: the migrated archive's
-# non-renamed members (eaxpy_, etc.) are only pulled in if referenced.
+# add_fypp_source (defined in tests/CMakeLists.txt) drives fypp.
 
-if(NOT HAVE_REAL10)
-    message(STATUS "tests/blas_parallel: skipping — HAVE_REAL10 required")
+if(NOT (HAVE_REAL10 OR HAVE_REAL16))
+    message(STATUS "tests/blas_parallel: skipping — no extended precision available")
     return()
 endif()
 
-# Shared utility module: env-driven seed + case count, random shape /
-# parameter generation, error metric.
-add_library(blas_parallel_fuzz_common STATIC
-    common/fuzz_util.f90
-)
+set(_common_target_dir
+    ${CMAKE_CURRENT_SOURCE_DIR}/common/target_${TARGET_NAME})
+set(_consist_target_dir
+    ${CMAKE_CURRENT_SOURCE_DIR}/consistency/target_${TARGET_NAME})
+set(_bench_target_dir
+    ${CMAKE_CURRENT_SOURCE_DIR}/bench/target_${TARGET_NAME})
+
+if(NOT IS_DIRECTORY ${_common_target_dir})
+    message(STATUS "tests/blas_parallel: no fuzz_util shim for target "
+                   "'${TARGET_NAME}' — skipping")
+    return()
+endif()
+
+# Generate fuzz_util.f90 for this target.
+add_fypp_source(_fuzz_util_src
+    ${_common_target_dir}/fuzz_util.fypp
+    ${CMAKE_CURRENT_SOURCE_DIR}/common)
+
+add_library(blas_parallel_fuzz_common STATIC ${_fuzz_util_src})
 fortran_module_layout(blas_parallel_fuzz_common)
 
-function(add_consistency_test driver_src)
-    get_filename_component(_name ${driver_src} NAME_WE)
-    add_executable(${_name} ${driver_src})
+function(add_consistency_test shim_path)
+    get_filename_component(_name ${shim_path} NAME_WE)
+    add_fypp_source(_src ${shim_path}
+        ${CMAKE_CURRENT_SOURCE_DIR}/consistency)
+    add_executable(${_name} ${_src})
     target_link_libraries(${_name} PRIVATE
         blas_parallel_fuzz_common
-        ${LIB_PREFIX}blas          # composite — overlay wins for egemm_
-        ${LIB_PREFIX}blas_migrated # renamed archive — provides egemm_migrated_
-    )
+        ${LIB_PREFIX}blas
+        ${LIB_PREFIX}blas_migrated)
     add_test(NAME blas_parallel_${_name} COMMAND ${_name})
-    # Pass env defaults; user can override on the ctest invocation.
     set_tests_properties(blas_parallel_${_name} PROPERTIES
         ENVIRONMENT "BLAS_FUZZ_CASES=200")
 endfunction()
 
-add_consistency_test(consistency/fuzz_egemm.f90)
-add_consistency_test(consistency/fuzz_ygemm.f90)
-
-# Benchmarks. Not run by default (skipped via SKIP_REGULAR_EXPRESSION
-# style — actually we just gate via a LABELS=bench filter so a bare
-# `ctest` doesn't run them; opt in with `ctest -L bench`).
-function(add_bench_test driver_src)
-    get_filename_component(_name ${driver_src} NAME_WE)
-    add_executable(${_name} ${driver_src})
+function(add_bench_test shim_path)
+    get_filename_component(_name ${shim_path} NAME_WE)
+    add_fypp_source(_src ${shim_path}
+        ${CMAKE_CURRENT_SOURCE_DIR}/bench)
+    add_executable(${_name} ${_src})
     target_link_libraries(${_name} PRIVATE
         blas_parallel_fuzz_common
         ${LIB_PREFIX}blas
@@ -59,8 +63,21 @@ function(add_bench_test driver_src)
     file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/bench_reports)
     add_test(NAME blas_parallel_${_name} COMMAND ${_name}
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bench_reports)
-    set_tests_properties(blas_parallel_${_name} PROPERTIES
-        LABELS "bench")
+    set_tests_properties(blas_parallel_${_name} PROPERTIES LABELS "bench")
 endfunction()
 
-add_bench_test(bench/bench_egemm.f90)
+if(IS_DIRECTORY ${_consist_target_dir})
+    file(GLOB _consist_shims CONFIGURE_DEPENDS
+        ${_consist_target_dir}/fuzz_*.fypp)
+    foreach(_s ${_consist_shims})
+        add_consistency_test(${_s})
+    endforeach()
+endif()
+
+if(IS_DIRECTORY ${_bench_target_dir})
+    file(GLOB _bench_shims CONFIGURE_DEPENDS
+        ${_bench_target_dir}/bench_*.fypp)
+    foreach(_s ${_bench_shims})
+        add_bench_test(${_s})
+    endforeach()
+endif()

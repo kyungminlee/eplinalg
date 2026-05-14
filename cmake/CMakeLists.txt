@@ -655,39 +655,48 @@ if(NOT BASELINE_BUILD)
         # ones) are pulled in.
         # Routines with overlay implementations — full prefixed lower-
         # case names (matching the C kernel filenames under
-        # src/parallel_blas/${TARGET_NAME}/). Default is target-specific;
-        # callers can override on the cmake command line to grow the
-        # set when new kernels land.
-        if(NOT DEFINED PARALLEL_BLAS_OVERLAY_ROUTINES)
-            set(PARALLEL_BLAS_OVERLAY_ROUTINES "egemm" "ygemm")
+        # src/parallel_blas/${TARGET_NAME}/). The per-target subdir
+        # publishes its list via the PARALLEL_BLAS_OVERLAY_ROUTINES
+        # CACHE INTERNAL variable; users can override on the cmake
+        # command line to limit or grow the set.
+        if(NOT DEFINED PARALLEL_BLAS_OVERLAY_ROUTINES OR
+                "${PARALLEL_BLAS_OVERLAY_ROUTINES}" STREQUAL "")
+            message(WARNING
+                "parallel_blas: PARALLEL_BLAS_OVERLAY_ROUTINES is empty for "
+                "target '${TARGET_NAME}' — the per-target CMakeLists should "
+                "set it (CACHE INTERNAL) to the list of overlay-covered "
+                "routines. Skipping the renamed migrated archive.")
+            set(_skip_migrated_archive TRUE)
         endif()
 
-        message(STATUS "parallel_blas: wiring ${LIB_PREFIX}blas_migrated archive (objcopy) "
-                       "routines=${PARALLEL_BLAS_OVERLAY_ROUTINES}")
-        set(_redef_file ${CMAKE_CURRENT_BINARY_DIR}/${LIB_PREFIX}blas_migrated.redef)
-        set(_redef_content "")
-        foreach(_r ${PARALLEL_BLAS_OVERLAY_ROUTINES})
-            string(APPEND _redef_content "${_r}_ ${_r}_migrated_\n")
-        endforeach()
-        file(GENERATE OUTPUT ${_redef_file} CONTENT "${_redef_content}")
+        if(NOT _skip_migrated_archive)
+            message(STATUS "parallel_blas: wiring ${LIB_PREFIX}blas_migrated archive "
+                           "(objcopy) routines=${PARALLEL_BLAS_OVERLAY_ROUTINES}")
+            set(_redef_file ${CMAKE_CURRENT_BINARY_DIR}/${LIB_PREFIX}blas_migrated.redef)
+            set(_redef_content "")
+            foreach(_r ${PARALLEL_BLAS_OVERLAY_ROUTINES})
+                string(APPEND _redef_content "${_r}_ ${_r}_migrated_\n")
+            endforeach()
+            file(GENERATE OUTPUT ${_redef_file} CONTENT "${_redef_content}")
 
-        set(_migrated_archive
-            ${CMAKE_CURRENT_BINARY_DIR}/lib${LIB_PREFIX}blas_migrated.a)
-        add_custom_command(
-            OUTPUT ${_migrated_archive}
-            COMMAND ${CMAKE_OBJCOPY} --redefine-syms=${_redef_file}
-                    $<TARGET_FILE:${LIB_PREFIX}blas_serial>
-                    ${_migrated_archive}
-            DEPENDS ${LIB_PREFIX}blas_serial ${_redef_file}
-            COMMENT "objcopy: emitting lib${LIB_PREFIX}blas_migrated.a"
-            VERBATIM)
-        add_custom_target(${LIB_PREFIX}blas_migrated_build
-            DEPENDS ${_migrated_archive})
-        add_library(${LIB_PREFIX}blas_migrated STATIC IMPORTED GLOBAL)
-        set_target_properties(${LIB_PREFIX}blas_migrated PROPERTIES
-            IMPORTED_LOCATION ${_migrated_archive})
-        add_dependencies(${LIB_PREFIX}blas_migrated
-            ${LIB_PREFIX}blas_migrated_build)
+            set(_migrated_archive
+                ${CMAKE_CURRENT_BINARY_DIR}/lib${LIB_PREFIX}blas_migrated.a)
+            add_custom_command(
+                OUTPUT ${_migrated_archive}
+                COMMAND ${CMAKE_OBJCOPY} --redefine-syms=${_redef_file}
+                        $<TARGET_FILE:${LIB_PREFIX}blas_serial>
+                        ${_migrated_archive}
+                DEPENDS ${LIB_PREFIX}blas_serial ${_redef_file}
+                COMMENT "objcopy: emitting lib${LIB_PREFIX}blas_migrated.a"
+                VERBATIM)
+            add_custom_target(${LIB_PREFIX}blas_migrated_build
+                DEPENDS ${_migrated_archive})
+            add_library(${LIB_PREFIX}blas_migrated STATIC IMPORTED GLOBAL)
+            set_target_properties(${LIB_PREFIX}blas_migrated PROPERTIES
+                IMPORTED_LOCATION ${_migrated_archive})
+            add_dependencies(${LIB_PREFIX}blas_migrated
+                ${LIB_PREFIX}blas_migrated_build)
+        endif()
     else()
         add_migrated_fortran_library(blas)
         if(TARGET ${LIB_PREFIX}blas AND TARGET blas)

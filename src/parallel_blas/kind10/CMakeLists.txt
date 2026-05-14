@@ -17,6 +17,17 @@ set(_kernels
     ygemm.c
 )
 
+# Publish the overlay-covered routine names so the BLAS section in
+# cmake/CMakeLists.txt knows what to rename in the consistency archive.
+# Strip the .c suffix from each kernel filename.
+set(_routines "")
+foreach(_k ${_kernels})
+    string(REGEX REPLACE "\\.c$" "" _r "${_k}")
+    list(APPEND _routines "${_r}")
+endforeach()
+set(PARALLEL_BLAS_OVERLAY_ROUTINES "${_routines}" CACHE INTERNAL
+    "BLAS routines provided by the parallel overlay for this target")
+
 add_library(${LIB_PREFIX}blas_parallel STATIC ${_kernels})
 
 target_compile_features(${LIB_PREFIX}blas_parallel PRIVATE c_std_99)
@@ -24,10 +35,7 @@ target_compile_options(${LIB_PREFIX}blas_parallel PRIVATE
     -O3
     -ffp-contract=fast
 )
-# -march=native is desirable but pinned per-host; gate so cross-builds
-# and aarch64 CI don't break. Override with -DPARALLEL_BLAS_MARCH=...
-set(PARALLEL_BLAS_MARCH "native" CACHE STRING
-    "value passed to -march for parallel BLAS kernels (empty to disable)")
+# -march comes from src/parallel_blas/CMakeLists.txt (shared knob).
 if(NOT "${PARALLEL_BLAS_MARCH}" STREQUAL "")
     target_compile_options(${LIB_PREFIX}blas_parallel PRIVATE
         -march=${PARALLEL_BLAS_MARCH})
