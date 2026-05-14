@@ -300,7 +300,7 @@ dominates), but inner-product's reduced C traffic and register
 accumulator buy a small edge at every size — overlay slightly
 ahead at all sizes single-threaded.
 
-#### multifloats (DD, C++ inlined) — outer-product
+#### multifloats (DD, AVX2 4-wide SIMD by default; see §10.4) — was outer-product scalar
 
 | s | overlay | migrated | overlay/migrated |
 |---|---|---|---|
@@ -399,6 +399,47 @@ shapes live as drop-in replacements of the same `inner_kernel` (and
 its matching `pack_A` layout) inside `egemm.c` / `qgemm.c` /
 `mgemm.cpp` respectively. The choice is one local edit per target;
 no shared infra changes.
+
+### AVX2 SIMD micro-kernel for multifloats — **default ON**
+
+Double-double's 16-byte type fits naturally into ymm registers (4×
+double per ymm = 4 parallel DD values). The error-free transforms
+(`twoprod`, `twosum`) at the heart of DD arithmetic are
+embarrassingly parallel across lanes — no horizontal reductions,
+no cross-lane dependencies.
+
+Implementation in `src/parallel_blas/multifloats/mgemm_simd_kernel.h`:
+
+  twoprod(a, b) → (p, e):  p = a*b, e = fma(a, b, -p)   /* exact */
+  twosum(a, b)  → (s, e):  6-op variant
+  dd_mul(ah, al, bh, bl) → (rh, rl)
+  dd_add(ah, al, bh, bl) → (rh, rl)
+
+All using `_mm256_*pd` on AVX2 + FMA. Micro-kernel shape MR=1,
+NR=4 (1 row of A × 4 cols of B per iteration). B is repacked in
+SoA layout (separate `hi[]` / `lo[]` arrays) so the inner-p loop
+loads 4 contiguous doubles per iteration with `vmovupd`. A stays
+AoS scalar (broadcast per-p with `vbroadcastsd`).
+
+Gated on `MBLAS_SIMD_DD` (default ON when the compiler accepts
+`-mavx2 -mfma`, which is the case for any halfway-recent x86_64).
+
+Measured on Raptor Lake (i3-1315U, AVX2 + FMA, no AVX-512):
+
+| | OMP=1 | OMP=4 (s=1024) |
+|---|---|---|
+| **scalar outer-product baseline** | 0.51 GFLOP/s | (not previously measured) |
+| **AVX2 SIMD (4-wide)** | 1.89 GFLOP/s | 4.70 GFLOP/s |
+| **vs scalar overlay** | **3.8×** (near-ideal 4-lane) | ~2.5× thread-scaling |
+| **vs migrated** | **15×** | **38×** |
+
+Per-trans variation under 5% (DD ops dominate everything; even the
+non-NN packing's strided read is invisible behind the EFT chain).
+
+The 38× over migrated is the largest speedup of any kernel in this
+overlay — because the migrated Fortran goes through an elemental
+wrapper around each scalar DD op, paying call overhead AND no SIMD,
+while the overlay does both.
 
 ### Register-tiled (MR × NR) micro-kernel — tried, abandoned
 

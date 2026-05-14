@@ -89,10 +89,11 @@ program fuzz_mgemm
 
         if (err > tol) then
             fails = fails + 1
-            print '(a,i0,a,2a1,a,3i6,a,3i6)', &
+            print '(a,i0,a,2a1,a,3i6,a,3i6,a,es12.4,a,es12.4)', &
                 'FAIL case ', i, '  trans=', ta, tb, &
                 '  mnk=', m, n, k, &
-                '  lda/ldb/ldc=', lda, ldb, ldc
+                '  lda/ldb/ldc=', lda, ldb, ldc, &
+                '  err=', err%limbs(1), '  tol=', tol%limbs(1)
         end if
         if (bad_ov /= 0) then
             sentinel_fails = sentinel_fails + 1

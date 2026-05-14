@@ -45,3 +45,20 @@ if(OpenMP_CXX_FOUND)
 elseif(OpenMP_C_FOUND)
     target_link_libraries(${LIB_PREFIX}blas_parallel PUBLIC OpenMP::OpenMP_C)
 endif()
+
+# AVX2 SIMD double-double kernel for mgemm. 4-wide SoA — see
+# mgemm_simd_kernel.h. Default ON for x86_64; the cmake check below
+# disables it if -mavx2 isn't accepted by the compiler. Bench result
+# on Raptor Lake: 3.8× over the scalar outer-product baseline single-
+# threaded, 38× over migrated at OMP=4 s=1024.
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-mavx2 -mfma" _HAS_AVX2_FMA_FLAGS)
+option(MBLAS_SIMD_DD
+    "multifloats: AVX2 SIMD kernel for mgemm (4-wide SoA double-double)"
+    ${_HAS_AVX2_FMA_FLAGS})
+if(MBLAS_SIMD_DD)
+    target_compile_definitions(${LIB_PREFIX}blas_parallel PRIVATE
+        MBLAS_SIMD_DD=1)
+    target_compile_options(${LIB_PREFIX}blas_parallel PRIVATE
+        -mavx2 -mfma)
+endif()

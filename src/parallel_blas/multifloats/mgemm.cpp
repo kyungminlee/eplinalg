@@ -22,6 +22,10 @@
 #include <omp.h>
 #endif
 
+#ifdef MBLAS_SIMD_DD
+#include "mgemm_simd_kernel.h"
+#endif
+
 namespace mf = multifloats;
 using T = mf::float64x2;
 
@@ -100,6 +104,119 @@ void inner_kernel(int ib, int jb, int pb, T alpha,
     }
 }
 
+#ifdef MBLAS_SIMD_DD
+
+/*
+ * SoA pack_B for SIMD path.
+ * Layout: NR-column panels along the j-axis. Within each panel, the
+ * (p, j_local) plane is stored as NR contiguous doubles per p in two
+ * parallel arrays (hi, lo) — so loading 4 doubles into a ymm register
+ * for one p iteration is a straight `vmovupd`.
+ *
+ *   Bp_hi[ panel*(pb*NR) + p*NR + j_local ] = op(B)[pc+p, jc+panel*NR+j_local].limbs[0]
+ *   Bp_lo[ same offset ]                    = ... .limbs[1]
+ *
+ * Trailing panel (jb mod NR != 0) is zero-padded so the SIMD kernel
+ * can always run the full NR-wide tile; the writeback masks padded
+ * lanes.
+ */
+void pack_B_soa(const T * __restrict__ B, int ldb,
+                int pc, int jc, int pb, int jb, int tb,
+                double * __restrict__ Bp_hi, double * __restrict__ Bp_lo)
+{
+    constexpr int NR = simd_dd::NR;
+    const int npanels = (jb + NR - 1) / NR;
+    for (int panel = 0; panel < npanels; ++panel) {
+        const int j0 = panel * NR;
+        const int nr_eff = (jb - j0 < NR) ? (jb - j0) : NR;
+        double *dst_hi = &Bp_hi[static_cast<std::size_t>(panel) * pb * NR];
+        double *dst_lo = &Bp_lo[static_cast<std::size_t>(panel) * pb * NR];
+        if (tb == 'N') {
+            /* B[pc+p, jc+j0+c] = B[(jc+j0+c)*ldb + (pc+p)] */
+            for (int c = 0; c < nr_eff; ++c) {
+                const T *col = &B[static_cast<std::size_t>(jc + j0 + c) * ldb + pc];
+                for (int p = 0; p < pb; ++p) {
+                    dst_hi[p * NR + c] = col[p].limbs[0];
+                    dst_lo[p * NR + c] = col[p].limbs[1];
+                }
+            }
+            for (int c = nr_eff; c < NR; ++c)
+                for (int p = 0; p < pb; ++p) {
+                    dst_hi[p * NR + c] = 0.0;
+                    dst_lo[p * NR + c] = 0.0;
+                }
+        } else {
+            /* op(B)[p, j] = B[jc+j, pc+p] = B[(pc+p)*ldb + (jc+j)] */
+            for (int p = 0; p < pb; ++p) {
+                const T *row = &B[static_cast<std::size_t>(pc + p) * ldb + (jc + j0)];
+                for (int c = 0; c < nr_eff; ++c) {
+                    dst_hi[p * NR + c] = row[c].limbs[0];
+                    dst_lo[p * NR + c] = row[c].limbs[1];
+                }
+                for (int c = nr_eff; c < NR; ++c) {
+                    dst_hi[p * NR + c] = 0.0;
+                    dst_lo[p * NR + c] = 0.0;
+                }
+            }
+        }
+    }
+}
+
+/*
+ * SIMD inner kernel — 1 row of A × NR=4 cols of B per micro-kernel.
+ * Ap is the existing AoS pack (one row of length pb per i). Bp is the
+ * SoA pack above (NR-col panels).
+ */
+void inner_kernel_simd(int ib, int jb, int pb, T alpha,
+                       const T * __restrict__ Ap,
+                       const double * __restrict__ Bp_hi,
+                       const double * __restrict__ Bp_lo,
+                       T * __restrict__ C, int ldc)
+{
+    constexpr int NR = simd_dd::NR;
+    const int j_panels = (jb + NR - 1) / NR;
+    const __m256d alpha_h = _mm256_set1_pd(alpha.limbs[0]);
+    const __m256d alpha_l = _mm256_set1_pd(alpha.limbs[1]);
+    for (int jp = 0; jp < j_panels; ++jp) {
+        const int j0 = jp * NR;
+        const int nr_eff = (jb - j0 < NR) ? (jb - j0) : NR;
+        const double *Bp_h_panel = &Bp_hi[static_cast<std::size_t>(jp) * pb * NR];
+        const double *Bp_l_panel = &Bp_lo[static_cast<std::size_t>(jp) * pb * NR];
+        for (int i = 0; i < ib; ++i) {
+            /* pack_A produces COLUMN-major Ap: Ap[p*ib + i] = op(A)[i, p]. */
+            __m256d acc_h = _mm256_setzero_pd();
+            __m256d acc_l = _mm256_setzero_pd();
+            for (int p = 0; p < pb; ++p) {
+                /* broadcast scalar A elements + load 4 B elements */
+                const T &aval = Ap[static_cast<std::size_t>(p) * ib + i];
+                __m256d ah = _mm256_set1_pd(aval.limbs[0]);
+                __m256d al = _mm256_set1_pd(aval.limbs[1]);
+                __m256d bh = _mm256_loadu_pd(&Bp_h_panel[p * NR]);
+                __m256d bl = _mm256_loadu_pd(&Bp_l_panel[p * NR]);
+                __m256d rh, rl;
+                simd_dd::dd_mul(ah, al, bh, bl, rh, rl);
+                simd_dd::dd_add(acc_h, acc_l, rh, rl, acc_h, acc_l);
+            }
+            /* scale by alpha (DD * DD) */
+            __m256d ph, pl;
+            simd_dd::dd_mul(alpha_h, alpha_l, acc_h, acc_l, ph, pl);
+            /* writeback: C[i, j0..j0+nr_eff-1] += ph[lane] + pl[lane] (DD) */
+            alignas(32) double ph_a[NR], pl_a[NR];
+            _mm256_store_pd(ph_a, ph);
+            _mm256_store_pd(pl_a, pl);
+            for (int j = 0; j < nr_eff; ++j) {
+                T r;
+                r.limbs[0] = ph_a[j];
+                r.limbs[1] = pl_a[j];
+                T &dst = C[static_cast<std::size_t>(j0 + j) * ldc + i];
+                dst = dst + r;
+            }
+        }
+    }
+}
+
+#endif /* MBLAS_SIMD_DD */
+
 const T zero_dd{0.0, 0.0};
 const T one_dd {1.0, 0.0};
 
@@ -142,6 +259,37 @@ extern "C" void mgemm_(
     {
         T *Ap = static_cast<T *>(std::aligned_alloc(
             64, static_cast<std::size_t>(MC) * KC * sizeof(T)));
+#ifdef MBLAS_SIMD_DD
+        /* SoA Bp: round NC up to NR boundary for the trailing panel. */
+        constexpr int NR_simd = simd_dd::NR;
+        const int NC_pad = ((NC + NR_simd - 1) / NR_simd) * NR_simd;
+        double *Bp_hi = static_cast<double *>(std::aligned_alloc(
+            64, static_cast<std::size_t>(KC) * NC_pad * sizeof(double)));
+        double *Bp_lo = static_cast<double *>(std::aligned_alloc(
+            64, static_cast<std::size_t>(KC) * NC_pad * sizeof(double)));
+        if (Ap && Bp_hi && Bp_lo) {
+#ifdef _OPENMP
+            #pragma omp for schedule(static)
+#endif
+            for (int jc = 0; jc < N; jc += NC) {
+                const int jb = (N - jc < NC) ? (N - jc) : NC;
+                for (int pc = 0; pc < K; pc += KC) {
+                    const int pb = (K - pc < KC) ? (K - pc) : KC;
+                    pack_B_soa(b, ldb, pc, jc, pb, jb, tb, Bp_hi, Bp_lo);
+                    for (int ic = 0; ic < M; ic += MC) {
+                        const int ib = (M - ic < MC) ? (M - ic) : MC;
+                        pack_A(a, lda, ic, pc, ib, pb, ta, Ap);
+                        inner_kernel_simd(ib, jb, pb, alpha, Ap, Bp_hi, Bp_lo,
+                                          &c[static_cast<std::size_t>(jc) * ldc + ic],
+                                          ldc);
+                    }
+                }
+            }
+        }
+        std::free(Ap);
+        std::free(Bp_hi);
+        std::free(Bp_lo);
+#else
         T *Bp = static_cast<T *>(std::aligned_alloc(
             64, static_cast<std::size_t>(KC) * NC * sizeof(T)));
         if (Ap && Bp) {
@@ -165,5 +313,6 @@ extern "C" void mgemm_(
         }
         std::free(Ap);
         std::free(Bp);
+#endif /* MBLAS_SIMD_DD */
     }
 }
