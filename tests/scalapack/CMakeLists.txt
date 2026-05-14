@@ -136,6 +136,13 @@ else()
         ${LIB_PREFIX}lapack
         ${LIB_PREFIX}blas
     )
+    # qscalapack's Fortran routines call qlamov_/pqgemr2d_ etc. that
+    # live in qscalapack_c — used to be pulled in via qscalapack's
+    # INTERFACE_LINK_LIBRARIES, but that cycle was broken to fix
+    # find_package, so list it explicitly here.
+    if(TARGET ${LIB_PREFIX}scalapack_c)
+        target_link_libraries(scalapack_test_target PUBLIC ${LIB_PREFIX}scalapack_c)
+    endif()
     foreach(_dep ${LIB_PREFIX}ptzblas ${LIB_PREFIX}pbblas)
         if(TARGET ${_dep})
             target_link_libraries(scalapack_test_target PUBLIC ${_dep})
