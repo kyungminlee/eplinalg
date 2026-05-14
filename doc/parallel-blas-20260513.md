@@ -218,7 +218,7 @@ multifloats if available. OMP outside as before.
 | **0d** | Composite rewiring of `${LIB_PREFIX}blas` (rename existing target → `_serial`, add INTERFACE shim) under `PARALLEL_BLAS=ON` | `${LIB_PREFIX}lapack` links unchanged, downstream consumers transparently pick up the overlay |
 | 1     | Fuzz harness for `egemm` (runs against the migrated archive only — validates the harness itself) | finds zero false positives on migrated-vs-migrated |
 | 2     | Bench harness for `egemm` (baseline numbers committed)                                 | reproducible GFLOP/s for migrated baseline |
-| 3     | Serial blocked + packed `egemm` in C (no OMP yet)                                      | fuzz green; bench ≥ 5× serial Netlib at N=1024 |
+| 3     | Serial blocked + packed `egemm` in C (no OMP yet)                                      | fuzz green; bench within ~10% of serial Netlib at N≥256 (kind10 is compute-bound on x87, so blocking is a wash perf-wise but enables step 4 parallelization) |
 | 4     | Add OMP to `egemm`                                                                     | fuzz green at all thread counts; ~linear scaling to N_core/2 |
 | 5     | Block-size autotune sweep; commit tuned `MC/KC/NC`                                     | aggregator picks winners; merge to `develop` |
 | 6     | Repeat for `ygemm` (complex)                                                           | fuzz + bench |
