@@ -37,6 +37,11 @@
 #include <omp.h>
 #endif
 
+#ifdef MBLAS_SIMD_DD
+#include "mgemm_simd_kernel.h"   /* dd_mul, dd_add, dd_neg primitives */
+#include <immintrin.h>
+#endif
+
 namespace mf = multifloats;
 using T = mf::float64x2;
 
@@ -80,6 +85,258 @@ extern "C" void mgemm_(
 
 #define A_(i, j)  a[static_cast<std::size_t>(j) * lda + (i)]
 #define B_(i, j)  b[static_cast<std::size_t>(j) * ldb + (i)]
+
+#ifdef MBLAS_SIMD_DD
+
+/* ── SIMD 4-wide diagonal kernel for SIDE='L' variants.
+ *
+ * Layout: pack 4 columns of B into thread-local SoA hi[] / lo[]
+ * arrays (interleaved by row), do forward/back substitution in
+ * SIMD across the 4 column lanes, unpack back to B. Partial
+ * trailing 4-panel (j_count < 4) is zero-padded so the kernel
+ * always runs full 4-wide; only j_count lanes are written back.
+ *
+ * Operates on M ≤ kMaxBlockM (block size cap from trsm_nb). Stack
+ * scratch is 2 · M · 4 doubles = 4KB at M=64.
+ */
+constexpr int kSimdLane = simd_dd::NR;   /* 4 */
+constexpr int kMaxBlockM = 256;          /* upper bound for stack scratch */
+
+/* Pack [M, j_start..j_start+j_count) of B into SoA scratch (bh, bl).
+ * Zero-pad lanes ≥ j_count. */
+inline void pack_B_4col(int M, const T *b, int ldb, int j_start, int j_count,
+                        double *bh, double *bl)
+{
+    for (int j = 0; j < j_count; ++j) {
+        const T *col = &b[static_cast<std::size_t>(j_start + j) * ldb];
+        for (int i = 0; i < M; ++i) {
+            bh[i * kSimdLane + j] = col[i].limbs[0];
+            bl[i * kSimdLane + j] = col[i].limbs[1];
+        }
+    }
+    for (int j = j_count; j < kSimdLane; ++j)
+        for (int i = 0; i < M; ++i) {
+            bh[i * kSimdLane + j] = 0.0;
+            bl[i * kSimdLane + j] = 0.0;
+        }
+}
+
+inline void unpack_B_4col(int M, T *b, int ldb, int j_start, int j_count,
+                          const double *bh, const double *bl)
+{
+    for (int j = 0; j < j_count; ++j) {
+        T *col = &b[static_cast<std::size_t>(j_start + j) * ldb];
+        for (int i = 0; i < M; ++i) {
+            col[i].limbs[0] = bh[i * kSimdLane + j];
+            col[i].limbs[1] = bl[i * kSimdLane + j];
+        }
+    }
+}
+
+/* SIMD alpha prescale on packed scratch. */
+inline void simd_prescale(int M, T alpha, double *bh, double *bl)
+{
+    if (dd_isone(alpha)) return;
+    if (dd_iszero(alpha)) {
+        const __m256d z = _mm256_setzero_pd();
+        for (int k = 0; k < M; ++k) {
+            _mm256_storeu_pd(&bh[k * kSimdLane], z);
+            _mm256_storeu_pd(&bl[k * kSimdLane], z);
+        }
+        return;
+    }
+    const __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    const __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    for (int k = 0; k < M; ++k) {
+        __m256d bkh = _mm256_loadu_pd(&bh[k * kSimdLane]);
+        __m256d bkl = _mm256_loadu_pd(&bl[k * kSimdLane]);
+        __m256d nh, nl;
+        simd_dd::dd_mul(bkh, bkl, ah, al, nh, nl);
+        _mm256_storeu_pd(&bh[k * kSimdLane], nh);
+        _mm256_storeu_pd(&bl[k * kSimdLane], nl);
+    }
+}
+
+/* Forward substitution (L, L, N): for k = 0..M-1 :
+ *   if nounit: bk /= A[k,k]
+ *   for i > k: bi -= A[i,k] * bk */
+inline void simd_fwd_sub_lln(int M, const T *a, int lda, int nounit,
+                             double *bh, double *bl)
+{
+    for (int k = 0; k < M; ++k) {
+        __m256d bkh = _mm256_loadu_pd(&bh[k * kSimdLane]);
+        __m256d bkl = _mm256_loadu_pd(&bl[k * kSimdLane]);
+        if (nounit) {
+            const T inv = one_dd / A_(k, k);
+            __m256d ih = _mm256_set1_pd(inv.limbs[0]);
+            __m256d il = _mm256_set1_pd(inv.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bkh, bkl, ih, il, nh, nl);
+            bkh = nh; bkl = nl;
+            _mm256_storeu_pd(&bh[k * kSimdLane], bkh);
+            _mm256_storeu_pd(&bl[k * kSimdLane], bkl);
+        }
+        for (int i = k + 1; i < M; ++i) {
+            __m256d aih = _mm256_set1_pd(A_(i, k).limbs[0]);
+            __m256d ail = _mm256_set1_pd(A_(i, k).limbs[1]);
+            __m256d ph, pl;
+            simd_dd::dd_mul(aih, ail, bkh, bkl, ph, pl);
+            simd_dd::dd_neg(ph, pl);
+            __m256d bih = _mm256_loadu_pd(&bh[i * kSimdLane]);
+            __m256d bil = _mm256_loadu_pd(&bl[i * kSimdLane]);
+            __m256d nh, nl;
+            simd_dd::dd_add(bih, bil, ph, pl, nh, nl);
+            _mm256_storeu_pd(&bh[i * kSimdLane], nh);
+            _mm256_storeu_pd(&bl[i * kSimdLane], nl);
+        }
+    }
+}
+
+/* Back substitution (L, U, N): for k = M-1..0 :
+ *   if nounit: bk /= A[k,k]
+ *   for i < k: bi -= A[i,k] * bk */
+inline void simd_bwd_sub_lun(int M, const T *a, int lda, int nounit,
+                             double *bh, double *bl)
+{
+    for (int k = M - 1; k >= 0; --k) {
+        __m256d bkh = _mm256_loadu_pd(&bh[k * kSimdLane]);
+        __m256d bkl = _mm256_loadu_pd(&bl[k * kSimdLane]);
+        if (nounit) {
+            const T inv = one_dd / A_(k, k);
+            __m256d ih = _mm256_set1_pd(inv.limbs[0]);
+            __m256d il = _mm256_set1_pd(inv.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bkh, bkl, ih, il, nh, nl);
+            bkh = nh; bkl = nl;
+            _mm256_storeu_pd(&bh[k * kSimdLane], bkh);
+            _mm256_storeu_pd(&bl[k * kSimdLane], bkl);
+        }
+        for (int i = 0; i < k; ++i) {
+            __m256d aih = _mm256_set1_pd(A_(i, k).limbs[0]);
+            __m256d ail = _mm256_set1_pd(A_(i, k).limbs[1]);
+            __m256d ph, pl;
+            simd_dd::dd_mul(aih, ail, bkh, bkl, ph, pl);
+            simd_dd::dd_neg(ph, pl);
+            __m256d bih = _mm256_loadu_pd(&bh[i * kSimdLane]);
+            __m256d bil = _mm256_loadu_pd(&bl[i * kSimdLane]);
+            __m256d nh, nl;
+            simd_dd::dd_add(bih, bil, ph, pl, nh, nl);
+            _mm256_storeu_pd(&bh[i * kSimdLane], nh);
+            _mm256_storeu_pd(&bl[i * kSimdLane], nl);
+        }
+    }
+}
+
+/* Forward sub on Aᵀ (L, L, T): inner-product form, scans i = M-1..0.
+ *   t = α·B[i,j]; for k > i: t -= A[k,i]·B[k,j]; B[i,j] = t / A[i,i] */
+inline void simd_fwd_sub_llt(int M, const T *a, int lda, T alpha, int nounit,
+                             double *bh, double *bl)
+{
+    const __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    const __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    for (int i = M - 1; i >= 0; --i) {
+        __m256d bih = _mm256_loadu_pd(&bh[i * kSimdLane]);
+        __m256d bil = _mm256_loadu_pd(&bl[i * kSimdLane]);
+        __m256d th, tl;
+        simd_dd::dd_mul(ah, al, bih, bil, th, tl);
+        for (int k = i + 1; k < M; ++k) {
+            __m256d akh = _mm256_set1_pd(A_(k, i).limbs[0]);
+            __m256d akl = _mm256_set1_pd(A_(k, i).limbs[1]);
+            __m256d bkh = _mm256_loadu_pd(&bh[k * kSimdLane]);
+            __m256d bkl = _mm256_loadu_pd(&bl[k * kSimdLane]);
+            __m256d ph, pl;
+            simd_dd::dd_mul(akh, akl, bkh, bkl, ph, pl);
+            simd_dd::dd_neg(ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(th, tl, ph, pl, nh, nl);
+            th = nh; tl = nl;
+        }
+        if (nounit) {
+            const T inv = one_dd / A_(i, i);
+            __m256d ih = _mm256_set1_pd(inv.limbs[0]);
+            __m256d il = _mm256_set1_pd(inv.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(th, tl, ih, il, nh, nl);
+            th = nh; tl = nl;
+        }
+        _mm256_storeu_pd(&bh[i * kSimdLane], th);
+        _mm256_storeu_pd(&bl[i * kSimdLane], tl);
+    }
+}
+
+/* (L, U, T): scans i = 0..M-1, k = 0..i-1. */
+inline void simd_bwd_sub_lut(int M, const T *a, int lda, T alpha, int nounit,
+                             double *bh, double *bl)
+{
+    const __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    const __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    for (int i = 0; i < M; ++i) {
+        __m256d bih = _mm256_loadu_pd(&bh[i * kSimdLane]);
+        __m256d bil = _mm256_loadu_pd(&bl[i * kSimdLane]);
+        __m256d th, tl;
+        simd_dd::dd_mul(ah, al, bih, bil, th, tl);
+        for (int k = 0; k < i; ++k) {
+            __m256d akh = _mm256_set1_pd(A_(k, i).limbs[0]);
+            __m256d akl = _mm256_set1_pd(A_(k, i).limbs[1]);
+            __m256d bkh = _mm256_loadu_pd(&bh[k * kSimdLane]);
+            __m256d bkl = _mm256_loadu_pd(&bl[k * kSimdLane]);
+            __m256d ph, pl;
+            simd_dd::dd_mul(akh, akl, bkh, bkl, ph, pl);
+            simd_dd::dd_neg(ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(th, tl, ph, pl, nh, nl);
+            th = nh; tl = nl;
+        }
+        if (nounit) {
+            const T inv = one_dd / A_(i, i);
+            __m256d ih = _mm256_set1_pd(inv.limbs[0]);
+            __m256d il = _mm256_set1_pd(inv.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(th, tl, ih, il, nh, nl);
+            th = nh; tl = nl;
+        }
+        _mm256_storeu_pd(&bh[i * kSimdLane], th);
+        _mm256_storeu_pd(&bl[i * kSimdLane], tl);
+    }
+}
+
+enum trsm_simd_op { SLLN, SLUN, SLLT, SLUT };
+
+/* SIMD diagonal solver for a column range. Replaces mtrsm_*_core on
+ * the blocked path. Scratch is per-call stack (small, ≤4KB).
+ * For LLN/LUN: alpha is applied to bh/bl via simd_prescale before
+ *              the forward/back sub (matches the rank-1 form).
+ * For LLT/LUT: alpha is folded into the i-loop (matches scalar form). */
+inline void mtrsm_simd_diag(trsm_simd_op op, int j_start, int j_end,
+                            int M, T alpha,
+                            const T *a, int lda, T *b, int ldb, int nounit)
+{
+    alignas(32) double bh[kMaxBlockM * kSimdLane];
+    alignas(32) double bl[kMaxBlockM * kSimdLane];
+    for (int j = j_start; j < j_end; j += kSimdLane) {
+        const int jc = (j_end - j < kSimdLane) ? (j_end - j) : kSimdLane;
+        pack_B_4col(M, b, ldb, j, jc, bh, bl);
+        switch (op) {
+        case SLLN:
+            simd_prescale(M, alpha, bh, bl);
+            simd_fwd_sub_lln(M, a, lda, nounit, bh, bl);
+            break;
+        case SLUN:
+            simd_prescale(M, alpha, bh, bl);
+            simd_bwd_sub_lun(M, a, lda, nounit, bh, bl);
+            break;
+        case SLLT:
+            simd_fwd_sub_llt(M, a, lda, alpha, nounit, bh, bl);
+            break;
+        case SLUT:
+            simd_bwd_sub_lut(M, a, lda, alpha, nounit, bh, bl);
+            break;
+        }
+        unpack_B_4col(M, b, ldb, j, jc, bh, bl);
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
 
 /* ── Column-range "core" kernels: serial work over j ∈ [j_start, j_end). */
 
@@ -324,6 +581,23 @@ void blocked_chunk(trsm_variant V, int j_start, int j_end,
     const char TN[1] = {'T'};
     T *B_chunk = &B_(0, j_start);
 
+/* Diagonal-solve helper: SIMD path if available, scalar otherwise. */
+#ifdef MBLAS_SIMD_DD
+#define DIAG_SOLVE(op, scalar_core, ib_arg, alpha_arg)               \
+    do {                                                              \
+        if ((ib_arg) <= kMaxBlockM)                                   \
+            mtrsm_simd_diag(op, j_start, j_end, (ib_arg), (alpha_arg),\
+                            &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);\
+        else                                                          \
+            scalar_core(j_start, j_end, (ib_arg), (alpha_arg),        \
+                        &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);   \
+    } while (0)
+#else
+#define DIAG_SOLVE(op, scalar_core, ib_arg, alpha_arg)               \
+    scalar_core(j_start, j_end, (ib_arg), (alpha_arg),                \
+                &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit)
+#endif
+
     if (V == LLN) {
         for (int ic = 0; ic < M; ic += nb) {
             const int ib = (M - ic < nb) ? (M - ic) : nb;
@@ -333,8 +607,7 @@ void blocked_chunk(trsm_variant V, int j_start, int j_end,
                        B_chunk, &ldb, &one,
                        &B_chunk[ic], &ldb, 1, 1);
             }
-            mtrsm_lln_core(j_start, j_end, ib, one_dd,
-                           &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            DIAG_SOLVE(SLLN, mtrsm_lln_core, ib, one_dd);
         }
     } else if (V == LUN) {
         int ic = ((M - 1) / nb) * nb;
@@ -348,8 +621,7 @@ void blocked_chunk(trsm_variant V, int j_start, int j_end,
                        &B_chunk[j0], &ldb, &one,
                        &B_chunk[ic], &ldb, 1, 1);
             }
-            mtrsm_lun_core(j_start, j_end, ib, one_dd,
-                           &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            DIAG_SOLVE(SLUN, mtrsm_lun_core, ib, one_dd);
             ic -= nb;
         }
     } else if (V == LLT) {
@@ -364,8 +636,7 @@ void blocked_chunk(trsm_variant V, int j_start, int j_end,
                        &B_chunk[i0], &ldb, &one,
                        &B_chunk[ic], &ldb, 1, 1);
             }
-            mtrsm_llt_core(j_start, j_end, ib, one_dd,
-                           &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            DIAG_SOLVE(SLLT, mtrsm_llt_core, ib, one_dd);
             ic -= nb;
         }
     } else { /* LUT */
@@ -377,10 +648,10 @@ void blocked_chunk(trsm_variant V, int j_start, int j_end,
                        B_chunk, &ldb, &one,
                        &B_chunk[ic], &ldb, 1, 1);
             }
-            mtrsm_lut_core(j_start, j_end, ib, one_dd,
-                           &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            DIAG_SOLVE(SLUT, mtrsm_lut_core, ib, one_dd);
         }
     }
+#undef DIAG_SOLVE
 }
 
 void blocked_dispatch(trsm_variant V, int M, int N, T alpha,
