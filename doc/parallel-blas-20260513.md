@@ -496,12 +496,49 @@ fails completely here.
 
 (Infrastructure kept; gated off by default. Flag: `QBLAS_USE_FMAQ`.)
 
-### Conclusion
+### SIMD-vectorized soft-fp — analyzed, infeasible on AVX2-only
 
-kind16 perf is bound by the irreducible cost of soft-float quad
-arithmetic. Real headroom for this precision is hardware support
-— Sapphire Rapids (avx10 / `_Float128` natively) and beyond ship
-native quad ops; portable headroom is essentially zero.
+Would 4-wide (AVX2) or 8-wide (AVX-512) parallel `__float128`
+multiplies via SoA limb layout pay off? The throughput bound:
+
+The hot operation is a 113×113 → 226-bit mantissa multiply. Scalar:
+4 `mulq` instructions = ~4–6 cycles end-to-end (mulq is
+1 op/cycle, native 64×64 → 128). On **AVX2 the only widening
+multiply is `vpmuludq` (32×32 → 64)**, which needs ~8 instructions
+to synthesize one 64×64 → 128 per lane:
+
+| ISA | per-fraction-multiply throughput vs scalar |
+|---|---|
+| AVX2 only  | **0.5× — slower** (16 cycles SIMD vs 4 cycles scalar for 4-wide) |
+| AVX-512 + IFMA52 (Ice Lake-X / Sapphire Rapids / newer Xeon) | ~7× faster (8-wide `vpmadd52*uq` with native 52×52 widening) |
+
+The scalar `mulq` is too good a competitor on AVX2 — the SIMD path
+adds carry-handling shifts/adds that erase the parallelism gain.
+Existing SIMD `__float128` libraries (Sleef, Intel IPP-crypto)
+exclusively target the AVX-512 IFMA52 path.
+
+The box this analysis was done on is an Intel i3-1315U (13th gen
+Raptor Lake): AVX2 + FMA, no AVX-512 (Intel disabled it on
+consumer Alder/Raptor Lake). So SIMD soft-fp is a net loss here.
+
+### Conclusion — kind16 perf wall-bounded by hardware
+
+All five potential paths analyzed; none survives:
+
+| option | outcome |
+|---|---|
+| #1 pack/unpack elision | inline-softfp showed zero gain → not the bottleneck |
+| #2 unpack Bp once into SoA | est. 3–5 %, not worth the engineering |
+| #3 skip case classification | est. 5 %, gcc may already do it via branch prediction |
+| #4 SIMD-vectorize soft-fp | needs AVX-512 IFMA52, absent on this box |
+| #5 loop-level exponent management | dropped by user direction |
+
+So kind16 perf is **truly bound by hardware**. The single concrete
+headroom direction is upgrading to a CPU with native `_Float128`
+operations — Sapphire Rapids (Xeon server, mid-2023+) ships them,
+gcc emits them automatically when `-march=` enables the relevant
+ISA. On consumer Raptor/Alder Lake / older Skylake-X, kind16 is at
+the floor.
 
 Worth nailing down what is *not* a path: replacing `__float128`
 with multifloats DD is sometimes proposed as a "faster quad", but
