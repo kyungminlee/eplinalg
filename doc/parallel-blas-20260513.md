@@ -414,18 +414,43 @@ Reading:
   (b) cache blocking + packing pays for a 16-byte scalar type at
   typical L1/L2 footprints.
 
-### Parallel scaling (`OMP_NUM_THREADS=4`, N=1024 unless noted)
+### Parallel scaling (`OMP_NUM_THREADS=4`, s=1024 unless noted)
 
-| target | overlay GFLOP/s | migrated GFLOP/s | overlay vs serial migrated |
+#### kind10 — per-transpose breakdown
+
+The migrated kernel's perf varies 3× across the 9 transpose combos
+because column-major access patterns hit different cache profiles
+(textbook "A^T·B is cache-friendliest" effect — TN/CN read two
+contiguous columns in the inner loop; TT/TC/CT/CC have the worst
+stride pattern). The overlay packs both operands into a uniform
+layout, so its perf is essentially constant — packing turns a 3×
+swing into noise.
+
+| trans | overlay | migrated | overlay / migrated |
 |---|---|---|---|
-| kind10 | 5.3 | 1.27 | **4.2×** |
-| kind16 | 0.14 | 0.059 | **2.3×** |
-| multifloats | not measured (defaults; expect ~16× from 4× serial × ~4× threads) | | |
+| NN | 7.70 | 1.27 | 6.1× |
+| NT | 7.57 | 1.23 | 6.2× |
+| NC | 7.42 | 1.24 | 6.0× |
+| TN | 7.54 | **1.56** | 4.8× |
+| TT | 7.56 | **0.55** | **13.7×** |
+| TC | 7.53 | 0.61 | 12.4× |
+| CN | 7.36 | **1.64** | 4.5× |
+| CT | 7.29 | 0.63 | 11.5× |
+| CC | 7.47 | 0.63 | 11.9× |
 
-kind10 hits near-linear scaling (4× on 4 cores). kind16 caps at ~2.3×
-because the static schedule on NC=256 with N=1024 yields only 4
-chunks — fine-grained autotune of NC would help. multifloats
-scaling not yet measured at OMP=4.
+So packing's biggest practical win on kind10 isn't the headline
+GFLOP/s — it's **uniformity**. Downstream LAPACK calls
+`DGEMM('T','N',...)` and `DGEMM('N','T',...)` in roughly equal
+proportions; performance that doesn't depend on which one you
+called is real engineering value.
+
+#### kind16, multifloats — uniform across combos
+
+For these precisions, arithmetic cost (libquadmath calls / inlined
+DD ops) dominates everything else so the transpose dispatch doesn't
+swing perf — both impls track flat across the 9 combos. Overlay
+wins 1.9–2× (kind16) and 7–10× (multifloats) per combo, with
+≤10% variation by transpose.
 
 ## 11. References
 
