@@ -424,22 +424,37 @@ AoS scalar (broadcast per-p with `vbroadcastsd`).
 Gated on `MBLAS_SIMD_DD` (default ON when the compiler accepts
 `-mavx2 -mfma`, which is the case for any halfway-recent x86_64).
 
+Micro-kernel sizing: started at MR=1 (1 row of A × 4 cols of B per
+call) and bumped to **MR=2** for ILP. Two rows of A produce two
+independent dd_mul → dd_add chains that share the same `vmovupd`
+of B; gcc interleaves them, hiding FMA latency. Register budget at
+MR=2: 4 accumulators + 4 broadcasts + 2 B + 2 scratch ≈ 12 of 16
+ymm regs — fits with headroom. Trailing odd row (`ib` odd) handled
+by a separate MR=1 tail loop so the main loop stays branch-free.
+
 Measured on Raptor Lake (i3-1315U, AVX2 + FMA, no AVX-512):
 
 | | OMP=1 | OMP=4 (s=1024) |
 |---|---|---|
-| **scalar outer-product baseline** | 0.51 GFLOP/s | (not previously measured) |
-| **AVX2 SIMD (4-wide)** | 1.89 GFLOP/s | 4.70 GFLOP/s |
-| **vs scalar overlay** | **3.8×** (near-ideal 4-lane) | ~2.5× thread-scaling |
-| **vs migrated** | **15×** | **38×** |
+| **scalar outer-product baseline** | 0.51 GFLOP/s | (≈1.26) |
+| **AVX2 SIMD MR=1** | 1.89 | 4.70 |
+| **AVX2 SIMD MR=2** | **3.55** | **7.58** |
+| **MR=2 vs scalar overlay** | **7.0×** | **6.0×** |
+| **MR=2 vs migrated** | **29×** | **62×** |
+
+The MR=1 → MR=2 jump alone is **1.88×** — close to a clean
+doubling. Beyond the obvious B-load amortization, the bigger win
+is ILP: two dd_mul chains in flight at once gives the out-of-order
+core enough work to retire FMAs back-to-back instead of stalling
+on the EFT data dependency.
 
 Per-trans variation under 5% (DD ops dominate everything; even the
 non-NN packing's strided read is invisible behind the EFT chain).
 
-The 38× over migrated is the largest speedup of any kernel in this
-overlay — because the migrated Fortran goes through an elemental
-wrapper around each scalar DD op, paying call overhead AND no SIMD,
-while the overlay does both.
+The 62× over migrated is the largest speedup of any kernel in this
+overlay — the migrated Fortran goes through an elemental wrapper
+around each scalar DD op (call overhead) and uses no SIMD; the
+overlay fixes both at once.
 
 ### Register-tiled (MR × NR) micro-kernel — tried, abandoned
 

@@ -163,9 +163,40 @@ void pack_B_soa(const T * __restrict__ B, int ldb,
 }
 
 /*
- * SIMD inner kernel — 1 row of A × NR=4 cols of B per micro-kernel.
- * Ap is the existing AoS pack (one row of length pb per i). Bp is the
- * SoA pack above (NR-col panels).
+ * SIMD writeback helper: alpha-scale a DD accumulator (acc_h, acc_l)
+ * and merge into C[i, j0..j0+nr_eff-1].
+ */
+static inline __attribute__((always_inline)) void
+simd_writeback(__m256d alpha_h, __m256d alpha_l,
+               __m256d acc_h, __m256d acc_l,
+               T *C_row_i, int ldc, int j0, int nr_eff)
+{
+    constexpr int NR = simd_dd::NR;
+    __m256d ph, pl;
+    simd_dd::dd_mul(alpha_h, alpha_l, acc_h, acc_l, ph, pl);
+    alignas(32) double ph_a[NR], pl_a[NR];
+    _mm256_store_pd(ph_a, ph);
+    _mm256_store_pd(pl_a, pl);
+    for (int j = 0; j < nr_eff; ++j) {
+        T r;
+        r.limbs[0] = ph_a[j];
+        r.limbs[1] = pl_a[j];
+        T &dst = C_row_i[static_cast<std::size_t>(j0 + j) * ldc];
+        dst = dst + r;
+    }
+}
+
+/*
+ * SIMD inner kernel — MR=2 register tile.
+ * 2 rows of A × NR=4 cols of B per micro-kernel call. The two rows'
+ * dd_mul/dd_add chains run in parallel — same B load amortized across
+ * both, gcc gets to interleave 8 FMAs per p iteration for ILP.
+ *
+ * Register budget: 4 acc (ach0/acl0/ach1/acl1) + 4 broadcasts
+ * (ah0/al0/ah1/al1) + 2 B (bh/bl) + scratch ≈ 12 of 16 ymm regs.
+ *
+ * Trailing odd row (ib odd) handled by a separate MR=1 tail loop —
+ * keeps the main loop branch-free.
  */
 void inner_kernel_simd(int ib, int jb, int pb, T alpha,
                        const T * __restrict__ Ap,
@@ -182,12 +213,36 @@ void inner_kernel_simd(int ib, int jb, int pb, T alpha,
         const int nr_eff = (jb - j0 < NR) ? (jb - j0) : NR;
         const double *Bp_h_panel = &Bp_hi[static_cast<std::size_t>(jp) * pb * NR];
         const double *Bp_l_panel = &Bp_lo[static_cast<std::size_t>(jp) * pb * NR];
-        for (int i = 0; i < ib; ++i) {
-            /* pack_A produces COLUMN-major Ap: Ap[p*ib + i] = op(A)[i, p]. */
+        int i = 0;
+        /* MR=2 main loop */
+        for (; i + 1 < ib; i += 2) {
+            __m256d ach0 = _mm256_setzero_pd(), acl0 = _mm256_setzero_pd();
+            __m256d ach1 = _mm256_setzero_pd(), acl1 = _mm256_setzero_pd();
+            for (int p = 0; p < pb; ++p) {
+                __m256d bh = _mm256_loadu_pd(&Bp_h_panel[p * NR]);
+                __m256d bl = _mm256_loadu_pd(&Bp_l_panel[p * NR]);
+                const T &a0 = Ap[static_cast<std::size_t>(p) * ib + i];
+                const T &a1 = Ap[static_cast<std::size_t>(p) * ib + i + 1];
+                __m256d ah0 = _mm256_set1_pd(a0.limbs[0]);
+                __m256d al0 = _mm256_set1_pd(a0.limbs[1]);
+                __m256d ah1 = _mm256_set1_pd(a1.limbs[0]);
+                __m256d al1 = _mm256_set1_pd(a1.limbs[1]);
+                __m256d rh0, rl0, rh1, rl1;
+                simd_dd::dd_mul(ah0, al0, bh, bl, rh0, rl0);
+                simd_dd::dd_mul(ah1, al1, bh, bl, rh1, rl1);
+                simd_dd::dd_add(ach0, acl0, rh0, rl0, ach0, acl0);
+                simd_dd::dd_add(ach1, acl1, rh1, rl1, ach1, acl1);
+            }
+            simd_writeback(alpha_h, alpha_l, ach0, acl0,
+                           &C[i],     ldc, j0, nr_eff);
+            simd_writeback(alpha_h, alpha_l, ach1, acl1,
+                           &C[i + 1], ldc, j0, nr_eff);
+        }
+        /* MR=1 tail (only fires when ib is odd) */
+        for (; i < ib; ++i) {
             __m256d acc_h = _mm256_setzero_pd();
             __m256d acc_l = _mm256_setzero_pd();
             for (int p = 0; p < pb; ++p) {
-                /* broadcast scalar A elements + load 4 B elements */
                 const T &aval = Ap[static_cast<std::size_t>(p) * ib + i];
                 __m256d ah = _mm256_set1_pd(aval.limbs[0]);
                 __m256d al = _mm256_set1_pd(aval.limbs[1]);
@@ -197,20 +252,8 @@ void inner_kernel_simd(int ib, int jb, int pb, T alpha,
                 simd_dd::dd_mul(ah, al, bh, bl, rh, rl);
                 simd_dd::dd_add(acc_h, acc_l, rh, rl, acc_h, acc_l);
             }
-            /* scale by alpha (DD * DD) */
-            __m256d ph, pl;
-            simd_dd::dd_mul(alpha_h, alpha_l, acc_h, acc_l, ph, pl);
-            /* writeback: C[i, j0..j0+nr_eff-1] += ph[lane] + pl[lane] (DD) */
-            alignas(32) double ph_a[NR], pl_a[NR];
-            _mm256_store_pd(ph_a, ph);
-            _mm256_store_pd(pl_a, pl);
-            for (int j = 0; j < nr_eff; ++j) {
-                T r;
-                r.limbs[0] = ph_a[j];
-                r.limbs[1] = pl_a[j];
-                T &dst = C[static_cast<std::size_t>(j0 + j) * ldc + i];
-                dst = dst + r;
-            }
+            simd_writeback(alpha_h, alpha_l, acc_h, acc_l,
+                           &C[i], ldc, j0, nr_eff);
         }
     }
 }
