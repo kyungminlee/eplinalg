@@ -28,10 +28,9 @@ if(NOT IS_DIRECTORY ${_per_target_dir})
     return()
 endif()
 
-# OpenMP is optional at step 0 (the passthrough stubs don't use it);
-# step 4+ depends on it. Detect now so the per-target CMakeLists can
-# link OpenMP::OpenMP_C unconditionally if it's needed there.
-find_package(OpenMP COMPONENTS C)
+# Detect both C and CXX so per-target subdirs (kind10/kind16 in C,
+# multifloats in C++) can pick whichever they need.
+find_package(OpenMP COMPONENTS C CXX)
 
 # Shared knob across per-target subdirs.
 set(PARALLEL_BLAS_MARCH "native" CACHE STRING

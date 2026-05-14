@@ -36,6 +36,12 @@ add_fypp_source(_fuzz_util_src
 
 add_library(blas_parallel_fuzz_common STATIC ${_fuzz_util_src})
 fortran_module_layout(blas_parallel_fuzz_common)
+if(NEEDS_MULTIFLOATS AND TARGET multifloatsf)
+    # multifloats target's fuzz_util uses real64x2/cmplx64x2 from the
+    # upstream Fortran module.
+    target_link_libraries(blas_parallel_fuzz_common PUBLIC
+        $<BUILD_INTERFACE:multifloatsf>)
+endif()
 
 function(add_consistency_test shim_path)
     get_filename_component(_name ${shim_path} NAME_WE)
