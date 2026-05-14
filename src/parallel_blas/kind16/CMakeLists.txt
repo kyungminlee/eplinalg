@@ -9,6 +9,8 @@
 set(_kernels
     qgemm.c
     xgemm.c
+    qtrsm.c
+    xtrsm.c
 )
 
 set(_routines "")
