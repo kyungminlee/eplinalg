@@ -27,6 +27,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+/* Threshold below which OMP parallel-for on the column axis isn't
+ * worth the parallel-region setup. */
+#define ETRSM_OMP_N_MIN 32
 
 typedef long double T;
 
@@ -70,6 +77,9 @@ static inline char up(const char *p) {
 static void trsm_lln(int M, int N, T alpha,
                      const T *a, int lda, T *b, int ldb, int nounit)
 {
+#ifdef _OPENMP
+    #pragma omp parallel for if(N >= ETRSM_OMP_N_MIN) schedule(static)
+#endif
     for (int j = 0; j < N; ++j) {
         if (alpha != 1.0L) for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
         for (int k = 0; k < M; ++k) {
@@ -87,6 +97,9 @@ static void trsm_lln(int M, int N, T alpha,
 static void trsm_lun(int M, int N, T alpha,
                      const T *a, int lda, T *b, int ldb, int nounit)
 {
+#ifdef _OPENMP
+    #pragma omp parallel for if(N >= ETRSM_OMP_N_MIN) schedule(static)
+#endif
     for (int j = 0; j < N; ++j) {
         if (alpha != 1.0L) for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
         for (int k = M - 1; k >= 0; --k) {
@@ -106,6 +119,9 @@ static void trsm_llt(int M, int N, T alpha,
 {
     /* Reference: inner-product form, walks i from M-1 down to 0,
      * accumulating A[k,i]·B[k,j] for k > i (rows of A below diagonal). */
+#ifdef _OPENMP
+    #pragma omp parallel for if(N >= ETRSM_OMP_N_MIN) schedule(static)
+#endif
     for (int j = 0; j < N; ++j) {
         for (int i = M - 1; i >= 0; --i) {
             T t = alpha * B_(i, j);
@@ -120,6 +136,9 @@ static void trsm_llt(int M, int N, T alpha,
 static void trsm_lut(int M, int N, T alpha,
                      const T *a, int lda, T *b, int ldb, int nounit)
 {
+#ifdef _OPENMP
+    #pragma omp parallel for if(N >= ETRSM_OMP_N_MIN) schedule(static)
+#endif
     for (int j = 0; j < N; ++j) {
         for (int i = 0; i < M; ++i) {
             T t = alpha * B_(i, j);
@@ -140,10 +159,16 @@ static void prescale_B(int M, int N, T alpha, T *b, int ldb)
 {
     if (alpha == 1.0L) return;
     if (alpha == 0.0L) {
+#ifdef _OPENMP
+        #pragma omp parallel for if(N >= ETRSM_OMP_N_MIN) schedule(static)
+#endif
         for (int j = 0; j < N; ++j)
             for (int i = 0; i < M; ++i) B_(i, j) = 0.0L;
         return;
     }
+#ifdef _OPENMP
+    #pragma omp parallel for if(N >= ETRSM_OMP_N_MIN) schedule(static)
+#endif
     for (int j = 0; j < N; ++j)
         for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
 }
