@@ -61,6 +61,9 @@ set(_kernels
     mwnrm2.cpp
     wdotu.cpp
     wdotc.cpp
+    # L2 banded — general
+    mgbmv.cpp
+    wgbmv.cpp
 )
 
 set(_routines "")
