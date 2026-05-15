@@ -79,8 +79,9 @@ static const T ONE  = 1.0L + 0.0Li;
  *             stored). Same direct-vs-conj split.
  */
 static void hemm_diag_add_L(int ic, int ib, int jc, int jb, T alpha,
-                            const T *a, int lda, const T *b, int ldb,
-                            T *c, int ldc, char UPLO)
+                            const T *restrict a, int lda,
+                            const T *restrict b, int ldb,
+                            T *restrict c, int ldc, char UPLO)
 {
     for (int j = jc; j < jc + jb; ++j) {
         T *cj = c + (size_t)j * ldc;
@@ -113,8 +114,9 @@ static void hemm_diag_add_L(int ic, int ib, int jc, int jb, T alpha,
 
 /* Scalar Hermitian diagonal block, SIDE='R'. */
 static void hemm_diag_add_R(int jc, int jb, int ic, int ib, T alpha,
-                            const T *a, int lda, const T *b, int ldb,
-                            T *c, int ldc, char UPLO)
+                            const T *restrict a, int lda,
+                            const T *restrict b, int ldb,
+                            T *restrict c, int ldc, char UPLO)
 {
     for (int j = jc; j < jc + jb; ++j) {
         T *cj = c + (size_t)j * ldc;
@@ -149,10 +151,10 @@ void yhemm_(
     const char *side, const char *uplo,
     const int *m_, const int *n_,
     const T *alpha_,
-    const T *a, const int *lda_,
-    const T *b, const int *ldb_,
+    const T *restrict a, const int *lda_,
+    const T *restrict b, const int *ldb_,
     const T *beta_,
-    T *c, const int *ldc_,
+    T *restrict c, const int *ldc_,
     size_t side_len, size_t uplo_len)
 {
     (void)side_len; (void)uplo_len;

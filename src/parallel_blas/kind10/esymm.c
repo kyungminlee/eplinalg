@@ -83,8 +83,9 @@ static inline char up(const char *p) {
  *             upper-stored half.
  */
 static void symm_diag_add_L(int ic, int ib, int jc, int jb, T alpha,
-                            const T *a, int lda, const T *b, int ldb,
-                            T *c, int ldc, char UPLO)
+                            const T *restrict a, int lda,
+                            const T *restrict b, int ldb,
+                            T *restrict c, int ldc, char UPLO)
 {
     for (int j = jc; j < jc + jb; ++j) {
         T *cj = c + (size_t)j * ldc;
@@ -117,8 +118,9 @@ static void symm_diag_add_L(int ic, int ib, int jc, int jb, T alpha,
 
 /* Scalar diagonal-block symm for SIDE='R'. */
 static void symm_diag_add_R(int jc, int jb, int ic, int ib, T alpha,
-                            const T *a, int lda, const T *b, int ldb,
-                            T *c, int ldc, char UPLO)
+                            const T *restrict a, int lda,
+                            const T *restrict b, int ldb,
+                            T *restrict c, int ldc, char UPLO)
 {
     for (int j = jc; j < jc + jb; ++j) {
         T *cj = c + (size_t)j * ldc;
@@ -152,10 +154,10 @@ void esymm_(
     const char *side, const char *uplo,
     const int *m_, const int *n_,
     const T *alpha_,
-    const T *a, const int *lda_,
-    const T *b, const int *ldb_,
+    const T *restrict a, const int *lda_,
+    const T *restrict b, const int *ldb_,
     const T *beta_,
-    T *c, const int *ldc_,
+    T *restrict c, const int *ldc_,
     size_t side_len, size_t uplo_len)
 {
     (void)side_len; (void)uplo_len;
