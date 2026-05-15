@@ -76,6 +76,11 @@ set(_kernels
     ytbmv.c
     etbsv.c
     ytbsv.c
+    # L2 packed — triangular mat-vec / solve
+    etpmv.c
+    ytpmv.c
+    etpsv.c
+    ytpsv.c
 )
 
 # Publish the overlay-covered routine names so the BLAS section in
