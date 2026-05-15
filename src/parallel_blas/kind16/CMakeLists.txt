@@ -57,6 +57,9 @@ set(_kernels
     xdotc.c
     qxnrm2.c
     qxasum.c
+    # L2 banded — general
+    qgbmv.c
+    xgbmv.c
 )
 
 set(_routines "")
