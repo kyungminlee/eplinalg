@@ -234,6 +234,106 @@ void symm_diag_add_L(int ic, int ib, int N, T alpha,
     }
 }
 
+#ifdef MBLAS_SIMD_DD
+
+/* AoS→SoA: load 4 DD cells from a column into (hi, lo) 4-lane vectors.
+ * Memory layout per cell: [hi, lo] back-to-back. */
+inline void load_4cell_soa(const T *col, int ofs,
+                           __m256d &h, __m256d &l)
+{
+    __m256d v0 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs]));
+    __m256d v1 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs + 2]));
+    __m256d lo = _mm256_unpacklo_pd(v0, v1);   /* [c0h, c2h, c1h, c3h] */
+    __m256d hi = _mm256_unpackhi_pd(v0, v1);   /* [c0l, c2l, c1l, c3l] */
+    h = _mm256_permute4x64_pd(lo, 0xD8);       /* [c0h, c1h, c2h, c3h] */
+    l = _mm256_permute4x64_pd(hi, 0xD8);       /* [c0l, c1l, c2l, c3l] */
+}
+
+inline void store_4cell_soa(T *col, int ofs, __m256d h, __m256d l)
+{
+    __m256d lo = _mm256_unpacklo_pd(h, l);     /* [c0h, c0l, c2h, c2l] */
+    __m256d hi = _mm256_unpackhi_pd(h, l);     /* [c1h, c1l, c3h, c3l] */
+    __m256d v0 = _mm256_permute2f128_pd(lo, hi, 0x20);  /* [c0h, c0l, c1h, c1l] */
+    __m256d v1 = _mm256_permute2f128_pd(lo, hi, 0x31);  /* [c2h, c2l, c3h, c3l] */
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs]),     v0);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs + 2]), v1);
+}
+
+/* SIDE='R' symmetric diag-block kernel, 4-row SIMD.
+ *
+ * For each i-block of 4 rows: hold C[i..i+3, j] in 2 ymm regs across
+ * the k loop, accumulate α·A_eff(j,k)·B[i..i+3, k] for k ∈ [jc, jc+jb),
+ * store back. A_eff uses the symmetric mirror via UPLO.
+ * Tail (M % 4 != 0) falls back to scalar. */
+inline void simd_symm_diag_R(int jc, int jb, int M, T alpha,
+                             const T *a, int lda, const T *b, int ldb,
+                             T *c, int ldc, char UPLO)
+{
+    const int M4 = M & ~3;
+
+    for (int ib = 0; ib < M4; ib += 4) {
+        for (int j = jc; j < jc + jb; ++j) {
+            T *cj = c + static_cast<std::size_t>(j) * ldc;
+            __m256d ch, cl;
+            load_4cell_soa(cj, ib, ch, cl);
+
+            for (int k = jc; k < jc + jb; ++k) {
+                T tval;
+                if (k == j)                  tval = alpha * A_(j, j);
+                else if (UPLO == 'L')        tval = (k < j) ? (alpha * A_(j, k))
+                                                            : (alpha * A_(k, j));
+                else /* UPLO == 'U' */       tval = (k < j) ? (alpha * A_(k, j))
+                                                            : (alpha * A_(j, k));
+                if (dd_iszero(tval)) continue;
+                const __m256d th = _mm256_set1_pd(tval.limbs[0]);
+                const __m256d tl = _mm256_set1_pd(tval.limbs[1]);
+                const T *bk = b + static_cast<std::size_t>(k) * ldb;
+                __m256d bh, bl;
+                load_4cell_soa(bk, ib, bh, bl);
+                __m256d ph, pl;
+                simd_dd::dd_mul(th, tl, bh, bl, ph, pl);
+                __m256d nh, nl;
+                simd_dd::dd_add(ch, cl, ph, pl, nh, nl);
+                ch = nh; cl = nl;
+            }
+
+            store_4cell_soa(cj, ib, ch, cl);
+        }
+    }
+
+    /* Scalar tail rows (at most 3) */
+    if (M4 < M) {
+        for (int j = jc; j < jc + jb; ++j) {
+            T *cj = c + static_cast<std::size_t>(j) * ldc;
+            {
+                const T t = alpha * A_(j, j);
+                for (int i = M4; i < M; ++i) cj[i] = cj[i] + t * B_(i, j);
+            }
+            if (UPLO == 'L') {
+                for (int k = jc; k < j; ++k) {
+                    const T t = alpha * A_(j, k);
+                    if (!dd_iszero(t)) for (int i = M4; i < M; ++i) cj[i] = cj[i] + t * B_(i, k);
+                }
+                for (int k = j + 1; k < jc + jb; ++k) {
+                    const T t = alpha * A_(k, j);
+                    if (!dd_iszero(t)) for (int i = M4; i < M; ++i) cj[i] = cj[i] + t * B_(i, k);
+                }
+            } else {
+                for (int k = jc; k < j; ++k) {
+                    const T t = alpha * A_(k, j);
+                    if (!dd_iszero(t)) for (int i = M4; i < M; ++i) cj[i] = cj[i] + t * B_(i, k);
+                }
+                for (int k = j + 1; k < jc + jb; ++k) {
+                    const T t = alpha * A_(j, k);
+                    if (!dd_iszero(t)) for (int i = M4; i < M; ++i) cj[i] = cj[i] + t * B_(i, k);
+                }
+            }
+        }
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
+
 void symm_diag_add_R(int jc, int jb, int M, T alpha,
                      const T *a, int lda, const T *b, int ldb,
                      T *c, int ldc, char UPLO)
@@ -264,6 +364,18 @@ void symm_diag_add_R(int jc, int jb, int M, T alpha,
             }
         }
     }
+}
+
+inline void diag_R_dispatch(int jc, int jb, int M, T alpha,
+                            const T *a, int lda, const T *b, int ldb,
+                            T *c, int ldc, char UPLO)
+{
+#ifdef MBLAS_SIMD_DD
+    simd_symm_diag_R(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
+    return;
+#else
+    diag_R_dispatch(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
+#endif
 }
 
 inline void diag_L_dispatch(int ic, int ib, int N, T alpha,
@@ -378,7 +490,7 @@ extern "C" void msymm_(
                            &B_(0, 0), &ldb, &A_(jc, 0), &lda,
                            &one_dd, &C_(0, jc), &ldc, 1, 1);
                 }
-                symm_diag_add_R(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
+                diag_R_dispatch(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
                 const int trailing = N - jc - jb;
                 if (trailing > 0) {
                     mgemm_(NN, NN, &M, &jb, &trailing, &alpha,
@@ -391,7 +503,7 @@ extern "C" void msymm_(
                            &B_(0, 0), &ldb, &A_(0, jc), &lda,
                            &one_dd, &C_(0, jc), &ldc, 1, 1);
                 }
-                symm_diag_add_R(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
+                diag_R_dispatch(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
                 const int trailing = N - jc - jb;
                 if (trailing > 0) {
                     mgemm_(NN, TN, &M, &jb, &trailing, &alpha,
