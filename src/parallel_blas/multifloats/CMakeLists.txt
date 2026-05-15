@@ -39,6 +39,18 @@ set(_kernels
     wher.cpp
     msyr2.cpp
     wher2.cpp
+    # L1 BLAS — subroutine-style (function-return L1 routines deferred)
+    mscal.cpp
+    wscal.cpp
+    wmscal.cpp
+    maxpy.cpp
+    waxpy.cpp
+    mcopy.cpp
+    wcopy.cpp
+    mswap.cpp
+    wswap.cpp
+    mrot.cpp
+    wmrot.cpp
 )
 
 set(_routines "")
