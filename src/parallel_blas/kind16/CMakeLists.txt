@@ -76,6 +76,11 @@ set(_kernels
     xtpmv.c
     qtpsv.c
     xtpsv.c
+    # L2 packed — sym/Herm rank-1 + rank-2
+    qspr.c
+    xhpr.c
+    qspr2.c
+    xhpr2.c
 )
 
 set(_routines "")
