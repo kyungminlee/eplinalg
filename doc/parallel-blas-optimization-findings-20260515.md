@@ -206,3 +206,105 @@ These weren't tested but might be worth a controlled bench:
 3. **Software prefetching** for Ap/Bp in inner kernel: OpenBLAS does this; we don't. May help at s≥256 where data starts to exceed L2.
 4. **Bench mgemm/wgemm at OMP=4 or 8** — adaptive MC and persistent buffers may behave differently with cross-thread cache contention.
 5. **Egemm + ygemm at OMP>1** — current numbers are OMP=1. Threading is the actual point of the overlay.
+
+---
+
+# Addendum: kind10 L3 (symm/hemm/syrk/herk) round — 2026-05-15
+
+A second optimization pass on the symmetric and Hermitian L3 routines, after the GEMM/TRSM work above. Targets: esymm, ysymm, yhemm, esyrk, ysyrk, yherk. Pattern: diagonal-block scalar kernel plus an off-diagonal trailing `[ey]gemm` call per block-pair, blocked over column panels.
+
+The original baseline had several catastrophic outliers — esyrk U/N s=64 at 0.24×, yhemm L/L s=64 at 0.43×, ysymm L/U at 0.75–0.95× — buried inside otherwise-passable mean speedups (1.0–1.3×). Three structural fixes, applied as a recipe to each file, cleared all of them. Plus one negative result and one "no further closure possible" finding worth recording.
+
+## TL;DR results (OMP=1, 40 iters, P-core)
+
+| routine | mean before | mean after | min before | min after |
+|---------|-------------|------------|------------|-----------|
+| esymm   | 1.16× | **1.41×** | 0.85 | 0.89 |
+| ysymm   | 1.00× | **1.20×** | 0.75 | 1.09 |
+| yhemm   | 0.99× | **1.18×** | **0.43** | 0.93 |
+| esyrk   | 1.22× | **1.31×** | **0.24** | 0.85 |
+| ysyrk   | 1.06× | **1.12×** | 0.82 | 0.99 |
+| yherk   | 1.05× | **1.13×** | 0.80 | 0.97 |
+
+## What worked
+
+### A. Stride-1 A access in the diagonal kernel (symm/hemm)
+The Netlib reference DSYMM/ZSYMM/ZHEMM walks A column-major — for SIDE='L' UPLO='L', `A(K,I)` with `K>I` reads the stored lower triangle stride-1 in K. Our overlay was reading `A_(i, k)` (row i, column k) — the *symmetric counterpart*, also stored, but **stride-lda in k** at fixed i. Every inner-iteration A load crossed a cache line.
+
+Fix: reverse the i loop direction (backward for UPLO='L', forward for UPLO='U') so the inner k loop reads `A_(k, i)` — same column, varying row, stride-1.
+
+For Hermitian: the conjugate moves from the cj[k] update onto the temp2 accumulation when iteration direction flips (since `conj(A(i,k)) = A(k,i)` for the stored half). Same total ops, same result, stride-1.
+
+Impact on its own: ysymm L/U 0.75–0.95 → 1.12–1.18; yhemm L/L 0.43 → 0.93 at s=64.
+
+### B. Single-block fast path (symm/hemm)
+At small M (≤ nb), the framed `for(jc) → for(ic) → diag_kernel + gemm` path runs exactly one ic iteration with no gemm call. The framing — `omp_get_max_threads`, OMP pragma runtime check, function call into the static diag kernel, jc/ic outer loops — adds ~5–10% overhead on top of an irreducible scalar inner loop.
+
+Fix: early fast path inside the entry function that inlines the Netlib loop directly, folds BETA into the diagonal write, and skips all framing.
+
+Modest additional gain (~3–5%) and removes the BETA pre-scale separate pass.
+
+### C. Smaller `nb` cap (all six)
+Default `nb=64` (esymm/esyrk) or `64–256` (ysymm/yhemm/ysyrk/yherk). At s=128 with nb=64, the entire problem is a single diagonal block — zero gemm trailing-update work, 100% of the time in the scalar diag kernel. The gemm-driven speedup that justifies this overlay never fires.
+
+Dropped to:
+- **esymm: cap 128 → 64**. egemm at K=32 doesn't amortize for real long-double (packing overhead too high), so the floor stays at 64.
+- **ysymm/yhemm/ysyrk/yherk: cap 256 → 32**. Complex long-double per-element work is heavy enough that ygemm tolerates K=32; packing fraction is small.
+- **esyrk: cap stays 64** (same real long-double reasoning).
+
+Impact: s=128 and s=256 fragment into 2×2 and 4×4 block grids with the trailing `[ey]gemm` calls picking up most of the off-diagonal work.
+
+### D. `restrict` pointers on all A/B/C parameters (largest single per-file win)
+C `const T*` doesn't tell gcc the buffers don't alias. The diag inner loop is `cj[k] += temp1 * ai[k]; temp2 += bj[k] * cconj(ai[k]);` — gcc has to assume the `cj[k]` store might have changed `ai[k]` or `bj[k]`, so it reloads them from memory on every iteration. Verified by objdump: `fldt (a.real); fldt (a.imag); ... fstpt (cj.real); fstpt (cj.imag); fldt (a.real); fldt (a.imag);` — three redundant loads per iteration.
+
+Adding `restrict` to `a`, `b`, `c` on both the entry-point signatures (yhemm_, ysymm_, esymm_, esyrk_, ysyrk_, yherk_) and the static helper signatures eliminates the reloads. The BLAS spec already forbids aliasing, so this is a free correctness assertion.
+
+Impact: ysymm L/L 1.04 → 1.09, yhemm L/L 0.93 → 0.96, ysymm L/U all sizes +1–2%. Biggest on the complex routines where the inner loop has to keep both real/imag halves of A live across the C store. esymm (real long-double) was flat — a single scalar write doesn't trigger the same reload chain.
+
+## What didn't work
+
+### Manual `__real__`/`__imag__` real-arithmetic expansion (yhemm)
+After noticing that `bj[k] * cconj(ai[k])` compiles to ~25 x87 ops (verified by objdump), tried rewriting the inner loop as explicit scalar `long double` arithmetic:
+
+```c
+__real__ cj[k] += t1r * ar - t1i * ai;
+__imag__ cj[k] += t1r * ai + t1i * ar;
+t2r += br * ar + bi * ai;
+t2i += bi * ar - br * ai;
+```
+
+**Result**: regressed L/L 64 from 0.93× → 0.86×. Disassembly showed gcc had successfully eliminated the redundant A/B loads, but spilled `t1.i` to the stack (`fldt 0x10(%rsp)`) instead and reloaded it twice per iteration. The x87 stack is 8 slots and the expanded form needs to keep more values live than the implicit form. Net: more loads, slower.
+
+`-fcx-fortran-rules` already gets gcc to inline complex multiplication (no `__mulxc3` libcall), so the manual expansion buys nothing the compiler isn't already doing.
+
+### gcc scheduler flags `-fschedule-insns -fsched-pressure` (yhemm)
+Both default-off on x86 due to historic x87 quirks. Tried enabling them per-file via `set_source_files_properties`. Result: small regression (L/L 64: 0.93 → 0.89). Tried `-fmodulo-sched` separately: net negative too. The default scheduler is already doing the best it can on this inner loop.
+
+## Findings worth recording
+
+### x87 codegen ceiling on `_Complex long double` (yhemm L/L)
+Even with all fixes applied, yhemm L/L sits at 0.92–0.96× across all sizes — overlay ~2.15 GF/s, migrated ~2.30 GF/s. The 7% gap is a hard floor: gcc and gfortran are producing **the same inlined-cmul + fchs-conjugate inner-loop structure** (verified via objdump on both `.o` files); the difference is x87 register scheduling, which gfortran does slightly better on this specific pattern.
+
+Closing the gap would require:
+- **Type-level rewrite**: SoA (`long double` re/im arrays) instead of `_Complex long double`. The Fortran ABI forbids changing the public signature, so this only works as a local repack into scratch buffers inside the kernel — and the ~2 KB unpack/repack per 32×32 diag block likely eats the gain.
+- **Inline x87 assembly**: technically feasible but gcc's extended asm with x87 constraints is famously buggy; you'd be chasing gfortran's already-optimal schedule with a more fragile encoding.
+
+Not pursued. The remaining 7% is below the noise floor of any realistic OMP>1 win.
+
+### The `nb` choice splits real vs complex
+Real long-double (`egemm`, `esyrk`): keep nb ≥ 64. egemm at K=32 doesn't amortize its packing overhead — the scalar inner kernel has enough ILP on x87 that the gemm-via-pack isn't a win until K is large.
+
+Complex long-double (`ygemm`, `ysyrk`, etc.): nb=32 is fine. Each complex op is ~8× heavier than scalar long-double, so the packing fraction of total work shrinks and gemm pays off at K=32.
+
+### Aliasing pessimism is real and `restrict` is free
+This is the most important takeaway from the L3 round. Three lines of code (`restrict` on a, b, c at the entry-point + helper) closed several percentage points of margin across complex routines. The disassembly proof made this obvious — but it would have been easy to miss had I not been looking at the actual generated code.
+
+Whenever a BLAS-shape kernel has the inner-loop pattern `c[i] += stuff(a[i], b[i])`, `restrict` on those three pointers is almost always a free win on x87 long-double — because the compiler can otherwise assume the C write may have changed A or B.
+
+## Additions to "diagnostic methodology"
+
+7. **When the overlay loses on a single (uplo, trans, size) cell, check whether the framed path is hitting a *single-block regime* — i.e. nb is large enough that the gemm trailing-update never fires.** That's almost always where the catastrophic outliers live (esyrk U/N 0.24×, yhemm L/L 0.43×, ytrmm L/U/N/N 0.45×). The fix is rarely "improve the diag kernel" — it's "shrink nb so the trailing gemm picks up the slack."
+
+8. **For x87 long-double kernels, always check the objdump for redundant `fldt` after a `fstpt` to A/B addresses.** Two reloads of the same memory location per inner iteration is a tell that the compiler is being conservative about aliasing. `restrict` fixes it.
+
+9. **Negative results (this round): two compiler flag experiments and one source-level manual expansion** all regressed. Save effort: prove the disassembly is suboptimal *before* trying to fix it, and verify the fix changes the disassembly in the expected direction *before* benching.
