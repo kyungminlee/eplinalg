@@ -294,6 +294,130 @@ void hemm_diag_add_L(int ic, int ib, int N, T alpha,
     }
 }
 
+#ifdef MBLAS_SIMD_DD
+
+inline void load_4cell_csoa(const T *col, int ofs,
+                            __m256d &rh, __m256d &rl,
+                            __m256d &ih, __m256d &il)
+{
+    __m256d v0 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs]));
+    __m256d v1 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs + 1]));
+    __m256d v2 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs + 2]));
+    __m256d v3 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs + 3]));
+    __m256d t0 = _mm256_unpacklo_pd(v0, v1);
+    __m256d t1 = _mm256_unpackhi_pd(v0, v1);
+    __m256d t2 = _mm256_unpacklo_pd(v2, v3);
+    __m256d t3 = _mm256_unpackhi_pd(v2, v3);
+    rh = _mm256_permute2f128_pd(t0, t2, 0x20);
+    rl = _mm256_permute2f128_pd(t1, t3, 0x20);
+    ih = _mm256_permute2f128_pd(t0, t2, 0x31);
+    il = _mm256_permute2f128_pd(t1, t3, 0x31);
+}
+
+inline void store_4cell_csoa(T *col, int ofs,
+                             __m256d rh, __m256d rl,
+                             __m256d ih, __m256d il)
+{
+    __m256d t0 = _mm256_unpacklo_pd(rh, rl);
+    __m256d t1 = _mm256_unpackhi_pd(rh, rl);
+    __m256d t2 = _mm256_unpacklo_pd(ih, il);
+    __m256d t3 = _mm256_unpackhi_pd(ih, il);
+    __m256d v0 = _mm256_permute2f128_pd(t0, t2, 0x20);
+    __m256d v1 = _mm256_permute2f128_pd(t1, t3, 0x20);
+    __m256d v2 = _mm256_permute2f128_pd(t0, t2, 0x31);
+    __m256d v3 = _mm256_permute2f128_pd(t1, t3, 0x31);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs]),     v0);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs + 1]), v1);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs + 2]), v2);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs + 3]), v3);
+}
+
+/* SIDE='R' Hermitian diag, 4-row SIMD. Differences from wsymm-R:
+ *  - A(j,j) is real (im=0)
+ *  - Off-diag uses conj on the stored half (mirroring scalar code) */
+inline void simd_hemm_diag_R(int jc, int jb, int M, T alpha,
+                             const T *a, int lda, const T *b, int ldb,
+                             T *c, int ldc, char UPLO)
+{
+    const int M4 = M & ~3;
+
+    for (int ib = 0; ib < M4; ib += 4) {
+        for (int j = jc; j < jc + jb; ++j) {
+            T *cj = c + static_cast<std::size_t>(j) * ldc;
+            __m256d crh, crl, cih, cil;
+            load_4cell_csoa(cj, ib, crh, crl, cih, cil);
+
+            for (int k = jc; k < jc + jb; ++k) {
+                T tval;
+                if (k == j) {
+                    const T diag = T{ A_(j, j).re, rzero };  /* real */
+                    tval = cmul(alpha, diag);
+                } else if (UPLO == 'L') {
+                    /* k < j: A_eff(k,j) = conj(A(j,k)) since (j,k) is in stored half;
+                     * k > j: A_eff(k,j) = A(k,j) directly (stored). */
+                    tval = (k < j) ? cmul(alpha, cconj(A_(j, k)))
+                                   : cmul(alpha, A_(k, j));
+                } else { /* UPLO=U */
+                    tval = (k < j) ? cmul(alpha, A_(k, j))
+                                   : cmul(alpha, cconj(A_(j, k)));
+                }
+                if (cdd_iszero(tval)) continue;
+                __m256d trh = _mm256_set1_pd(tval.re.limbs[0]);
+                __m256d trl = _mm256_set1_pd(tval.re.limbs[1]);
+                __m256d tih = _mm256_set1_pd(tval.im.limbs[0]);
+                __m256d til = _mm256_set1_pd(tval.im.limbs[1]);
+                const T *bk = b + static_cast<std::size_t>(k) * ldb;
+                __m256d brh, brl, bih, bil;
+                load_4cell_csoa(bk, ib, brh, brl, bih, bil);
+                __m256d prh, prl, pih, pil;
+                simd_dd::cdd_mul(trh, trl, tih, til,
+                                 brh, brl, bih, bil,
+                                 prh, prl, pih, pil);
+                __m256d nrh, nrl, nih, nil_;
+                simd_dd::cdd_add(crh, crl, cih, cil,
+                                 prh, prl, pih, pil,
+                                 nrh, nrl, nih, nil_);
+                crh = nrh; crl = nrl; cih = nih; cil = nil_;
+            }
+
+            store_4cell_csoa(cj, ib, crh, crl, cih, cil);
+        }
+    }
+
+    /* Scalar tail */
+    if (M4 < M) {
+        for (int j = jc; j < jc + jb; ++j) {
+            T *cj = c + static_cast<std::size_t>(j) * ldc;
+            {
+                const T diag = T{ A_(j, j).re, rzero };
+                const T t = cmul(alpha, diag);
+                for (int i = M4; i < M; ++i) cj[i] = cadd(cj[i], cmul(t, B_(i, j)));
+            }
+            if (UPLO == 'L') {
+                for (int k = jc; k < j; ++k) {
+                    const T t = cmul(alpha, cconj(A_(j, k)));
+                    if (!cdd_iszero(t)) for (int i = M4; i < M; ++i) cj[i] = cadd(cj[i], cmul(t, B_(i, k)));
+                }
+                for (int k = j + 1; k < jc + jb; ++k) {
+                    const T t = cmul(alpha, A_(k, j));
+                    if (!cdd_iszero(t)) for (int i = M4; i < M; ++i) cj[i] = cadd(cj[i], cmul(t, B_(i, k)));
+                }
+            } else {
+                for (int k = jc; k < j; ++k) {
+                    const T t = cmul(alpha, A_(k, j));
+                    if (!cdd_iszero(t)) for (int i = M4; i < M; ++i) cj[i] = cadd(cj[i], cmul(t, B_(i, k)));
+                }
+                for (int k = j + 1; k < jc + jb; ++k) {
+                    const T t = cmul(alpha, cconj(A_(j, k)));
+                    if (!cdd_iszero(t)) for (int i = M4; i < M; ++i) cj[i] = cadd(cj[i], cmul(t, B_(i, k)));
+                }
+            }
+        }
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
+
 void hemm_diag_add_R(int jc, int jb, int M, T alpha,
                      const T *a, int lda, const T *b, int ldb,
                      T *c, int ldc, char UPLO)
@@ -325,6 +449,18 @@ void hemm_diag_add_R(int jc, int jb, int M, T alpha,
             }
         }
     }
+}
+
+inline void diag_R_dispatch(int jc, int jb, int M, T alpha,
+                            const T *a, int lda, const T *b, int ldb,
+                            T *c, int ldc, char UPLO)
+{
+#ifdef MBLAS_SIMD_DD
+    simd_hemm_diag_R(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
+    return;
+#else
+    diag_R_dispatch(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
+#endif
 }
 
 inline void diag_L_dispatch(int ic, int ib, int N, T alpha,
@@ -439,7 +575,7 @@ extern "C" void whemm_(
                            &B_(0, 0), &ldb, &A_(jc, 0), &lda,
                            &one_cdd, &C_(0, jc), &ldc, 1, 1);
                 }
-                hemm_diag_add_R(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
+                diag_R_dispatch(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
                 const int trailing = N - jc - jb;
                 if (trailing > 0) {
                     wgemm_(NN, NN, &M, &jb, &trailing, &alpha,
@@ -452,7 +588,7 @@ extern "C" void whemm_(
                            &B_(0, 0), &ldb, &A_(0, jc), &lda,
                            &one_cdd, &C_(0, jc), &ldc, 1, 1);
                 }
-                hemm_diag_add_R(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
+                diag_R_dispatch(jc, jb, M, alpha, a, lda, b, ldb, c, ldc, UPLO);
                 const int trailing = N - jc - jb;
                 if (trailing > 0) {
                     wgemm_(NN, CN, &M, &jb, &trailing, &alpha,
