@@ -43,6 +43,25 @@ set(_kernels
     yher.c
     esyr2.c
     yher2.c
+    # L1 BLAS — subroutines + functions
+    escal.c
+    eaxpy.c
+    ecopy.c
+    eswap.c
+    erot.c
+    edot.c
+    enrm2.c
+    easum.c
+    yscal.c
+    yescal.c
+    yaxpy.c
+    ycopy.c
+    yswap.c
+    yerot.c
+    ydotu.c
+    ydotc.c
+    eynrm2.c
+    eyasum.c
 )
 
 # Publish the overlay-covered routine names so the BLAS section in
