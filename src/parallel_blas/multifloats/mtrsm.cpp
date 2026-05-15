@@ -398,9 +398,289 @@ inline void mtrsm_lut_core(int j_start, int j_end, int M, T alpha,
     }
 }
 
-/* ── SIDE = 'R': solve X op(A) = α B. Always scalar unblocked.
- * Same code paths as etrsm; SIDE='R' is much less common in LAPACK
- * so blocking it is deferred. */
+/* ── SIDE = 'R': solve X op(A) = α B. SIMD over 4-row chunks of B;
+ * scalar tail for remaining rows. Same column-major loop structure
+ * as reference DTRSM 'R',*,*. */
+
+#ifdef MBLAS_SIMD_DD
+
+inline void load_4cell_soa(const T *col, int ofs, __m256d &h, __m256d &l)
+{
+    __m256d v0 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs]));
+    __m256d v1 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs + 2]));
+    __m256d lo = _mm256_unpacklo_pd(v0, v1);
+    __m256d hi = _mm256_unpackhi_pd(v0, v1);
+    h = _mm256_permute4x64_pd(lo, 0xD8);
+    l = _mm256_permute4x64_pd(hi, 0xD8);
+}
+
+inline void store_4cell_soa(T *col, int ofs, __m256d h, __m256d l)
+{
+    __m256d lo = _mm256_unpacklo_pd(h, l);
+    __m256d hi = _mm256_unpackhi_pd(h, l);
+    __m256d v0 = _mm256_permute2f128_pd(lo, hi, 0x20);
+    __m256d v1 = _mm256_permute2f128_pd(lo, hi, 0x31);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs]),     v0);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs + 2]), v1);
+}
+
+/* RLN: B := α·B / L (R-side, lower-tri L, no transpose).
+ * For each ib (4-row chunk), iterate j = N-1..0:
+ *   B(:,j) *= α; B(:,j) -= sum_{k>j} A(k,j) · B(:,k); B(:,j) /= A(j,j) */
+inline void simd_trsm_r4_rln(int ib, int N, T alpha,
+                             const T *a, int lda, T *b, int ldb, int nounit)
+{
+    __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    const bool alpha_nontriv = !dd_isone(alpha);
+    for (int j = N - 1; j >= 0; --j) {
+        T *bj = b + static_cast<std::size_t>(j) * ldb;
+        __m256d bjh, bjl;
+        load_4cell_soa(bj, ib, bjh, bjl);
+        if (alpha_nontriv) {
+            __m256d nh, nl;
+            simd_dd::dd_mul(bjh, bjl, ah, al, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        for (int k = j + 1; k < N; ++k) {
+            const T akj = A_(k, j);
+            if (dd_iszero(akj)) continue;
+            __m256d akh = _mm256_set1_pd(akj.limbs[0]);
+            __m256d akl = _mm256_set1_pd(akj.limbs[1]);
+            const T *bk = b + static_cast<std::size_t>(k) * ldb;
+            __m256d bkh, bkl;
+            load_4cell_soa(bk, ib, bkh, bkl);
+            __m256d ph, pl;
+            simd_dd::dd_mul(akh, akl, bkh, bkl, ph, pl);
+            simd_dd::dd_neg(ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(bjh, bjl, ph, pl, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        if (nounit) {
+            const T inv = one_dd / A_(j, j);
+            __m256d ih = _mm256_set1_pd(inv.limbs[0]);
+            __m256d il = _mm256_set1_pd(inv.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bjh, bjl, ih, il, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        store_4cell_soa(bj, ib, bjh, bjl);
+    }
+}
+
+inline void simd_trsm_r4_run(int ib, int N, T alpha,
+                             const T *a, int lda, T *b, int ldb, int nounit)
+{
+    __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    const bool alpha_nontriv = !dd_isone(alpha);
+    for (int j = 0; j < N; ++j) {
+        T *bj = b + static_cast<std::size_t>(j) * ldb;
+        __m256d bjh, bjl;
+        load_4cell_soa(bj, ib, bjh, bjl);
+        if (alpha_nontriv) {
+            __m256d nh, nl;
+            simd_dd::dd_mul(bjh, bjl, ah, al, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        for (int k = 0; k < j; ++k) {
+            const T akj = A_(k, j);
+            if (dd_iszero(akj)) continue;
+            __m256d akh = _mm256_set1_pd(akj.limbs[0]);
+            __m256d akl = _mm256_set1_pd(akj.limbs[1]);
+            const T *bk = b + static_cast<std::size_t>(k) * ldb;
+            __m256d bkh, bkl;
+            load_4cell_soa(bk, ib, bkh, bkl);
+            __m256d ph, pl;
+            simd_dd::dd_mul(akh, akl, bkh, bkl, ph, pl);
+            simd_dd::dd_neg(ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(bjh, bjl, ph, pl, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        if (nounit) {
+            const T inv = one_dd / A_(j, j);
+            __m256d ih = _mm256_set1_pd(inv.limbs[0]);
+            __m256d il = _mm256_set1_pd(inv.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bjh, bjl, ih, il, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        store_4cell_soa(bj, ib, bjh, bjl);
+    }
+}
+
+/* RLT: B := α·B / Lᵀ. Iterate k = 0..N-1:
+ *   B(:,k) /= A(k,k) (if nounit); subtract from B(:,j) for j > k; α-scale B(:,k) */
+inline void simd_trsm_r4_rlt(int ib, int N, T alpha,
+                             const T *a, int lda, T *b, int ldb, int nounit)
+{
+    __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    const bool alpha_nontriv = !dd_isone(alpha);
+    for (int k = 0; k < N; ++k) {
+        T *bk = b + static_cast<std::size_t>(k) * ldb;
+        __m256d bkh, bkl;
+        load_4cell_soa(bk, ib, bkh, bkl);
+        if (nounit) {
+            const T inv = one_dd / A_(k, k);
+            __m256d ih = _mm256_set1_pd(inv.limbs[0]);
+            __m256d il = _mm256_set1_pd(inv.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bkh, bkl, ih, il, nh, nl);
+            bkh = nh; bkl = nl;
+            store_4cell_soa(bk, ib, bkh, bkl);
+        }
+        for (int j = k + 1; j < N; ++j) {
+            const T ajk = A_(j, k);
+            if (dd_iszero(ajk)) continue;
+            __m256d ajh = _mm256_set1_pd(ajk.limbs[0]);
+            __m256d ajl = _mm256_set1_pd(ajk.limbs[1]);
+            T *bj = b + static_cast<std::size_t>(j) * ldb;
+            __m256d bjh, bjl;
+            load_4cell_soa(bj, ib, bjh, bjl);
+            __m256d ph, pl;
+            simd_dd::dd_mul(ajh, ajl, bkh, bkl, ph, pl);
+            simd_dd::dd_neg(ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(bjh, bjl, ph, pl, nh, nl);
+            store_4cell_soa(bj, ib, nh, nl);
+        }
+        if (alpha_nontriv) {
+            __m256d nh, nl;
+            simd_dd::dd_mul(bkh, bkl, ah, al, nh, nl);
+            store_4cell_soa(bk, ib, nh, nl);
+        }
+    }
+}
+
+inline void simd_trsm_r4_rut(int ib, int N, T alpha,
+                             const T *a, int lda, T *b, int ldb, int nounit)
+{
+    __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    const bool alpha_nontriv = !dd_isone(alpha);
+    for (int k = N - 1; k >= 0; --k) {
+        T *bk = b + static_cast<std::size_t>(k) * ldb;
+        __m256d bkh, bkl;
+        load_4cell_soa(bk, ib, bkh, bkl);
+        if (nounit) {
+            const T inv = one_dd / A_(k, k);
+            __m256d ih = _mm256_set1_pd(inv.limbs[0]);
+            __m256d il = _mm256_set1_pd(inv.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bkh, bkl, ih, il, nh, nl);
+            bkh = nh; bkl = nl;
+            store_4cell_soa(bk, ib, bkh, bkl);
+        }
+        for (int j = 0; j < k; ++j) {
+            const T ajk = A_(j, k);
+            if (dd_iszero(ajk)) continue;
+            __m256d ajh = _mm256_set1_pd(ajk.limbs[0]);
+            __m256d ajl = _mm256_set1_pd(ajk.limbs[1]);
+            T *bj = b + static_cast<std::size_t>(j) * ldb;
+            __m256d bjh, bjl;
+            load_4cell_soa(bj, ib, bjh, bjl);
+            __m256d ph, pl;
+            simd_dd::dd_mul(ajh, ajl, bkh, bkl, ph, pl);
+            simd_dd::dd_neg(ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(bjh, bjl, ph, pl, nh, nl);
+            store_4cell_soa(bj, ib, nh, nl);
+        }
+        if (alpha_nontriv) {
+            __m256d nh, nl;
+            simd_dd::dd_mul(bkh, bkl, ah, al, nh, nl);
+            store_4cell_soa(bk, ib, nh, nl);
+        }
+    }
+}
+
+enum trsm_r_op { TRSM_RLN, TRSM_RUN, TRSM_RLT, TRSM_RUT };
+
+/* Forward decl scalar tails (defined below). */
+inline void mtrsm_rln_core(int, int, int, T, const T*, int, T*, int, int);
+inline void mtrsm_run_core(int, int, int, T, const T*, int, T*, int, int);
+inline void mtrsm_rlt_core(int, int, int, T, const T*, int, T*, int, int);
+inline void mtrsm_rut_core(int, int, int, T, const T*, int, T*, int, int);
+
+inline void mtrsm_simd_diag_R(trsm_r_op op, int M, int N, T alpha,
+                              const T *a, int lda, T *b, int ldb, int nounit)
+{
+    const int M4 = M & ~3;
+    for (int ib = 0; ib < M4; ib += 4) {
+        switch (op) {
+        case TRSM_RLN: simd_trsm_r4_rln(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        case TRSM_RUN: simd_trsm_r4_run(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        case TRSM_RLT: simd_trsm_r4_rlt(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        case TRSM_RUT: simd_trsm_r4_rut(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        }
+    }
+    /* Scalar tail rows: each *_core processes full B[i:M, *]. Need to constrain
+     * to i ∈ [M4, M). The scalar cores take (j_start, j_end) for SIDE='L', but
+     * SIDE='R' cores use j_end as N and process all M rows. We need a row-range
+     * variant. Simplest: directly inline the scalar logic over rows [M4, M). */
+    if (M4 < M) {
+        const int Mt = M;  /* keep names consistent */
+        switch (op) {
+        case TRSM_RLN: {
+            for (int j = N - 1; j >= 0; --j) {
+                if (!dd_isone(alpha)) for (int i = M4; i < Mt; ++i) B_(i, j) = B_(i, j) * alpha;
+                for (int k = j + 1; k < N; ++k) {
+                    if (!dd_iszero(A_(k, j))) {
+                        const T akj = A_(k, j);
+                        for (int i = M4; i < Mt; ++i) B_(i, j) = B_(i, j) - akj * B_(i, k);
+                    }
+                }
+                if (nounit) { const T inv = one_dd / A_(j, j);
+                    for (int i = M4; i < Mt; ++i) B_(i, j) = B_(i, j) * inv; }
+            }
+        } break;
+        case TRSM_RUN: {
+            for (int j = 0; j < N; ++j) {
+                if (!dd_isone(alpha)) for (int i = M4; i < Mt; ++i) B_(i, j) = B_(i, j) * alpha;
+                for (int k = 0; k < j; ++k) {
+                    if (!dd_iszero(A_(k, j))) {
+                        const T akj = A_(k, j);
+                        for (int i = M4; i < Mt; ++i) B_(i, j) = B_(i, j) - akj * B_(i, k);
+                    }
+                }
+                if (nounit) { const T inv = one_dd / A_(j, j);
+                    for (int i = M4; i < Mt; ++i) B_(i, j) = B_(i, j) * inv; }
+            }
+        } break;
+        case TRSM_RLT: {
+            for (int k = 0; k < N; ++k) {
+                if (nounit) { const T inv = one_dd / A_(k, k);
+                    for (int i = M4; i < Mt; ++i) B_(i, k) = B_(i, k) * inv; }
+                for (int j = k + 1; j < N; ++j) {
+                    if (!dd_iszero(A_(j, k))) {
+                        const T ajk = A_(j, k);
+                        for (int i = M4; i < Mt; ++i) B_(i, j) = B_(i, j) - ajk * B_(i, k);
+                    }
+                }
+                if (!dd_isone(alpha)) for (int i = M4; i < Mt; ++i) B_(i, k) = B_(i, k) * alpha;
+            }
+        } break;
+        case TRSM_RUT: {
+            for (int k = N - 1; k >= 0; --k) {
+                if (nounit) { const T inv = one_dd / A_(k, k);
+                    for (int i = M4; i < Mt; ++i) B_(i, k) = B_(i, k) * inv; }
+                for (int j = 0; j < k; ++j) {
+                    if (!dd_iszero(A_(j, k))) {
+                        const T ajk = A_(j, k);
+                        for (int i = M4; i < Mt; ++i) B_(i, j) = B_(i, j) - ajk * B_(i, k);
+                    }
+                }
+                if (!dd_isone(alpha)) for (int i = M4; i < Mt; ++i) B_(i, k) = B_(i, k) * alpha;
+            }
+        } break;
+        }
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
 
 inline void mtrsm_rln_core(int j_start, int j_end, int M, T alpha,
                            const T *a, int lda, T *b, int ldb, int nounit)
@@ -736,6 +1016,12 @@ extern "C" void mtrsm_(
             }
         }
     } else {
+#ifdef MBLAS_SIMD_DD
+        trsm_r_op op;
+        if (TR == 'N') op = (UPLO == 'L') ? TRSM_RLN : TRSM_RUN;
+        else           op = (UPLO == 'L') ? TRSM_RLT : TRSM_RUT;
+        mtrsm_simd_diag_R(op, M, N, alpha, a, lda, b, ldb, nounit);
+#else
         if (TR == 'N') {
             if (UPLO == 'L') mtrsm_rln(M, N, alpha, a, lda, b, ldb, nounit);
             else             mtrsm_run(M, N, alpha, a, lda, b, ldb, nounit);
@@ -743,6 +1029,7 @@ extern "C" void mtrsm_(
             if (UPLO == 'L') mtrsm_rlt(M, N, alpha, a, lda, b, ldb, nounit);
             else             mtrsm_rut(M, N, alpha, a, lda, b, ldb, nounit);
         }
+#endif
     }
 }
 
