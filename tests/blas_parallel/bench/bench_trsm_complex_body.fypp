@@ -1,7 +1,4 @@
-#! Wall-clock bench — complex TRSM. Per-target shim sets:
-#!   routine    e.g. 'ytrsm' (kind10), 'xtrsm' (kind16)
-#!
-#! Square M=N=s problem; fixed (SIDE=L, UPLO=L, TRANSA=N, DIAG=N).
+#! Wall-clock bench — complex TRSM, all SIDE×UPLO×TRANSA×DIAG × sizes.
 
 program bench_${routine}$
     use fuzz_util, only: rk, fill_matrix_complex
@@ -28,13 +25,17 @@ program bench_${routine}$
         end subroutine ${routine}$_migrated
     end interface
 
-    integer :: iters, warmup, nsizes, i
+    integer :: iters, warmup, nsizes, i, isd, iup, itr, idg
     integer, allocatable :: sizes(:)
     complex(rk), allocatable :: A(:), B_init(:), B_use(:)
     complex(rk) :: alpha
     real(8) :: t_ov, t_mig
     character(len=256) :: out_path
     integer :: ios, jio
+    character(len=1), parameter :: SIDES(2)   = ['L', 'R']
+    character(len=1), parameter :: UPLOS(2)   = ['L', 'U']
+    character(len=1), parameter :: TRANSES(3) = ['N', 'T', 'C']
+    character(len=1), parameter :: DIAGS(2)   = ['N', 'U']
 
     iters  = read_int_env('BLAS_BENCH_ITERS',  2)
     warmup = read_int_env('BLAS_BENCH_WARMUP', 1)
@@ -52,17 +53,24 @@ program bench_${routine}$
     write(jio, '(a,i0,a)') '  "warmup": ', warmup, ','
     write(jio, '(a)') '  "results": ['
 
-    print '(a)', '       size       overlay GFLOP/s   migrated GFLOP/s   speedup'
-    do i = 1, nsizes
-        call run_size(sizes(i), alpha, iters, warmup, t_ov, t_mig)
-        call emit_json(jio, sizes(i), t_ov, t_mig, i == nsizes)
-        call emit_console(sizes(i), t_ov, t_mig)
+    print '(a)', 'side uplo trans diag    size      overlay GF/s   migrated GF/s   speedup'
+    do isd = 1, size(SIDES)
+      do iup = 1, size(UPLOS)
+        do itr = 1, size(TRANSES)
+          do idg = 1, size(DIAGS)
+            do i = 1, nsizes
+                call run_size(SIDES(isd), UPLOS(iup), TRANSES(itr), DIAGS(idg), &
+                              sizes(i), alpha, iters, warmup, t_ov, t_mig)
+                call emit_console(SIDES(isd), UPLOS(iup), TRANSES(itr), DIAGS(idg), sizes(i), t_ov, t_mig)
+            end do
+          end do
+        end do
+      end do
     end do
 
     write(jio, '(a)') '  ]'
     write(jio, '(a)') '}'
     close(jio)
-    print '(2a)', 'wrote ', trim(out_path)
 
 contains
 
@@ -85,60 +93,45 @@ contains
         integer :: ios, i, j, n, val
         character(len=32) :: tok
         call get_environment_variable('BLAS_BENCH_SIZES', buf, status=ios)
-        if (ios /= 0 .or. len_trim(buf) == 0) then
-            arr = [64, 128, 256, 512]
-            return
-        end if
+        if (ios /= 0 .or. len_trim(buf) == 0) then; arr = [64, 128, 256, 512]; return; end if
         n = 1
-        do i = 1, len_trim(buf)
-            if (buf(i:i) == ',') n = n + 1
-        end do
+        do i = 1, len_trim(buf); if (buf(i:i) == ',') n = n + 1; end do
         allocate(arr(n))
-        j = 1; tok = ''
-        n = 0
+        j = 1; tok = ''; n = 0
         do i = 1, len_trim(buf) + 1
             if (i > len_trim(buf) .or. buf(i:i) == ',') then
                 read(tok, *, iostat=ios) val
-                if (ios == 0) then
-                    n = n + 1
-                    arr(n) = val
-                end if
-                tok = ''
-                j = 1
-            else
-                tok(j:j) = buf(i:i)
-                j = j + 1
-            end if
+                if (ios == 0) then; n = n + 1; arr(n) = val; end if
+                tok = ''; j = 1
+            else; tok(j:j) = buf(i:i); j = j + 1; end if
         end do
         if (n < size(arr)) arr = arr(1:n)
     end subroutine read_sizes
 
-    subroutine fill_lower_tri(M, A, lda)
+    subroutine fill_tri_both(M, A, lda)
         integer, intent(in) :: M, lda
         complex(rk), intent(inout) :: A(:)
         integer :: i, j, idx
         real(8) :: r1, r2
-        real(rk) :: sc
-        sc = 1.0_rk / real(max(M, 1), rk)
+        real(rk) :: scale
+        scale = 1.0_rk / real(max(M, 1), rk)
         do j = 1, M
             do i = 1, M
                 idx = (j - 1) * lda + i
-                if (i > j) then
+                if (i == j) then
                     call random_number(r1); call random_number(r2)
-                    A(idx) = cmplx(real(2.0_8*r1-1.0_8, rk) * sc, &
-                                   real(2.0_8*r2-1.0_8, rk) * sc, rk)
-                else if (i == j) then
-                    call random_number(r1); call random_number(r2)
-                    A(idx) = cmplx(real(1.0_8 + r1, rk), &
-                                   real(0.5_8 * r2, rk), rk)
+                    A(idx) = cmplx(1.0_rk + real(r1, rk), 0.5_rk * real(r2, rk), rk)
                 else
-                    A(idx) = (0.0_rk, 0.0_rk)
+                    call random_number(r1); call random_number(r2)
+                    A(idx) = cmplx(real(2.0_8*r1-1.0_8, rk) * scale, &
+                                   real(2.0_8*r2-1.0_8, rk) * scale, rk)
                 end if
             end do
         end do
-    end subroutine fill_lower_tri
+    end subroutine fill_tri_both
 
-    subroutine run_size(s, alpha, iters, warmup, t_ov, t_mig)
+    subroutine run_size(side, uplo, transa, diag, s, alpha, iters, warmup, t_ov, t_mig)
+        character, intent(in) :: side, uplo, transa, diag
         integer, intent(in) :: s, iters, warmup
         complex(rk), intent(in) :: alpha
         real(8), intent(out) :: t_ov, t_mig
@@ -148,24 +141,24 @@ contains
 
         allocate(A(s * s), B_init(s * s), B_use(s * s))
         allocate(samples_ov(iters), samples_mig(iters))
-        call fill_lower_tri(s, A, s)
+        call fill_tri_both(s, A, s)
         call fill_matrix_complex(B_init, s, s, s)
 
         do it = 1, warmup
             B_use = B_init
-            call ${routine}$('L','L','N','N', s, s, alpha, A, s, B_use, s)
+            call ${routine}$(side, uplo, transa, diag, s, s, alpha, A, s, B_use, s)
             B_use = B_init
-            call ${routine}$_migrated('L','L','N','N', s, s, alpha, A, s, B_use, s)
+            call ${routine}$_migrated(side, uplo, transa, diag, s, s, alpha, A, s, B_use, s)
         end do
         do it = 1, iters
             B_use = B_init
             call cpu_clock(t0)
-            call ${routine}$('L','L','N','N', s, s, alpha, A, s, B_use, s)
+            call ${routine}$(side, uplo, transa, diag, s, s, alpha, A, s, B_use, s)
             call cpu_clock(t1)
             samples_ov(it) = t1 - t0
             B_use = B_init
             call cpu_clock(t0)
-            call ${routine}$_migrated('L','L','N','N', s, s, alpha, A, s, B_use, s)
+            call ${routine}$_migrated(side, uplo, transa, diag, s, s, alpha, A, s, B_use, s)
             call cpu_clock(t1)
             samples_mig(it) = t1 - t0
         end do
@@ -187,56 +180,34 @@ contains
         real(8), allocatable :: y(:)
         integer :: i, j, n
         real(8) :: tmp
-        n = size(x)
-        allocate(y(n))
-        y = x
+        n = size(x); allocate(y(n)); y = x
         do i = 1, n - 1
             do j = i + 1, n
-                if (y(j) < y(i)) then
-                    tmp = y(i); y(i) = y(j); y(j) = tmp
-                end if
+                if (y(j) < y(i)) then; tmp = y(i); y(i) = y(j); y(j) = tmp; end if
             end do
         end do
         if (mod(n, 2) == 1) then; m = y((n + 1) / 2)
         else; m = 0.5_8 * (y(n / 2) + y(n / 2 + 1)); end if
     end function median
 
-    ! Complex TRSM: 4·s³ flops (4× real-trsm count for complex).
     function gflops(s, t) result(g)
         integer, intent(in) :: s
         real(8), intent(in) :: t
         real(8) :: g
-        if (t > 0.0_8) then
-            g = 4.0_8 * real(s, 8)**3 / t / 1.0e9_8
-        else
-            g = 0.0_8
-        end if
+        if (t > 0.0_8) then; g = 4.0_8 * real(s, 8)**3 / t / 1.0e9_8
+        else; g = 0.0_8; end if
     end function gflops
 
-    subroutine emit_console(s, t_ov, t_mig)
+    subroutine emit_console(side, uplo, transa, diag, s, t_ov, t_mig)
+        character, intent(in) :: side, uplo, transa, diag
         integer, intent(in) :: s
         real(8), intent(in) :: t_ov, t_mig
         real(8) :: g_ov, g_mig, speedup
-        g_ov  = gflops(s, t_ov)
-        g_mig = gflops(s, t_mig)
+        g_ov  = gflops(s, t_ov); g_mig = gflops(s, t_mig)
         if (t_ov > 0.0_8) then; speedup = t_mig / t_ov
         else; speedup = 0.0_8; end if
-        print '(7x,i6,4x,f12.4,7x,f12.4,4x,f7.2,a)', &
-            s, g_ov, g_mig, speedup, 'x'
+        print '(a1,4x,a1,4x,a1,4x,a1,5x,i6,4x,f12.4,4x,f12.4,4x,f7.2,a)', &
+            side, uplo, transa, diag, s, g_ov, g_mig, speedup, 'x'
     end subroutine emit_console
-
-    subroutine emit_json(io, s, t_ov, t_mig, last)
-        integer, intent(in) :: io, s
-        real(8), intent(in) :: t_ov, t_mig
-        logical, intent(in) :: last
-        write(io, '(a)') '    {'
-        write(io, '(a,i0,a)') '      "size": ', s, ','
-        write(io, '(a,es16.8,a)') '      "t_overlay_s": ',  t_ov,  ','
-        write(io, '(a,es16.8,a)') '      "t_migrated_s": ', t_mig, ','
-        write(io, '(a,es16.8,a)') '      "gflops_overlay": ',  gflops(s, t_ov),  ','
-        write(io, '(a,es16.8)')   '      "gflops_migrated": ', gflops(s, t_mig)
-        if (last) then; write(io, '(a)') '    }'
-        else; write(io, '(a)') '    },'; end if
-    end subroutine emit_json
 
 end program bench_${routine}$

@@ -9,75 +9,40 @@
  * N×N) triangular (upper or lower; optionally unit-diagonal). B is
  * overwritten with the solution X.
  *
- * Stage 1 implementation: scalar unblocked, all 16 distinct algorithm
- * variants. Same rank-1-update loop structure as the upstream Netlib
- * reference DTRSM so the numerical behavior matches the migrated
- * archive to a tight tolerance.
+ * Implementation: unblocked Netlib reference algorithm with OpenMP
+ * coarse-grain parallelism. SIDE='L' partitions columns of B across
+ * threads; SIDE='R' partitions rows of B (in both cases, the
+ * partition axis carries no cross-thread dependence).
  *
- * A blocked version (with `qgemm` trailing updates) lands in a follow-
- * up commit. For unblocked the kernel is O(M²) per RHS column; the
- * blocked form gets the GEMM acceleration.
- *
- * Fortran ABI: same shape as the migrated entry point. Character args
- * have hidden trailing size_t length values appended; we ignore the
- * lengths and look at the first byte (upper-cased).
+ * No blocking / no qgemm trailing update: at kind16, every op lowers
+ * to a libquadmath call, so blocking adds dispatch overhead without
+ * accelerating the arithmetic. The reference algorithm matches
+ * migrated DTRSM single-thread, and the OMP wrappers add the
+ * parallel-scaling layer on top.
  */
 
 #include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
 #include <ctype.h>
 #include <quadmath.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
-/* Threshold below which OMP parallel-for on the column axis isn't
- * worth the parallel-region setup. */
-#define QTRSM_OMP_N_MIN 32
+/* Threshold below which the parallel-region setup isn't worth it. */
+#define QTRSM_OMP_MIN 32
 
 typedef __float128 T;
-
-/* Block size for the SIDE='L' blocked path. Env-tunable; default
- * picked empirically to match egemm's natural panel sizing. */
-static int env_int(const char *name, int dflt) {
-    const char *s = getenv(name);
-    if (!s || !*s) return dflt;
-    int v = atoi(s);
-    return v > 0 ? v : dflt;
-}
-static int g_nb_trsm = 0;
-static int trsm_nb(void) {
-    if (g_nb_trsm == 0) g_nb_trsm = env_int("QTRSM_NB", 64);
-    return g_nb_trsm;
-}
-
-/* Local egemm declaration (the overlay's own qgemm_ — symbol is in
- * our static archive). We call it for trailing-matrix updates. */
-extern void qgemm_(
-    const char *transa, const char *transb,
-    const int *m, const int *n, const int *k,
-    const T *alpha,
-    const T *a, const int *lda,
-    const T *b, const int *ldb,
-    const T *beta,
-    T *c, const int *ldc,
-    size_t transa_len, size_t transb_len);
 
 static inline char up(const char *p) {
     return (char)toupper((unsigned char)*p);
 }
 
-/* Convenience accessors over column-major A and B. */
 #define A_(i, j)  a[(size_t)(j) * lda + (i)]
 #define B_(i, j)  b[(size_t)(j) * ldb + (i)]
 
-/* ── SIDE = 'L': solve op(A) X = α B, A is M×M, B is M×N ───────── */
-
-/* Column-range "core" kernels: serial work over columns j in
- * [j_start, j_end). Used both standalone (wrapped in their own
- * parallel region) and inside the blocked path (where the outer
- * parallel region has already partitioned the column range). */
+/* ── SIDE = 'L' column-range cores ────────────────────────────────
+ * Each thread owns a column slice [j_start, j_end) of B and runs the
+ * full Netlib algorithm on its slice. A is read-only and shared. */
 
 static inline void trsm_lln_core(int j_start, int j_end, int M, T alpha,
                                  const T *a, int lda, T *b, int ldb, int nounit)
@@ -137,272 +102,133 @@ static inline void trsm_lut_core(int j_start, int j_end, int M, T alpha,
     }
 }
 
-/* Standalone unblocked entries: wrap in own parallel region if N is
- * big enough. Called when M < 2·nb (blocked path doesn't kick in). */
-#ifdef _OPENMP
-#define TRSM_OMP_WRAPPER(name, core)                                       \
-    static void name(int M, int N, T alpha,                                \
-                     const T *a, int lda, T *b, int ldb, int nounit)       \
-    {                                                                      \
-        if (N >= QTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {           \
-            _Pragma("omp parallel")                                        \
-            {                                                              \
-                int tid = omp_get_thread_num();                            \
-                int nt  = omp_get_num_threads();                           \
-                int js  = ((long long)N * tid) / nt;                       \
-                int je  = ((long long)N * (tid + 1)) / nt;                 \
-                core(js, je, M, alpha, a, lda, b, ldb, nounit);            \
-            }                                                              \
-        } else {                                                           \
-            core(0, N, M, alpha, a, lda, b, ldb, nounit);                  \
-        }                                                                  \
-    }
-#else
-#define TRSM_OMP_WRAPPER(name, core)                                       \
-    static void name(int M, int N, T alpha,                                \
-                     const T *a, int lda, T *b, int ldb, int nounit)       \
-    {                                                                      \
-        core(0, N, M, alpha, a, lda, b, ldb, nounit);                      \
-    }
-#endif
+/* ── SIDE = 'R' row-range cores ────────────────────────────────────
+ * Each thread owns a row slice [i_start, i_end) of B. The algorithm
+ * runs unchanged on its row strip — every B access is via B_(i, ·)
+ * with i in the strip; A is read-only. */
 
-TRSM_OMP_WRAPPER(trsm_lln, trsm_lln_core)
-TRSM_OMP_WRAPPER(trsm_lun, trsm_lun_core)
-TRSM_OMP_WRAPPER(trsm_llt, trsm_llt_core)
-TRSM_OMP_WRAPPER(trsm_lut, trsm_lut_core)
-
-/* ── Blocked SIDE='L' variants: coarse-grain parallelism across N.
- *
- * One outer `#pragma omp parallel` partitions columns of B across
- * threads; each thread runs serial blocked-TRSM on its own column
- * chunk. egemm calls inside each thread automatically run with a
- * 1-thread inner team (OMP nesting disabled by default), so the
- * trailing-update is single-thread per outer thread — exactly the
- * pattern we want: 4 cores each doing serial gemm on their chunk
- * of B, near-perfect parallel scaling and one OMP setup for the
- * whole TRSM (not 16+ as before).
- *
- * The unblocked diagonal-block kernels are called via their _core
- * helpers (serial column-range version) directly inside the thread's
- * loop — the `#pragma omp for/parallel for` they used to spawn is
- * replaced by the outer team's manual partition.
- */
-
-/* Apply alpha to a column slice [j_start, j_end) of B in place. */
-static inline void prescale_chunk(int j_start, int j_end, int M, T alpha,
-                                  T *b, int ldb)
-{
-    if (alpha == 1.0Q) return;
-    if (alpha == 0.0Q) {
-        for (int j = j_start; j < j_end; ++j)
-            for (int i = 0; i < M; ++i) B_(i, j) = 0.0Q;
-        return;
-    }
-    for (int j = j_start; j < j_end; ++j)
-        for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
-}
-
-/* One blocked-TRSM iteration body, shared across UPLO/TRANSA variants.
- * Caller passes a callback selector via enum + iteration direction. */
-
-enum trsm_variant { LLN, LUN, LLT, LUT };
-
-/* Per-thread serial blocked-TRSM on a column slice [j_start, j_end) of B. */
-static void blocked_chunk(enum trsm_variant V, int j_start, int j_end,
-                          int M, int nb, T alpha,
-                          const T *a, int lda, T *b, int ldb, int nounit)
-{
-    const int my_N = j_end - j_start;
-    if (my_N <= 0) return;
-    prescale_chunk(j_start, j_end, M, alpha, b, ldb);
-
-    const T m_one = -1.0Q, one = 1.0Q;
-    const char NN[1] = {'N'};
-    const char TN[1] = {'T'};
-    /* The egemm call sees only this thread's column slice — operates
-     * on B starting at column j_start, my_N columns wide. */
-    T *B_chunk = &B_(0, j_start);
-
-    if (V == LLN) {
-        for (int ic = 0; ic < M; ic += nb) {
-            const int ib = (M - ic < nb) ? (M - ic) : nb;
-            if (ic > 0) {
-                /* B[ic..ic+ib, j_start..j_end] -= A[ic..ic+ib, 0..ic] · B[0..ic, j_start..j_end] */
-                qgemm_(NN, NN, &ib, &my_N, &ic, &m_one,
-                       &A_(ic, 0), &lda,
-                       B_chunk, &ldb, &one,
-                       &B_chunk[ic], &ldb, 1, 1);
-            }
-            trsm_lln_core(j_start, j_end, ib, 1.0Q,
-                          &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
-        }
-    } else if (V == LUN) {
-        int ic = ((M - 1) / nb) * nb;
-        while (ic >= 0) {
-            const int ib = (M - ic < nb) ? (M - ic) : nb;
-            const int trailing = M - (ic + ib);
-            if (trailing > 0) {
-                const int j0 = ic + ib;
-                qgemm_(NN, NN, &ib, &my_N, &trailing, &m_one,
-                       &A_(ic, j0), &lda,
-                       &B_chunk[j0], &ldb, &one,
-                       &B_chunk[ic], &ldb, 1, 1);
-            }
-            trsm_lun_core(j_start, j_end, ib, 1.0Q,
-                          &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
-            ic -= nb;
-        }
-    } else if (V == LLT) {
-        int ic = ((M - 1) / nb) * nb;
-        while (ic >= 0) {
-            const int ib = (M - ic < nb) ? (M - ic) : nb;
-            const int trailing = M - (ic + ib);
-            if (trailing > 0) {
-                const int i0 = ic + ib;
-                qgemm_(TN, NN, &ib, &my_N, &trailing, &m_one,
-                       &A_(i0, ic), &lda,
-                       &B_chunk[i0], &ldb, &one,
-                       &B_chunk[ic], &ldb, 1, 1);
-            }
-            trsm_llt_core(j_start, j_end, ib, 1.0Q,
-                          &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
-            ic -= nb;
-        }
-    } else { /* LUT */
-        for (int ic = 0; ic < M; ic += nb) {
-            const int ib = (M - ic < nb) ? (M - ic) : nb;
-            if (ic > 0) {
-                qgemm_(TN, NN, &ib, &my_N, &ic, &m_one,
-                       &A_(0, ic), &lda,
-                       B_chunk, &ldb, &one,
-                       &B_chunk[ic], &ldb, 1, 1);
-            }
-            trsm_lut_core(j_start, j_end, ib, 1.0Q,
-                          &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
-        }
-    }
-}
-
-static void blocked_dispatch(enum trsm_variant V, int M, int N, T alpha,
-                             const T *a, int lda, T *b, int ldb, int nounit)
-{
-    const int nb = trsm_nb();
-#ifdef _OPENMP
-    if (N >= QTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {
-        #pragma omp parallel
-        {
-            int tid = omp_get_thread_num();
-            int nt  = omp_get_num_threads();
-            int js  = ((long long)N * tid) / nt;
-            int je  = ((long long)N * (tid + 1)) / nt;
-            blocked_chunk(V, js, je, M, nb, alpha, a, lda, b, ldb, nounit);
-        }
-        return;
-    }
-#endif
-    blocked_chunk(V, 0, N, M, nb, alpha, a, lda, b, ldb, nounit);
-}
-
-static void blocked_lln(int M, int N, T alpha,
-                        const T *a, int lda, T *b, int ldb, int nounit) {
-    blocked_dispatch(LLN, M, N, alpha, a, lda, b, ldb, nounit);
-}
-static void blocked_lun(int M, int N, T alpha,
-                        const T *a, int lda, T *b, int ldb, int nounit) {
-    blocked_dispatch(LUN, M, N, alpha, a, lda, b, ldb, nounit);
-}
-static void blocked_llt(int M, int N, T alpha,
-                        const T *a, int lda, T *b, int ldb, int nounit) {
-    blocked_dispatch(LLT, M, N, alpha, a, lda, b, ldb, nounit);
-}
-static void blocked_lut(int M, int N, T alpha,
-                        const T *a, int lda, T *b, int ldb, int nounit) {
-    blocked_dispatch(LUT, M, N, alpha, a, lda, b, ldb, nounit);
-}
-
-/* ── SIDE = 'R': solve X op(A) = α B, A is N×N, B is M×N ───────── */
-
-/* (R, L, N): solve X · A = α B, A lower triangular.
- * Equivalent to back-substitution on columns of B from j = N-1 down. */
-static void trsm_rln(int M, int N, T alpha,
-                     const T *a, int lda, T *b, int ldb, int nounit)
+static inline void trsm_rln_core(int i_start, int i_end, int N, T alpha,
+                                 const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int j = N - 1; j >= 0; --j) {
-        if (alpha != 1.0Q) for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
+        if (alpha != 1.0Q) for (int i = i_start; i < i_end; ++i) B_(i, j) *= alpha;
         for (int k = j + 1; k < N; ++k) {
             if (A_(k, j) != 0.0Q) {
                 const T akj = A_(k, j);
-                for (int i = 0; i < M; ++i)
-                    B_(i, j) -= akj * B_(i, k);
+                for (int i = i_start; i < i_end; ++i) B_(i, j) -= akj * B_(i, k);
             }
         }
         if (nounit) {
             const T inv = 1.0Q / A_(j, j);
-            for (int i = 0; i < M; ++i) B_(i, j) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, j) *= inv;
         }
     }
 }
 
-/* (R, U, N): solve X · A = α B, A upper triangular.
- * Forward-sub on columns of B from j = 0 up. */
-static void trsm_run(int M, int N, T alpha,
-                     const T *a, int lda, T *b, int ldb, int nounit)
+static inline void trsm_run_core(int i_start, int i_end, int N, T alpha,
+                                 const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int j = 0; j < N; ++j) {
-        if (alpha != 1.0Q) for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
+        if (alpha != 1.0Q) for (int i = i_start; i < i_end; ++i) B_(i, j) *= alpha;
         for (int k = 0; k < j; ++k) {
             if (A_(k, j) != 0.0Q) {
                 const T akj = A_(k, j);
-                for (int i = 0; i < M; ++i)
-                    B_(i, j) -= akj * B_(i, k);
+                for (int i = i_start; i < i_end; ++i) B_(i, j) -= akj * B_(i, k);
             }
         }
         if (nounit) {
             const T inv = 1.0Q / A_(j, j);
-            for (int i = 0; i < M; ++i) B_(i, j) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, j) *= inv;
         }
     }
 }
 
-/* (R, L, T): solve X · Aᵀ = α B, A lower. */
-static void trsm_rlt(int M, int N, T alpha,
-                     const T *a, int lda, T *b, int ldb, int nounit)
+static inline void trsm_rlt_core(int i_start, int i_end, int N, T alpha,
+                                 const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int k = 0; k < N; ++k) {
         if (nounit) {
             const T inv = 1.0Q / A_(k, k);
-            for (int i = 0; i < M; ++i) B_(i, k) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, k) *= inv;
         }
         for (int j = k + 1; j < N; ++j) {
             if (A_(j, k) != 0.0Q) {
                 const T ajk = A_(j, k);
-                for (int i = 0; i < M; ++i)
-                    B_(i, j) -= ajk * B_(i, k);
+                for (int i = i_start; i < i_end; ++i) B_(i, j) -= ajk * B_(i, k);
             }
         }
-        if (alpha != 1.0Q) for (int i = 0; i < M; ++i) B_(i, k) *= alpha;
+        if (alpha != 1.0Q) for (int i = i_start; i < i_end; ++i) B_(i, k) *= alpha;
     }
 }
 
-/* (R, U, T): solve X · Aᵀ = α B, A upper. */
-static void trsm_rut(int M, int N, T alpha,
-                     const T *a, int lda, T *b, int ldb, int nounit)
+static inline void trsm_rut_core(int i_start, int i_end, int N, T alpha,
+                                 const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int k = N - 1; k >= 0; --k) {
         if (nounit) {
             const T inv = 1.0Q / A_(k, k);
-            for (int i = 0; i < M; ++i) B_(i, k) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, k) *= inv;
         }
         for (int j = 0; j < k; ++j) {
             if (A_(j, k) != 0.0Q) {
                 const T ajk = A_(j, k);
-                for (int i = 0; i < M; ++i)
-                    B_(i, j) -= ajk * B_(i, k);
+                for (int i = i_start; i < i_end; ++i) B_(i, j) -= ajk * B_(i, k);
             }
         }
-        if (alpha != 1.0Q) for (int i = 0; i < M; ++i) B_(i, k) *= alpha;
+        if (alpha != 1.0Q) for (int i = i_start; i < i_end; ++i) B_(i, k) *= alpha;
     }
 }
+
+/* ── OMP wrappers: one parallel region per call, manual partition. ── */
+
+#ifdef _OPENMP
+#define QTRSM_OMP_WRAP_L(name, core)                                       \
+    static void name(int M, int N, T alpha,                                \
+                     const T *a, int lda, T *b, int ldb, int nounit) {     \
+        if (N >= QTRSM_OMP_MIN && omp_get_max_threads() > 1) {             \
+            _Pragma("omp parallel") {                                      \
+                int tid = omp_get_thread_num();                            \
+                int nt  = omp_get_num_threads();                           \
+                int js  = (int)((long long)N * tid / nt);                  \
+                int je  = (int)((long long)N * (tid + 1) / nt);            \
+                core(js, je, M, alpha, a, lda, b, ldb, nounit);            \
+            }                                                              \
+        } else { core(0, N, M, alpha, a, lda, b, ldb, nounit); }           \
+    }
+#define QTRSM_OMP_WRAP_R(name, core)                                       \
+    static void name(int M, int N, T alpha,                                \
+                     const T *a, int lda, T *b, int ldb, int nounit) {     \
+        if (M >= QTRSM_OMP_MIN && omp_get_max_threads() > 1) {             \
+            _Pragma("omp parallel") {                                      \
+                int tid = omp_get_thread_num();                            \
+                int nt  = omp_get_num_threads();                           \
+                int is  = (int)((long long)M * tid / nt);                  \
+                int ie  = (int)((long long)M * (tid + 1) / nt);            \
+                core(is, ie, N, alpha, a, lda, b, ldb, nounit);            \
+            }                                                              \
+        } else { core(0, M, N, alpha, a, lda, b, ldb, nounit); }           \
+    }
+#else
+#define QTRSM_OMP_WRAP_L(name, core)                                       \
+    static void name(int M, int N, T alpha,                                \
+                     const T *a, int lda, T *b, int ldb, int nounit) {     \
+        core(0, N, M, alpha, a, lda, b, ldb, nounit);                      \
+    }
+#define QTRSM_OMP_WRAP_R(name, core)                                       \
+    static void name(int M, int N, T alpha,                                \
+                     const T *a, int lda, T *b, int ldb, int nounit) {     \
+        core(0, M, N, alpha, a, lda, b, ldb, nounit);                      \
+    }
+#endif
+
+QTRSM_OMP_WRAP_L(trsm_lln, trsm_lln_core)
+QTRSM_OMP_WRAP_L(trsm_lun, trsm_lun_core)
+QTRSM_OMP_WRAP_L(trsm_llt, trsm_llt_core)
+QTRSM_OMP_WRAP_L(trsm_lut, trsm_lut_core)
+QTRSM_OMP_WRAP_R(trsm_rln, trsm_rln_core)
+QTRSM_OMP_WRAP_R(trsm_run, trsm_run_core)
+QTRSM_OMP_WRAP_R(trsm_rlt, trsm_rlt_core)
+QTRSM_OMP_WRAP_R(trsm_rut, trsm_rut_core)
 
 /* ── Entry point ──────────────────────────────────────────────── */
 
@@ -426,7 +252,6 @@ void qtrsm_(
 
     if (M == 0 || N == 0) return;
 
-    /* alpha == 0 quick return: B becomes all zeros. */
     if (alpha == 0.0Q) {
         for (int j = 0; j < N; ++j)
             for (int i = 0; i < M; ++i) B_(i, j) = 0.0Q;
@@ -434,26 +259,12 @@ void qtrsm_(
     }
 
     if (SIDE == 'L') {
-        /* Blocked path when M is large enough to amortize the egemm
-         * call overhead. Threshold is twice the block size — below
-         * that, blocking only adds noise. */
-        const int use_blocked = (M >= 2 * trsm_nb());
         if (TR == 'N') {
-            if (UPLO == 'L') {
-                if (use_blocked) blocked_lln(M, N, alpha, a, lda, b, ldb, nounit);
-                else             trsm_lln(M, N, alpha, a, lda, b, ldb, nounit);
-            } else {
-                if (use_blocked) blocked_lun(M, N, alpha, a, lda, b, ldb, nounit);
-                else             trsm_lun(M, N, alpha, a, lda, b, ldb, nounit);
-            }
+            if (UPLO == 'L') trsm_lln(M, N, alpha, a, lda, b, ldb, nounit);
+            else             trsm_lun(M, N, alpha, a, lda, b, ldb, nounit);
         } else {
-            if (UPLO == 'L') {
-                if (use_blocked) blocked_llt(M, N, alpha, a, lda, b, ldb, nounit);
-                else             trsm_llt(M, N, alpha, a, lda, b, ldb, nounit);
-            } else {
-                if (use_blocked) blocked_lut(M, N, alpha, a, lda, b, ldb, nounit);
-                else             trsm_lut(M, N, alpha, a, lda, b, ldb, nounit);
-            }
+            if (UPLO == 'L') trsm_llt(M, N, alpha, a, lda, b, ldb, nounit);
+            else             trsm_lut(M, N, alpha, a, lda, b, ldb, nounit);
         }
     } else {
         if (TR == 'N') {
