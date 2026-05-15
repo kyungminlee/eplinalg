@@ -1416,19 +1416,6 @@ set(STAGED_LIBRARIES {staged_list})
             shutil.rmtree(parallel_blas_dst)
         shutil.copytree(parallel_blas_src, parallel_blas_dst)
 
-    # Vendored libgcc soft-fp headers (LGPL+linking-exception). Used
-    # by the kind16 overlay under QBLAS_INLINE_SOFTFP=ON to inline
-    # __multf3 / __addtf3 instead of going through libgcc's external
-    # entry points. Always copied so flipping the cmake flag works
-    # without re-staging.
-    softfp_src = proj_root / 'external' / 'libgcc-softfp'
-    if softfp_src.is_dir():
-        softfp_dst = staging_dir / 'external' / 'libgcc-softfp'
-        if softfp_dst.exists():
-            shutil.rmtree(softfp_dst)
-        softfp_dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(softfp_src, softfp_dst)
-
     # Copy vendored Netlib BLAS source for the differential precision
     # tests' refblas_quad reference library (compiled with gfortran's
     # -freal-8-real-16 to promote KIND=8 entities to KIND=16 in-place).

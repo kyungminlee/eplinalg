@@ -1,106 +1,36 @@
 /*
- * xgemm — kind16 complex GEMM overlay (__complex128 / COMPLEX(KIND=16)).
+ * xgemm — kind16 complex (__complex128 / COMPLEX(KIND=16)) GEMM overlay.
  *
- * Same blocked + packed + OMP scaffold as ygemm; conjugate-transpose
- * 'C' collapses into the packers via conjq(). Complex __float128
- * arithmetic lowers to libquadmath helpers; arithmetic-bound,
- * scales nearly linearly with cores.
+ * Unblocked Netlib reference (ZGEMM-style) with OpenMP parallelism
+ * across columns of C. No packing or cache blocking — every op is a
+ * libquadmath call, the arithmetic dominates, and coarse-grain
+ * parallelism scales nearly linearly with cores.
+ *
+ * TRANSA / TRANSB independently in {N, T, C}. Conjugation under 'C'
+ * is applied at element access time; the per-element branch is one
+ * sign-flip on the imag part, dwarfed by the libquadmath cost of the
+ * surrounding multiply, so the conj flag costs effectively nothing.
  */
 
 #include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
 #include <ctype.h>
 #include <quadmath.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
+#define XGEMM_OMP_MIN 32
+
 typedef __complex128 T;
-
-static int env_int(const char *name, int dflt) {
-    const char *s = getenv(name);
-    if (!s || !*s) return dflt;
-    int v = atoi(s);
-    return v > 0 ? v : dflt;
-}
-
-static int g_mc = 0, g_kc = 0, g_nc = 0;
-static void init_blocks(void) {
-    if (g_mc) return;
-    g_mc = env_int("QBLAS_MC",  64);
-    g_kc = env_int("QBLAS_KC", 128);
-    g_nc = env_int("QBLAS_NC", 256);
-}
 
 static int trans_code(const char *p, size_t len) {
     (void)len;
     return (char)toupper((unsigned char)*p);
 }
 
-static void pack_A(const T *restrict A, int lda,
-                   int ic, int pc, int ib, int pb,
-                   int ta, T *restrict Ap)
-{
-    int i, p;
-    if (ta == 'N') {
-        for (p = 0; p < pb; ++p) {
-            const T *src = &A[(size_t)(pc + p) * lda + ic];
-            T *dst = &Ap[(size_t)p * ib];
-            for (i = 0; i < ib; ++i) dst[i] = src[i];
-        }
-    } else if (ta == 'T') {
-        for (i = 0; i < ib; ++i) {
-            const T *src = &A[(size_t)(ic + i) * lda + pc];
-            for (p = 0; p < pb; ++p) Ap[(size_t)p * ib + i] = src[p];
-        }
-    } else {  /* 'C' */
-        for (i = 0; i < ib; ++i) {
-            const T *src = &A[(size_t)(ic + i) * lda + pc];
-            for (p = 0; p < pb; ++p) Ap[(size_t)p * ib + i] = conjq(src[p]);
-        }
-    }
-}
-
-static void pack_B(const T *restrict B, int ldb,
-                   int pc, int jc, int pb, int jb,
-                   int tb, T *restrict Bp)
-{
-    int p, j;
-    if (tb == 'N') {
-        for (j = 0; j < jb; ++j) {
-            const T *src = &B[(size_t)(jc + j) * ldb + pc];
-            T *dst = &Bp[(size_t)j * pb];
-            for (p = 0; p < pb; ++p) dst[p] = src[p];
-        }
-    } else if (tb == 'T') {
-        for (p = 0; p < pb; ++p) {
-            const T *src = &B[(size_t)(pc + p) * ldb + jc];
-            for (j = 0; j < jb; ++j) Bp[(size_t)j * pb + p] = src[j];
-        }
-    } else {  /* 'C' */
-        for (p = 0; p < pb; ++p) {
-            const T *src = &B[(size_t)(pc + p) * ldb + jc];
-            for (j = 0; j < jb; ++j) Bp[(size_t)j * pb + p] = conjq(src[j]);
-        }
-    }
-}
-
-static void inner_kernel(int ib, int jb, int pb, T alpha,
-                         const T *restrict Ap, const T *restrict Bp,
-                         T *restrict C, int ldc)
-{
-    int i, j, p;
-    for (j = 0; j < jb; ++j) {
-        T *cj = &C[(size_t)j * ldc];
-        const T *bj = &Bp[(size_t)j * pb];
-        for (p = 0; p < pb; ++p) {
-            const T t = alpha * bj[p];
-            const T *ap = &Ap[(size_t)p * ib];
-            for (i = 0; i < ib; ++i) cj[i] += t * ap[i];
-        }
-    }
-}
+#define A_(i, j)  a[(size_t)(j) * lda + (i)]
+#define B_(i, j)  b[(size_t)(j) * ldb + (i)]
+#define C_(i, j)  c[(size_t)(j) * ldc + (i)]
 
 void xgemm_(
     const char *transa, const char *transb,
@@ -122,43 +52,64 @@ void xgemm_(
 
     const T zero = 0.0Q + 0.0Qi;
     const T one  = 1.0Q + 0.0Qi;
-    int i, j;
-    for (j = 0; j < N; ++j) {
-        T *cj = &c[(size_t)j * ldc];
-        if (beta == zero)      for (i = 0; i < M; ++i) cj[i]  = zero;
-        else if (beta != one)  for (i = 0; i < M; ++i) cj[i] *= beta;
+
+    if (alpha == zero || K == 0) {
+        for (int j = 0; j < N; ++j) {
+            T *cj = &C_(0, j);
+            if (beta == zero)      for (int i = 0; i < M; ++i) cj[i]  = zero;
+            else if (beta != one)  for (int i = 0; i < M; ++i) cj[i] *= beta;
+        }
+        return;
     }
-    if (alpha == zero || K == 0) return;
 
-    init_blocks();
-    const int MC = g_mc, KC = g_kc, NC = g_nc;
+    const int conj_a = (ta == 'C');
+    const int conj_b = (tb == 'C');
+    const int trans_a = (ta != 'N');
+    const int trans_b = (tb != 'N');
 
 #ifdef _OPENMP
-    #pragma omp parallel
+    const int use_omp = (N >= XGEMM_OMP_MIN && omp_get_max_threads() > 1);
+    #pragma omp parallel for if(use_omp) schedule(static)
 #endif
-    {
-        T *Ap = aligned_alloc(64, (size_t)MC * KC * sizeof(T));
-        T *Bp = aligned_alloc(64, (size_t)KC * NC * sizeof(T));
-        if (Ap && Bp) {
-            int jc, pc, ic;
-#ifdef _OPENMP
-            #pragma omp for schedule(static)
-#endif
-            for (jc = 0; jc < N; jc += NC) {
-                const int jb = (N - jc < NC) ? (N - jc) : NC;
-                for (pc = 0; pc < K; pc += KC) {
-                    const int pb = (K - pc < KC) ? (K - pc) : KC;
-                    pack_B(b, ldb, pc, jc, pb, jb, tb, Bp);
-                    for (ic = 0; ic < M; ic += MC) {
-                        const int ib = (M - ic < MC) ? (M - ic) : MC;
-                        pack_A(a, lda, ic, pc, ib, pb, ta, Ap);
-                        inner_kernel(ib, jb, pb, alpha, Ap, Bp,
-                                     &c[(size_t)jc * ldc + ic], ldc);
-                    }
+    for (int j = 0; j < N; ++j) {
+        T *cj = &C_(0, j);
+
+        if (beta == zero)      for (int i = 0; i < M; ++i) cj[i]  = zero;
+        else if (beta != one)  for (int i = 0; i < M; ++i) cj[i] *= beta;
+
+        if (!trans_a) {
+            /* op(A) = A: axpy form. */
+            for (int k = 0; k < K; ++k) {
+                T bkj;
+                if (!trans_b)      bkj = B_(k, j);
+                else if (!conj_b)  bkj = B_(j, k);
+                else               bkj = conjq(B_(j, k));
+                if (bkj != zero) {
+                    const T t = alpha * bkj;
+                    const T *ak = &A_(0, k);
+                    for (int i = 0; i < M; ++i) cj[i] += t * ak[i];
                 }
             }
+        } else {
+            /* op(A) ∈ {Aᵀ, Aᴴ}: inner-product form. */
+            for (int i = 0; i < M; ++i) {
+                T s = zero;
+                if (!trans_b) {
+                    if (!conj_a) for (int k = 0; k < K; ++k) s += A_(k, i)         * B_(k, j);
+                    else         for (int k = 0; k < K; ++k) s += conjq(A_(k, i))  * B_(k, j);
+                } else if (!conj_b) {
+                    if (!conj_a) for (int k = 0; k < K; ++k) s += A_(k, i)         * B_(j, k);
+                    else         for (int k = 0; k < K; ++k) s += conjq(A_(k, i))  * B_(j, k);
+                } else {
+                    if (!conj_a) for (int k = 0; k < K; ++k) s += A_(k, i)         * conjq(B_(j, k));
+                    else         for (int k = 0; k < K; ++k) s += conjq(A_(k, i))  * conjq(B_(j, k));
+                }
+                cj[i] += alpha * s;
+            }
         }
-        free(Ap);
-        free(Bp);
     }
 }
+
+#undef A_
+#undef B_
+#undef C_
