@@ -71,6 +71,11 @@ set(_kernels
     xtbmv.c
     qtbsv.c
     xtbsv.c
+    # L2 packed — triangular mat-vec / solve
+    qtpmv.c
+    xtpmv.c
+    qtpsv.c
+    xtpsv.c
 )
 
 set(_routines "")
