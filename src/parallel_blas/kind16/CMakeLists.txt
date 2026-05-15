@@ -63,6 +63,9 @@ set(_kernels
     # L2 banded — symmetric / Hermitian
     qsbmv.c
     xhbmv.c
+    # L2 packed — symmetric / Hermitian mat-vec
+    qspmv.c
+    xhpmv.c
 )
 
 set(_routines "")
