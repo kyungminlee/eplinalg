@@ -20,17 +20,17 @@
 typedef _Complex long double TC;
 typedef long double          TR;
 
-static int env_int(const char *name, int dflt) {
-    const char *s = getenv(name);
-    if (!s || !*s) return dflt;
-    int v = atoi(s);
-    return v > 0 ? v : dflt;
+static int g_yherk_nb = 32;
+
+__attribute__((constructor))
+static void yherk_init(void) {
+    const char *s = getenv("YHERK_NB");
+    if (s && *s) {
+        int v = atoi(s);
+        if (v > 0) g_yherk_nb = v;
+    }
 }
-static int g_nb = 0;
-static int herk_nb(void) {
-    if (g_nb == 0) g_nb = env_int("YHERK_NB", 64);
-    return g_nb;
-}
+static int herk_nb(void) { return g_yherk_nb; }
 
 extern void ygemm_(
     const char *transa, const char *transb,
@@ -54,7 +54,8 @@ static inline TC cconj(TC z) { return ~z; }
 /* Diagonal jb×jb block rank-k add, keeping diagonal entries real.
  * No beta scaling (caller pre-scales). */
 static void herk_diag_add(int jc, int jb, int K, TR alpha,
-                          const TC *a, int lda, TC *c, int ldc,
+                          const TC *restrict a, int lda,
+                          TC *restrict c, int ldc,
                           char UPLO, char TR_c)
 {
     if (TR_c == 'N') {
@@ -94,9 +95,9 @@ void yherk_(
     const char *uplo, const char *trans,
     const int *n_, const int *k_,
     const TR *alpha_,
-    const TC *a, const int *lda_,
+    const TC *restrict a, const int *lda_,
     const TR *beta_,
-    TC *c, const int *ldc_,
+    TC *restrict c, const int *ldc_,
     size_t uplo_len, size_t trans_len)
 {
     (void)uplo_len; (void)trans_len;

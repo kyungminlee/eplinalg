@@ -29,17 +29,17 @@
 
 typedef long double T;
 
-static int env_int(const char *name, int dflt) {
-    const char *s = getenv(name);
-    if (!s || !*s) return dflt;
-    int v = atoi(s);
-    return v > 0 ? v : dflt;
+static int g_esyrk_nb = 64;
+
+__attribute__((constructor))
+static void esyrk_init(void) {
+    const char *s = getenv("ESYRK_NB");
+    if (s && *s) {
+        int v = atoi(s);
+        if (v > 0) g_esyrk_nb = v;
+    }
 }
-static int g_nb = 0;
-static int syrk_nb(void) {
-    if (g_nb == 0) g_nb = env_int("ESYRK_NB", 64);
-    return g_nb;
-}
+static int syrk_nb(void) { return g_esyrk_nb; }
 
 extern void egemm_(
     const char *transa, const char *transb,
@@ -61,7 +61,8 @@ static inline char up(const char *p) {
 /* Rank-k addition into the UPLO triangle of the diagonal jb×jb block
  * at C[jc..jc+jb, jc..jc+jb]. No beta scaling (caller pre-scales). */
 static void syrk_diag_add(int jc, int jb, int K, T alpha,
-                          const T *a, int lda, T *c, int ldc,
+                          const T *restrict a, int lda,
+                          T *restrict c, int ldc,
                           char UPLO, int TR)
 {
     if (TR == 'N') {
@@ -97,9 +98,9 @@ void esyrk_(
     const char *uplo, const char *trans,
     const int *n_, const int *k_,
     const T *alpha_,
-    const T *a, const int *lda_,
+    const T *restrict a, const int *lda_,
     const T *beta_,
-    T *c, const int *ldc_,
+    T *restrict c, const int *ldc_,
     size_t uplo_len, size_t trans_len)
 {
     (void)uplo_len; (void)trans_len;

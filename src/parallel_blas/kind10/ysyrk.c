@@ -15,17 +15,17 @@
 
 typedef _Complex long double T;
 
-static int env_int(const char *name, int dflt) {
-    const char *s = getenv(name);
-    if (!s || !*s) return dflt;
-    int v = atoi(s);
-    return v > 0 ? v : dflt;
+static int g_ysyrk_nb = 32;
+
+__attribute__((constructor))
+static void ysyrk_init(void) {
+    const char *s = getenv("YSYRK_NB");
+    if (s && *s) {
+        int v = atoi(s);
+        if (v > 0) g_ysyrk_nb = v;
+    }
 }
-static int g_nb = 0;
-static int syrk_nb(void) {
-    if (g_nb == 0) g_nb = env_int("YSYRK_NB", 64);
-    return g_nb;
-}
+static int syrk_nb(void) { return g_ysyrk_nb; }
 
 extern void ygemm_(
     const char *transa, const char *transb,
@@ -48,7 +48,8 @@ static const T ZERO = 0.0L + 0.0Li;
 static const T ONE  = 1.0L + 0.0Li;
 
 static void syrk_diag_add(int jc, int jb, int K, T alpha,
-                          const T *a, int lda, T *c, int ldc,
+                          const T *restrict a, int lda,
+                          T *restrict c, int ldc,
                           char UPLO, char TR)
 {
     if (TR == 'N') {
@@ -84,9 +85,9 @@ void ysyrk_(
     const char *uplo, const char *trans,
     const int *n_, const int *k_,
     const T *alpha_,
-    const T *a, const int *lda_,
+    const T *restrict a, const int *lda_,
     const T *beta_,
-    T *c, const int *ldc_,
+    T *restrict c, const int *ldc_,
     size_t uplo_len, size_t trans_len)
 {
     (void)uplo_len; (void)trans_len;
