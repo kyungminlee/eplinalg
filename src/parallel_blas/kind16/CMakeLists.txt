@@ -20,6 +20,9 @@ set(_kernels
     qsymm.c
     xsymm.c
     xhemm.c
+    qsyr2k.c
+    xsyr2k.c
+    xher2k.c
 )
 
 set(_routines "")
