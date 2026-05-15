@@ -60,6 +60,9 @@ set(_kernels
     # L2 banded — general
     qgbmv.c
     xgbmv.c
+    # L2 banded — symmetric / Hermitian
+    qsbmv.c
+    xhbmv.c
 )
 
 set(_routines "")
