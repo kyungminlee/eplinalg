@@ -62,6 +62,9 @@ set(_kernels
     ydotc.c
     eynrm2.c
     eyasum.c
+    # L2 banded — general
+    egbmv.c
+    ygbmv.c
 )
 
 # Publish the overlay-covered routine names so the BLAS section in
