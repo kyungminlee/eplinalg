@@ -38,6 +38,25 @@ set(_kernels
     xher.c
     qsyr2.c
     xher2.c
+    # L1 BLAS — subroutines + functions
+    qscal.c
+    qaxpy.c
+    qcopy.c
+    qswap.c
+    qrot.c
+    qdot.c
+    qnrm2.c
+    qasum.c
+    xscal.c
+    xqscal.c
+    xaxpy.c
+    xcopy.c
+    xswap.c
+    xqrot.c
+    xdotu.c
+    xdotc.c
+    qxnrm2.c
+    qxasum.c
 )
 
 set(_routines "")
