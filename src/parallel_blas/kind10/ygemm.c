@@ -1,28 +1,30 @@
 /*
  * ygemm — kind10 complex GEMM overlay
- *   (COMPLEX(KIND=10), x86-64 _Complex long double, 2 × 80-bit
- *    extended packed into a 32-byte struct matching gfortran's
- *    complex(10) ABI).
+ *   (COMPLEX(KIND=10), x86-64 _Complex long double, 32-byte struct
+ *    matching gfortran's complex(10) ABI).
  *
- * Same Goto-style cache-blocked + packed + OpenMP scaffold as egemm.
- * The packers absorb both ordinary transpose (T) and conjugate
- * transpose (C); after packing the inner kernel sees uniform
- * column-major Ap/Bp regardless of source orientation.
+ * Strategy: reference algorithm + OpenMP-over-j.
  *
- * 'T' (transpose, no conj) and 'C' (conjugate transpose) diverge
- * only in the conj() applied during pack. For TRANSA='C' we conj
- * each A element while packing; same for B. The kernel itself is
- * the same complex FMA loop.
+ * Rationale: on x86-64 there is no SIMD path for long double or its
+ * complex form — every multiply goes through the 8-deep x87 register
+ * stack. A complex `a * b` already spills several fp80 temporaries,
+ * so any register-tile larger than ~1 accumulator over-pressures the
+ * stack. We tried OpenBLAS-style MR×NR outer-product tiles and they
+ * regressed slightly versus the simpler reference path. Packing also
+ * costs more than it saves at the sizes that matter here (a 256×256
+ * complex(10) panel is 2 MB, larger than the L2 it would warm).
  *
- * Block sizes shared with the real path via the same env knobs
- * (EBLAS_MC / KC / NC) — complex elements are 2× the size of real,
- * so the effective cache footprint is 2× larger; that's accepted at
- * this stage and revisited at autotune.
+ * What does win:
+ *   - Parallelism across the j (column-of-C) axis is embarrassingly
+ *     parallel and scales linearly until memory bandwidth saturates.
+ *   - Stride-1 inner loops over A and B where the orientation permits
+ *     — handled by selecting one of four loop bodies based on
+ *     (TRANSA, TRANSB). The same as the migrated zgemm in shape;
+ *     overlay wins purely by parallelizing the outer j-loop.
  *
  * Fortran ABI:
  *   - subroutine name lowercased + trailing underscore: `ygemm_`
- *   - scalars by pointer; complex scalar passed as a pointer to a
- *     pair of long doubles (real then imag)
+ *   - scalars by pointer; complex scalar = pointer to (re, im) pair
  *   - character args followed by hidden trailing `size_t` lengths
  *   - COMPLEX(KIND=10) ↔ `_Complex long double` (32 bytes on x86-64)
  */
@@ -38,114 +40,10 @@
 
 typedef _Complex long double C10;
 
-/* ── Block sizes (shared knobs with egemm) ────────────────────── */
-
-static int env_int(const char *name, int dflt) {
-    const char *s = getenv(name);
-    if (!s || !*s) return dflt;
-    int v = atoi(s);
-    return v > 0 ? v : dflt;
-}
-
-static int g_mc = 0, g_kc = 0, g_nc = 0;
-static void init_blocks(void) {
-    if (g_mc) return;
-    g_mc = env_int("EBLAS_MC",  64);
-    g_kc = env_int("EBLAS_KC", 128);
-    g_nc = env_int("EBLAS_NC", 256);
-}
-
 static int trans_code(const char *p, size_t len) {
     (void)len;
     return (char)toupper((unsigned char)*p);
 }
-
-/* ── Packers ──────────────────────────────────────────────────── */
-
-/*
- * Pack op(A)(ic:ic+ib, pc:pc+pb) into Ap, column-major (ib, pb).
- * After packing: Ap[p*ib + i] = op(A)[i, p].
- *
- *   ta == 'N':  op(A)[i,p] =        A[ic+i, pc+p]
- *   ta == 'T':  op(A)[i,p] =        A[pc+p, ic+i]
- *   ta == 'C':  op(A)[i,p] = conj(  A[pc+p, ic+i] )
- *
- * Conjugation collapses into pack — the kernel sees plain
- * multiplications afterwards.
- */
-static void pack_A(const C10 *restrict A, int lda,
-                   int ic, int pc, int ib, int pb,
-                   int ta, C10 *restrict Ap)
-{
-    int i, p;
-    if (ta == 'N') {
-        for (p = 0; p < pb; ++p) {
-            const C10 *src = &A[(size_t)(pc + p) * lda + ic];
-            C10 *dst = &Ap[(size_t)p * ib];
-            for (i = 0; i < ib; ++i) dst[i] = src[i];
-        }
-    } else if (ta == 'T') {
-        for (i = 0; i < ib; ++i) {
-            const C10 *src = &A[(size_t)(ic + i) * lda + pc];
-            for (p = 0; p < pb; ++p) Ap[(size_t)p * ib + i] = src[p];
-        }
-    } else {  /* 'C' */
-        for (i = 0; i < ib; ++i) {
-            const C10 *src = &A[(size_t)(ic + i) * lda + pc];
-            for (p = 0; p < pb; ++p) Ap[(size_t)p * ib + i] = conjl(src[p]);
-        }
-    }
-}
-
-static void pack_B(const C10 *restrict B, int ldb,
-                   int pc, int jc, int pb, int jb,
-                   int tb, C10 *restrict Bp)
-{
-    int p, j;
-    if (tb == 'N') {
-        for (j = 0; j < jb; ++j) {
-            const C10 *src = &B[(size_t)(jc + j) * ldb + pc];
-            C10 *dst = &Bp[(size_t)j * pb];
-            for (p = 0; p < pb; ++p) dst[p] = src[p];
-        }
-    } else if (tb == 'T') {
-        for (p = 0; p < pb; ++p) {
-            const C10 *src = &B[(size_t)(pc + p) * ldb + jc];
-            for (j = 0; j < jb; ++j) Bp[(size_t)j * pb + p] = src[j];
-        }
-    } else {  /* 'C' */
-        for (p = 0; p < pb; ++p) {
-            const C10 *src = &B[(size_t)(pc + p) * ldb + jc];
-            for (j = 0; j < jb; ++j) Bp[(size_t)j * pb + p] = conjl(src[j]);
-        }
-    }
-}
-
-/* ── Inner kernel ─────────────────────────────────────────────── */
-
-/*
- * C(ib × jb) += alpha * Ap[ib, pb] * Bp[pb, jb]
- * All column-major, contiguous after packing. Same shape as the
- * real-precision inner kernel; gcc emits a sequence of complex FMAs
- * (each ~4 long-double mults + 2 adds — ~50-cycle compute per op).
- */
-static void inner_kernel(int ib, int jb, int pb, C10 alpha,
-                         const C10 *restrict Ap, const C10 *restrict Bp,
-                         C10 *restrict C, int ldc)
-{
-    int i, j, p;
-    for (j = 0; j < jb; ++j) {
-        C10 *cj = &C[(size_t)j * ldc];
-        const C10 *bj = &Bp[(size_t)j * pb];
-        for (p = 0; p < pb; ++p) {
-            const C10 t = alpha * bj[p];
-            const C10 *ap = &Ap[(size_t)p * ib];
-            for (i = 0; i < ib; ++i) cj[i] += t * ap[i];
-        }
-    }
-}
-
-/* ── Entry point ──────────────────────────────────────────────── */
 
 void ygemm_(
     const char *transa, const char *transb,
@@ -165,46 +63,121 @@ void ygemm_(
 
     if (M <= 0 || N <= 0) return;
 
-    /* C <- beta * C up front. Handles K==0 / alpha==0 paths. */
-    int i, j;
     const C10 zero = 0.0L + 0.0iL;
     const C10 one  = 1.0L + 0.0iL;
-    for (j = 0; j < N; ++j) {
+
+    /* Beta pre-pass — handles K==0 / alpha==0 paths in one place. */
+    for (int j = 0; j < N; ++j) {
         C10 *cj = &c[(size_t)j * ldc];
-        if (beta == zero)      for (i = 0; i < M; ++i) cj[i]  = zero;
-        else if (beta != one)  for (i = 0; i < M; ++i) cj[i] *= beta;
+        if (beta == zero)      for (int i = 0; i < M; ++i) cj[i]  = zero;
+        else if (beta != one)  for (int i = 0; i < M; ++i) cj[i] *= beta;
     }
     if (alpha == zero || K == 0) return;
 
-    init_blocks();
-    const int MC = g_mc, KC = g_kc, NC = g_nc;
+    /*
+     * Four orientation paths, parallel across j. Inner k-loop is
+     * stride-1 on A or B (or both) wherever possible. Conjugation
+     * on A or B is absorbed via the `~` operator on _Complex.
+     */
+    const int conj_a = (ta == 'C');
+    const int conj_b = (tb == 'C');
 
+    /*
+     * Rank-1 paths are unrolled on the K (depth) axis, not on I. The
+     * migrated Netlib reference compiled by gfortran runs two K iters
+     * in parallel — precomputes TEMP_L and TEMP_{L+1}, then per-i
+     * accumulates `c[i,j] += TEMP_L * A[i,L] + TEMP_{L+1} * A[i,L+1]`.
+     * The two complex FMAs per i form independent chains and mask
+     * x87 fmul latency. Unrolling on I instead doesn't help — each
+     * row already targets a distinct C location, no extra ILP
+     * exposed. See `ygemm_migrated_` disasm at offset ~0xab8.
+     */
+    if (ta == 'N' && tb == 'N') {
+        /* C[i,j] += sum_l (alpha*B[l,j]) * A[i,l].  Rank-1 update over l,
+         * unrolled by 2 on l so each i gets two independent FMA chains. */
 #ifdef _OPENMP
-    #pragma omp parallel
+        #pragma omp parallel for schedule(static)
 #endif
-    {
-        C10 *Ap = aligned_alloc(64, (size_t)MC * KC * sizeof(C10));
-        C10 *Bp = aligned_alloc(64, (size_t)KC * NC * sizeof(C10));
-        if (Ap && Bp) {
-            int jc, pc, ic;
-#ifdef _OPENMP
-            #pragma omp for schedule(static)
-#endif
-            for (jc = 0; jc < N; jc += NC) {
-                const int jb = (N - jc < NC) ? (N - jc) : NC;
-                for (pc = 0; pc < K; pc += KC) {
-                    const int pb = (K - pc < KC) ? (K - pc) : KC;
-                    pack_B(b, ldb, pc, jc, pb, jb, tb, Bp);
-                    for (ic = 0; ic < M; ic += MC) {
-                        const int ib = (M - ic < MC) ? (M - ic) : MC;
-                        pack_A(a, lda, ic, pc, ib, pb, ta, Ap);
-                        inner_kernel(ib, jb, pb, alpha, Ap, Bp,
-                                     &c[(size_t)jc * ldc + ic], ldc);
-                    }
-                }
+        for (int j2 = 0; j2 < N; ++j2) {
+            C10 *cj = &c[(size_t)j2 * ldc];
+            int l = 0;
+            for (; l + 1 < K; l += 2) {
+                const C10 t0 = alpha * b[(size_t)j2 * ldb + l];
+                const C10 t1 = alpha * b[(size_t)j2 * ldb + l + 1];
+                const C10 *al0 = &a[(size_t)l       * lda];
+                const C10 *al1 = &a[(size_t)(l + 1) * lda];
+                for (int i2 = 0; i2 < M; ++i2)
+                    cj[i2] += t0 * al0[i2] + t1 * al1[i2];
+            }
+            for (; l < K; ++l) {
+                const C10 t = alpha * b[(size_t)j2 * ldb + l];
+                const C10 *al = &a[(size_t)l * lda];
+                for (int i2 = 0; i2 < M; ++i2) cj[i2] += t * al[i2];
             }
         }
-        free(Ap);
-        free(Bp);
+    } else if ((ta == 'T' || ta == 'C') && tb == 'N') {
+        /* A^op[i,l] = A[l,i] (or conjugated). Dot of A col i and B col j.
+         * Single-acc form: gcc already schedules this well; manual unroll
+         * with two accs regresses because the original form fits its
+         * register allocation. */
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
+#endif
+        for (int j2 = 0; j2 < N; ++j2) {
+            C10 *cj = &c[(size_t)j2 * ldc];
+            const C10 *bj = &b[(size_t)j2 * ldb];
+            for (int i2 = 0; i2 < M; ++i2) {
+                const C10 *ai = &a[(size_t)i2 * lda];
+                C10 acc = zero;
+                if (conj_a) for (int l = 0; l < K; ++l) acc += ~ai[l] * bj[l];
+                else        for (int l = 0; l < K; ++l) acc +=  ai[l] * bj[l];
+                cj[i2] += alpha * acc;
+            }
+        }
+    } else if (ta == 'N' && (tb == 'T' || tb == 'C')) {
+        /* B^op[l,j] = B[j,l] (or conj). Rank-1 update over l, K-unrolled. */
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
+#endif
+        for (int j2 = 0; j2 < N; ++j2) {
+            C10 *cj = &c[(size_t)j2 * ldc];
+            int l = 0;
+            for (; l + 1 < K; l += 2) {
+                const C10 b0 = b[(size_t)l       * ldb + j2];
+                const C10 b1 = b[(size_t)(l + 1) * ldb + j2];
+                const C10 t0 = alpha * (conj_b ? ~b0 : b0);
+                const C10 t1 = alpha * (conj_b ? ~b1 : b1);
+                const C10 *al0 = &a[(size_t)l       * lda];
+                const C10 *al1 = &a[(size_t)(l + 1) * lda];
+                for (int i2 = 0; i2 < M; ++i2)
+                    cj[i2] += t0 * al0[i2] + t1 * al1[i2];
+            }
+            for (; l < K; ++l) {
+                const C10 blj = b[(size_t)l * ldb + j2];
+                const C10 t   = alpha * (conj_b ? ~blj : blj);
+                const C10 *al = &a[(size_t)l * lda];
+                for (int i2 = 0; i2 < M; ++i2) cj[i2] += t * al[i2];
+            }
+        }
+    } else {
+        /* Both transposed. A col i × B row j. Dot-product form — single
+         * accumulator (same reason as the T*N path; the conditional on
+         * conj_a/conj_b inside an unrolled hot loop wrecks codegen). */
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
+#endif
+        for (int j2 = 0; j2 < N; ++j2) {
+            C10 *cj = &c[(size_t)j2 * ldc];
+            for (int i2 = 0; i2 < M; ++i2) {
+                const C10 *ai = &a[(size_t)i2 * lda];
+                C10 acc = zero;
+                for (int l = 0; l < K; ++l) {
+                    const C10 av = conj_a ? ~ai[l] : ai[l];
+                    const C10 bv = b[(size_t)l * ldb + j2];
+                    acc += av * (conj_b ? ~bv : bv);
+                }
+                cj[i2] += alpha * acc;
+            }
+        }
     }
 }
