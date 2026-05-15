@@ -16,6 +16,11 @@
 #include <omp.h>
 #endif
 
+#ifdef MBLAS_SIMD_DD
+#include "mgemm_simd_kernel.h"
+#include <immintrin.h>
+#endif
+
 namespace mf = multifloats;
 using T = mf::float64x2;
 
@@ -60,6 +65,213 @@ extern "C" void mgemm_(
 #define B_(i, j)  b[static_cast<std::size_t>(j) * ldb + (i)]
 
 /* ── SIDE = 'L' column-range cores ──────────────────────────────── */
+
+#ifdef MBLAS_SIMD_DD
+
+constexpr int kSimdLane = simd_dd::NR;
+constexpr int kMaxBlockM = 256;
+
+inline void pack_B_4col(int M, const T *b, int ldb, int j_start, int j_count,
+                        double *bh, double *bl)
+{
+    for (int j = 0; j < j_count; ++j) {
+        const T *col = &b[static_cast<std::size_t>(j_start + j) * ldb];
+        for (int i = 0; i < M; ++i) {
+            bh[i * kSimdLane + j] = col[i].limbs[0];
+            bl[i * kSimdLane + j] = col[i].limbs[1];
+        }
+    }
+    for (int j = j_count; j < kSimdLane; ++j)
+        for (int i = 0; i < M; ++i) {
+            bh[i * kSimdLane + j] = 0.0;
+            bl[i * kSimdLane + j] = 0.0;
+        }
+}
+
+inline void unpack_B_4col(int M, T *b, int ldb, int j_start, int j_count,
+                          const double *bh, const double *bl)
+{
+    for (int j = 0; j < j_count; ++j) {
+        T *col = &b[static_cast<std::size_t>(j_start + j) * ldb];
+        for (int i = 0; i < M; ++i) {
+            col[i].limbs[0] = bh[i * kSimdLane + j];
+            col[i].limbs[1] = bl[i * kSimdLane + j];
+        }
+    }
+}
+
+/* SIMD LLN: for k = M-1..0: temp = α·B(k); for i>k: B(i) += temp·A(i,k);
+ * if nounit: temp *= A(k,k); B(k) = temp. */
+inline void simd_trmm_lln(int M, const T *a, int lda, T alpha, int nounit,
+                          double *bh, double *bl)
+{
+    const __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    const __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    for (int k = M - 1; k >= 0; --k) {
+        __m256d bkh = _mm256_load_pd(&bh[k * kSimdLane]);
+        __m256d bkl = _mm256_load_pd(&bl[k * kSimdLane]);
+        __m256d th, tl;
+        simd_dd::dd_mul(ah, al, bkh, bkl, th, tl);
+        for (int i = M - 1; i > k; --i) {
+            const T aik = A_(i, k);
+            __m256d aih = _mm256_set1_pd(aik.limbs[0]);
+            __m256d ail = _mm256_set1_pd(aik.limbs[1]);
+            __m256d ph, pl;
+            simd_dd::dd_mul(th, tl, aih, ail, ph, pl);
+            __m256d bih = _mm256_load_pd(&bh[i * kSimdLane]);
+            __m256d bil = _mm256_load_pd(&bl[i * kSimdLane]);
+            __m256d nh, nl;
+            simd_dd::dd_add(bih, bil, ph, pl, nh, nl);
+            _mm256_store_pd(&bh[i * kSimdLane], nh);
+            _mm256_store_pd(&bl[i * kSimdLane], nl);
+        }
+        if (nounit) {
+            const T akk = A_(k, k);
+            __m256d akh = _mm256_set1_pd(akk.limbs[0]);
+            __m256d akl = _mm256_set1_pd(akk.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(th, tl, akh, akl, nh, nl);
+            th = nh; tl = nl;
+        }
+        _mm256_store_pd(&bh[k * kSimdLane], th);
+        _mm256_store_pd(&bl[k * kSimdLane], tl);
+    }
+}
+
+/* SIMD LUN: for k = 0..M: temp = α·B(k); for i<k: B(i) += temp·A(i,k);
+ * if nounit: temp *= A(k,k); B(k) = temp. */
+inline void simd_trmm_lun(int M, const T *a, int lda, T alpha, int nounit,
+                          double *bh, double *bl)
+{
+    const __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    const __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    for (int k = 0; k < M; ++k) {
+        __m256d bkh = _mm256_load_pd(&bh[k * kSimdLane]);
+        __m256d bkl = _mm256_load_pd(&bl[k * kSimdLane]);
+        __m256d th, tl;
+        simd_dd::dd_mul(ah, al, bkh, bkl, th, tl);
+        for (int i = 0; i < k; ++i) {
+            const T aik = A_(i, k);
+            __m256d aih = _mm256_set1_pd(aik.limbs[0]);
+            __m256d ail = _mm256_set1_pd(aik.limbs[1]);
+            __m256d ph, pl;
+            simd_dd::dd_mul(th, tl, aih, ail, ph, pl);
+            __m256d bih = _mm256_load_pd(&bh[i * kSimdLane]);
+            __m256d bil = _mm256_load_pd(&bl[i * kSimdLane]);
+            __m256d nh, nl;
+            simd_dd::dd_add(bih, bil, ph, pl, nh, nl);
+            _mm256_store_pd(&bh[i * kSimdLane], nh);
+            _mm256_store_pd(&bl[i * kSimdLane], nl);
+        }
+        if (nounit) {
+            const T akk = A_(k, k);
+            __m256d akh = _mm256_set1_pd(akk.limbs[0]);
+            __m256d akl = _mm256_set1_pd(akk.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(th, tl, akh, akl, nh, nl);
+            th = nh; tl = nl;
+        }
+        _mm256_store_pd(&bh[k * kSimdLane], th);
+        _mm256_store_pd(&bl[k * kSimdLane], tl);
+    }
+}
+
+/* SIMD LLT: for i = 0..M: t = B(i); if nounit: t *= A(i,i);
+ * for k>i: t += A(k,i)·B(k); B(i) = alpha·t. */
+inline void simd_trmm_llt(int M, const T *a, int lda, T alpha, int nounit,
+                          double *bh, double *bl)
+{
+    const __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    const __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    for (int i = 0; i < M; ++i) {
+        __m256d th = _mm256_load_pd(&bh[i * kSimdLane]);
+        __m256d tl = _mm256_load_pd(&bl[i * kSimdLane]);
+        if (nounit) {
+            const T aii = A_(i, i);
+            __m256d aih = _mm256_set1_pd(aii.limbs[0]);
+            __m256d ail = _mm256_set1_pd(aii.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(th, tl, aih, ail, nh, nl);
+            th = nh; tl = nl;
+        }
+        for (int k = i + 1; k < M; ++k) {
+            const T aki = A_(k, i);
+            __m256d akh = _mm256_set1_pd(aki.limbs[0]);
+            __m256d akl = _mm256_set1_pd(aki.limbs[1]);
+            __m256d bkh = _mm256_load_pd(&bh[k * kSimdLane]);
+            __m256d bkl = _mm256_load_pd(&bl[k * kSimdLane]);
+            __m256d ph, pl;
+            simd_dd::dd_mul(akh, akl, bkh, bkl, ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(th, tl, ph, pl, nh, nl);
+            th = nh; tl = nl;
+        }
+        __m256d nh, nl;
+        simd_dd::dd_mul(ah, al, th, tl, nh, nl);
+        _mm256_store_pd(&bh[i * kSimdLane], nh);
+        _mm256_store_pd(&bl[i * kSimdLane], nl);
+    }
+}
+
+/* SIMD LUT: for i = M-1..0: t = B(i); if nounit: t *= A(i,i);
+ * for k<i: t += A(k,i)·B(k); B(i) = alpha·t. */
+inline void simd_trmm_lut(int M, const T *a, int lda, T alpha, int nounit,
+                          double *bh, double *bl)
+{
+    const __m256d ah = _mm256_set1_pd(alpha.limbs[0]);
+    const __m256d al = _mm256_set1_pd(alpha.limbs[1]);
+    for (int i = M - 1; i >= 0; --i) {
+        __m256d th = _mm256_load_pd(&bh[i * kSimdLane]);
+        __m256d tl = _mm256_load_pd(&bl[i * kSimdLane]);
+        if (nounit) {
+            const T aii = A_(i, i);
+            __m256d aih = _mm256_set1_pd(aii.limbs[0]);
+            __m256d ail = _mm256_set1_pd(aii.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(th, tl, aih, ail, nh, nl);
+            th = nh; tl = nl;
+        }
+        for (int k = 0; k < i; ++k) {
+            const T aki = A_(k, i);
+            __m256d akh = _mm256_set1_pd(aki.limbs[0]);
+            __m256d akl = _mm256_set1_pd(aki.limbs[1]);
+            __m256d bkh = _mm256_load_pd(&bh[k * kSimdLane]);
+            __m256d bkl = _mm256_load_pd(&bl[k * kSimdLane]);
+            __m256d ph, pl;
+            simd_dd::dd_mul(akh, akl, bkh, bkl, ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(th, tl, ph, pl, nh, nl);
+            th = nh; tl = nl;
+        }
+        __m256d nh, nl;
+        simd_dd::dd_mul(ah, al, th, tl, nh, nl);
+        _mm256_store_pd(&bh[i * kSimdLane], nh);
+        _mm256_store_pd(&bl[i * kSimdLane], nl);
+    }
+}
+
+enum trmm_simd_op { SLLN, SLUN, SLLT, SLUT };
+
+inline void mtrmm_simd_diag(trmm_simd_op op, int j_start, int j_end,
+                            int M, T alpha,
+                            const T *a, int lda, T *b, int ldb, int nounit)
+{
+    alignas(32) double bh[kMaxBlockM * kSimdLane];
+    alignas(32) double bl[kMaxBlockM * kSimdLane];
+    for (int j = j_start; j < j_end; j += kSimdLane) {
+        const int jc = (j_end - j < kSimdLane) ? (j_end - j) : kSimdLane;
+        pack_B_4col(M, b, ldb, j, jc, bh, bl);
+        switch (op) {
+        case SLLN: simd_trmm_lln(M, a, lda, alpha, nounit, bh, bl); break;
+        case SLUN: simd_trmm_lun(M, a, lda, alpha, nounit, bh, bl); break;
+        case SLLT: simd_trmm_llt(M, a, lda, alpha, nounit, bh, bl); break;
+        case SLUT: simd_trmm_lut(M, a, lda, alpha, nounit, bh, bl); break;
+        }
+        unpack_B_4col(M, b, ldb, j, jc, bh, bl);
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
 
 inline void mtrmm_lln_core(int j_start, int j_end, int M, T alpha,
                            const T *a, int lda, T *b, int ldb, int nounit)
@@ -263,6 +475,12 @@ void blocked_chunk_L(trmm_variant_L V, int j_start, int j_end,
         int ic = ((M - 1) / nb) * nb;
         while (ic >= 0) {
             const int ib = (M - ic < nb) ? (M - ic) : nb;
+#ifdef MBLAS_SIMD_DD
+            if (ib <= kMaxBlockM) {
+                mtrmm_simd_diag(SLLN, j_start, j_end, ib, alpha,
+                                &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            } else
+#endif
             mtrmm_lln_core(j_start, j_end, ib, alpha,
                            &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
             if (ic > 0) {
@@ -276,6 +494,12 @@ void blocked_chunk_L(trmm_variant_L V, int j_start, int j_end,
     } else if (V == LUN) {
         for (int ic = 0; ic < M; ic += nb) {
             const int ib = (M - ic < nb) ? (M - ic) : nb;
+#ifdef MBLAS_SIMD_DD
+            if (ib <= kMaxBlockM) {
+                mtrmm_simd_diag(SLUN, j_start, j_end, ib, alpha,
+                                &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            } else
+#endif
             mtrmm_lun_core(j_start, j_end, ib, alpha,
                            &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
             const int trailing = M - (ic + ib);
@@ -290,6 +514,12 @@ void blocked_chunk_L(trmm_variant_L V, int j_start, int j_end,
     } else if (V == LLT) {
         for (int ic = 0; ic < M; ic += nb) {
             const int ib = (M - ic < nb) ? (M - ic) : nb;
+#ifdef MBLAS_SIMD_DD
+            if (ib <= kMaxBlockM) {
+                mtrmm_simd_diag(SLLT, j_start, j_end, ib, alpha,
+                                &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            } else
+#endif
             mtrmm_llt_core(j_start, j_end, ib, alpha,
                            &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
             const int trailing = M - (ic + ib);
@@ -305,6 +535,12 @@ void blocked_chunk_L(trmm_variant_L V, int j_start, int j_end,
         int ic = ((M - 1) / nb) * nb;
         while (ic >= 0) {
             const int ib = (M - ic < nb) ? (M - ic) : nb;
+#ifdef MBLAS_SIMD_DD
+            if (ib <= kMaxBlockM) {
+                mtrmm_simd_diag(SLUT, j_start, j_end, ib, alpha,
+                                &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            } else
+#endif
             mtrmm_lut_core(j_start, j_end, ib, alpha,
                            &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
             if (ic > 0) {
