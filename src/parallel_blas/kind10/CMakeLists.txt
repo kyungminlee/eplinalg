@@ -22,6 +22,9 @@ set(_kernels
     esyrk.c
     ysyrk.c
     yherk.c
+    esyr2k.c
+    ysyr2k.c
+    yher2k.c
     esymm.c
     ysymm.c
     yhemm.c
