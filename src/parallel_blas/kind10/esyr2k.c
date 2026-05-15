@@ -141,7 +141,13 @@ void esyr2k_(
         return;
     }
 
-    const int nb = syr2k_nb();
+    /* TR-aware nb. The TR='T' diag kernel already saturates the x87
+     * 2-stream fadd ceiling (~2.7 GF/s on this CPU); the trailing-egemm
+     * panel split adds framing overhead that the gemm-vs-scalar win
+     * doesn't recover. For TR='N' the rank-2-update diag kernel is
+     * slower and the trailing egemm calls are a clear win, so the
+     * default 64 holds. Verified via nb sweep across N∈{128,256,512}. */
+    const int nb = (TR == 'T') ? N : syr2k_nb();
 
 #ifdef _OPENMP
     const int use_omp = (N >= ESYR2K_OMP_MIN && omp_get_max_threads() > 1);
