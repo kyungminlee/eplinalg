@@ -1,14 +1,28 @@
 /*
  * msymm — multifloats real (DD) symmetric matrix multiply.
- * Blocked: scalar diagonal + mgemm trailing.
+ *
+ * Blocked: AVX2 4-wide SIMD diagonal kernel + mgemm trailing update.
+ *
+ * SIMD design (mirrors mtrsm.cpp's diagonal-block strategy):
+ *   - Pack 4 columns of B and C into SoA stack scratch (bh/bl + ch/cl).
+ *   - Run the rank-1 i,k inner kernel with A as scalar broadcasts
+ *     and B,C as 4-wide SIMD lanes (4 columns of C updated in parallel).
+ *   - Unpack C back into the user's column-major C; B is read-only.
+ *
+ * Falls back to a scalar diag for the per-call tail (<4 columns) or
+ * when SIMD is disabled.
  */
-
 #include <cstddef>
 #include <cstdlib>
 #include <cctype>
 #include <multifloats.h>
 #ifdef _OPENMP
 #include <omp.h>
+#endif
+
+#ifdef MBLAS_SIMD_DD
+#include "mgemm_simd_kernel.h"
+#include <immintrin.h>
 #endif
 
 namespace mf = multifloats;
@@ -50,6 +64,145 @@ extern "C" void mgemm_(
 #define B_(i, j)  b[static_cast<std::size_t>(j) * ldb + (i)]
 #define C_(i, j)  c[static_cast<std::size_t>(j) * ldc + (i)]
 
+#ifdef MBLAS_SIMD_DD
+
+constexpr int kSimdLane = simd_dd::NR;   /* 4 */
+constexpr int kMaxBlockM = 256;
+
+/* Pack `count` cells from B[ic..ic+count, j_start..j_start+j_count)
+ * into SoA scratch [bh,bl][0..count-1, 0..3]. Zero-pad lanes ≥ j_count. */
+inline void pack_4col(int count, int row_start,
+                      const T *m, int ldm, int j_start, int j_count,
+                      double *h, double *l)
+{
+    for (int j = 0; j < j_count; ++j) {
+        const T *col = m + static_cast<std::size_t>(j_start + j) * ldm;
+        for (int i = 0; i < count; ++i) {
+            h[i * kSimdLane + j] = col[row_start + i].limbs[0];
+            l[i * kSimdLane + j] = col[row_start + i].limbs[1];
+        }
+    }
+    for (int j = j_count; j < kSimdLane; ++j)
+        for (int i = 0; i < count; ++i) {
+            h[i * kSimdLane + j] = 0.0;
+            l[i * kSimdLane + j] = 0.0;
+        }
+}
+
+inline void unpack_4col(int count, int row_start,
+                        T *m, int ldm, int j_start, int j_count,
+                        const double *h, const double *l)
+{
+    for (int j = 0; j < j_count; ++j) {
+        T *col = m + static_cast<std::size_t>(j_start + j) * ldm;
+        for (int i = 0; i < count; ++i) {
+            col[row_start + i].limbs[0] = h[i * kSimdLane + j];
+            col[row_start + i].limbs[1] = l[i * kSimdLane + j];
+        }
+    }
+}
+
+/* SIDE='L' symmetric-multiply diag-block kernel, 4 column lanes.
+ *
+ * For each i in the diag block (rows ic..ic+ib of A), apply the
+ * symmetric "read A(i,k) once, use twice" pattern:
+ *   temp1 = alpha · B[i,j]
+ *   For k in same-half of triangle (k<i for L; k>i for U):
+ *     C[k,j] += temp1 · A(i,k)            (off-diag scatter)
+ *     temp2  += B[k,j] · A(i,k)           (per-lane accumulator)
+ *   C[i,j] += temp1 · A(i,i) + alpha · temp2
+ *
+ * Packed scratch is block-relative: row index 0..ib-1 maps to absolute
+ * row ic+0..ic+ib-1. A is read via absolute (i,k) indices.
+ */
+inline void simd_symm_diag_L(int ic, int ib, T alpha,
+                             const T *a, int lda,
+                             const double *bh, const double *bl,
+                             double *ch, double *cl,
+                             char UPLO)
+{
+    const __m256d alpha_h = _mm256_set1_pd(alpha.limbs[0]);
+    const __m256d alpha_l = _mm256_set1_pd(alpha.limbs[1]);
+
+    auto body = [&](int i) {
+        const int ir = i - ic;
+        __m256d bi_h = _mm256_load_pd(&bh[ir * kSimdLane]);
+        __m256d bi_l = _mm256_load_pd(&bl[ir * kSimdLane]);
+        __m256d t1h, t1l;
+        simd_dd::dd_mul(alpha_h, alpha_l, bi_h, bi_l, t1h, t1l);
+        __m256d t2h = _mm256_setzero_pd();
+        __m256d t2l = _mm256_setzero_pd();
+
+        const int k_lo = (UPLO == 'L') ? ic       : i + 1;
+        const int k_hi = (UPLO == 'L') ? i        : ic + ib;
+        for (int k = k_lo; k < k_hi; ++k) {
+            const int kr = k - ic;
+            const T aik = A_(i, k);
+            __m256d aih = _mm256_set1_pd(aik.limbs[0]);
+            __m256d ail = _mm256_set1_pd(aik.limbs[1]);
+            /* C[k,j] += temp1 · A(i,k) */
+            __m256d ck_h = _mm256_load_pd(&ch[kr * kSimdLane]);
+            __m256d ck_l = _mm256_load_pd(&cl[kr * kSimdLane]);
+            __m256d ph, pl;
+            simd_dd::dd_mul(t1h, t1l, aih, ail, ph, pl);
+            __m256d new_ckh, new_ckl;
+            simd_dd::dd_add(ck_h, ck_l, ph, pl, new_ckh, new_ckl);
+            _mm256_store_pd(&ch[kr * kSimdLane], new_ckh);
+            _mm256_store_pd(&cl[kr * kSimdLane], new_ckl);
+            /* temp2 += B[k,j] · A(i,k) */
+            __m256d bk_h = _mm256_load_pd(&bh[kr * kSimdLane]);
+            __m256d bk_l = _mm256_load_pd(&bl[kr * kSimdLane]);
+            __m256d qh, ql;
+            simd_dd::dd_mul(bk_h, bk_l, aih, ail, qh, ql);
+            __m256d new_t2h, new_t2l;
+            simd_dd::dd_add(t2h, t2l, qh, ql, new_t2h, new_t2l);
+            t2h = new_t2h; t2l = new_t2l;
+        }
+        /* Diagonal cell: C[i,j] += temp1·A(i,i) + alpha·temp2 */
+        const T aii = A_(i, i);
+        __m256d aii_h = _mm256_set1_pd(aii.limbs[0]);
+        __m256d aii_l = _mm256_set1_pd(aii.limbs[1]);
+        __m256d diag_h, diag_l;
+        simd_dd::dd_mul(t1h, t1l, aii_h, aii_l, diag_h, diag_l);
+        __m256d at2h, at2l;
+        simd_dd::dd_mul(alpha_h, alpha_l, t2h, t2l, at2h, at2l);
+        __m256d sum_h, sum_l;
+        simd_dd::dd_add(diag_h, diag_l, at2h, at2l, sum_h, sum_l);
+        __m256d ci_h = _mm256_load_pd(&ch[ir * kSimdLane]);
+        __m256d ci_l = _mm256_load_pd(&cl[ir * kSimdLane]);
+        __m256d new_cih, new_cil;
+        simd_dd::dd_add(ci_h, ci_l, sum_h, sum_l, new_cih, new_cil);
+        _mm256_store_pd(&ch[ir * kSimdLane], new_cih);
+        _mm256_store_pd(&cl[ir * kSimdLane], new_cil);
+    };
+
+    if (UPLO == 'L') for (int i = ic;          i < ic + ib;  ++i) body(i);
+    else             for (int i = ic + ib - 1; i >= ic;      --i) body(i);
+}
+
+/* Drive the SIMD diag over a column range [0..N) in 4-column panels. */
+inline void simd_symm_diag_L_panels(int ic, int ib, int N, T alpha,
+                                    const T *a, int lda,
+                                    const T *b, int ldb,
+                                    T *c, int ldc, char UPLO)
+{
+    alignas(32) double bh[kMaxBlockM * kSimdLane];
+    alignas(32) double bl[kMaxBlockM * kSimdLane];
+    alignas(32) double ch[kMaxBlockM * kSimdLane];
+    alignas(32) double cl[kMaxBlockM * kSimdLane];
+    for (int j = 0; j < N; j += kSimdLane) {
+        const int jc = (N - j < kSimdLane) ? (N - j) : kSimdLane;
+        pack_4col(ib, ic, b, ldb, j, jc, bh, bl);
+        pack_4col(ib, ic, c, ldc, j, jc, ch, cl);
+        simd_symm_diag_L(ic, ib, alpha, a, lda, bh, bl, ch, cl, UPLO);
+        unpack_4col(ib, ic, c, ldc, j, jc, ch, cl);
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
+
+/* Scalar fallback diag for SIDE='L' (also used when SIMD off or
+ * block too big for stack scratch). */
 void symm_diag_add_L(int ic, int ib, int N, T alpha,
                      const T *a, int lda, const T *b, int ldb,
                      T *c, int ldc, char UPLO)
@@ -113,6 +266,19 @@ void symm_diag_add_R(int jc, int jb, int M, T alpha,
     }
 }
 
+inline void diag_L_dispatch(int ic, int ib, int N, T alpha,
+                            const T *a, int lda, const T *b, int ldb,
+                            T *c, int ldc, char UPLO)
+{
+#ifdef MBLAS_SIMD_DD
+    if (ib <= kMaxBlockM) {
+        simd_symm_diag_L_panels(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
+        return;
+    }
+#endif
+    symm_diag_add_L(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
+}
+
 } /* anonymous namespace */
 
 extern "C" void msymm_(
@@ -172,7 +338,7 @@ extern "C" void msymm_(
                            &A_(ic, 0), &lda, &B_(0, 0), &ldb,
                            &one_dd, &C_(ic, 0), &ldc, 1, 1);
                 }
-                symm_diag_add_L(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
+                diag_L_dispatch(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
                 const int trailing = M - ic - ib;
                 if (trailing > 0) {
                     mgemm_(TN, NN, &ib, &N, &trailing, &alpha,
@@ -185,7 +351,7 @@ extern "C" void msymm_(
                            &A_(0, ic), &lda, &B_(0, 0), &ldb,
                            &one_dd, &C_(ic, 0), &ldc, 1, 1);
                 }
-                symm_diag_add_L(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
+                diag_L_dispatch(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
                 const int trailing = M - ic - ib;
                 if (trailing > 0) {
                     mgemm_(NN, NN, &ib, &N, &trailing, &alpha,
