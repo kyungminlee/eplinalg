@@ -333,6 +333,204 @@ inline void mtrmm_lut_core(int j_start, int j_end, int M, T alpha,
 
 /* ── SIDE = 'R' row-range cores ─────────────────────────────────── */
 
+#ifdef MBLAS_SIMD_DD
+
+/* Forward decls for scalar tails (defined below). */
+inline void mtrmm_rln_core(int, int, int, T, const T*, int, T*, int, int);
+inline void mtrmm_run_core(int, int, int, T, const T*, int, T*, int, int);
+inline void mtrmm_rlt_core(int, int, int, T, const T*, int, T*, int, int);
+inline void mtrmm_rut_core(int, int, int, T, const T*, int, T*, int, int);
+
+inline void load_4cell_soa(const T *col, int ofs, __m256d &h, __m256d &l)
+{
+    __m256d v0 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs]));
+    __m256d v1 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs + 2]));
+    __m256d lo = _mm256_unpacklo_pd(v0, v1);
+    __m256d hi = _mm256_unpackhi_pd(v0, v1);
+    h = _mm256_permute4x64_pd(lo, 0xD8);
+    l = _mm256_permute4x64_pd(hi, 0xD8);
+}
+
+inline void store_4cell_soa(T *col, int ofs, __m256d h, __m256d l)
+{
+    __m256d lo = _mm256_unpacklo_pd(h, l);
+    __m256d hi = _mm256_unpackhi_pd(h, l);
+    __m256d v0 = _mm256_permute2f128_pd(lo, hi, 0x20);
+    __m256d v1 = _mm256_permute2f128_pd(lo, hi, 0x31);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs]),     v0);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs + 2]), v1);
+}
+
+/* R-side trmm SIMD: 4-row chunks of B[i_start:i_end, 0..N).
+ * For each 4-row chunk, run the trmm column-by-column with broadcast A. */
+inline void simd_trmm_r4_rln(int ib, int N, T alpha, const T *a, int lda,
+                             T *b, int ldb, int nounit)
+{
+    for (int j = 0; j < N; ++j) {
+        T *bj = b + static_cast<std::size_t>(j) * ldb;
+        T t = alpha;
+        if (nounit) t = t * A_(j, j);
+        __m256d bjh, bjl;
+        load_4cell_soa(bj, ib, bjh, bjl);
+        if (!dd_isone(t)) {
+            __m256d th = _mm256_set1_pd(t.limbs[0]);
+            __m256d tl = _mm256_set1_pd(t.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bjh, bjl, th, tl, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        for (int k = j + 1; k < N; ++k) {
+            const T akj_v = A_(k, j);
+            if (dd_iszero(akj_v)) continue;
+            const T akj = alpha * akj_v;
+            __m256d akh = _mm256_set1_pd(akj.limbs[0]);
+            __m256d akl = _mm256_set1_pd(akj.limbs[1]);
+            const T *bk = b + static_cast<std::size_t>(k) * ldb;
+            __m256d bkh, bkl;
+            load_4cell_soa(bk, ib, bkh, bkl);
+            __m256d ph, pl;
+            simd_dd::dd_mul(akh, akl, bkh, bkl, ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(bjh, bjl, ph, pl, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        store_4cell_soa(bj, ib, bjh, bjl);
+    }
+}
+
+inline void simd_trmm_r4_run(int ib, int N, T alpha, const T *a, int lda,
+                             T *b, int ldb, int nounit)
+{
+    for (int j = N - 1; j >= 0; --j) {
+        T *bj = b + static_cast<std::size_t>(j) * ldb;
+        T t = alpha;
+        if (nounit) t = t * A_(j, j);
+        __m256d bjh, bjl;
+        load_4cell_soa(bj, ib, bjh, bjl);
+        if (!dd_isone(t)) {
+            __m256d th = _mm256_set1_pd(t.limbs[0]);
+            __m256d tl = _mm256_set1_pd(t.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bjh, bjl, th, tl, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        for (int k = 0; k < j; ++k) {
+            const T akj_v = A_(k, j);
+            if (dd_iszero(akj_v)) continue;
+            const T akj = alpha * akj_v;
+            __m256d akh = _mm256_set1_pd(akj.limbs[0]);
+            __m256d akl = _mm256_set1_pd(akj.limbs[1]);
+            const T *bk = b + static_cast<std::size_t>(k) * ldb;
+            __m256d bkh, bkl;
+            load_4cell_soa(bk, ib, bkh, bkl);
+            __m256d ph, pl;
+            simd_dd::dd_mul(akh, akl, bkh, bkl, ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(bjh, bjl, ph, pl, nh, nl);
+            bjh = nh; bjl = nl;
+        }
+        store_4cell_soa(bj, ib, bjh, bjl);
+    }
+}
+
+/* For RLT/RUT, the column-update order goes k=N-1..0 (RLT) or 0..N-1 (RUT);
+ * for each k we update columns j != k by adding α·A(j,k)·B(:,k), then scale B(:,k)
+ * by α (×A(k,k) if nounit). Need to read B(:,k) before scaling. */
+inline void simd_trmm_r4_rlt(int ib, int N, T alpha, const T *a, int lda,
+                             T *b, int ldb, int nounit)
+{
+    for (int k = N - 1; k >= 0; --k) {
+        const T *bk = b + static_cast<std::size_t>(k) * ldb;
+        __m256d bkh, bkl;
+        load_4cell_soa(bk, ib, bkh, bkl);  /* original B(:,k) before scaling */
+        for (int j = k + 1; j < N; ++j) {
+            const T ajk_v = A_(j, k);
+            if (dd_iszero(ajk_v)) continue;
+            const T ajk = alpha * ajk_v;
+            __m256d ah = _mm256_set1_pd(ajk.limbs[0]);
+            __m256d al = _mm256_set1_pd(ajk.limbs[1]);
+            T *bj = b + static_cast<std::size_t>(j) * ldb;
+            __m256d bjh, bjl;
+            load_4cell_soa(bj, ib, bjh, bjl);
+            __m256d ph, pl;
+            simd_dd::dd_mul(ah, al, bkh, bkl, ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(bjh, bjl, ph, pl, nh, nl);
+            store_4cell_soa(bj, ib, nh, nl);
+        }
+        T t = alpha;
+        if (nounit) t = t * A_(k, k);
+        if (!dd_isone(t)) {
+            __m256d th = _mm256_set1_pd(t.limbs[0]);
+            __m256d tl = _mm256_set1_pd(t.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bkh, bkl, th, tl, nh, nl);
+            store_4cell_soa(const_cast<T*>(bk), ib, nh, nl);
+        }
+    }
+}
+
+inline void simd_trmm_r4_rut(int ib, int N, T alpha, const T *a, int lda,
+                             T *b, int ldb, int nounit)
+{
+    for (int k = 0; k < N; ++k) {
+        const T *bk = b + static_cast<std::size_t>(k) * ldb;
+        __m256d bkh, bkl;
+        load_4cell_soa(bk, ib, bkh, bkl);
+        for (int j = 0; j < k; ++j) {
+            const T ajk_v = A_(j, k);
+            if (dd_iszero(ajk_v)) continue;
+            const T ajk = alpha * ajk_v;
+            __m256d ah = _mm256_set1_pd(ajk.limbs[0]);
+            __m256d al = _mm256_set1_pd(ajk.limbs[1]);
+            T *bj = b + static_cast<std::size_t>(j) * ldb;
+            __m256d bjh, bjl;
+            load_4cell_soa(bj, ib, bjh, bjl);
+            __m256d ph, pl;
+            simd_dd::dd_mul(ah, al, bkh, bkl, ph, pl);
+            __m256d nh, nl;
+            simd_dd::dd_add(bjh, bjl, ph, pl, nh, nl);
+            store_4cell_soa(bj, ib, nh, nl);
+        }
+        T t = alpha;
+        if (nounit) t = t * A_(k, k);
+        if (!dd_isone(t)) {
+            __m256d th = _mm256_set1_pd(t.limbs[0]);
+            __m256d tl = _mm256_set1_pd(t.limbs[1]);
+            __m256d nh, nl;
+            simd_dd::dd_mul(bkh, bkl, th, tl, nh, nl);
+            store_4cell_soa(const_cast<T*>(bk), ib, nh, nl);
+        }
+    }
+}
+
+enum trmm_r_op { RLN_OP, RUN_OP, RLT_OP, RUT_OP };
+
+inline void mtrmm_simd_diag_R(trmm_r_op op, int i_start, int i_end, int N, T alpha,
+                              const T *a, int lda, T *b, int ldb, int nounit)
+{
+    const int i4_end = i_start + ((i_end - i_start) & ~3);
+    for (int ib = i_start; ib < i4_end; ib += 4) {
+        switch (op) {
+        case RLN_OP: simd_trmm_r4_rln(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        case RUN_OP: simd_trmm_r4_run(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        case RLT_OP: simd_trmm_r4_rlt(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        case RUT_OP: simd_trmm_r4_rut(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        }
+    }
+    /* Scalar tail rows */
+    if (i4_end < i_end) {
+        switch (op) {
+        case RLN_OP: mtrmm_rln_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit); break;
+        case RUN_OP: mtrmm_run_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit); break;
+        case RLT_OP: mtrmm_rlt_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit); break;
+        case RUT_OP: mtrmm_rut_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit); break;
+        }
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
+
 inline void mtrmm_rln_core(int i_start, int i_end, int N, T alpha,
                            const T *a, int lda, T *b, int ldb, int nounit)
 {
@@ -591,8 +789,13 @@ void blocked_chunk_R(trmm_variant_R V, int i_start, int i_end,
     if (V == RLN) {
         for (int jc = 0; jc < N; jc += nb) {
             const int jb = (N - jc < nb) ? (N - jc) : nb;
+#ifdef MBLAS_SIMD_DD
+            mtrmm_simd_diag_R(RLN_OP, i_start, i_end, jb, alpha,
+                              &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#else
             mtrmm_rln_core(i_start, i_end, jb, alpha,
                            &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#endif
             const int trailing = N - (jc + jb);
             if (trailing > 0) {
                 const int k0 = jc + jb;
@@ -606,8 +809,13 @@ void blocked_chunk_R(trmm_variant_R V, int i_start, int i_end,
         int jc = ((N - 1) / nb) * nb;
         while (jc >= 0) {
             const int jb = (N - jc < nb) ? (N - jc) : nb;
+#ifdef MBLAS_SIMD_DD
+            mtrmm_simd_diag_R(RUN_OP, i_start, i_end, jb, alpha,
+                              &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#else
             mtrmm_run_core(i_start, i_end, jb, alpha,
                            &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#endif
             if (jc > 0) {
                 mgemm_(NN, NN, &my_M, &jb, &jc, &alpha,
                        B_chunk, &ldb,
@@ -620,8 +828,13 @@ void blocked_chunk_R(trmm_variant_R V, int i_start, int i_end,
         int jc = ((N - 1) / nb) * nb;
         while (jc >= 0) {
             const int jb = (N - jc < nb) ? (N - jc) : nb;
+#ifdef MBLAS_SIMD_DD
+            mtrmm_simd_diag_R(RLT_OP, i_start, i_end, jb, alpha,
+                              &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#else
             mtrmm_rlt_core(i_start, i_end, jb, alpha,
                            &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#endif
             if (jc > 0) {
                 mgemm_(NN, TN, &my_M, &jb, &jc, &alpha,
                        B_chunk, &ldb,
@@ -633,8 +846,13 @@ void blocked_chunk_R(trmm_variant_R V, int i_start, int i_end,
     } else { /* RUT */
         for (int jc = 0; jc < N; jc += nb) {
             const int jb = (N - jc < nb) ? (N - jc) : nb;
+#ifdef MBLAS_SIMD_DD
+            mtrmm_simd_diag_R(RUT_OP, i_start, i_end, jb, alpha,
+                              &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#else
             mtrmm_rut_core(i_start, i_end, jb, alpha,
                            &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#endif
             const int trailing = N - (jc + jb);
             if (trailing > 0) {
                 const int k0 = jc + jb;
@@ -729,6 +947,15 @@ extern "C" void mtrmm_(
         }
     } else {
         const int use_blocked = (N >= 2 * nb);
+#ifdef MBLAS_SIMD_DD
+        if (!use_blocked) {
+            trmm_r_op op = RLN_OP;
+            if (TR == 'N') op = (UPLO == 'L') ? RLN_OP : RUN_OP;
+            else           op = (UPLO == 'L') ? RLT_OP : RUT_OP;
+            mtrmm_simd_diag_R(op, 0, M, N, alpha, a, lda, b, ldb, nounit);
+            return;
+        }
+#endif
         if (TR == 'N') {
             if (UPLO == 'L') {
                 if (use_blocked) blocked_dispatch_R(RLN, M, N, alpha, a, lda, b, ldb, nounit);
