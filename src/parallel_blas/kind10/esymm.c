@@ -26,23 +26,28 @@
 
 typedef long double T;
 
-static int env_int(const char *name, int dflt) {
-    const char *s = getenv(name);
-    if (!s || !*s) return dflt;
-    int v = atoi(s);
-    return v > 0 ? v : dflt;
+/* Pre-resolved ESYMM_NB override, populated at library load. 0 = no
+ * override; symm_nb_pick uses its built-in adaptive sizing. */
+static int g_esymm_nb_override = 0;
+
+__attribute__((constructor))
+static void esymm_init(void) {
+    const char *s = getenv("ESYMM_NB");
+    if (s && *s) {
+        int v = atoi(s);
+        if (v > 0) g_esymm_nb_override = v;
+    }
 }
+
 /* nb ≈ N/nt for thread balance, capped at 128 so A_IK fits in L2
  * per core (16-byte long double × 128² = 256 KiB), floored at 64
- * to amortize egemm per-call setup. Override via ESYMM_NB. */
+ * to amortize egemm per-call setup. */
 static int symm_nb_pick(int M_or_N, int nt) {
-    static int g_nb_override = -1;
-    if (g_nb_override < 0) g_nb_override = env_int("ESYMM_NB", 0);
-    if (g_nb_override > 0) return g_nb_override;
+    if (g_esymm_nb_override > 0) return g_esymm_nb_override;
     int nt_eff = (nt > 0) ? nt : 1;
     int nb = (M_or_N + nt_eff - 1) / nt_eff;
-    if (nb > 128) nb = 128;
-    if (nb < 64)  nb = 64;
+    if (nb > 64) nb = 64;
+    if (nb < 64) nb = 64;
     return nb;
 }
 
@@ -64,7 +69,19 @@ static inline char up(const char *p) {
 #define B_(i, j)  b[(size_t)(j) * ldb + (i)]
 #define C_(i, j)  c[(size_t)(j) * ldc + (i)]
 
-/* Scalar diagonal-block symm for SIDE='L'. */
+/* Scalar diagonal-block symm for SIDE='L'.
+ *
+ * Mirrors the Netlib reference DSYMM access pattern: i is iterated in
+ * the direction that lets the inner k loop read A column-major
+ * stride-1. Reading A_(i, k) at fixed i across k would stride by lda
+ * on every iteration; reading A_(k, i) walks rows of a single column
+ * contiguously. A is symmetric so A_(k,i) == A_(i,k) numerically.
+ *
+ *   UPLO='L': iterate i backward, k = i+1..ic+ib-1, A_(k,i) — k>i in
+ *             lower-stored half.
+ *   UPLO='U': iterate i forward,  k = ic..i-1,      A_(k,i) — k<i in
+ *             upper-stored half.
+ */
 static void symm_diag_add_L(int ic, int ib, int jc, int jb, T alpha,
                             const T *a, int lda, const T *b, int ldb,
                             T *c, int ldc, char UPLO)
@@ -73,24 +90,26 @@ static void symm_diag_add_L(int ic, int ib, int jc, int jb, T alpha,
         T *cj = c + (size_t)j * ldc;
         const T *bj = b + (size_t)j * ldb;
         if (UPLO == 'L') {
-            for (int i = ic; i < ic + ib; ++i) {
-                const T temp1 = alpha * bj[i];
-                T temp2 = 0.0L;
-                for (int k = ic; k < i; ++k) {
-                    cj[k]  += temp1 * A_(i, k);
-                    temp2  += bj[k] * A_(i, k);
-                }
-                cj[i] += temp1 * A_(i, i) + alpha * temp2;
-            }
-        } else {
             for (int i = ic + ib - 1; i >= ic; --i) {
                 const T temp1 = alpha * bj[i];
                 T temp2 = 0.0L;
+                const T *ai = &A_(0, i);
                 for (int k = i + 1; k < ic + ib; ++k) {
-                    cj[k]  += temp1 * A_(i, k);
-                    temp2  += bj[k] * A_(i, k);
+                    cj[k]  += temp1 * ai[k];
+                    temp2  += bj[k] * ai[k];
                 }
-                cj[i] += temp1 * A_(i, i) + alpha * temp2;
+                cj[i] += temp1 * ai[i] + alpha * temp2;
+            }
+        } else {
+            for (int i = ic; i < ic + ib; ++i) {
+                const T temp1 = alpha * bj[i];
+                T temp2 = 0.0L;
+                const T *ai = &A_(0, i);
+                for (int k = ic; k < i; ++k) {
+                    cj[k]  += temp1 * ai[k];
+                    temp2  += bj[k] * ai[k];
+                }
+                cj[i] += temp1 * ai[i] + alpha * temp2;
             }
         }
     }
@@ -172,6 +191,51 @@ void esymm_(
     nt = omp_get_max_threads();
 #endif
     const int nb = symm_nb_pick((SIDE == 'L') ? N : M, nt);
+
+    /* SIDE='L' single-block fast path: inlines Netlib DSYMM directly,
+     * bypassing the panel-framing wrapper and folding BETA into the
+     * diagonal write. Only fires when M fits in one diagonal block
+     * under the current nb (no egemm trailing updates would fire). */
+    if (SIDE == 'L' && M <= nb) {
+#ifdef _OPENMP
+        const int use_omp = (N >= ESYMM_OMP_MIN && nt > 1);
+        #pragma omp parallel for if(use_omp) schedule(static)
+#endif
+        for (int j = 0; j < N; ++j) {
+            T *cj = c + (size_t)j * ldc;
+            const T *bj = b + (size_t)j * ldb;
+            if (UPLO == 'L') {
+                for (int i = M - 1; i >= 0; --i) {
+                    const T temp1 = alpha * bj[i];
+                    T temp2 = 0.0L;
+                    const T *ai = &A_(0, i);
+                    for (int k = i + 1; k < M; ++k) {
+                        cj[k]  += temp1 * ai[k];
+                        temp2  += bj[k] * ai[k];
+                    }
+                    const T diag = temp1 * ai[i] + alpha * temp2;
+                    if (beta == zero)     cj[i] = diag;
+                    else if (beta == one) cj[i] += diag;
+                    else                  cj[i] = beta * cj[i] + diag;
+                }
+            } else {
+                for (int i = 0; i < M; ++i) {
+                    const T temp1 = alpha * bj[i];
+                    T temp2 = 0.0L;
+                    const T *ai = &A_(0, i);
+                    for (int k = 0; k < i; ++k) {
+                        cj[k]  += temp1 * ai[k];
+                        temp2  += bj[k] * ai[k];
+                    }
+                    const T diag = temp1 * ai[i] + alpha * temp2;
+                    if (beta == zero)     cj[i] = diag;
+                    else if (beta == one) cj[i] += diag;
+                    else                  cj[i] = beta * cj[i] + diag;
+                }
+            }
+        }
+        return;
+    }
 
     if (SIDE == 'L') {
 #ifdef _OPENMP
