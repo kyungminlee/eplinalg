@@ -56,16 +56,12 @@ soa_load4(const double *p, __m256d &hi, __m256d &lo)
 static inline __attribute__((always_inline)) void
 soa_store4(double *p, __m256d hi, __m256d lo)
 {
-    __m256d hp = _mm256_permute4x64_pd(hi, 0xD8);  /* [h0, h2, h1, h3] */
-    __m256d lp = _mm256_permute4x64_pd(lo, 0xD8);  /* [l0, l2, l1, l3] */
-    __m256d a01 = _mm256_unpacklo_pd(hp, lp);      /* [h0, l0, h2, l2] */
-    __m256d a23 = _mm256_unpackhi_pd(hp, lp);      /* [h1, l1, h3, l3] */
-    /* a01 holds elements 0 and 2 interleaved with their lo's; we need
-     * to write [h0,l0,h1,l1,h2,l2,h3,l3] to memory. Reshuffle: */
-    __m256d out0 = _mm256_permute2f128_pd(a01, a23, 0x20); /* [h0,l0,h1,l1] */
-    __m256d out1 = _mm256_permute2f128_pd(a01, a23, 0x31); /* [h2,l2,h3,l3] */
-    _mm256_storeu_pd(p,     out0);
-    _mm256_storeu_pd(p + 4, out1);
+    __m256d hp = _mm256_permute4x64_pd(hi, 0xD8);  /* [h0,h2,h1,h3] */
+    __m256d lp = _mm256_permute4x64_pd(lo, 0xD8);  /* [l0,l2,l1,l3] */
+    __m256d a01 = _mm256_unpacklo_pd(hp, lp);      /* [h0,l0,h1,l1] */
+    __m256d a23 = _mm256_unpackhi_pd(hp, lp);      /* [h2,l2,h3,l3] */
+    _mm256_storeu_pd(p,     a01);
+    _mm256_storeu_pd(p + 4, a23);
 }
 #endif
 
