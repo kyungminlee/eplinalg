@@ -1,0 +1,5 @@
+       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+           64          0.2847             0.0768       3.71x
+          128          0.6585             0.0837       7.87x
+          256          0.9464             0.0947       9.99x
+wrote bench_msymm.json
