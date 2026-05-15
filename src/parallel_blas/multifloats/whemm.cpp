@@ -1,7 +1,10 @@
 /*
  * whemm — multifloats complex (DD) Hermitian matrix multiply.
- * Blocked + wgemm trailing. Reflection gemms use 'C' (conjugate
- * transpose); scalar diagonal kernel keeps the diagonal real.
+ *
+ * AVX2 4-wide SIMD diag kernel + wgemm trailing. Same pack/unpack
+ * shape as wsymm; the differences are (a) A(i,k) is conjugated
+ * when used to update the off-diagonal C cell, since A is stored
+ * Hermitian, and (b) the diagonal element A(i,i) is forced real.
  */
 
 #include <cstddef>
@@ -10,6 +13,11 @@
 #include <multifloats.h>
 #ifdef _OPENMP
 #include <omp.h>
+#endif
+
+#ifdef MBLAS_SIMD_DD
+#include "mgemm_simd_kernel.h"
+#include <immintrin.h>
 #endif
 
 namespace mf = multifloats;
@@ -65,6 +73,192 @@ extern "C" void wgemm_(
 #define A_(i, j)  a[static_cast<std::size_t>(j) * lda + (i)]
 #define B_(i, j)  b[static_cast<std::size_t>(j) * ldb + (i)]
 #define C_(i, j)  c[static_cast<std::size_t>(j) * ldc + (i)]
+
+#ifdef MBLAS_SIMD_DD
+
+constexpr int kSimdLane = simd_dd::NR;
+constexpr int kMaxBlockM = 128;
+
+inline void pack_4col_cdd(int count, int row_start,
+                          const T *m, int ldm, int j_start, int j_count,
+                          double *rh, double *rl, double *ih, double *il)
+{
+    for (int j = 0; j < j_count; ++j) {
+        const T *col = m + static_cast<std::size_t>(j_start + j) * ldm;
+        for (int i = 0; i < count; ++i) {
+            rh[i * kSimdLane + j] = col[row_start + i].re.limbs[0];
+            rl[i * kSimdLane + j] = col[row_start + i].re.limbs[1];
+            ih[i * kSimdLane + j] = col[row_start + i].im.limbs[0];
+            il[i * kSimdLane + j] = col[row_start + i].im.limbs[1];
+        }
+    }
+    for (int j = j_count; j < kSimdLane; ++j)
+        for (int i = 0; i < count; ++i) {
+            rh[i * kSimdLane + j] = 0.0; rl[i * kSimdLane + j] = 0.0;
+            ih[i * kSimdLane + j] = 0.0; il[i * kSimdLane + j] = 0.0;
+        }
+}
+
+inline void unpack_4col_cdd(int count, int row_start,
+                            T *m, int ldm, int j_start, int j_count,
+                            const double *rh, const double *rl,
+                            const double *ih, const double *il)
+{
+    for (int j = 0; j < j_count; ++j) {
+        T *col = m + static_cast<std::size_t>(j_start + j) * ldm;
+        for (int i = 0; i < count; ++i) {
+            col[row_start + i].re.limbs[0] = rh[i * kSimdLane + j];
+            col[row_start + i].re.limbs[1] = rl[i * kSimdLane + j];
+            col[row_start + i].im.limbs[0] = ih[i * kSimdLane + j];
+            col[row_start + i].im.limbs[1] = il[i * kSimdLane + j];
+        }
+    }
+}
+
+inline void broadcast_cdd(const T &v,
+                          __m256d &rh, __m256d &rl,
+                          __m256d &ih, __m256d &il)
+{
+    rh = _mm256_set1_pd(v.re.limbs[0]); rl = _mm256_set1_pd(v.re.limbs[1]);
+    ih = _mm256_set1_pd(v.im.limbs[0]); il = _mm256_set1_pd(v.im.limbs[1]);
+}
+
+/* SIDE='L' Hermitian diag-block kernel.
+ *
+ * Differs from wsymm's by:
+ *  - cj[k] += temp1 · conj(A(i,k))   — A's im negated for this product
+ *  - diagonal A(i,i) is real (im=0)  — only A.re used
+ */
+inline void simd_hemm_diag_L(int ic, int ib, T alpha,
+                             const T *a, int lda,
+                             const double *brh, const double *brl,
+                             const double *bih, const double *bil,
+                             double *crh, double *crl,
+                             double *cih, double *cil,
+                             char UPLO)
+{
+    __m256d a_rh, a_rl, a_ih, a_il;
+    broadcast_cdd(alpha, a_rh, a_rl, a_ih, a_il);
+    const __m256d zero_v = _mm256_setzero_pd();
+
+    auto body = [&](int i) {
+        const int ir = i - ic;
+        __m256d bi_rh = _mm256_load_pd(&brh[ir * kSimdLane]);
+        __m256d bi_rl = _mm256_load_pd(&brl[ir * kSimdLane]);
+        __m256d bi_ih = _mm256_load_pd(&bih[ir * kSimdLane]);
+        __m256d bi_il = _mm256_load_pd(&bil[ir * kSimdLane]);
+        __m256d t1rh, t1rl, t1ih, t1il;
+        simd_dd::cdd_mul(a_rh, a_rl, a_ih, a_il,
+                         bi_rh, bi_rl, bi_ih, bi_il,
+                         t1rh, t1rl, t1ih, t1il);
+        __m256d t2rh = _mm256_setzero_pd();
+        __m256d t2rl = _mm256_setzero_pd();
+        __m256d t2ih = _mm256_setzero_pd();
+        __m256d t2il = _mm256_setzero_pd();
+
+        const int k_lo = (UPLO == 'L') ? ic       : i + 1;
+        const int k_hi = (UPLO == 'L') ? i        : ic + ib;
+        for (int k = k_lo; k < k_hi; ++k) {
+            const int kr = k - ic;
+            __m256d ak_rh, ak_rl, ak_ih, ak_il;
+            broadcast_cdd(A_(i, k), ak_rh, ak_rl, ak_ih, ak_il);
+            /* Conjugated copy of A(i,k) for cj[k] update */
+            __m256d akc_ih = _mm256_sub_pd(zero_v, ak_ih);
+            __m256d akc_il = _mm256_sub_pd(zero_v, ak_il);
+
+            /* C[k,j] += temp1 · conj(A(i,k)) */
+            __m256d ck_rh = _mm256_load_pd(&crh[kr * kSimdLane]);
+            __m256d ck_rl = _mm256_load_pd(&crl[kr * kSimdLane]);
+            __m256d ck_ih = _mm256_load_pd(&cih[kr * kSimdLane]);
+            __m256d ck_il = _mm256_load_pd(&cil[kr * kSimdLane]);
+            __m256d prh, prl, pih, pil;
+            simd_dd::cdd_mul(t1rh, t1rl, t1ih, t1il,
+                             ak_rh, ak_rl, akc_ih, akc_il,
+                             prh, prl, pih, pil);
+            __m256d ncrh, ncrl, ncih, ncil;
+            simd_dd::cdd_add(ck_rh, ck_rl, ck_ih, ck_il,
+                             prh, prl, pih, pil,
+                             ncrh, ncrl, ncih, ncil);
+            _mm256_store_pd(&crh[kr * kSimdLane], ncrh);
+            _mm256_store_pd(&crl[kr * kSimdLane], ncrl);
+            _mm256_store_pd(&cih[kr * kSimdLane], ncih);
+            _mm256_store_pd(&cil[kr * kSimdLane], ncil);
+
+            /* temp2 += B[k,j] · A(i,k)  (no conjugate) */
+            __m256d bk_rh = _mm256_load_pd(&brh[kr * kSimdLane]);
+            __m256d bk_rl = _mm256_load_pd(&brl[kr * kSimdLane]);
+            __m256d bk_ih = _mm256_load_pd(&bih[kr * kSimdLane]);
+            __m256d bk_il = _mm256_load_pd(&bil[kr * kSimdLane]);
+            __m256d qrh, qrl, qih, qil;
+            simd_dd::cdd_mul(bk_rh, bk_rl, bk_ih, bk_il,
+                             ak_rh, ak_rl, ak_ih, ak_il,
+                             qrh, qrl, qih, qil);
+            __m256d nt2rh, nt2rl, nt2ih, nt2il;
+            simd_dd::cdd_add(t2rh, t2rl, t2ih, t2il,
+                             qrh, qrl, qih, qil,
+                             nt2rh, nt2rl, nt2ih, nt2il);
+            t2rh = nt2rh; t2rl = nt2rl; t2ih = nt2ih; t2il = nt2il;
+        }
+
+        /* C[i,j] += temp1 · A(i,i).re + alpha · temp2  (A diag is real) */
+        const T aii = A_(i, i);
+        __m256d aii_rh = _mm256_set1_pd(aii.re.limbs[0]);
+        __m256d aii_rl = _mm256_set1_pd(aii.re.limbs[1]);
+        __m256d d_rh, d_rl, d_ih, d_il;
+        simd_dd::cdd_mul(t1rh, t1rl, t1ih, t1il,
+                         aii_rh, aii_rl, zero_v, zero_v,
+                         d_rh, d_rl, d_ih, d_il);
+        __m256d at_rh, at_rl, at_ih, at_il;
+        simd_dd::cdd_mul(a_rh, a_rl, a_ih, a_il,
+                         t2rh, t2rl, t2ih, t2il,
+                         at_rh, at_rl, at_ih, at_il);
+        __m256d sum_rh, sum_rl, sum_ih, sum_il;
+        simd_dd::cdd_add(d_rh, d_rl, d_ih, d_il,
+                         at_rh, at_rl, at_ih, at_il,
+                         sum_rh, sum_rl, sum_ih, sum_il);
+        __m256d ci_rh = _mm256_load_pd(&crh[ir * kSimdLane]);
+        __m256d ci_rl = _mm256_load_pd(&crl[ir * kSimdLane]);
+        __m256d ci_ih = _mm256_load_pd(&cih[ir * kSimdLane]);
+        __m256d ci_il = _mm256_load_pd(&cil[ir * kSimdLane]);
+        __m256d ncirh, ncirl, nciih, nciil;
+        simd_dd::cdd_add(ci_rh, ci_rl, ci_ih, ci_il,
+                         sum_rh, sum_rl, sum_ih, sum_il,
+                         ncirh, ncirl, nciih, nciil);
+        _mm256_store_pd(&crh[ir * kSimdLane], ncirh);
+        _mm256_store_pd(&crl[ir * kSimdLane], ncirl);
+        _mm256_store_pd(&cih[ir * kSimdLane], nciih);
+        _mm256_store_pd(&cil[ir * kSimdLane], nciil);
+    };
+
+    if (UPLO == 'L') for (int i = ic;          i < ic + ib;  ++i) body(i);
+    else             for (int i = ic + ib - 1; i >= ic;      --i) body(i);
+}
+
+inline void simd_hemm_diag_L_panels(int ic, int ib, int N, T alpha,
+                                    const T *a, int lda,
+                                    const T *b, int ldb,
+                                    T *c, int ldc, char UPLO)
+{
+    alignas(32) double brh[kMaxBlockM * kSimdLane];
+    alignas(32) double brl[kMaxBlockM * kSimdLane];
+    alignas(32) double bih[kMaxBlockM * kSimdLane];
+    alignas(32) double bil[kMaxBlockM * kSimdLane];
+    alignas(32) double crh[kMaxBlockM * kSimdLane];
+    alignas(32) double crl[kMaxBlockM * kSimdLane];
+    alignas(32) double cih[kMaxBlockM * kSimdLane];
+    alignas(32) double cil[kMaxBlockM * kSimdLane];
+    for (int j = 0; j < N; j += kSimdLane) {
+        const int jc = (N - j < kSimdLane) ? (N - j) : kSimdLane;
+        pack_4col_cdd(ib, ic, b, ldb, j, jc, brh, brl, bih, bil);
+        pack_4col_cdd(ib, ic, c, ldc, j, jc, crh, crl, cih, cil);
+        simd_hemm_diag_L(ic, ib, alpha, a, lda,
+                         brh, brl, bih, bil,
+                         crh, crl, cih, cil, UPLO);
+        unpack_4col_cdd(ib, ic, c, ldc, j, jc, crh, crl, cih, cil);
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
 
 void hemm_diag_add_L(int ic, int ib, int N, T alpha,
                      const T *a, int lda, const T *b, int ldb,
@@ -133,6 +327,19 @@ void hemm_diag_add_R(int jc, int jb, int M, T alpha,
     }
 }
 
+inline void diag_L_dispatch(int ic, int ib, int N, T alpha,
+                            const T *a, int lda, const T *b, int ldb,
+                            T *c, int ldc, char UPLO)
+{
+#ifdef MBLAS_SIMD_DD
+    if (ib <= kMaxBlockM) {
+        simd_hemm_diag_L_panels(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
+        return;
+    }
+#endif
+    diag_L_dispatch(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
+}
+
 } /* anonymous namespace */
 
 extern "C" void whemm_(
@@ -192,7 +399,7 @@ extern "C" void whemm_(
                            &A_(ic, 0), &lda, &B_(0, 0), &ldb,
                            &one_cdd, &C_(ic, 0), &ldc, 1, 1);
                 }
-                hemm_diag_add_L(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
+                diag_L_dispatch(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
                 const int trailing = M - ic - ib;
                 if (trailing > 0) {
                     wgemm_(CN, NN, &ib, &N, &trailing, &alpha,
@@ -205,7 +412,7 @@ extern "C" void whemm_(
                            &A_(0, ic), &lda, &B_(0, 0), &ldb,
                            &one_cdd, &C_(ic, 0), &ldc, 1, 1);
                 }
-                hemm_diag_add_L(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
+                diag_L_dispatch(ic, ib, N, alpha, a, lda, b, ldb, c, ldc, UPLO);
                 const int trailing = M - ic - ib;
                 if (trailing > 0) {
                     wgemm_(NN, NN, &ib, &N, &trailing, &alpha,
