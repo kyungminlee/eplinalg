@@ -65,6 +65,9 @@ set(_kernels
     # L2 banded — general
     egbmv.c
     ygbmv.c
+    # L2 banded — symmetric / Hermitian
+    esbmv.c
+    yhbmv.c
 )
 
 # Publish the overlay-covered routine names so the BLAS section in
