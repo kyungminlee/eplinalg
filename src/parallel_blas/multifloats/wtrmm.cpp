@@ -839,6 +839,16 @@ extern "C" void wtrmm_(
 
     if (SIDE == 'L') {
         const int use_blocked = (M >= 2 * nb);
+#ifdef MBLAS_SIMD_DD
+        const int simd_unblocked = (!use_blocked) && (M <= kMaxBlockM);
+        if (simd_unblocked) {
+            trmm_simd_op_w op;
+            if (TR == 'N')      op = (UPLO == 'L') ? WSLLN : WSLUN;
+            else if (TR == 'T') op = (UPLO == 'L') ? WSLLT : WSLUT;
+            else                op = (UPLO == 'L') ? WSLLC : WSLUC;
+            wtrmm_simd_diag(op, 0, N, M, alpha, a, lda, b, ldb, nounit);
+        } else
+#endif
         if (TR == 'N') {
             if (UPLO == 'L') {
                 if (use_blocked) blocked_dispatch_L(WLLN, M, N, alpha, a, lda, b, ldb, nounit);

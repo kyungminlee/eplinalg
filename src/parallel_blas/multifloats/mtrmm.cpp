@@ -699,6 +699,17 @@ extern "C" void mtrmm_(
 
     if (SIDE == 'L') {
         const int use_blocked = (M >= 2 * nb);
+#ifdef MBLAS_SIMD_DD
+        /* For small M (single-block regime), route the unblocked path
+         * through the SIMD diag too — same kernel, full N column range. */
+        const int simd_unblocked = (!use_blocked) && (M <= kMaxBlockM);
+        if (simd_unblocked) {
+            trmm_simd_op op = SLLN;
+            if (TR == 'N') op = (UPLO == 'L') ? SLLN : SLUN;
+            else           op = (UPLO == 'L') ? SLLT : SLUT;
+            mtrmm_simd_diag(op, 0, N, M, alpha, a, lda, b, ldb, nounit);
+        } else
+#endif
         if (TR == 'N') {
             if (UPLO == 'L') {
                 if (use_blocked) blocked_dispatch_L(LLN, M, N, alpha, a, lda, b, ldb, nounit);
