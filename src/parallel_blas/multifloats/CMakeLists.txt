@@ -67,10 +67,13 @@ if(MBLAS_SIMD_DD)
     # Empirical sweep on Raptor Lake (i3-1315U) at OMP=1 s=1024:
     #   MR=1: 1.92 GFLOP/s            (baseline, 1 chain)
     #   MR=2: 3.49     (+82%, ILP win — two independent dd_mul chains)
-    #   MR=3: 3.74     (+7%, sweet spot)
+    #   MR=3: 3.74     (+7%, sweet spot at s=1024)
     #   MR=4: 3.78     (+1%, register pressure cancels parallelism gain)
-    # Choose 3 by default — gains plateau there.
-    set(MBLAS_SIMD_MR 3 CACHE STRING
+    # Re-measured at s=128/256 with 80 iters pinned to a P-core:
+    #   MR=4 is +5% over MR=3 with stdev 0.2-0.4% — clean structural win.
+    #   At s=64 the two are statistically indistinguishable (-1.2% mean,
+    #   3.1% stdev — within noise). Pick MR=4 as the new default.
+    set(MBLAS_SIMD_MR 4 CACHE STRING
         "multifloats: SIMD micro-kernel register-tile rows MR (1..4)")
     # NR_PAN: # of ymm-wide (4-col) panels per micro-kernel call.
     # 1 → NR=4 (current default). 2 → NR=8 (forces MR≤2 due to regs).
