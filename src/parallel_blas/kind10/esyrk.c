@@ -86,8 +86,18 @@ static void syrk_diag_add(int jc, int jb, int K, T alpha,
             const T *Aj = a + (size_t)j * lda;
             for (int i = i_lo; i < i_hi; ++i) {
                 const T *Ai = a + (size_t)i * lda;
-                T s = 0.0L;
-                for (int l = 0; l < K; ++l) s += Ai[l] * Aj[l];
+                /* 2-chain dot product: x87 fadd has ~7-cycle latency,
+                 * so a single-accumulator reduction is ~1.3 GF/s.
+                 * Splitting into two independent chains doubles it,
+                 * matching gfortran's reference DSYRK rate. */
+                T s0 = 0.0L, s1 = 0.0L;
+                int l = 0;
+                for (; l + 1 < K; l += 2) {
+                    s0 += Ai[l]     * Aj[l];
+                    s1 += Ai[l + 1] * Aj[l + 1];
+                }
+                T s = s0 + s1;
+                for (; l < K; ++l) s += Ai[l] * Aj[l];
                 cj[i] += alpha * s;
             }
         }
