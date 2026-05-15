@@ -16,6 +16,11 @@
 #include <omp.h>
 #endif
 
+#ifdef MBLAS_SIMD_DD
+#include "mgemm_simd_kernel.h"
+#include <immintrin.h>
+#endif
+
 namespace mf = multifloats;
 using R = mf::float64x2;
 using T = mf::complex64x2;
@@ -77,6 +82,279 @@ inline T A_op(const T *a, int lda, int row, int col, int conj_flag) {
 }
 
 /* ── SIDE = 'L' column-range cores ──────────────────────────────── */
+
+#ifdef MBLAS_SIMD_DD
+
+constexpr int kSimdLane = simd_dd::NR;
+constexpr int kMaxBlockM = 128;
+
+inline void pack_B_4col_cdd(int M, const T *b, int ldb, int j_start, int j_count,
+                            double *rh, double *rl, double *ih, double *il)
+{
+    for (int j = 0; j < j_count; ++j) {
+        const T *col = &b[static_cast<std::size_t>(j_start + j) * ldb];
+        for (int i = 0; i < M; ++i) {
+            rh[i * kSimdLane + j] = col[i].re.limbs[0];
+            rl[i * kSimdLane + j] = col[i].re.limbs[1];
+            ih[i * kSimdLane + j] = col[i].im.limbs[0];
+            il[i * kSimdLane + j] = col[i].im.limbs[1];
+        }
+    }
+    for (int j = j_count; j < kSimdLane; ++j)
+        for (int i = 0; i < M; ++i) {
+            rh[i * kSimdLane + j] = 0.0; rl[i * kSimdLane + j] = 0.0;
+            ih[i * kSimdLane + j] = 0.0; il[i * kSimdLane + j] = 0.0;
+        }
+}
+
+inline void unpack_B_4col_cdd(int M, T *b, int ldb, int j_start, int j_count,
+                              const double *rh, const double *rl,
+                              const double *ih, const double *il)
+{
+    for (int j = 0; j < j_count; ++j) {
+        T *col = &b[static_cast<std::size_t>(j_start + j) * ldb];
+        for (int i = 0; i < M; ++i) {
+            col[i].re.limbs[0] = rh[i * kSimdLane + j];
+            col[i].re.limbs[1] = rl[i * kSimdLane + j];
+            col[i].im.limbs[0] = ih[i * kSimdLane + j];
+            col[i].im.limbs[1] = il[i * kSimdLane + j];
+        }
+    }
+}
+
+/* Broadcast A(r,c) with optional conjugate (negate im if conj_flag). */
+inline void broadcast_A_cdd(const T *a, int lda, int r, int c, int conj_flag,
+                            __m256d &rh, __m256d &rl, __m256d &ih, __m256d &il)
+{
+    rh = _mm256_set1_pd(A_(r, c).re.limbs[0]);
+    rl = _mm256_set1_pd(A_(r, c).re.limbs[1]);
+    if (conj_flag) {
+        ih = _mm256_set1_pd(-A_(r, c).im.limbs[0]);
+        il = _mm256_set1_pd(-A_(r, c).im.limbs[1]);
+    } else {
+        ih = _mm256_set1_pd(A_(r, c).im.limbs[0]);
+        il = _mm256_set1_pd(A_(r, c).im.limbs[1]);
+    }
+}
+
+inline void simd_wtrmm_lln(int M, const T *a, int lda, T alpha, int nounit,
+                           double *brh, double *brl, double *bih, double *bil)
+{
+    __m256d arh = _mm256_set1_pd(alpha.re.limbs[0]);
+    __m256d arl = _mm256_set1_pd(alpha.re.limbs[1]);
+    __m256d aih = _mm256_set1_pd(alpha.im.limbs[0]);
+    __m256d ail = _mm256_set1_pd(alpha.im.limbs[1]);
+    for (int k = M - 1; k >= 0; --k) {
+        __m256d bkrh = _mm256_load_pd(&brh[k * kSimdLane]);
+        __m256d bkrl = _mm256_load_pd(&brl[k * kSimdLane]);
+        __m256d bkih = _mm256_load_pd(&bih[k * kSimdLane]);
+        __m256d bkil = _mm256_load_pd(&bil[k * kSimdLane]);
+        __m256d trh, trl, tih, til;
+        simd_dd::cdd_mul(arh, arl, aih, ail, bkrh, bkrl, bkih, bkil,
+                         trh, trl, tih, til);
+        for (int i = M - 1; i > k; --i) {
+            __m256d akrh, akrl, akih, akil;
+            broadcast_A_cdd(a, lda, i, k, 0, akrh, akrl, akih, akil);
+            __m256d prh, prl, pih, pil;
+            simd_dd::cdd_mul(trh, trl, tih, til, akrh, akrl, akih, akil,
+                             prh, prl, pih, pil);
+            __m256d birh = _mm256_load_pd(&brh[i * kSimdLane]);
+            __m256d birl = _mm256_load_pd(&brl[i * kSimdLane]);
+            __m256d biih = _mm256_load_pd(&bih[i * kSimdLane]);
+            __m256d biil = _mm256_load_pd(&bil[i * kSimdLane]);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_add(birh, birl, biih, biil, prh, prl, pih, pil,
+                             nrh, nrl, nih, nil_);
+            _mm256_store_pd(&brh[i * kSimdLane], nrh);
+            _mm256_store_pd(&brl[i * kSimdLane], nrl);
+            _mm256_store_pd(&bih[i * kSimdLane], nih);
+            _mm256_store_pd(&bil[i * kSimdLane], nil_);
+        }
+        if (nounit) {
+            __m256d akrh, akrl, akih, akil;
+            broadcast_A_cdd(a, lda, k, k, 0, akrh, akrl, akih, akil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_mul(trh, trl, tih, til, akrh, akrl, akih, akil,
+                             nrh, nrl, nih, nil_);
+            trh = nrh; trl = nrl; tih = nih; til = nil_;
+        }
+        _mm256_store_pd(&brh[k * kSimdLane], trh);
+        _mm256_store_pd(&brl[k * kSimdLane], trl);
+        _mm256_store_pd(&bih[k * kSimdLane], tih);
+        _mm256_store_pd(&bil[k * kSimdLane], til);
+    }
+}
+
+inline void simd_wtrmm_lun(int M, const T *a, int lda, T alpha, int nounit,
+                           double *brh, double *brl, double *bih, double *bil)
+{
+    __m256d arh = _mm256_set1_pd(alpha.re.limbs[0]);
+    __m256d arl = _mm256_set1_pd(alpha.re.limbs[1]);
+    __m256d aih = _mm256_set1_pd(alpha.im.limbs[0]);
+    __m256d ail = _mm256_set1_pd(alpha.im.limbs[1]);
+    for (int k = 0; k < M; ++k) {
+        __m256d bkrh = _mm256_load_pd(&brh[k * kSimdLane]);
+        __m256d bkrl = _mm256_load_pd(&brl[k * kSimdLane]);
+        __m256d bkih = _mm256_load_pd(&bih[k * kSimdLane]);
+        __m256d bkil = _mm256_load_pd(&bil[k * kSimdLane]);
+        __m256d trh, trl, tih, til;
+        simd_dd::cdd_mul(arh, arl, aih, ail, bkrh, bkrl, bkih, bkil,
+                         trh, trl, tih, til);
+        for (int i = 0; i < k; ++i) {
+            __m256d akrh, akrl, akih, akil;
+            broadcast_A_cdd(a, lda, i, k, 0, akrh, akrl, akih, akil);
+            __m256d prh, prl, pih, pil;
+            simd_dd::cdd_mul(trh, trl, tih, til, akrh, akrl, akih, akil,
+                             prh, prl, pih, pil);
+            __m256d birh = _mm256_load_pd(&brh[i * kSimdLane]);
+            __m256d birl = _mm256_load_pd(&brl[i * kSimdLane]);
+            __m256d biih = _mm256_load_pd(&bih[i * kSimdLane]);
+            __m256d biil = _mm256_load_pd(&bil[i * kSimdLane]);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_add(birh, birl, biih, biil, prh, prl, pih, pil,
+                             nrh, nrl, nih, nil_);
+            _mm256_store_pd(&brh[i * kSimdLane], nrh);
+            _mm256_store_pd(&brl[i * kSimdLane], nrl);
+            _mm256_store_pd(&bih[i * kSimdLane], nih);
+            _mm256_store_pd(&bil[i * kSimdLane], nil_);
+        }
+        if (nounit) {
+            __m256d akrh, akrl, akih, akil;
+            broadcast_A_cdd(a, lda, k, k, 0, akrh, akrl, akih, akil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_mul(trh, trl, tih, til, akrh, akrl, akih, akil,
+                             nrh, nrl, nih, nil_);
+            trh = nrh; trl = nrl; tih = nih; til = nil_;
+        }
+        _mm256_store_pd(&brh[k * kSimdLane], trh);
+        _mm256_store_pd(&brl[k * kSimdLane], trl);
+        _mm256_store_pd(&bih[k * kSimdLane], tih);
+        _mm256_store_pd(&bil[k * kSimdLane], til);
+    }
+}
+
+/* LL T/C: for i = 0..M-1: t = B(i); if nounit: t *= A_op(i,i);
+ * for k>i: t += A_op(k,i) · B(k); B(i) = alpha · t. */
+inline void simd_wtrmm_llTC(int M, const T *a, int lda, T alpha, int nounit,
+                            int conj_flag,
+                            double *brh, double *brl, double *bih, double *bil)
+{
+    __m256d arh = _mm256_set1_pd(alpha.re.limbs[0]);
+    __m256d arl = _mm256_set1_pd(alpha.re.limbs[1]);
+    __m256d aih = _mm256_set1_pd(alpha.im.limbs[0]);
+    __m256d ail = _mm256_set1_pd(alpha.im.limbs[1]);
+    for (int i = 0; i < M; ++i) {
+        __m256d trh = _mm256_load_pd(&brh[i * kSimdLane]);
+        __m256d trl = _mm256_load_pd(&brl[i * kSimdLane]);
+        __m256d tih = _mm256_load_pd(&bih[i * kSimdLane]);
+        __m256d til = _mm256_load_pd(&bil[i * kSimdLane]);
+        if (nounit) {
+            __m256d aiih, aiil, aiiih, aiiil;
+            broadcast_A_cdd(a, lda, i, i, conj_flag, aiih, aiil, aiiih, aiiil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_mul(trh, trl, tih, til, aiih, aiil, aiiih, aiiil,
+                             nrh, nrl, nih, nil_);
+            trh = nrh; trl = nrl; tih = nih; til = nil_;
+        }
+        for (int k = i + 1; k < M; ++k) {
+            __m256d akrh, akrl, akih, akil;
+            broadcast_A_cdd(a, lda, k, i, conj_flag, akrh, akrl, akih, akil);
+            __m256d bkrh = _mm256_load_pd(&brh[k * kSimdLane]);
+            __m256d bkrl = _mm256_load_pd(&brl[k * kSimdLane]);
+            __m256d bkih = _mm256_load_pd(&bih[k * kSimdLane]);
+            __m256d bkil = _mm256_load_pd(&bil[k * kSimdLane]);
+            __m256d prh, prl, pih, pil;
+            simd_dd::cdd_mul(akrh, akrl, akih, akil, bkrh, bkrl, bkih, bkil,
+                             prh, prl, pih, pil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_add(trh, trl, tih, til, prh, prl, pih, pil,
+                             nrh, nrl, nih, nil_);
+            trh = nrh; trl = nrl; tih = nih; til = nil_;
+        }
+        __m256d nrh, nrl, nih, nil_;
+        simd_dd::cdd_mul(arh, arl, aih, ail, trh, trl, tih, til,
+                         nrh, nrl, nih, nil_);
+        _mm256_store_pd(&brh[i * kSimdLane], nrh);
+        _mm256_store_pd(&brl[i * kSimdLane], nrl);
+        _mm256_store_pd(&bih[i * kSimdLane], nih);
+        _mm256_store_pd(&bil[i * kSimdLane], nil_);
+    }
+}
+
+/* LU T/C: for i = M-1..0: t = B(i); if nounit: t *= A_op(i,i);
+ * for k<i: t += A_op(k,i) · B(k); B(i) = alpha · t. */
+inline void simd_wtrmm_luTC(int M, const T *a, int lda, T alpha, int nounit,
+                            int conj_flag,
+                            double *brh, double *brl, double *bih, double *bil)
+{
+    __m256d arh = _mm256_set1_pd(alpha.re.limbs[0]);
+    __m256d arl = _mm256_set1_pd(alpha.re.limbs[1]);
+    __m256d aih = _mm256_set1_pd(alpha.im.limbs[0]);
+    __m256d ail = _mm256_set1_pd(alpha.im.limbs[1]);
+    for (int i = M - 1; i >= 0; --i) {
+        __m256d trh = _mm256_load_pd(&brh[i * kSimdLane]);
+        __m256d trl = _mm256_load_pd(&brl[i * kSimdLane]);
+        __m256d tih = _mm256_load_pd(&bih[i * kSimdLane]);
+        __m256d til = _mm256_load_pd(&bil[i * kSimdLane]);
+        if (nounit) {
+            __m256d aiih, aiil, aiiih, aiiil;
+            broadcast_A_cdd(a, lda, i, i, conj_flag, aiih, aiil, aiiih, aiiil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_mul(trh, trl, tih, til, aiih, aiil, aiiih, aiiil,
+                             nrh, nrl, nih, nil_);
+            trh = nrh; trl = nrl; tih = nih; til = nil_;
+        }
+        for (int k = 0; k < i; ++k) {
+            __m256d akrh, akrl, akih, akil;
+            broadcast_A_cdd(a, lda, k, i, conj_flag, akrh, akrl, akih, akil);
+            __m256d bkrh = _mm256_load_pd(&brh[k * kSimdLane]);
+            __m256d bkrl = _mm256_load_pd(&brl[k * kSimdLane]);
+            __m256d bkih = _mm256_load_pd(&bih[k * kSimdLane]);
+            __m256d bkil = _mm256_load_pd(&bil[k * kSimdLane]);
+            __m256d prh, prl, pih, pil;
+            simd_dd::cdd_mul(akrh, akrl, akih, akil, bkrh, bkrl, bkih, bkil,
+                             prh, prl, pih, pil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_add(trh, trl, tih, til, prh, prl, pih, pil,
+                             nrh, nrl, nih, nil_);
+            trh = nrh; trl = nrl; tih = nih; til = nil_;
+        }
+        __m256d nrh, nrl, nih, nil_;
+        simd_dd::cdd_mul(arh, arl, aih, ail, trh, trl, tih, til,
+                         nrh, nrl, nih, nil_);
+        _mm256_store_pd(&brh[i * kSimdLane], nrh);
+        _mm256_store_pd(&brl[i * kSimdLane], nrl);
+        _mm256_store_pd(&bih[i * kSimdLane], nih);
+        _mm256_store_pd(&bil[i * kSimdLane], nil_);
+    }
+}
+
+enum trmm_simd_op_w { WSLLN, WSLUN, WSLLT, WSLUT, WSLLC, WSLUC };
+
+inline void wtrmm_simd_diag(trmm_simd_op_w op, int j_start, int j_end,
+                            int M, T alpha,
+                            const T *a, int lda, T *b, int ldb, int nounit)
+{
+    alignas(32) double brh[kMaxBlockM * kSimdLane];
+    alignas(32) double brl[kMaxBlockM * kSimdLane];
+    alignas(32) double bih[kMaxBlockM * kSimdLane];
+    alignas(32) double bil[kMaxBlockM * kSimdLane];
+    for (int j = j_start; j < j_end; j += kSimdLane) {
+        const int jc = (j_end - j < kSimdLane) ? (j_end - j) : kSimdLane;
+        pack_B_4col_cdd(M, b, ldb, j, jc, brh, brl, bih, bil);
+        switch (op) {
+        case WSLLN: simd_wtrmm_lln(M, a, lda, alpha, nounit, brh, brl, bih, bil); break;
+        case WSLUN: simd_wtrmm_lun(M, a, lda, alpha, nounit, brh, brl, bih, bil); break;
+        case WSLLT: simd_wtrmm_llTC(M, a, lda, alpha, nounit, 0, brh, brl, bih, bil); break;
+        case WSLUT: simd_wtrmm_luTC(M, a, lda, alpha, nounit, 0, brh, brl, bih, bil); break;
+        case WSLLC: simd_wtrmm_llTC(M, a, lda, alpha, nounit, 1, brh, brl, bih, bil); break;
+        case WSLUC: simd_wtrmm_luTC(M, a, lda, alpha, nounit, 1, brh, brl, bih, bil); break;
+        }
+        unpack_B_4col_cdd(M, b, ldb, j, jc, brh, brl, bih, bil);
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
 
 inline void wtrmm_lln_core(int j_start, int j_end, int M, T alpha,
                            const T *a, int lda, T *b, int ldb, int nounit)
@@ -329,6 +607,12 @@ void blocked_chunk_L(trmm_variant_L V, int j_start, int j_end,
         int ic = ((M - 1) / nb) * nb;
         while (ic >= 0) {
             const int ib = (M - ic < nb) ? (M - ic) : nb;
+#ifdef MBLAS_SIMD_DD
+            if (ib <= kMaxBlockM) {
+                wtrmm_simd_diag(WSLLN, j_start, j_end, ib, alpha,
+                                &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            } else
+#endif
             wtrmm_lln_core(j_start, j_end, ib, alpha,
                            &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
             if (ic > 0) {
@@ -342,6 +626,12 @@ void blocked_chunk_L(trmm_variant_L V, int j_start, int j_end,
     } else if (V == WLUN) {
         for (int ic = 0; ic < M; ic += nb) {
             const int ib = (M - ic < nb) ? (M - ic) : nb;
+#ifdef MBLAS_SIMD_DD
+            if (ib <= kMaxBlockM) {
+                wtrmm_simd_diag(WSLUN, j_start, j_end, ib, alpha,
+                                &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            } else
+#endif
             wtrmm_lun_core(j_start, j_end, ib, alpha,
                            &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
             const int trailing = M - (ic + ib);
@@ -358,6 +648,12 @@ void blocked_chunk_L(trmm_variant_L V, int j_start, int j_end,
         const char *gemm_trans = conj_flag ? CN : TN;
         for (int ic = 0; ic < M; ic += nb) {
             const int ib = (M - ic < nb) ? (M - ic) : nb;
+#ifdef MBLAS_SIMD_DD
+            if (ib <= kMaxBlockM) {
+                wtrmm_simd_diag(conj_flag ? WSLLC : WSLLT, j_start, j_end, ib, alpha,
+                                &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            } else
+#endif
             wtrmm_llTC_core(j_start, j_end, ib, alpha,
                             &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit, conj_flag);
             const int trailing = M - (ic + ib);
@@ -375,6 +671,12 @@ void blocked_chunk_L(trmm_variant_L V, int j_start, int j_end,
         int ic = ((M - 1) / nb) * nb;
         while (ic >= 0) {
             const int ib = (M - ic < nb) ? (M - ic) : nb;
+#ifdef MBLAS_SIMD_DD
+            if (ib <= kMaxBlockM) {
+                wtrmm_simd_diag(conj_flag ? WSLUC : WSLUT, j_start, j_end, ib, alpha,
+                                &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+            } else
+#endif
             wtrmm_luTC_core(j_start, j_end, ib, alpha,
                             &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit, conj_flag);
             if (ic > 0) {
