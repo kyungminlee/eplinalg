@@ -51,6 +51,16 @@ set(_kernels
     wswap.cpp
     mrot.cpp
     wmrot.cpp
+    # L1 function-return overlays — DD struct returns via SysV register
+    # pair (16B) or sret (32B); gfortran convention matches since the
+    # multifloats types are bind(c).
+    mdot.cpp
+    masum.cpp
+    mnrm2.cpp
+    mwasum.cpp
+    mwnrm2.cpp
+    wdotu.cpp
+    wdotc.cpp
 )
 
 set(_routines "")
