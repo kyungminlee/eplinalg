@@ -71,6 +71,11 @@ set(_kernels
     # L2 packed — symmetric / Hermitian mat-vec
     espmv.c
     yhpmv.c
+    # L2 banded — triangular mat-vec / solve
+    etbmv.c
+    ytbmv.c
+    etbsv.c
+    ytbsv.c
 )
 
 # Publish the overlay-covered routine names so the BLAS section in
