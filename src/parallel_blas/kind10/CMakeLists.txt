@@ -25,6 +25,15 @@ set(_kernels
     esyr2k.c
     ysyr2k.c
     yher2k.c
+    egemv.c
+    ygemv.c
+    eger.c
+    ygeru.c
+    ygerc.c
+    esymv.c
+    yhemv.c
+    etrsv.c
+    ytrsv.c
     esymm.c
     ysymm.c
     yhemm.c
