@@ -13,6 +13,14 @@ set(_kernels
     wgemm.cpp
     mtrsm.cpp
     wtrsm.cpp
+    mtrmm.cpp
+    wtrmm.cpp
+    msyrk.cpp
+    wsyrk.cpp
+    wherk.cpp
+    msymm.cpp
+    wsymm.cpp
+    whemm.cpp
 )
 
 set(_routines "")
