@@ -27,7 +27,7 @@ static int env_int(const char *name, int dflt) {
 }
 static int g_nb_trmm = 0;
 static int trmm_nb(void) {
-    if (g_nb_trmm == 0) g_nb_trmm = env_int("YTRMM_NB", 64);
+    if (g_nb_trmm == 0) g_nb_trmm = env_int("YTRMM_NB", 32);
     return g_nb_trmm;
 }
 
