@@ -338,3 +338,35 @@ for (; l < K; ++l) s += Ai[l] * Aj[l];
 2. ygemm had a `conj_b ? ~bv0 : bv0` conditional inside the loop body that wasn't constant-folded; the K-unroll put a runtime branch in the critical path. Even without that, naïve K-unroll on complex would help less.
 
 **Rule of thumb:** K-axis 2-unroll is the right structural move on **real scalar long-double dot-product reductions**. For complex types, leave the inner loop single-accumulator — gcc's scheduler does better when there's only one cmul chain to lay out on the x87 stack.
+
+## Addendum 2: ytrmm nb 64 → 32 + etrmm at codegen ceiling — 2026-05-15
+
+Two follow-on findings from the trmm round.
+
+### ytrmm L U N N s=64: 0.45× → 1.10× via nb 64 → 32 (single-block-regime fix)
+
+Same failure mode documented for ysymm/yhemm/ysyrk/yherk in Addendum 1, now confirmed on ytrmm. At nb=64, the gate `M >= 2*nb` falls through to the unblocked scalar core at M=64; the trailing ygemm never fires. Dropping default nb to 32 engages the blocked path: two 32×32 diag kernels + one 32×64×32 ygemm. ytrmm L U N N s=64 went 0.42 → 2.20 GF/s.
+
+Distribution-level: median 0.99× → 1.08×, min 0.45× → 0.95×, sub-parity 14/27 → 8/27. All remaining cells within 5% of parity.
+
+**Generalization:** the "shrink nb for complex variants" recipe applies to **every** complex L3 routine on this overlay — symm, hemm, syrk, herk, and trmm — for the same reason (ygemm at K=32 amortizes well; real long-double doesn't). Apply by default; don't wait for a catastrophic outlier to spot it.
+
+### etrmm sub-parity cells are not a codegen gap
+
+Disassembled `trmm_llt._omp_fn.0` (overlay) and the corresponding Fortran inner loop in `etrmm.f.o` (migrated). The inner dot-product loop is **byte-identical**:
+
+```
+fldt   0x10(%rXX,%rYY,1)   ; load A(k,i)
+fldt   0x10(%rXX,%rYY,1)   ; load B(k,j)
+add    $0x10,%rYY
+fmulp  %st,%st(1)
+faddp  %st,%st(1)
+cmp    %rYY,%rZZ
+jne    ...
+```
+
+6 instructions, identical encoding. gcc -O3 + `-fcx-fortran-rules` produces the same x87 instruction sequence as gfortran for the canonical real long-double dot-product kernel.
+
+**Implication:** for any kind10 real routine whose inner loop is this 6-instruction sequence, the overlay can match migrated but cannot beat it via codegen. Sub-parity cells in this regime (etrmm's 0.91–0.99× cluster) are framing overhead or run-to-run noise, not a fixable codegen gap.
+
+**Practical rule:** before optimizing a real long-double scalar inner loop, disassemble both overlay and migrated. If the inner loops are byte-identical, stop — chase outer-loop framing or accept noise. Combined with methodology #10 (compare migrated to ceiling), this gives two independent ways to detect "no win possible" before sinking iter budget.
