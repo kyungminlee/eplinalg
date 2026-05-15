@@ -24,6 +24,15 @@ set(_kernels
     msyr2k.cpp
     wsyr2k.cpp
     wher2k.cpp
+    mgemv.cpp
+    wgemv.cpp
+    mger.cpp
+    wgeru.cpp
+    wgerc.cpp
+    msymv.cpp
+    whemv.cpp
+    mtrsv.cpp
+    wtrsv.cpp
 )
 
 set(_routines "")

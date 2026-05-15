@@ -23,6 +23,15 @@ set(_kernels
     qsyr2k.c
     xsyr2k.c
     xher2k.c
+    qgemv.c
+    xgemv.c
+    qger.c
+    xgeru.c
+    xgerc.c
+    qsymv.c
+    xhemv.c
+    qtrsv.c
+    xtrsv.c
 )
 
 set(_routines "")

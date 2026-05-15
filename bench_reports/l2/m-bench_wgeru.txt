@@ -1,0 +1,4 @@
+   size      overlay GF/s   migrated GF/s   speedup
+      128          0.4986          0.2234       2.23x
+      256          0.5002          0.2216       2.26x
+      512          0.4933          0.2195       2.25x
