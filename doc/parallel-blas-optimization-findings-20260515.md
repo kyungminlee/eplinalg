@@ -308,3 +308,33 @@ Whenever a BLAS-shape kernel has the inner-loop pattern `c[i] += stuff(a[i], b[i
 8. **For x87 long-double kernels, always check the objdump for redundant `fldt` after a `fstpt` to A/B addresses.** Two reloads of the same memory location per inner iteration is a tell that the compiler is being conservative about aliasing. `restrict` fixes it.
 
 9. **Negative results (this round): two compiler flag experiments and one source-level manual expansion** all regressed. Save effort: prove the disassembly is suboptimal *before* trying to fix it, and verify the fix changes the disassembly in the expected direction *before* benching.
+
+10. **Compare migrated to the theoretical x87 ceiling before "fixing" the overlay.** Real long-double dot product has three regimes:
+    - Single-accumulator: ~1.3 GF/s (7-cycle fadd dep chain)
+    - 2 independent accumulators: ~2.7 GF/s
+    - Fully pipelined fmul+fadd, no chain: ~9.4 GF/s (rarely achievable)
+
+    Migrated DSYRK at TR='T' s=64 hits 2.36 GF/s — that's right at the 2-acc ceiling. **If migrated is at a known x87 ceiling, you can't beat it; you can only match it by replicating the same dep-chain count.** Compute migrated's % of peak first; if it's ≥85% of some ceiling, identify which ceiling and replicate.
+
+## K-axis 2-unroll: works on real dot products, breaks on complex ones
+
+Counterpart to the documented ygemm dot-product regression (§7 above). The pattern:
+
+```c
+T s0 = 0.0L, s1 = 0.0L;
+int l = 0;
+for (; l + 1 < K; l += 2) {
+    s0 += Ai[l]     * Aj[l];
+    s1 += Ai[l + 1] * Aj[l + 1];
+}
+T s = s0 + s1;
+for (; l < K; ++l) s += Ai[l] * Aj[l];
+```
+
+**Real long-double (esyrk TR='T')**: cleanly doubles throughput on a serial fadd-chain kernel. esyrk L/T 64: 0.85× → 0.98×; every other L/T,U/T cell pinned to ≥0.98×. Matches gfortran's reference DSYRK rate.
+
+**Complex long-double dot product paths (ygemm TN/CN, CT/CC; ysyrk/yherk T/C)**: regressed under the same pattern, or already at parity so the unroll buys nothing. Two reasons:
+1. Complex multiplication is itself ~4× heavier than real, so the single-chain bottleneck is less of the runtime (chain latency hidden by cmul work).
+2. ygemm had a `conj_b ? ~bv0 : bv0` conditional inside the loop body that wasn't constant-folded; the K-unroll put a runtime branch in the critical path. Even without that, naïve K-unroll on complex would help less.
+
+**Rule of thumb:** K-axis 2-unroll is the right structural move on **real scalar long-double dot-product reductions**. For complex types, leave the inner loop single-accumulator — gcc's scheduler does better when there's only one cmul chain to lay out on the x87 stack.
