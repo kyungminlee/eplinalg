@@ -18,21 +18,27 @@
 
 typedef _Complex long double T;
 
-static int env_int(const char *name, int dflt) {
-    const char *s = getenv(name);
-    if (!s || !*s) return dflt;
-    int v = atoi(s);
-    return v > 0 ? v : dflt;
+static int g_yhemm_nb_override = 0;
+
+__attribute__((constructor))
+static void yhemm_init(void) {
+    const char *s = getenv("YHEMM_NB");
+    if (s && *s) {
+        int v = atoi(s);
+        if (v > 0) g_yhemm_nb_override = v;
+    }
 }
-/* See ysymm.c — same heuristic. */
+
+/* Cap=32 chosen to match ysymm: small blocks fragment the diagonal
+ * kernel work so that ygemm picks up the off-diagonal trailing
+ * updates aggressively. Complex long-double ops are heavy enough
+ * that ygemm tolerates small K. */
 static int hemm_nb_pick(int M_or_N, int nt) {
-    static int g_nb_override = -1;
-    if (g_nb_override < 0) g_nb_override = env_int("YHEMM_NB", 0);
-    if (g_nb_override > 0) return g_nb_override;
+    if (g_yhemm_nb_override > 0) return g_yhemm_nb_override;
     int nt_eff = (nt > 0) ? nt : 1;
     int nb = (M_or_N + nt_eff - 1) / nt_eff;
-    if (nb > 256) nb = 256;
-    if (nb < 64)  nb = 64;
+    if (nb > 32) nb = 32;
+    if (nb < 32) nb = 32;
     return nb;
 }
 
@@ -59,7 +65,19 @@ static const T ONE  = 1.0L + 0.0Li;
 #define B_(i, j)  b[(size_t)(j) * ldb + (i)]
 #define C_(i, j)  c[(size_t)(j) * ldc + (i)]
 
-/* Scalar Hermitian diagonal block, SIDE='L'. */
+/* Scalar Hermitian diagonal block, SIDE='L'.
+ *
+ * Mirrors the Netlib reference ZHEMM access pattern: i is iterated in
+ * the direction that lets the inner k loop read A column-major
+ * stride-1. The Hermitian conjugate moves from the cj[k] update onto
+ * the temp2 accumulation (since the stored half flips when iteration
+ * direction flips):
+ *
+ *   UPLO='L': i backward, k = i+1..ic+ib-1, A_(k,i) in lower (k>i,
+ *             stored). cj[k] gets direct A; temp2 accumulates conj(A).
+ *   UPLO='U': i forward,  k = ic..i-1,      A_(k,i) in upper (k<i,
+ *             stored). Same direct-vs-conj split.
+ */
 static void hemm_diag_add_L(int ic, int ib, int jc, int jb, T alpha,
                             const T *a, int lda, const T *b, int ldb,
                             T *c, int ldc, char UPLO)
@@ -68,25 +86,26 @@ static void hemm_diag_add_L(int ic, int ib, int jc, int jb, T alpha,
         T *cj = c + (size_t)j * ldc;
         const T *bj = b + (size_t)j * ldb;
         if (UPLO == 'L') {
-            for (int i = ic; i < ic + ib; ++i) {
-                const T temp1 = alpha * bj[i];
-                T temp2 = ZERO;
-                for (int k = ic; k < i; ++k) {
-                    /* A(k, i) = conj(A_stored(i, k)). */
-                    cj[k]  += temp1 * cconj(A_(i, k));
-                    temp2  += bj[k] * A_(i, k);
-                }
-                cj[i] += temp1 * __real__ A_(i, i) + alpha * temp2;
-            }
-        } else {
             for (int i = ic + ib - 1; i >= ic; --i) {
                 const T temp1 = alpha * bj[i];
                 T temp2 = ZERO;
+                const T *ai = &A_(0, i);
                 for (int k = i + 1; k < ic + ib; ++k) {
-                    cj[k]  += temp1 * cconj(A_(i, k));
-                    temp2  += bj[k] * A_(i, k);
+                    cj[k]  += temp1 * ai[k];
+                    temp2  += bj[k] * cconj(ai[k]);
                 }
-                cj[i] += temp1 * __real__ A_(i, i) + alpha * temp2;
+                cj[i] += temp1 * __real__ ai[i] + alpha * temp2;
+            }
+        } else {
+            for (int i = ic; i < ic + ib; ++i) {
+                const T temp1 = alpha * bj[i];
+                T temp2 = ZERO;
+                const T *ai = &A_(0, i);
+                for (int k = ic; k < i; ++k) {
+                    cj[k]  += temp1 * ai[k];
+                    temp2  += bj[k] * cconj(ai[k]);
+                }
+                cj[i] += temp1 * __real__ ai[i] + alpha * temp2;
             }
         }
     }
@@ -168,6 +187,50 @@ void yhemm_(
     nt = omp_get_max_threads();
 #endif
     const int nb = hemm_nb_pick((SIDE == 'L') ? N : M, nt);
+
+    /* SIDE='L' single-block fast path: inlines Netlib ZHEMM directly,
+     * bypassing panel framing and folding BETA into the diagonal
+     * write. Only fires when M fits in one diagonal block. */
+    if (SIDE == 'L' && M <= nb) {
+#ifdef _OPENMP
+        const int use_omp = (N >= YHEMM_OMP_MIN && nt > 1);
+        #pragma omp parallel for if(use_omp) schedule(static)
+#endif
+        for (int j = 0; j < N; ++j) {
+            T *cj = c + (size_t)j * ldc;
+            const T *bj = b + (size_t)j * ldb;
+            if (UPLO == 'L') {
+                for (int i = M - 1; i >= 0; --i) {
+                    const T temp1 = alpha * bj[i];
+                    T temp2 = ZERO;
+                    const T *ai = &A_(0, i);
+                    for (int k = i + 1; k < M; ++k) {
+                        cj[k]  += temp1 * ai[k];
+                        temp2  += bj[k] * cconj(ai[k]);
+                    }
+                    const T diag = temp1 * __real__ ai[i] + alpha * temp2;
+                    if (beta == ZERO)     cj[i] = diag;
+                    else if (beta == ONE) cj[i] += diag;
+                    else                  cj[i] = beta * cj[i] + diag;
+                }
+            } else {
+                for (int i = 0; i < M; ++i) {
+                    const T temp1 = alpha * bj[i];
+                    T temp2 = ZERO;
+                    const T *ai = &A_(0, i);
+                    for (int k = 0; k < i; ++k) {
+                        cj[k]  += temp1 * ai[k];
+                        temp2  += bj[k] * cconj(ai[k]);
+                    }
+                    const T diag = temp1 * __real__ ai[i] + alpha * temp2;
+                    if (beta == ZERO)     cj[i] = diag;
+                    else if (beta == ONE) cj[i] += diag;
+                    else                  cj[i] = beta * cj[i] + diag;
+                }
+            }
+        }
+        return;
+    }
 
     if (SIDE == 'L') {
 #ifdef _OPENMP
