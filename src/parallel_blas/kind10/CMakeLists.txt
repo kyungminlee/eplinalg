@@ -81,6 +81,11 @@ set(_kernels
     ytpmv.c
     etpsv.c
     ytpsv.c
+    # L2 packed — sym/Herm rank-1 + rank-2
+    espr.c
+    yhpr.c
+    espr2.c
+    yhpr2.c
 )
 
 # Publish the overlay-covered routine names so the BLAS section in
