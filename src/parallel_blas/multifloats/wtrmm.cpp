@@ -420,6 +420,236 @@ inline void wtrmm_luTC_core(int j_start, int j_end, int M, T alpha,
 
 /* ── SIDE = 'R' row-range cores ─────────────────────────────────── */
 
+#ifdef MBLAS_SIMD_DD
+
+/* Forward decls */
+inline void wtrmm_rln_core(int, int, int, T, const T*, int, T*, int, int);
+inline void wtrmm_run_core(int, int, int, T, const T*, int, T*, int, int);
+inline void wtrmm_rlTC_core(int, int, int, T, const T*, int, T*, int, int, int);
+inline void wtrmm_ruTC_core(int, int, int, T, const T*, int, T*, int, int, int);
+
+inline void load_4cell_csoa(const T *col, int ofs,
+                            __m256d &rh, __m256d &rl,
+                            __m256d &ih, __m256d &il)
+{
+    __m256d v0 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs]));
+    __m256d v1 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs + 1]));
+    __m256d v2 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs + 2]));
+    __m256d v3 = _mm256_loadu_pd(reinterpret_cast<const double*>(&col[ofs + 3]));
+    __m256d t0 = _mm256_unpacklo_pd(v0, v1);
+    __m256d t1 = _mm256_unpackhi_pd(v0, v1);
+    __m256d t2 = _mm256_unpacklo_pd(v2, v3);
+    __m256d t3 = _mm256_unpackhi_pd(v2, v3);
+    rh = _mm256_permute2f128_pd(t0, t2, 0x20);
+    rl = _mm256_permute2f128_pd(t1, t3, 0x20);
+    ih = _mm256_permute2f128_pd(t0, t2, 0x31);
+    il = _mm256_permute2f128_pd(t1, t3, 0x31);
+}
+
+inline void store_4cell_csoa(T *col, int ofs,
+                             __m256d rh, __m256d rl,
+                             __m256d ih, __m256d il)
+{
+    __m256d t0 = _mm256_unpacklo_pd(rh, rl);
+    __m256d t1 = _mm256_unpackhi_pd(rh, rl);
+    __m256d t2 = _mm256_unpacklo_pd(ih, il);
+    __m256d t3 = _mm256_unpackhi_pd(ih, il);
+    __m256d v0 = _mm256_permute2f128_pd(t0, t2, 0x20);
+    __m256d v1 = _mm256_permute2f128_pd(t1, t3, 0x20);
+    __m256d v2 = _mm256_permute2f128_pd(t0, t2, 0x31);
+    __m256d v3 = _mm256_permute2f128_pd(t1, t3, 0x31);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs]),     v0);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs + 1]), v1);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs + 2]), v2);
+    _mm256_storeu_pd(reinterpret_cast<double*>(&col[ofs + 3]), v3);
+}
+
+inline void broadcast_c4(const T &v, __m256d &rh, __m256d &rl, __m256d &ih, __m256d &il)
+{
+    rh = _mm256_set1_pd(v.re.limbs[0]); rl = _mm256_set1_pd(v.re.limbs[1]);
+    ih = _mm256_set1_pd(v.im.limbs[0]); il = _mm256_set1_pd(v.im.limbs[1]);
+}
+
+inline void simd_wtrmm_r4_rln(int ib, int N, T alpha,
+                              const T *a, int lda, T *b, int ldb, int nounit)
+{
+    for (int j = 0; j < N; ++j) {
+        T *bj = b + static_cast<std::size_t>(j) * ldb;
+        T t = alpha;
+        if (nounit) t = cmul(t, A_(j, j));
+        __m256d brh, brl, bih, bil;
+        load_4cell_csoa(bj, ib, brh, brl, bih, bil);
+        if (!cdd_isone(t)) {
+            __m256d trh, trl, tih, til;
+            broadcast_c4(t, trh, trl, tih, til);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_mul(brh, brl, bih, bil, trh, trl, tih, til,
+                             nrh, nrl, nih, nil_);
+            brh = nrh; brl = nrl; bih = nih; bil = nil_;
+        }
+        for (int k = j + 1; k < N; ++k) {
+            const T akj_v = A_(k, j);
+            if (cdd_iszero(akj_v)) continue;
+            const T akj = cmul(alpha, akj_v);
+            __m256d arh, arl, aih, ail;
+            broadcast_c4(akj, arh, arl, aih, ail);
+            const T *bk = b + static_cast<std::size_t>(k) * ldb;
+            __m256d bkrh, bkrl, bkih, bkil;
+            load_4cell_csoa(bk, ib, bkrh, bkrl, bkih, bkil);
+            __m256d prh, prl, pih, pil;
+            simd_dd::cdd_mul(arh, arl, aih, ail, bkrh, bkrl, bkih, bkil,
+                             prh, prl, pih, pil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_add(brh, brl, bih, bil, prh, prl, pih, pil,
+                             nrh, nrl, nih, nil_);
+            brh = nrh; brl = nrl; bih = nih; bil = nil_;
+        }
+        store_4cell_csoa(bj, ib, brh, brl, bih, bil);
+    }
+}
+
+inline void simd_wtrmm_r4_run(int ib, int N, T alpha,
+                              const T *a, int lda, T *b, int ldb, int nounit)
+{
+    for (int j = N - 1; j >= 0; --j) {
+        T *bj = b + static_cast<std::size_t>(j) * ldb;
+        T t = alpha;
+        if (nounit) t = cmul(t, A_(j, j));
+        __m256d brh, brl, bih, bil;
+        load_4cell_csoa(bj, ib, brh, brl, bih, bil);
+        if (!cdd_isone(t)) {
+            __m256d trh, trl, tih, til;
+            broadcast_c4(t, trh, trl, tih, til);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_mul(brh, brl, bih, bil, trh, trl, tih, til,
+                             nrh, nrl, nih, nil_);
+            brh = nrh; brl = nrl; bih = nih; bil = nil_;
+        }
+        for (int k = 0; k < j; ++k) {
+            const T akj_v = A_(k, j);
+            if (cdd_iszero(akj_v)) continue;
+            const T akj = cmul(alpha, akj_v);
+            __m256d arh, arl, aih, ail;
+            broadcast_c4(akj, arh, arl, aih, ail);
+            const T *bk = b + static_cast<std::size_t>(k) * ldb;
+            __m256d bkrh, bkrl, bkih, bkil;
+            load_4cell_csoa(bk, ib, bkrh, bkrl, bkih, bkil);
+            __m256d prh, prl, pih, pil;
+            simd_dd::cdd_mul(arh, arl, aih, ail, bkrh, bkrl, bkih, bkil,
+                             prh, prl, pih, pil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_add(brh, brl, bih, bil, prh, prl, pih, pil,
+                             nrh, nrl, nih, nil_);
+            brh = nrh; brl = nrl; bih = nih; bil = nil_;
+        }
+        store_4cell_csoa(bj, ib, brh, brl, bih, bil);
+    }
+}
+
+inline void simd_wtrmm_r4_rlTC(int ib, int N, T alpha, int conj_flag,
+                               const T *a, int lda, T *b, int ldb, int nounit)
+{
+    for (int k = N - 1; k >= 0; --k) {
+        const T *bk = b + static_cast<std::size_t>(k) * ldb;
+        __m256d bkrh, bkrl, bkih, bkil;
+        load_4cell_csoa(bk, ib, bkrh, bkrl, bkih, bkil);
+        for (int j = k + 1; j < N; ++j) {
+            const T ajk = A_op(a, lda, j, k, conj_flag);
+            if (cdd_iszero(ajk)) continue;
+            const T scaled = cmul(alpha, ajk);
+            __m256d arh, arl, aih, ail;
+            broadcast_c4(scaled, arh, arl, aih, ail);
+            T *bj = b + static_cast<std::size_t>(j) * ldb;
+            __m256d bjrh, bjrl, bjih, bjil;
+            load_4cell_csoa(bj, ib, bjrh, bjrl, bjih, bjil);
+            __m256d prh, prl, pih, pil;
+            simd_dd::cdd_mul(arh, arl, aih, ail, bkrh, bkrl, bkih, bkil,
+                             prh, prl, pih, pil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_add(bjrh, bjrl, bjih, bjil, prh, prl, pih, pil,
+                             nrh, nrl, nih, nil_);
+            store_4cell_csoa(bj, ib, nrh, nrl, nih, nil_);
+        }
+        T t = alpha;
+        if (nounit) t = cmul(t, A_op(a, lda, k, k, conj_flag));
+        if (!cdd_isone(t)) {
+            __m256d trh, trl, tih, til;
+            broadcast_c4(t, trh, trl, tih, til);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_mul(bkrh, bkrl, bkih, bkil, trh, trl, tih, til,
+                             nrh, nrl, nih, nil_);
+            store_4cell_csoa(const_cast<T*>(bk), ib, nrh, nrl, nih, nil_);
+        }
+    }
+}
+
+inline void simd_wtrmm_r4_ruTC(int ib, int N, T alpha, int conj_flag,
+                               const T *a, int lda, T *b, int ldb, int nounit)
+{
+    for (int k = 0; k < N; ++k) {
+        const T *bk = b + static_cast<std::size_t>(k) * ldb;
+        __m256d bkrh, bkrl, bkih, bkil;
+        load_4cell_csoa(bk, ib, bkrh, bkrl, bkih, bkil);
+        for (int j = 0; j < k; ++j) {
+            const T ajk = A_op(a, lda, j, k, conj_flag);
+            if (cdd_iszero(ajk)) continue;
+            const T scaled = cmul(alpha, ajk);
+            __m256d arh, arl, aih, ail;
+            broadcast_c4(scaled, arh, arl, aih, ail);
+            T *bj = b + static_cast<std::size_t>(j) * ldb;
+            __m256d bjrh, bjrl, bjih, bjil;
+            load_4cell_csoa(bj, ib, bjrh, bjrl, bjih, bjil);
+            __m256d prh, prl, pih, pil;
+            simd_dd::cdd_mul(arh, arl, aih, ail, bkrh, bkrl, bkih, bkil,
+                             prh, prl, pih, pil);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_add(bjrh, bjrl, bjih, bjil, prh, prl, pih, pil,
+                             nrh, nrl, nih, nil_);
+            store_4cell_csoa(bj, ib, nrh, nrl, nih, nil_);
+        }
+        T t = alpha;
+        if (nounit) t = cmul(t, A_op(a, lda, k, k, conj_flag));
+        if (!cdd_isone(t)) {
+            __m256d trh, trl, tih, til;
+            broadcast_c4(t, trh, trl, tih, til);
+            __m256d nrh, nrl, nih, nil_;
+            simd_dd::cdd_mul(bkrh, bkrl, bkih, bkil, trh, trl, tih, til,
+                             nrh, nrl, nih, nil_);
+            store_4cell_csoa(const_cast<T*>(bk), ib, nrh, nrl, nih, nil_);
+        }
+    }
+}
+
+enum wtrmm_r_op { WRLN_OP, WRUN_OP, WRLT_OP, WRUT_OP, WRLC_OP, WRUC_OP };
+
+inline void wtrmm_simd_diag_R(wtrmm_r_op op, int i_start, int i_end, int N, T alpha,
+                              const T *a, int lda, T *b, int ldb, int nounit)
+{
+    const int i4_end = i_start + ((i_end - i_start) & ~3);
+    for (int ib = i_start; ib < i4_end; ib += 4) {
+        switch (op) {
+        case WRLN_OP: simd_wtrmm_r4_rln(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        case WRUN_OP: simd_wtrmm_r4_run(ib, N, alpha, a, lda, b, ldb, nounit); break;
+        case WRLT_OP: simd_wtrmm_r4_rlTC(ib, N, alpha, 0, a, lda, b, ldb, nounit); break;
+        case WRUT_OP: simd_wtrmm_r4_ruTC(ib, N, alpha, 0, a, lda, b, ldb, nounit); break;
+        case WRLC_OP: simd_wtrmm_r4_rlTC(ib, N, alpha, 1, a, lda, b, ldb, nounit); break;
+        case WRUC_OP: simd_wtrmm_r4_ruTC(ib, N, alpha, 1, a, lda, b, ldb, nounit); break;
+        }
+    }
+    if (i4_end < i_end) {
+        switch (op) {
+        case WRLN_OP: wtrmm_rln_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit); break;
+        case WRUN_OP: wtrmm_run_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit); break;
+        case WRLT_OP: wtrmm_rlTC_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit, 0); break;
+        case WRUT_OP: wtrmm_ruTC_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit, 0); break;
+        case WRLC_OP: wtrmm_rlTC_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit, 1); break;
+        case WRUC_OP: wtrmm_ruTC_core(i4_end, i_end, N, alpha, a, lda, b, ldb, nounit, 1); break;
+        }
+    }
+}
+
+#endif  /* MBLAS_SIMD_DD */
+
 inline void wtrmm_rln_core(int i_start, int i_end, int N, T alpha,
                            const T *a, int lda, T *b, int ldb, int nounit)
 {
@@ -728,8 +958,13 @@ void blocked_chunk_R(trmm_variant_R V, int i_start, int i_end,
     if (V == WRLN) {
         for (int jc = 0; jc < N; jc += nb) {
             const int jb = (N - jc < nb) ? (N - jc) : nb;
+#ifdef MBLAS_SIMD_DD
+            wtrmm_simd_diag_R(WRLN_OP, i_start, i_end, jb, alpha,
+                              &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#else
             wtrmm_rln_core(i_start, i_end, jb, alpha,
                            &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#endif
             const int trailing = N - (jc + jb);
             if (trailing > 0) {
                 const int k0 = jc + jb;
@@ -743,8 +978,13 @@ void blocked_chunk_R(trmm_variant_R V, int i_start, int i_end,
         int jc = ((N - 1) / nb) * nb;
         while (jc >= 0) {
             const int jb = (N - jc < nb) ? (N - jc) : nb;
+#ifdef MBLAS_SIMD_DD
+            wtrmm_simd_diag_R(WRUN_OP, i_start, i_end, jb, alpha,
+                              &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#else
             wtrmm_run_core(i_start, i_end, jb, alpha,
                            &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#endif
             if (jc > 0) {
                 wgemm_(NN, NN, &my_M, &jb, &jc, &alpha,
                        B_chunk, &ldb,
@@ -759,8 +999,13 @@ void blocked_chunk_R(trmm_variant_R V, int i_start, int i_end,
         int jc = ((N - 1) / nb) * nb;
         while (jc >= 0) {
             const int jb = (N - jc < nb) ? (N - jc) : nb;
+#ifdef MBLAS_SIMD_DD
+            wtrmm_simd_diag_R(conj_flag ? WRLC_OP : WRLT_OP, i_start, i_end, jb, alpha,
+                              &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#else
             wtrmm_rlTC_core(i_start, i_end, jb, alpha,
                             &A_(jc, jc), lda, &B_(0, jc), ldb, nounit, conj_flag);
+#endif
             if (jc > 0) {
                 wgemm_(NN, gemm_trans, &my_M, &jb, &jc, &alpha,
                        B_chunk, &ldb,
@@ -774,8 +1019,13 @@ void blocked_chunk_R(trmm_variant_R V, int i_start, int i_end,
         const char *gemm_trans = conj_flag ? CN : TN;
         for (int jc = 0; jc < N; jc += nb) {
             const int jb = (N - jc < nb) ? (N - jc) : nb;
+#ifdef MBLAS_SIMD_DD
+            wtrmm_simd_diag_R(conj_flag ? WRUC_OP : WRUT_OP, i_start, i_end, jb, alpha,
+                              &A_(jc, jc), lda, &B_(0, jc), ldb, nounit);
+#else
             wtrmm_ruTC_core(i_start, i_end, jb, alpha,
                             &A_(jc, jc), lda, &B_(0, jc), ldb, nounit, conj_flag);
+#endif
             const int trailing = N - (jc + jb);
             if (trailing > 0) {
                 const int k0 = jc + jb;
@@ -876,6 +1126,16 @@ extern "C" void wtrmm_(
         }
     } else {
         const int use_blocked = (N >= 2 * nb);
+#ifdef MBLAS_SIMD_DD
+        if (!use_blocked) {
+            wtrmm_r_op op;
+            if (TR == 'N')      op = (UPLO == 'L') ? WRLN_OP : WRUN_OP;
+            else if (TR == 'T') op = (UPLO == 'L') ? WRLT_OP : WRUT_OP;
+            else                op = (UPLO == 'L') ? WRLC_OP : WRUC_OP;
+            wtrmm_simd_diag_R(op, 0, M, N, alpha, a, lda, b, ldb, nounit);
+            return;
+        }
+#endif
         if (TR == 'N') {
             if (UPLO == 'L') {
                 if (use_blocked) blocked_dispatch_R(WRLN, M, N, alpha, a, lda, b, ldb, nounit);
