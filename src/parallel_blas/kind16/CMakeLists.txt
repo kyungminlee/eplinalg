@@ -32,6 +32,12 @@ set(_kernels
     xhemv.c
     qtrsv.c
     xtrsv.c
+    qtrmv.c
+    xtrmv.c
+    qsyr.c
+    xher.c
+    qsyr2.c
+    xher2.c
 )
 
 set(_routines "")
