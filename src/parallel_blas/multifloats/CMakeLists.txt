@@ -33,6 +33,12 @@ set(_kernels
     whemv.cpp
     mtrsv.cpp
     wtrsv.cpp
+    mtrmv.cpp
+    wtrmv.cpp
+    msyr.cpp
+    wher.cpp
+    msyr2.cpp
+    wher2.cpp
 )
 
 set(_routines "")
