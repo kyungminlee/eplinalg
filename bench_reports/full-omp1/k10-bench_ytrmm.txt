@@ -1,0 +1,6 @@
+       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+           64          1.7933             1.7484       1.03x
+          128          1.4984             1.3892       1.08x
+          256          1.5448             1.3933       1.11x
+          512          1.5793             1.4075       1.12x
+wrote bench_ytrmm.json

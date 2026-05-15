@@ -1,0 +1,4 @@
+       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+          128          0.0520             0.0520       1.00x
+          256          0.0551             0.0552       1.00x
+wrote bench_xsymm.json
