@@ -17,6 +17,14 @@ set(_kernels
     ygemm.c
     etrsm.c
     ytrsm.c
+    etrmm.c
+    ytrmm.c
+    esyrk.c
+    ysyrk.c
+    yherk.c
+    esymm.c
+    ysymm.c
+    yhemm.c
 )
 
 # Publish the overlay-covered routine names so the BLAS section in
