@@ -21,6 +21,9 @@ set(_kernels
     msymm.cpp
     wsymm.cpp
     whemm.cpp
+    msyr2k.cpp
+    wsyr2k.cpp
+    wher2k.cpp
 )
 
 set(_routines "")
