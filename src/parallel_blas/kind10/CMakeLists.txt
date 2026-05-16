@@ -15,6 +15,8 @@
 set(_kernels
     egemm.c
     ygemm.c
+    egemmtr.c
+    ygemmtr.c
     etrsm.c
     ytrsm.c
     etrmm.c

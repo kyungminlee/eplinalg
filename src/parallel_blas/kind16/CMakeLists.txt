@@ -10,6 +10,8 @@
 set(_kernels
     qgemm.c
     xgemm.c
+    qgemmtr.c
+    xgemmtr.c
     qtrsm.c
     xtrsm.c
     qtrmm.c

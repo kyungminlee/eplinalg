@@ -11,6 +11,8 @@
 set(_kernels
     mgemm.cpp
     wgemm.cpp
+    mgemmtr.cpp
+    wgemmtr.cpp
     mtrsm.cpp
     wtrsm.cpp
     mtrmm.cpp
