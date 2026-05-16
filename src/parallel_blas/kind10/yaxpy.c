@@ -10,7 +10,9 @@ void yaxpy_(const int *n_, const T *alpha_,
     if (n <= 0) return;
     if (alpha == (T)0.0L) return;
     if (incx == 1 && incy == 1) {
-        for (int i = 0; i < n; ++i) y[i] += alpha * x[i];
+        const T *xe = x + n;
+        T *yp = y;
+        for (const T *xp = x; xp < xe; ++xp, ++yp) *yp += alpha * (*xp);
     } else {
         int ix = (incx < 0) ? (-n + 1) * incx : 0;
         int iy = (incy < 0) ? (-n + 1) * incy : 0;

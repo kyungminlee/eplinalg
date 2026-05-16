@@ -8,10 +8,12 @@ void erot_(const int *n_, T *x, const int *incx_, T *y, const int *incy_,
     const T c = *c_, s = *s_;
     if (n <= 0) return;
     if (incx == 1 && incy == 1) {
-        for (int i = 0; i < n; ++i) {
-            T tx = c * x[i] + s * y[i];
-            y[i] = c * y[i] - s * x[i];
-            x[i] = tx;
+        T *xe = x + n;
+        T *xp = x, *yp = y;
+        for (; xp < xe; ++xp, ++yp) {
+            T tx = c * (*xp) + s * (*yp);
+            *yp = c * (*yp) - s * (*xp);
+            *xp = tx;
         }
     } else {
         int ix = (incx < 0) ? (-n + 1) * incx : 0;

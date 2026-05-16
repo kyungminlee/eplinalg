@@ -9,9 +9,10 @@ void xqscal_(const int *n_, const R *alpha_, T *x, const int *incx_)
     const R alpha = *alpha_;
     if (n <= 0 || alpha == 1.0Q) return;
     if (incx == 1) {
-        for (int i = 0; i < n; ++i) {
-            __real__ x[i] *= alpha;
-            __imag__ x[i] *= alpha;
+        T *end = x + n;
+        for (T *p = x; p < end; ++p) {
+            __real__ *p *= alpha;
+            __imag__ *p *= alpha;
         }
     } else {
         int ix = (incx < 0) ? (-n + 1) * incx : 0;

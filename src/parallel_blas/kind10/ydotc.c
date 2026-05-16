@@ -10,7 +10,7 @@ T ydotc_(const int *n_, const T *x, const int *incx_,
     if (incx == 1 && incy == 1) {
         int i = 0;
         for (; i + 1 < n; i += 2) {
-            s0 += ~x[i]     * y[i];
+            s0 += ~x[i    ] * y[i    ];
             s1 += ~x[i + 1] * y[i + 1];
         }
         if (i < n) s0 += ~x[i] * y[i];
