@@ -64,6 +64,9 @@ set(_kernels
     # L2 banded — general
     mgbmv.cpp
     wgbmv.cpp
+    # L2 banded — symmetric / Hermitian
+    msbmv.cpp
+    whbmv.cpp
 )
 
 set(_routines "")
