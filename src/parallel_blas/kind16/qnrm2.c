@@ -18,7 +18,7 @@ T qnrm2_(const int *n_, const T *x, const int *incx_)
         ix += incx;
     }
     if (scale == 0.0Q) return 0.0Q;
-    if (!finiteq(scale)) return scale;
+    if (!__builtin_isfinite(scale)) return scale;
     T s = 0.0Q;
     ix = 0;
     for (int i = 0; i < n; ++i) {
