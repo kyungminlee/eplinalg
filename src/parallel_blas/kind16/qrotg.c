@@ -1,5 +1,8 @@
 /* qrotg — kind16 real Givens generator. */
 #include <quadmath.h>
+/* fabsq via __builtin_fabsf128 — single `pand` instead of a libquadmath function call. */
+#undef fabsq
+#define fabsq(x) __builtin_fabsf128(x)
 typedef __float128 T;
 
 void qrotg_(T *a, T *b, T *c, T *s)

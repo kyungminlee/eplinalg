@@ -1,5 +1,8 @@
 /* iqamax — kind16 real: 1-based argmax(|X|). */
 #include <quadmath.h>
+/* fabsq via __builtin_fabsf128 — single `pand` instead of a libquadmath function call. */
+#undef fabsq
+#define fabsq(x) __builtin_fabsf128(x)
 typedef __float128 T;
 int iqamax_(const int *n_, const T *x, const int *incx_)
 {

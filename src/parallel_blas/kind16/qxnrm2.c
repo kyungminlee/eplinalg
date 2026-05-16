@@ -1,5 +1,8 @@
 /* qxnrm2 — kind16: ||X||₂ for complex X (real result). Two-pass scaled. */
 #include <quadmath.h>
+/* fabsq via __builtin_fabsf128 — single `pand` instead of a libquadmath function call. */
+#undef fabsq
+#define fabsq(x) __builtin_fabsf128(x)
 typedef __complex128 T;
 typedef __float128 R;
 

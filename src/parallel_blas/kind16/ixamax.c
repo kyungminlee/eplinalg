@@ -1,5 +1,8 @@
 /* ixamax — kind16 complex: 1-based argmax(|re|+|im|). */
 #include <quadmath.h>
+/* fabsq via __builtin_fabsf128 — single `pand` instead of a libquadmath function call. */
+#undef fabsq
+#define fabsq(x) __builtin_fabsf128(x)
 typedef __complex128 T;
 typedef __float128 R;
 int ixamax_(const int *n_, const T *x, const int *incx_)

@@ -1,5 +1,8 @@
 /* qrotmg — kind16 real: generate modified Givens. */
 #include <quadmath.h>
+/* fabsq via __builtin_fabsf128 — single `pand` instead of a libquadmath function call. */
+#undef fabsq
+#define fabsq(x) __builtin_fabsf128(x)
 typedef __float128 T;
 
 void qrotmg_(T *d1_, T *d2_, T *x1_, const T *y1_, T *dparam)
