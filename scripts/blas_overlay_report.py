@@ -71,6 +71,27 @@ def overlay_routines(target: str) -> list[str]:
     return out
 
 
+def isa_tag(target: str, routine: str) -> str:
+    """Return 'AVX2+FMA3', 'FMA3', or 'scalar' based on source inspection.
+
+    - kind10 (fp80) and kind16 (__float128) have no SIMD path on x86-64.
+    - multifloats with __m256 / _mm256_ / *SIMD_DD macros → AVX2+FMA3.
+    - multifloats without explicit intrinsics still picks up FMA3
+      through the underlying dd_mul / dd_add helpers (compiled with
+      -mfma), so we tag those FMA3.
+    """
+    ext = "cpp" if target == "multifloats" else "c"
+    p = SRC / target / f"{routine}.{ext}"
+    if not p.exists():
+        return PLACEHOLDER
+    if target in ("kind10", "kind16"):
+        return "scalar"
+    src = p.read_text()
+    if re.search(r"__m256|_mm256_|MBLAS_SIMD_DD|WBLAS_SIMD_DD", src):
+        return "AVX2+FMA3"
+    return "FMA3"
+
+
 def algorithm_summary(target: str, routine: str) -> str:
     """First descriptive line of the overlay source's top comment."""
     ext = "cpp" if target == "multifloats" else "c"
@@ -116,6 +137,7 @@ class BenchRow:
     target: str
     routine: str
     algo: str
+    isa: str = PLACEHOLDER
     digits: str = PLACEHOLDER         # min / med / max digits
     gflops_omp1: str = PLACEHOLDER
     speedup_omp1: str = PLACEHOLDER
@@ -270,7 +292,8 @@ def main():
 
         for r in routines:
             algo = algorithm_summary(target, r)
-            row = BenchRow(target=target, routine=r, algo=algo)
+            row = BenchRow(target=target, routine=r, algo=algo,
+                           isa=isa_tag(target, r))
 
             if not args.skip_bench:
                 d1 = run_bench_one(bdir, r, args.size, args.iters, omp=1)
@@ -309,12 +332,12 @@ def main():
         sub = [r for r in rows if r.target == target]
         if not sub: continue
         out_lines += [f"## {target}", "",
-                      "| routine | algorithm | err digits (min/med/max) | GFLOP/s (OMP=1) | speedup OMP=1 | speedup OMP=4 |",
-                      "|---------|-----------|---------------------------|----------------:|--------------:|--------------:|"]
+                      "| routine | algorithm | ISA | err digits (min/med/max) | GFLOP/s (OMP=1) | speedup OMP=1 | speedup OMP=4 |",
+                      "|---------|-----------|-----|---------------------------|----------------:|--------------:|--------------:|"]
         for r in sub:
             algo = r.algo.replace("|", "\\|")[:120]
             out_lines.append(
-                f"| `{r.routine}` | {algo} | {r.digits} | "
+                f"| `{r.routine}` | {algo} | {r.isa} | {r.digits} | "
                 f"{r.gflops_omp1} | {r.speedup_omp1} | {r.speedup_omp4} |"
             )
         out_lines.append("")
