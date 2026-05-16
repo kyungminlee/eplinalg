@@ -44,8 +44,13 @@ void espr_(
             for (int j = 0; j < N; ++j) {
                 if (x[j] != zero) {
                     const T tmp = alpha * x[j];
-                    const int kk = (j * (j + 1)) / 2;
-                    for (int i = 0; i <= j; ++i) ap[kk + i] += x[i] * tmp;
+                    /* Pointer-walk: gcc emits one `add` + one `cmp`
+                     * per iter (9 insns) instead of counter-and-cmp
+                     * (10 insns). Matches reference DSPR codegen. */
+                    T *restrict apk  = &ap[(size_t)j * (j + 1) / 2];
+                    T *restrict aend = apk + j + 1;
+                    const T *restrict xp = x;
+                    for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
                 }
             }
         } else {
@@ -56,8 +61,10 @@ void espr_(
             for (int j = 0; j < N; ++j) {
                 if (x[j] != zero) {
                     const T tmp = alpha * x[j];
-                    const int kk = j * N - (j * (j - 1)) / 2;
-                    for (int i = j; i < N; ++i) ap[kk + (i - j)] += x[i] * tmp;
+                    T *restrict apk  = &ap[(size_t)j * N - (size_t)j * (j - 1) / 2];
+                    T *restrict aend = apk + (N - j);
+                    const T *restrict xp = &x[j];
+                    for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
                 }
             }
         }

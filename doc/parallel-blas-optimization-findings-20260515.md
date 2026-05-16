@@ -743,3 +743,66 @@ when `use_omp=false`.
      pointer increments are a significant fraction of inner-loop insts;
    - `-O3` auto-unroll hasn't already done the work (kind16/multifloats
      may differ).
+
+---
+
+## Addendum 8: pointer-walk loop pattern for L2 packed kernels (2026-05-16)
+
+`espr` (kind10 real symmetric packed rank-1, `A := alpha·x·xᵀ + A`)
+benched at 0.78–0.93× across (uplo, size). Same diagnosis pattern as
+Addendum 7: walk one pointer + walk a counter = 10 insns per inner
+iter; walk two pointers and compare = 9.
+
+### Before vs after
+
+The natural C form:
+
+```c
+for (int i = 0; i <= j; ++i) ap[kk + i] += x[i] * tmp;
+```
+
+compiles to 10 insns per iter (one pointer increment + one counter
+inc + one cmp). Rewritten as a pointer-walk:
+
+```c
+T *restrict apk  = &ap[kk];
+T *restrict aend = apk + j + 1;
+const T *restrict xp = x;
+for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
+```
+
+compiles to 9 insns per iter — two pointer increments + cmp, no
+separate counter. Matches gfortran reference DSPR codegen.
+
+### Results
+
+| uplo | N    | before | after |
+|------|------|-------:|------:|
+| L    | 512  | 0.78×  | 1.01× |
+| L    | 1024 | 0.83×  | 1.09× |
+| L    | 2048 | 0.86×  | 1.01× |
+| U    | 512  | 0.87×  | 0.99× |
+| U    | 1024 | 0.87×  | 0.97× |
+| U    | 2048 | 0.93×  | 0.97× |
+| L OMP=4 | 1024 | 1.04× | **2.09×** |
+| U OMP=4 | 1024 | 1.05× | **1.67×** |
+
+Fuzz is bit-exact (max err 0.0): pointer-walk preserves the exact
+operation order of the counter loop.
+
+### Rules
+
+5. **Default to pointer-walk loops for two-array lockstep AXPY shapes.**
+   `for (int i = ...; ++i) a[i] += x[i] * t` is fine for one-array
+   patterns; for two arrays in lockstep it costs one extra `inc` per
+   iter that gfortran wouldn't emit. The pointer form costs more
+   characters to write but matches what `-O3` would do for the Fortran
+   source.
+
+6. **Addendum 7's shared-index trick and Addendum 8's pointer-walk are
+   separate codegen patches.** Apply Addendum 7 (`char*` byte-offset
+   walk) when ≥3 pointers walk in lockstep with the same stride; apply
+   Addendum 8 (pointer-compare loop) when 2 pointers walk in lockstep.
+   gcc handles the 2-pointer case fine when the loop is written as
+   pointer-compare; for 3+ pointers it still loses to fortran unless
+   you go through `char*`.
