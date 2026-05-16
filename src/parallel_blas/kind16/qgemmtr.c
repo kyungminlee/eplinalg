@@ -48,7 +48,7 @@ void qgemmtr_(const char *uplo, const char *transa, const char *transb,
         if (beta == one) return;
 #ifdef _OPENMP
         const int use_omp0 = (N >= QGEMMTR_OMP_MIN && omp_get_max_threads() > 1);
-        #pragma omp parallel for if(use_omp0) schedule(static)
+        #pragma omp parallel for if(use_omp0) schedule(static, 1)
 #endif
         for (int j = 0; j < N; ++j) {
             const int is = upper ? 0 : j;
@@ -62,7 +62,7 @@ void qgemmtr_(const char *uplo, const char *transa, const char *transb,
 
 #ifdef _OPENMP
     const int use_omp = (N >= QGEMMTR_OMP_MIN && omp_get_max_threads() > 1);
-    #pragma omp parallel for if(use_omp) schedule(static)
+    #pragma omp parallel for if(use_omp) schedule(static, 1)
 #endif
     for (int j = 0; j < N; ++j) {
         const int is = upper ? 0 : j;
