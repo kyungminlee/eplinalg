@@ -439,3 +439,58 @@ Routines previously sub-parity that returned to ≥1.0×: `eaxpy`, `ecopy`, `edo
 3. **Per-call overhead is the right thing to chase once codegen is at parity.** Once the inner loop is byte-identical to migrated (Addendum 2 rule), the only remaining variable is what the caller pays *before* and *after* the loop. The libgomp call was 1 instruction in the source but 50 ns in practice — invisible to anyone who only reads C, obvious in the disassembly.
 
 4. **Apply OMP-overhead fixes broadly, then re-bench.** A handful of routines showed small (<10%) regressions in the after-sweep doc. Several of those (`escal`, `esyr2`, `mspr2`, etc.) sit in source files the sweep didn't touch — they're `BLAS_BENCH_ITERS=3` sampling noise, not real regressions. With this many routines × this many shapes, individual-cell variance is large; trust the aggregate means.
+
+## Addendum 4: libm function calls in the inner expression — 2026-05-16
+
+Reported: `yrotg` (kind10 complex Givens generator) at 0.48× of migrated — by far the worst speedup in the entire overlay after the OMP-sweep round.
+
+### Diagnosis
+
+Inner loops were already byte-identical to migrated for the rotg family (single-call routines, no inner loop to compare). The cost had to be *inside* the body. One-line objdump check:
+
+    overlay  yrotg.c.o:   3 × call hypotl@plt
+    migrated yrotg.f90.o: 0 external calls
+
+`hypotl(x, y)` returns sqrt(x² + y²) with overflow protection — for long double on glibc that's a software implementation, ~100–300 cycles per call. Three of them per yrotg invocation = the entire missing 50% of throughput.
+
+The migrated Fortran implements Anderson 2017 ("Safe Scaling in Level 1 BLAS") with direct algebra on `ABSSQ(t) = Re(t)² + Im(t)²`, branching to a scaled path only when inputs risk overflow or underflow. The common-input fast path uses two inline `fsqrt`s and otherwise stays in registers.
+
+### Fix
+
+Replaced the three-hypot pattern with the same unscaled algebra:
+
+```c
+g2 = br*br + bi*bi;             // |b|²
+if (g2 == 0)  { *c = 1; *s = 0; return; }
+f2 = ar*ar + ai*ai;             // |a|²
+if (f2 == 0)  { *c = 0; /* sqrt(g2), conj(b)/|b| */ return; }
+h2 = f2 + g2;
+*c  = sqrtl(f2 / h2);            // |a|/sqrt(|a|²+|b|²)
+*a_ = a / *c;                    // sign(a)·sqrt(|a|²+|b|²)
+d   = sqrtl(f2 * h2);
+*s  = conj(b) * (a / d);
+```
+
+Two `sqrtl` calls (each compiles to one `fsqrt` instruction in this build) and otherwise direct arithmetic.
+
+Speedups (OMP=1, BLAS_BENCH_SIZES=10000 looped per call):
+
+| target          | routine | before | after |
+|-----------------|---------|--------|-------|
+| kind10          | yrotg   | 0.48×  | **1.78×** |
+| kind16          | xrotg   | 0.77×  | 1.21× |
+| multifloats     | wrotg   | 3.42×  | **5.88×** |
+
+multifloats had the biggest absolute jump because `cabsdd` (the DD analog of `hypotl`) is itself DD arithmetic — eliminating two of those nets more cycles even relative to the already-DD `sqrtdd`.
+
+### Generalization
+
+Three categories of hidden function calls to look for during overlay diagnosis, sorted by cost on this hardware:
+
+1. **libm long-double helpers** (`hypotl`, `sinl`, `cosl`, `powl`, `cbrtl`, `frexpl`, `ldexpl`): ~100–300 cycles each. None are inlined; `-ffast-math` doesn't help most of them. The Fortran reference often avoids these entirely via direct algebra — so a Fortran-to-C migration that "preserves intent" by reaching for libm reintroduces a cost the original didn't have.
+2. **libquadmath analogs** (`hypotq`, `sqrtq`, `sinq`, etc.): higher absolute cost than libm long-double because `__float128` arithmetic is itself emulated. Sweep equivalent.
+3. **libgomp helpers** (`omp_get_max_threads`, `omp_get_num_procs`): ~15–50 ns per call. Addendum 3 covered these.
+
+**Diagnostic rule:** when an overlay is sub-parity and the inner loop body has been verified equal to migrated, run `objdump -dr` and look at the `R_X86_64_PLT32` relocations. The list of names is the list of suspects, and `sqrt` is almost always the only one that's actually intrinsic. If `hypot`/`pow`/etc. appears, see if the source-level algorithm can be rewritten to avoid it — the BLAS/LAPACK reference frequently has already done so.
+
+**Practical rule for porting:** before introducing `hypot`/`pow`/`exp` in a C overlay, check whether the original Fortran source actually uses the equivalent intrinsic. If it doesn't, find the algebraic identity it used instead and port that.
