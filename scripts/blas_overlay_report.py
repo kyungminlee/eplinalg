@@ -325,9 +325,20 @@ def main():
         "many test programs cover only a handful of (uplo, trans) combinations).",
         "",
         f"Placeholder `{PLACEHOLDER}` = data unavailable "
-        "(no bench shim, build failure, or no matching test).",
+        "(no bench shim, build failure, or no matching fuzz program).",
+        "",
+        "**Coverage:**",
         "",
     ]
+    for target in targets:
+        sub = [r for r in rows if r.target == target]
+        nb = sum(1 for r in sub if r.gflops_omp1 != PLACEHOLDER)
+        nf = sum(1 for r in sub if r.digits != PLACEHOLDER)
+        out_lines.append(
+            f"- {target}: {len(sub)} overlay routines, "
+            f"{nb} with bench data, {nf} with fuzz data"
+        )
+    out_lines.append("")
     for target in targets:
         sub = [r for r in rows if r.target == target]
         if not sub: continue
