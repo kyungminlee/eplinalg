@@ -70,6 +70,11 @@ set(_kernels
     # L2 packed — symmetric / Hermitian mat-vec
     mspmv.cpp
     whpmv.cpp
+    # L2 banded — triangular mat-vec / solve
+    mtbmv.cpp
+    wtbmv.cpp
+    mtbsv.cpp
+    wtbsv.cpp
 )
 
 set(_routines "")
