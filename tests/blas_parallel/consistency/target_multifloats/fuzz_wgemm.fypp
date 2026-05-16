@@ -36,6 +36,7 @@ program fuzz_wgemm
 
     seed = read_seed()
     ncases = read_cases()
+    call err_stats_init(ncases)
     print '(a,i0,a,i0)', 'fuzz_wgemm: seed=', seed, '  cases=', ncases
     call seed_rng(seed)
 
@@ -85,6 +86,8 @@ program fuzz_wgemm
         bad_ov  = check_sentinels_complex(C_ov,  m, n, ldc)
         bad_mig = check_sentinels_complex(C_mig, m, n, ldc)
 
+        call err_stats_record(err%limbs(1))
+
         if (err > tol) then
             fails = fails + 1
             print '(a,i0,a,2a1,a,3i6,a,3i6)', &
@@ -109,5 +112,6 @@ program fuzz_wgemm
     print '(a,i0,a,i0,a,i0,a,i0)', &
         'fuzz_wgemm: ', ncases - fails, '/', ncases, &
         ' passed; tol_fails=', fails, ' sentinel_fails=', sentinel_fails
+    call err_stats_print()
     if (fails > 0 .or. sentinel_fails > 0) error stop 1
 end program fuzz_wgemm

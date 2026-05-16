@@ -37,6 +37,7 @@ program fuzz_wsymm
 
     seed = read_seed()
     ncases = read_cases()
+    call err_stats_init(ncases)
     print '(a,i0,a,i0)', 'fuzz_wsymm: seed=', seed, '  cases=', ncases
     call seed_rng(seed)
 
@@ -97,6 +98,8 @@ program fuzz_wsymm
 
         tol = max(real64x2(10.0_8), real64x2(4.0_8 * real(max(m, n), 8))) * eps
 
+        call err_stats_record(err%limbs(1))
+
         if (err > tol) then
             fails = fails + 1
             print '(a,i0,a,2a1,a,2i6)', &
@@ -110,5 +113,6 @@ program fuzz_wsymm
     print '(a,i0,a,i0,a,i0,a,i0)', &
         'fuzz_wsymm: ', ncases - fails, '/', ncases, &
         ' passed; tol_fails=', fails, ' sentinel_fails=', sentinel_fails
+    call err_stats_print()
     if (fails > 0 .or. sentinel_fails > 0) error stop 1
 end program fuzz_wsymm

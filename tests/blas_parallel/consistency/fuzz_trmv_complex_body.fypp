@@ -28,6 +28,8 @@ program fuzz_${routine}$
     real(8) :: u
 
     seed = read_seed(); ncases = read_cases()
+
+    call err_stats_init(ncases)
     print '(a,i0,a,i0)', 'fuzz_${routine}$: seed=', seed, '  cases=', ncases
     call seed_rng(seed); fails = 0
     do ic = 1, ncases
@@ -60,6 +62,7 @@ program fuzz_${routine}$
             tiny_val = tiny(1.0_rk)
             if (ref_max < tiny_val) then; err = diff_max; else; err = diff_max / ref_max; end if
         end block
+        call err_stats_record(err)
         if (err > tol .or. err /= err) then
             fails = fails + 1
             print '(a,i0,a,3a1,a,i6)', 'FAIL ', ic, ' UTD=', uplo, trans, diag, ' n=', n
@@ -67,5 +70,6 @@ program fuzz_${routine}$
         deallocate(A, X0, X_ov, X_mig)
     end do
     print '(a,i0,a,i0,a,i0)', 'fuzz_${routine}$: ', ncases - fails, '/', ncases, ' passed; tol_fails=', fails
+    call err_stats_print()
     if (fails > 0) error stop 1
 end program fuzz_${routine}$

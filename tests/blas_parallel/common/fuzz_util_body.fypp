@@ -16,8 +16,11 @@ module fuzz_util
     public :: fill_matrix_complex, max_rel_err_complex, check_sentinels_complex
     public :: rand_pad
     public :: rk, eps, sentinel_re, sentinel_im
+    public :: err_stats_init, err_stats_record, err_stats_print
 
     integer, parameter :: rk = ${rk_value}$
+    real(rk), allocatable, save :: err_buf(:)
+    integer, save :: err_count = 0
     real(rk), parameter :: eps = epsilon(1.0_rk)
 
     ! Magic values planted in matrix padding rows (i > m). Any kernel
@@ -298,5 +301,50 @@ contains
             p = rand_int_log(33, 128)
         end if
     end function rand_pad
+
+    subroutine err_stats_init(n)
+        integer, intent(in) :: n
+        if (allocated(err_buf)) deallocate(err_buf)
+        allocate(err_buf(max(1, n)))
+        err_count = 0
+    end subroutine err_stats_init
+
+    subroutine err_stats_record(e)
+        real(rk), intent(in) :: e
+        if (.not. allocated(err_buf)) return
+        if (err_count >= size(err_buf)) return
+        err_count = err_count + 1
+        err_buf(err_count) = e
+    end subroutine err_stats_record
+
+    subroutine err_stats_print()
+        real(rk) :: vmin, vmax, vmed, t
+        integer :: i, j
+        if (.not. allocated(err_buf) .or. err_count == 0) then
+            print '(a)', 'ERR_STATS: n=0'
+            return
+        end if
+        ! Insertion sort over err_count entries — n is small (≤ a few k).
+        do i = 2, err_count
+            t = err_buf(i)
+            j = i - 1
+            do while (j >= 1)
+                if (err_buf(j) <= t) exit
+                err_buf(j + 1) = err_buf(j)
+                j = j - 1
+            end do
+            err_buf(j + 1) = t
+        end do
+        vmin = err_buf(1)
+        vmax = err_buf(err_count)
+        if (mod(err_count, 2) == 1) then
+            vmed = err_buf((err_count + 1) / 2)
+        else
+            vmed = 0.5_rk * (err_buf(err_count / 2) + err_buf(err_count / 2 + 1))
+        end if
+        print '(a, es14.6, a, es14.6, a, es14.6, a, i0)', &
+            'ERR_STATS: min=', vmin, ' med=', vmed, ' max=', vmax, &
+            ' n=', err_count
+    end subroutine err_stats_print
 
 end module fuzz_util

@@ -42,6 +42,7 @@ program fuzz_${routine}$
 
     seed = read_seed()
     ncases = read_cases()
+    call err_stats_init(ncases)
     print '(a,i0,a,i0)', 'fuzz_${routine}$: seed=', seed, '  cases=', ncases
     call seed_rng(seed)
 
@@ -90,6 +91,8 @@ program fuzz_${routine}$
         bad_ov  = check_sentinels_real(C_ov,  m, n, ldc)
         bad_mig = check_sentinels_real(C_mig, m, n, ldc)
 
+        call err_stats_record(err)
+
         if (err > tol .or. err /= err) then
             fails = fails + 1
             print '(a,i0,a,2a1,a,3i6,a,3i6,a,2es12.4,a,es12.4)', &
@@ -121,5 +124,7 @@ program fuzz_${routine}$
     print '(a,i0,a,i0,a,i0,a,i0)', &
         'fuzz_${routine}$: ', ncases - fails, '/', ncases, &
         ' passed; tol_fails=', fails, ' sentinel_fails=', sentinel_fails
+
+    call err_stats_print()
     if (fails > 0 .or. sentinel_fails > 0) error stop 1
 end program fuzz_${routine}$

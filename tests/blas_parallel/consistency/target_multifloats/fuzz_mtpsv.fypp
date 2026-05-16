@@ -26,6 +26,7 @@ program fuzz_mtpsv
     type(real64x2), allocatable :: AP(:), X0(:), X_ov(:), X_mig(:)
     real(8) :: u
     seed = read_seed(); ncases = read_cases()
+    call err_stats_init(ncases)
     print '(a,i0,a,i0)', 'fuzz_mtpsv: seed=', seed, '  cases=', ncases
     call seed_rng(seed); fails = 0
     do ic = 1, ncases
@@ -61,6 +62,7 @@ program fuzz_mtpsv
             if (ref_max < tiny_val) then; err = diff_max; else; err = diff_max / ref_max; end if
         end block
         tol = max(real64x2(10.0_8), real64x2(16.0_8 * real(n, 8))) * eps
+        call err_stats_record(err%limbs(1))
         if (err > tol) then
             fails = fails + 1
             print '(a,i0,a,3a1,a,i6)', 'FAIL ', ic, ' UTD=', uplo, trans, diag, ' n=', n
@@ -68,5 +70,6 @@ program fuzz_mtpsv
         deallocate(AP, X0, X_ov, X_mig)
     end do
     print '(a,i0,a,i0,a,i0)', 'fuzz_mtpsv: ', ncases - fails, '/', ncases, ' passed; tol_fails=', fails
+    call err_stats_print()
     if (fails > 0) error stop 1
 end program
