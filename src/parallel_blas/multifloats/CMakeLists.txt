@@ -75,6 +75,11 @@ set(_kernels
     wtbmv.cpp
     mtbsv.cpp
     wtbsv.cpp
+    # L2 packed — triangular mat-vec / solve
+    mtpmv.cpp
+    wtpmv.cpp
+    mtpsv.cpp
+    wtpsv.cpp
 )
 
 set(_routines "")
