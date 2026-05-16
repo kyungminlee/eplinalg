@@ -19,6 +19,7 @@
 #ifdef MBLAS_SIMD_DD
 #include "mgemm_simd_kernel.h"
 #include <immintrin.h>
+#include "../common/blas_omp.h"
 #endif
 
 namespace mf = multifloats;
@@ -732,7 +733,7 @@ inline void wtrmm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define WTRMM_OMP_WRAP_L(name, core)                                       \
     void name(int M, int N, T alpha,                                        \
               const T *a, int lda, T *b, int ldb, int nounit) {             \
-        if (N >= WTRMM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (N >= WTRMM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -745,7 +746,7 @@ inline void wtrmm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define WTRMM_OMP_WRAP_L_TC(name, core, cflag)                              \
     void name(int M, int N, T alpha,                                        \
               const T *a, int lda, T *b, int ldb, int nounit) {             \
-        if (N >= WTRMM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (N >= WTRMM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -758,7 +759,7 @@ inline void wtrmm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define WTRMM_OMP_WRAP_R(name, core)                                       \
     void name(int M, int N, T alpha,                                        \
               const T *a, int lda, T *b, int ldb, int nounit) {             \
-        if (M >= WTRMM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (M >= WTRMM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -771,7 +772,7 @@ inline void wtrmm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define WTRMM_OMP_WRAP_R_TC(name, core, cflag)                              \
     void name(int M, int N, T alpha,                                        \
               const T *a, int lda, T *b, int ldb, int nounit) {             \
-        if (M >= WTRMM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (M >= WTRMM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -925,7 +926,7 @@ void blocked_dispatch_L(trmm_variant_L V, int M, int N, T alpha,
 {
     const int nb = trmm_nb();
 #ifdef _OPENMP
-    if (N >= WTRMM_OMP_MIN && omp_get_max_threads() > 1) {
+    if (N >= WTRMM_OMP_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -1043,7 +1044,7 @@ void blocked_dispatch_R(trmm_variant_R V, int M, int N, T alpha,
 {
     const int nb = trmm_nb();
 #ifdef _OPENMP
-    if (M >= WTRMM_OMP_MIN && omp_get_max_threads() > 1) {
+    if (M >= WTRMM_OMP_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();

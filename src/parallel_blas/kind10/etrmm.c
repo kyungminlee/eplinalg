@@ -29,6 +29,7 @@
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define ETRMM_OMP_MIN 32
@@ -208,7 +209,7 @@ static inline void trmm_rut_core(int i_start, int i_end, int N, T alpha,
 #define ETRMM_OMP_WRAP_L(name, core)                                       \
     static void name(int M, int N, T alpha,                                \
                      const T *a, int lda, T *b, int ldb, int nounit) {     \
-        if (N >= ETRMM_OMP_MIN && omp_get_max_threads() > 1) {             \
+        if (N >= ETRMM_OMP_MIN && blas_omp_max_threads() > 1) {             \
             _Pragma("omp parallel") {                                      \
                 int tid = omp_get_thread_num();                            \
                 int nt  = omp_get_num_threads();                           \
@@ -221,7 +222,7 @@ static inline void trmm_rut_core(int i_start, int i_end, int N, T alpha,
 #define ETRMM_OMP_WRAP_R(name, core)                                       \
     static void name(int M, int N, T alpha,                                \
                      const T *a, int lda, T *b, int ldb, int nounit) {     \
-        if (M >= ETRMM_OMP_MIN && omp_get_max_threads() > 1) {             \
+        if (M >= ETRMM_OMP_MIN && blas_omp_max_threads() > 1) {             \
             _Pragma("omp parallel") {                                      \
                 int tid = omp_get_thread_num();                            \
                 int nt  = omp_get_num_threads();                           \
@@ -358,7 +359,7 @@ static void blocked_dispatch_L(enum trmm_variant V, int M, int N, T alpha,
 {
     const int nb = trmm_nb();
 #ifdef _OPENMP
-    if (N >= ETRMM_OMP_MIN && omp_get_max_threads() > 1) {
+    if (N >= ETRMM_OMP_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -479,7 +480,7 @@ static void blocked_dispatch_R(enum trmm_variant_R V, int M, int N, T alpha,
 {
     const int nb = trmm_nb();
 #ifdef _OPENMP
-    if (M >= ETRMM_OMP_MIN && omp_get_max_threads() > 1) {
+    if (M >= ETRMM_OMP_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();

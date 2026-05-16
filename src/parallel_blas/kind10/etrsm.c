@@ -29,6 +29,7 @@
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 /* Threshold below which OMP parallel-for on the column axis isn't
@@ -143,7 +144,7 @@ static inline void trsm_lut_core(int j_start, int j_end, int M, T alpha,
     static void name(int M, int N, T alpha,                                \
                      const T *a, int lda, T *b, int ldb, int nounit)       \
     {                                                                      \
-        if (N >= ETRSM_OMP_N_MIN && omp_get_max_threads() > 1) {           \
+        if (N >= ETRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {           \
             _Pragma("omp parallel")                                        \
             {                                                              \
                 int tid = omp_get_thread_num();                            \
@@ -287,7 +288,7 @@ static void blocked_dispatch(enum trsm_variant V, int M, int N, T alpha,
 {
     const int nb = trsm_nb();
 #ifdef _OPENMP
-    if (N >= ETRSM_OMP_N_MIN && omp_get_max_threads() > 1) {
+    if (N >= ETRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();

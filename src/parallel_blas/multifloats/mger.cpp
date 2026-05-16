@@ -11,6 +11,7 @@
 #endif
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 namespace mf = multifloats;
@@ -68,7 +69,7 @@ extern "C" void mger_(
         for (int i = 0; i < M; ++i) { x_hi[i] = x[i].limbs[0]; x_lo[i] = x[i].limbs[1]; }
         for (std::size_t i = static_cast<std::size_t>(M); i < M_pad; ++i) { x_hi[i] = 0.0; x_lo[i] = 0.0; }
 #ifdef _OPENMP
-        const int use_omp = (N >= MGER_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (N >= MGER_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int j = 0; j < N; ++j) {
@@ -96,7 +97,7 @@ extern "C" void mger_(
         std::free(x_hi); std::free(x_lo);
 #else
 #ifdef _OPENMP
-        const int use_omp = (N >= MGER_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (N >= MGER_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int j = 0; j < N; ++j) {

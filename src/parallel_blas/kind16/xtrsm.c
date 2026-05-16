@@ -20,6 +20,7 @@
 #include <quadmath.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define XTRSM_OMP_MIN 32
@@ -186,7 +187,7 @@ static inline void xtrsm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define XTRSM_OMP_WRAP_L(name, core)                                        \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (N >= XTRSM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (N >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -199,7 +200,7 @@ static inline void xtrsm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define XTRSM_OMP_WRAP_L_TC(name, core, cflag)                              \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (N >= XTRSM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (N >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -212,7 +213,7 @@ static inline void xtrsm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define XTRSM_OMP_WRAP_R(name, core)                                        \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (M >= XTRSM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (M >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -225,7 +226,7 @@ static inline void xtrsm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define XTRSM_OMP_WRAP_R_TC(name, core, cflag)                              \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (M >= XTRSM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (M >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \

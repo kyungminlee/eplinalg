@@ -5,6 +5,7 @@
 #include <multifloats.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 namespace mf = multifloats;
@@ -39,7 +40,7 @@ extern "C" void msyr_(
 
     if (incx == 1) {
 #ifdef _OPENMP
-        const int use_omp = (N >= MSYR_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (N >= MSYR_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int j = 0; j < N; ++j) {

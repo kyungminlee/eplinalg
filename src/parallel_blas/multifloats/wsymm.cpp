@@ -18,6 +18,7 @@
 #ifdef MBLAS_SIMD_DD
 #include "mgemm_simd_kernel.h"
 #include <immintrin.h>
+#include "../common/blas_omp.h"
 #endif
 
 namespace mf = multifloats;
@@ -487,7 +488,7 @@ extern "C" void wsymm_(
         if (cdd_isone(beta)) return;
 #ifdef _OPENMP
         const int axis = (SIDE == 'L') ? M : N;
-        const bool use_omp = (axis >= WSYMM_OMP_MIN && omp_get_max_threads() > 1);
+        const bool use_omp = (axis >= WSYMM_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int j = 0; j < N; ++j) {
@@ -502,7 +503,7 @@ extern "C" void wsymm_(
 
     if (SIDE == 'L') {
 #ifdef _OPENMP
-        const bool use_omp = (M >= WSYMM_OMP_MIN && omp_get_max_threads() > 1);
+        const bool use_omp = (M >= WSYMM_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(dynamic, 1)
 #endif
         for (int ic = 0; ic < M; ic += nb) {
@@ -542,7 +543,7 @@ extern "C" void wsymm_(
         }
     } else {
 #ifdef _OPENMP
-        const bool use_omp = (N >= WSYMM_OMP_MIN && omp_get_max_threads() > 1);
+        const bool use_omp = (N >= WSYMM_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(dynamic, 1)
 #endif
         for (int jc = 0; jc < N; jc += nb) {

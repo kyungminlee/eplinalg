@@ -8,6 +8,7 @@
 #include <complex.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define YGEMMTR_OMP_MIN 32
@@ -51,7 +52,7 @@ void ygemmtr_(const char *uplo, const char *transa, const char *transb,
     if (alpha == zero || K == 0) {
         if (beta == one) return;
 #ifdef _OPENMP
-        const int use_omp0 = (N >= YGEMMTR_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp0 = (N >= YGEMMTR_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp0) schedule(static, 1)
 #endif
         for (int j = 0; j < N; ++j) {
@@ -65,7 +66,7 @@ void ygemmtr_(const char *uplo, const char *transa, const char *transb,
     }
 
 #ifdef _OPENMP
-    const int use_omp = (N >= YGEMMTR_OMP_MIN && omp_get_max_threads() > 1);
+    const int use_omp = (N >= YGEMMTR_OMP_MIN && blas_omp_max_threads() > 1);
     #pragma omp parallel for if(use_omp) schedule(static, 1)
 #endif
     for (int j = 0; j < N; ++j) {

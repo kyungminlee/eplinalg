@@ -40,6 +40,7 @@
 #ifdef MBLAS_SIMD_DD
 #include "mgemm_simd_kernel.h"   /* dd_mul, dd_add, dd_neg primitives */
 #include <immintrin.h>
+#include "../common/blas_omp.h"
 #endif
 
 namespace mf = multifloats;
@@ -777,7 +778,7 @@ inline void mtrsm_rut_core(int j_start, int j_end, int M, T alpha,
     void name(int M, int N, T alpha,                                        \
               const T *a, int lda, T *b, int ldb, int nounit)               \
     {                                                                       \
-        if (N >= MTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {            \
+        if (N >= MTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {            \
             _Pragma("omp parallel")                                         \
             {                                                               \
                 int tid = omp_get_thread_num();                             \
@@ -939,7 +940,7 @@ void blocked_dispatch(trsm_variant V, int M, int N, T alpha,
 {
     const int nb = trsm_nb();
 #ifdef _OPENMP
-    if (N >= MTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {
+    if (N >= MTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();

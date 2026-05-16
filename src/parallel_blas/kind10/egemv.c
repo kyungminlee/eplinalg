@@ -19,6 +19,7 @@
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define EGEMV_OMP_MIN 64
@@ -85,7 +86,7 @@ void egemv_(
              * gfortran's reference DGEMV codegen — halves y memory
              * traffic on the column-AXPY path. */
 #ifdef _OPENMP
-            const int use_omp = (M >= EGEMV_OMP_MIN && omp_get_max_threads() > 1);
+            const int use_omp = (M >= EGEMV_OMP_MIN && blas_omp_max_threads() > 1);
 #endif
             int i_lo = 0, i_hi = M;
             (void)i_lo; (void)i_hi;
@@ -136,7 +137,7 @@ void egemv_(
     } else {  /* TRANS = 'T' or 'C' (real: same): y[j] += alpha · sum_i A(i,j) · x(i) */
         if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
-            const int use_omp = (N >= EGEMV_OMP_MIN && omp_get_max_threads() > 1);
+            const int use_omp = (N >= EGEMV_OMP_MIN && blas_omp_max_threads() > 1);
             #pragma omp parallel for if(use_omp) schedule(static)
 #endif
             for (int j = 0; j < N; ++j) {

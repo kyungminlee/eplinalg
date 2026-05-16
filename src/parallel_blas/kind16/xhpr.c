@@ -8,6 +8,7 @@
 #include <quadmath.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define XHPR_OMP_MIN 64
@@ -40,7 +41,7 @@ void xhpr_(
     if (incx == 1) {
         if (UPLO == 'U') {
 #ifdef _OPENMP
-            const int use_omp = (N >= XHPR_OMP_MIN && omp_get_max_threads() > 1);
+            const int use_omp = (N >= XHPR_OMP_MIN && blas_omp_max_threads() > 1);
             #pragma omp parallel for if(use_omp) schedule(static)
 #endif
             for (int j = 0; j < N; ++j) {
@@ -55,7 +56,7 @@ void xhpr_(
             }
         } else {
 #ifdef _OPENMP
-            const int use_omp = (N >= XHPR_OMP_MIN && omp_get_max_threads() > 1);
+            const int use_omp = (N >= XHPR_OMP_MIN && blas_omp_max_threads() > 1);
             #pragma omp parallel for if(use_omp) schedule(static)
 #endif
             for (int j = 0; j < N; ++j) {

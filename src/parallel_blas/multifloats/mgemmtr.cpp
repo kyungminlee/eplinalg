@@ -17,6 +17,7 @@
 #include <multifloats.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 namespace mf = multifloats;
@@ -135,7 +136,7 @@ extern "C" void mgemmtr_(
     if (dd_iszero(alpha) || K == 0) {
         if (dd_isone(beta)) return;
 #ifdef _OPENMP
-        const bool use_omp0 = (N >= MGEMMTR_OMP_MIN && omp_get_max_threads() > 1);
+        const bool use_omp0 = (N >= MGEMMTR_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp0) schedule(static)
 #endif
         for (int j = 0; j < N; ++j) {
@@ -155,7 +156,7 @@ extern "C" void mgemmtr_(
     const char *tb_s = (tb == 'N') ? NN : TN;
 
 #ifdef _OPENMP
-    const bool use_omp = (N >= MGEMMTR_OMP_MIN && omp_get_max_threads() > 1);
+    const bool use_omp = (N >= MGEMMTR_OMP_MIN && blas_omp_max_threads() > 1);
     #pragma omp parallel for if(use_omp) schedule(dynamic, 1)
 #endif
     for (int jc = 0; jc < N; jc += nb) {

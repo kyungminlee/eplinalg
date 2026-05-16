@@ -17,6 +17,7 @@
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define ESYR2K_OMP_MIN 32
@@ -128,7 +129,7 @@ void esyr2k_(
     if (alpha == zero || K == 0) {
         if (beta == one) return;
 #ifdef _OPENMP
-        const int use_omp = (N >= ESYR2K_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (N >= ESYR2K_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int j = 0; j < N; ++j) {
@@ -150,7 +151,7 @@ void esyr2k_(
     const int nb = (TR == 'T') ? N : syr2k_nb();
 
 #ifdef _OPENMP
-    const int use_omp = (N >= ESYR2K_OMP_MIN && omp_get_max_threads() > 1);
+    const int use_omp = (N >= ESYR2K_OMP_MIN && blas_omp_max_threads() > 1);
     #pragma omp parallel for if(use_omp) schedule(dynamic, 1)
 #endif
     for (int jc = 0; jc < N; jc += nb) {

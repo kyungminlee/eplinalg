@@ -13,6 +13,7 @@
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define YTRMM_OMP_MIN 32
@@ -283,7 +284,7 @@ static void blocked_dispatch_L(enum ytrmm_variant_L V, int M, int N, T alpha,
 {
     const int nb = trmm_nb();
 #ifdef _OPENMP
-    if (N >= YTRMM_OMP_MIN && omp_get_max_threads() > 1) {
+    if (N >= YTRMM_OMP_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -381,7 +382,7 @@ static void blocked_dispatch_R(enum ytrmm_variant_R V, int M, int N, T alpha,
 {
     const int nb = trmm_nb();
 #ifdef _OPENMP
-    if (M >= YTRMM_OMP_MIN && omp_get_max_threads() > 1) {
+    if (M >= YTRMM_OMP_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -402,7 +403,7 @@ static void blocked_dispatch_R(enum ytrmm_variant_R V, int M, int N, T alpha,
 #define YTRMM_OMP_WRAP_L(name, core)                                        \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (N >= YTRMM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (N >= YTRMM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -415,7 +416,7 @@ static void blocked_dispatch_R(enum ytrmm_variant_R V, int M, int N, T alpha,
 #define YTRMM_OMP_WRAP_L_TC(name, core, cflag)                              \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (N >= YTRMM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (N >= YTRMM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -428,7 +429,7 @@ static void blocked_dispatch_R(enum ytrmm_variant_R V, int M, int N, T alpha,
 #define YTRMM_OMP_WRAP_R(name, core)                                        \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (M >= YTRMM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (M >= YTRMM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -441,7 +442,7 @@ static void blocked_dispatch_R(enum ytrmm_variant_R V, int M, int N, T alpha,
 #define YTRMM_OMP_WRAP_R_TC(name, core, cflag)                              \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (M >= YTRMM_OMP_MIN && omp_get_max_threads() > 1) {              \
+        if (M >= YTRMM_OMP_MIN && blas_omp_max_threads() > 1) {              \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \

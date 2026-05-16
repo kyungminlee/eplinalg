@@ -19,6 +19,7 @@
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define YGEMV_OMP_MIN 64
@@ -76,7 +77,7 @@ void ygemv_(
     if (TR == 'N') {
         if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
-            const int use_omp = (M >= YGEMV_OMP_MIN && omp_get_max_threads() > 1);
+            const int use_omp = (M >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1);
 #endif
             int i_lo = 0, i_hi = M;
             (void)i_lo; (void)i_hi;
@@ -131,7 +132,7 @@ void ygemv_(
         const int conj_a = (TR == 'C');
         if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
-            const int use_omp = (N >= YGEMV_OMP_MIN && omp_get_max_threads() > 1);
+            const int use_omp = (N >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1);
             #pragma omp parallel for if(use_omp) schedule(static)
 #endif
             for (int j = 0; j < N; ++j) {

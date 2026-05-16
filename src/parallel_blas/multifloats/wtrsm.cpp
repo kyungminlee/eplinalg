@@ -27,6 +27,7 @@
 #ifdef WBLAS_SIMD_DD
 #include "mgemm_simd_kernel.h"
 #include <immintrin.h>
+#include "../common/blas_omp.h"
 #endif
 
 namespace mf = multifloats;
@@ -917,7 +918,7 @@ inline void wtrsm_simd_diag_R(wtrsm_r_op op, int M, int N, T alpha,
     void name(int M, int N, T alpha,                                       \
               const T *a, int lda, T *b, int ldb, int nounit)              \
     {                                                                      \
-        if (N >= WTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {           \
+        if (N >= WTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {           \
             _Pragma("omp parallel")                                        \
             {                                                              \
                 int tid = omp_get_thread_num();                            \
@@ -945,7 +946,7 @@ WTRSM_OMP_WRAP(wtrsm_lun, wtrsm_lun_core, )
 void wtrsm_llt(int M, int N, T alpha, const T *a, int lda, T *b, int ldb, int nounit)
 {
 #ifdef _OPENMP
-    if (N >= WTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {
+    if (N >= WTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -963,7 +964,7 @@ void wtrsm_llt(int M, int N, T alpha, const T *a, int lda, T *b, int ldb, int no
 void wtrsm_lut(int M, int N, T alpha, const T *a, int lda, T *b, int ldb, int nounit)
 {
 #ifdef _OPENMP
-    if (N >= WTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {
+    if (N >= WTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -981,7 +982,7 @@ void wtrsm_lut(int M, int N, T alpha, const T *a, int lda, T *b, int ldb, int no
 void wtrsm_llc(int M, int N, T alpha, const T *a, int lda, T *b, int ldb, int nounit)
 {
 #ifdef _OPENMP
-    if (N >= WTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {
+    if (N >= WTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -999,7 +1000,7 @@ void wtrsm_llc(int M, int N, T alpha, const T *a, int lda, T *b, int ldb, int no
 void wtrsm_luc(int M, int N, T alpha, const T *a, int lda, T *b, int ldb, int nounit)
 {
 #ifdef _OPENMP
-    if (N >= WTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {
+    if (N >= WTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -1158,7 +1159,7 @@ void blocked_dispatch(wtrsm_variant V, int M, int N, T alpha,
 {
     const int nb = trsm_nb();
 #ifdef _OPENMP
-    if (N >= WTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {
+    if (N >= WTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();

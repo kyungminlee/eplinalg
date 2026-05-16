@@ -19,6 +19,7 @@
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define YHER2K_OMP_MIN 32
@@ -140,7 +141,7 @@ void yher2k_(
             return;
         }
 #ifdef _OPENMP
-        const int use_omp = (N >= YHER2K_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (N >= YHER2K_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int j = 0; j < N; ++j) {
@@ -161,7 +162,7 @@ void yher2k_(
     const int nb = her2k_nb();
 
 #ifdef _OPENMP
-    const int use_omp = (N >= YHER2K_OMP_MIN && omp_get_max_threads() > 1);
+    const int use_omp = (N >= YHER2K_OMP_MIN && blas_omp_max_threads() > 1);
     #pragma omp parallel for if(use_omp) schedule(dynamic, 1)
 #endif
     for (int jc = 0; jc < N; jc += nb) {

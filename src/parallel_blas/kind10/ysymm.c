@@ -25,6 +25,7 @@
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define YSYMM_OMP_MIN 32
@@ -183,7 +184,7 @@ void ysymm_(
         if (beta == ONE) return;
 #ifdef _OPENMP
         const int axis = (SIDE == 'L') ? N : M;
-        const int use_omp = (axis >= YSYMM_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (axis >= YSYMM_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int j = 0; j < N; ++j) {
@@ -196,7 +197,7 @@ void ysymm_(
 
     int nt = 1;
 #ifdef _OPENMP
-    nt = omp_get_max_threads();
+    nt = blas_omp_max_threads();
 #endif
     const int nb = symm_nb_pick((SIDE == 'L') ? N : M, nt);
 
@@ -250,7 +251,7 @@ void ysymm_(
          * full I/K loops serial on its J panel — A_IK loaded once per
          * (I, K) pair, used by both ygemm calls (L2 hit on call 2). */
 #ifdef _OPENMP
-        const int use_omp = (N >= YSYMM_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (N >= YSYMM_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int jc = 0; jc < N; jc += nb) {
@@ -295,7 +296,7 @@ void ysymm_(
         }
     } else {  /* SIDE = 'R' */
 #ifdef _OPENMP
-        const int use_omp = (M >= YSYMM_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (M >= YSYMM_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int ic = 0; ic < M; ic += nb) {

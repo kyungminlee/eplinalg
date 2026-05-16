@@ -15,6 +15,7 @@
 
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define YTRSM_OMP_N_MIN 32
@@ -207,7 +208,7 @@ static void ytrsm_ruTC_core(int M, int N, T alpha,
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit)        \
     {                                                                       \
-        if (N >= YTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {            \
+        if (N >= YTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {            \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -221,7 +222,7 @@ static void ytrsm_ruTC_core(int M, int N, T alpha,
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit)        \
     {                                                                       \
-        if (N >= YTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {            \
+        if (N >= YTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {            \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -358,7 +359,7 @@ static void blocked_dispatch(enum ytrsm_variant V, int M, int N, T alpha,
 {
     const int nb = trsm_nb();
 #ifdef _OPENMP
-    if (N >= YTRSM_OMP_N_MIN && omp_get_max_threads() > 1) {
+    if (N >= YTRSM_OMP_N_MIN && blas_omp_max_threads() > 1) {
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();

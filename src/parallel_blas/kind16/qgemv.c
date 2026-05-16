@@ -9,6 +9,7 @@
 #include <quadmath.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define QGEMV_OMP_MIN 64
@@ -56,7 +57,7 @@ void qgemv_(
 
     if (TR == 'N' && incx == 1 && incy == 1) {
 #ifdef _OPENMP
-        const int use_omp = (M >= QGEMV_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (M >= QGEMV_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel if(use_omp)
         {
             int tid = 0, nt = 1;
@@ -84,7 +85,7 @@ void qgemv_(
 #endif
     } else if (TR != 'N' && incx == 1 && incy == 1) {
 #ifdef _OPENMP
-        const int use_omp = (N >= QGEMV_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp = (N >= QGEMV_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
 #endif
         for (int j = 0; j < N; ++j) {

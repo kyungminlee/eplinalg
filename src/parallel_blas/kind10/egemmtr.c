@@ -16,6 +16,7 @@
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
 #define EGEMMTR_OMP_MIN 32
@@ -131,7 +132,7 @@ void egemmtr_(const char *uplo, const char *transa, const char *transb,
     if (alpha == zero || K == 0) {
         if (beta == one) return;
 #ifdef _OPENMP
-        const int use_omp0 = (N >= EGEMMTR_OMP_MIN && omp_get_max_threads() > 1);
+        const int use_omp0 = (N >= EGEMMTR_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp0) schedule(static, 1)
 #endif
         for (int j = 0; j < N; ++j) {
@@ -151,7 +152,7 @@ void egemmtr_(const char *uplo, const char *transa, const char *transb,
     const char *tb_s = (tb == 'N') ? NN : TN;
 
 #ifdef _OPENMP
-    const int use_omp = (N >= EGEMMTR_OMP_MIN && omp_get_max_threads() > 1);
+    const int use_omp = (N >= EGEMMTR_OMP_MIN && blas_omp_max_threads() > 1);
     #pragma omp parallel for if(use_omp) schedule(dynamic, 1)
 #endif
     for (int jc = 0; jc < N; jc += nb) {
