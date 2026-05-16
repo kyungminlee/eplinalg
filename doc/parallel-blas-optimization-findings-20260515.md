@@ -618,3 +618,128 @@ overlay-report flags a routine as sub-parity, re-bench at N where the
 kernel takes ≥10 ms before drawing any conclusions. The "13 sub-parity
 routines" the original survey reported was really 8 — and of those, only
 2 are worth attacking; the rest are at the documented x87 floor.
+
+---
+
+## Addendum 7: gfortran's shared-index pointer-walk codegen (2026-05-16)
+
+### The gap
+
+`egemv` N-path (`y := alpha · A · x + beta · y`, `A` is M×N stored column-major)
+sat at 0.74–0.85× vs migrated. Identical algorithm, identical instruction
+count (13 per inner-loop iter), identical L1-dcache miss count
+(measured via `perf stat`). Yet 17% more total instructions, ~9% more
+cycles.
+
+### The diagnosis
+
+The overlay's 2-way j-unrolled inner loop:
+
+```asm
+110:  lea (%r8,%r12,1),%r13     # recompute A0 base from A1 base
+114:  add $0x10,%rdx             # y ptr += 16
+118:  add $0x10,%r12             # A1 ptr += 16
+11c:  fldt 0x0(%r13,%rdi,1)     # load A0[i]
+...
+134:  cmp %rdx,%r9
+137:  jne 0x110
+```
+
+gcc maintains **three independent pointers** (Y, A0, A1) and emits a
+`lea` + two `add`s per iter to advance them. That's 3 of the 13 insts
+per iter just managing pointer arithmetic.
+
+gfortran's reference DGEMV — also 2-way j-unrolled by `-O3` auto-unroll
+— emits a different shape:
+
+```asm
+820:  fldt 0x10(%rdi,%r9,1)     # load A0[i] via shared index %r9
+825:  fmul %st(2),%st
+827:  fldt (%r15,%r9,1)         # load Y[i] via same %r9
+82b:  faddp
+82d:  fldt 0x10(%rsi,%r9,1)     # load A1[i] via same %r9
+832:  fmul %st(2),%st
+834:  faddp
+836:  fstpt (%r15,%r9,1)        # store Y[i] via same %r9
+83a:  add $0x10,%r9             # ONE pointer increment
+83e:  cmp %r11,%r9
+841:  jne 0x820
+```
+
+**Single shared index register `%r9` for all three loads, with three
+different base registers.** One `add` per iter. 11 insts per iter
+instead of 13.
+
+### Why gcc didn't emit the same shape
+
+Tried four variants of the C source:
+
+1. `for (int i = i_lo; i < i_hi; ++i) y[i] = ... a0[i] ... a1[i]` —
+   gcc keeps three pointers (13 insts).
+2. Same as #1 with `restrict` on all three pointers — same (13 insts).
+3. `size_t` induction variable — same (13 insts).
+4. **Explicit byte-offset walk** through three `char*` bases —
+   gcc emits the shared-index pattern (11 insts).
+
+The "what should be obvious" version (1) doesn't trigger gcc's
+shared-index loop transform. Only the byte-cast form does:
+
+```c
+char *restrict yp = (char *)(y + i_lo);
+const char *restrict a0 = (const char *)&A_(i_lo, j);
+const char *restrict a1 = (const char *)&A_(i_lo, j + 1);
+const size_t end = (size_t)span * sizeof(T);
+for (size_t k = 0; k < end; k += sizeof(T)) {
+    T *yk        = (T *)(yp + k);
+    const T *a0k = (const T *)(a0 + k);
+    const T *a1k = (const T *)(a1 + k);
+    *yk = (*yk + t0 * *a0k) + t1 * *a1k;
+}
+```
+
+### Results
+
+| metric           | before | after  | migrated |
+|------------------|-------:|-------:|---------:|
+| insts/inner iter | 13     | 11     | 11       |
+| insts (N=1024×50)| 375M   | 320M   | 320M     |
+| cycles (N=1024×50)|340M   | 310M   | 311M     |
+| GF/s (microbench)| 1.45   | 1.64   | 1.64     |
+| speedup (N=512)  | 0.74×  | 0.88×  | —        |
+| speedup (N=1024) | 0.84×  | 0.91×  | —        |
+| speedup (N=2048) | 0.85×  | 0.92×  | —        |
+| speedup OMP=4 N=512 | —   | 2.73×  | —        |
+
+Microbench (no OMP wrapper) hits exact parity. The remaining ~0.08
+gap in the bench harness is fixed-cost OMP outlining (firstprivate
+struct pack, `__GOMP_parallel` call, omp_fn prologue) that fires even
+when `use_omp=false`.
+
+### Rules
+
+1. **Same loop shape can produce different codegen.** Instruction count
+   per iter depends on whether gcc folds multiple pointer increments
+   into a single shared-index walk. Default codegen for
+   `array[i] = ... other[i] ... third[i]` keeps three pointers; only
+   the byte-offset walk through `char*` bases triggers the fold.
+
+2. **Always count insts in `objdump`, not in C.** A 13-line C loop and
+   an 11-line C loop can compile to the same number of x86 insts; a
+   "natural" C loop can be 17% more insts than a structurally-identical
+   Fortran loop. The `objdump -d` count is the only number that
+   matters for x87 perf at this level.
+
+3. **`perf stat -e cycles,instructions,L1-dcache-load-misses` is the
+   diagnostic.** If misses are identical and IPC is similar, the gap is
+   instruction count. If insts are identical and cycles diverge, the
+   gap is microarchitectural (port contention, branch prediction,
+   cache associativity). The two cases call for different fixes.
+
+4. **The byte-offset walk is the workaround for gcc's missed
+   shared-index transform.** Ugly but correct (well-defined via the
+   `char*` alias rule + `restrict`). Apply when:
+   - inner loop walks ≥2 arrays in lockstep with the same stride;
+   - operand size is large (long double / __float128) so per-iter
+     pointer increments are a significant fraction of inner-loop insts;
+   - `-O3` auto-unroll hasn't already done the work (kind16/multifloats
+     may differ).

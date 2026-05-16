@@ -100,14 +100,36 @@ void egemv_(
                     i_hi = ((long long)M * (tid + 1)) / nt;
                 }
 #endif
+                const int span = i_hi - i_lo;
                 int j = 0;
                 for (; j + 1 < N; j += 2) {
                     const T t0 = alpha * x[j];
                     const T t1 = alpha * x[j + 1];
-                    const T *a0 = &A_(0, j);
-                    const T *a1 = &A_(0, j + 1);
-                    for (int i = i_lo; i < i_hi; ++i) {
-                        y[i] += t0 * a0[i] + t1 * a1[i];
+                    /* Shared-index walk: one base pointer + a byte
+                     * offset that's added once per iter, used as the
+                     * `index` operand for all three loads. Mirrors
+                     * gfortran reference DGEMV codegen (one `add` +
+                     * one `cmp` per iter; three bases share a single
+                     * index register). Parenthesization on the inner
+                     * expression matches gfortran's interleaved
+                     * fmul/fadd schedule. */
+                    /* gcc emits a shared-index pointer-walk only when
+                     * the inner loop is structured as one byte offset
+                     * `k` added to three different base pointers. With
+                     * the natural `for (i ...) yp[i] = ... a0[i]
+                     * ... a1[i]` shape, gcc keeps three independent
+                     * pointers and emits 3 `add`s per iter (13 insns).
+                     * The byte-offset form drops to 11 insns per iter
+                     * and matches gfortran reference DGEMV codegen. */
+                    char *restrict yp = (char *)(y + i_lo);
+                    const char *restrict a0 = (const char *)&A_(i_lo, j);
+                    const char *restrict a1 = (const char *)&A_(i_lo, j + 1);
+                    const size_t end = (size_t)span * sizeof(T);
+                    for (size_t k = 0; k < end; k += sizeof(T)) {
+                        T *yk        = (T *)(yp + k);
+                        const T *a0k = (const T *)(a0 + k);
+                        const T *a1k = (const T *)(a1 + k);
+                        *yk = (*yk + t0 * *a0k) + t1 * *a1k;
                     }
                 }
                 for (; j < N; ++j) {
