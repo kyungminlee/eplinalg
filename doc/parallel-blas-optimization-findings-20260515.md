@@ -494,3 +494,66 @@ Three categories of hidden function calls to look for during overlay diagnosis, 
 **Diagnostic rule:** when an overlay is sub-parity and the inner loop body has been verified equal to migrated, run `objdump -dr` and look at the `R_X86_64_PLT32` relocations. The list of names is the list of suspects, and `sqrt` is almost always the only one that's actually intrinsic. If `hypot`/`pow`/etc. appears, see if the source-level algorithm can be rewritten to avoid it — the BLAS/LAPACK reference frequently has already done so.
 
 **Practical rule for porting:** before introducing `hypot`/`pow`/`exp` in a C overlay, check whether the original Fortran source actually uses the equivalent intrinsic. If it doesn't, find the algebraic identity it used instead and port that.
+
+## Addendum 5: algorithmic gap — Blue's single-pass nrm2 — 2026-05-16
+
+Sweep follow-up from Addendum 4. After clearing the avoidable libm calls in the L2 norm routines (qnrm2/qxnrm2 finiteq → __builtin_isfinite, fabsq → __builtin_fabsf128), `qnrm2` and `qxnrm2` were still at 0.39–0.40× of migrated. `enrm2` and `eynrm2` were at 0.84–0.88×. The remaining gap was **algorithmic, not call-overhead**.
+
+### Diagnosis
+
+The overlays used the obvious **two-pass scaled** L2 norm:
+
+```c
+scale = 0;  for i: scale = max(scale, |x[i]|)   // pass 1
+s = 0;      for i: t = x[i]/scale; s += t*t     // pass 2
+return scale * sqrt(s)
+```
+
+Two trips over X. For __float128 every element comparison and multiply is a libgcc soft-float call (`__lttf2`, `__multf3`, `__divtf3`) — doubling the trip count doubles the call count. For x87 long double the second pass is pure extra memory traffic and fmul/fadd latency.
+
+The migrated Fortran (kind16/qnrm2.f90) implements **Blue's algorithm** (Anderson 2017, "Safe Scaling in the Level 1 BLAS"; Blue 1978, "A Portable Fortran Program to Find the Euclidean Norm of a Vector"). Three magnitude-bucketed accumulators (`abig`/`amed`/`asml`) each accumulate the sum of squares within its own scale range, so the whole vector is processed in a **single pass**:
+
+```c
+for i:
+   ax = |x[i]|
+   if ax > btbig   abig += (ax * bsbig)²    // scale down before squaring
+   elif ax < btsml asml += (ax * bssml)²    // scale up before squaring
+   else            amed += ax²              // unscaled
+// combine abig/amed/asml at end
+```
+
+The thresholds (`btsml`/`btbig`/`bssml`/`bsbig`) are radix-power constants chosen so the scaled squares can't overflow or underflow.
+
+### Fix
+
+Ported Blue's algorithm directly to C for all four nrm2 routines:
+
+- Constants computed once per process via `scalbnq(1.0Q, k)` / `ldexpl(1.0L, k)` in a `__attribute__((cold))` static-init function.
+- Three accumulators in registers; single pass over X.
+- Complex variants (`eynrm2`, `qxnrm2`) factor the bucketing into a `static inline` helper called twice per element (Re, Im).
+
+Speedup vs migrated (OMP=1, N=4096):
+
+| target  | routine | before | after  |
+|---------|---------|--------|--------|
+| kind16  | qnrm2   | 0.39×  | 0.99×  |
+| kind16  | qxnrm2  | 0.40×  | 1.00×  |
+| kind10  | enrm2   | 0.88×  | **1.98×** |
+| kind10  | eynrm2  | 0.84×  | **1.97×** |
+
+kind10 ends up *beating* migrated by ~2× even though the algorithm is the same. Two reasons:
+
+1. The migrated has a `if (.not. blue_initialized)` branch in the hot path. Our C version uses `__builtin_expect(.. == 0, 0)` so the branch predicts perfectly after the first call.
+2. gcc with `-O3` schedules the three-accumulator bucketing loop better on x87 than gfortran does on the same source — both produce identical fmul/fadd op counts but gcc emits fewer fxch/fld redundancies for this specific shape.
+
+multifloats `mnrm2`/`mwnrm2` were not changed: they already run at ~20× via explicit AVX2+FMA3 SIMD kernels. The algorithm-level Blue port is orthogonal to the SIMD optimization and would interfere with the vectorized inner loop.
+
+### Rules
+
+1. **When the libm-call sweep doesn't close the gap, the algorithm is wrong.** Once `objdump -dr` shows only fundamental ops (`__multf3`, `__addtf3`, etc. for kind16; `fmul`, `fadd` for kind10), and the inner loop is still slower than migrated, the suspect shifts from per-call cost to per-pass cost. Count how many times the input vector is read.
+
+2. **The Fortran reference often implements the better algorithm.** The BLAS/LAPACK reference has accumulated half a century of numerical-stability work; the "obvious" port of `nrm2` to "find max, then sum" loses to the reference for both speed and safety. Read the Fortran source before writing the C overlay.
+
+3. **Single-pass beats two-pass even before SIMD considerations.** Memory traffic matters even for compute-bound kernels at small N; for L1 routines (memory-bound at any N) it's the dominant cost. If you can fold "find scaling factor" and "sum scaled" into one pass via bucketing or running max, do it.
+
+4. **Process-once init costs nothing in steady state.** Blue's algorithm needs four scale-threshold constants. Computing them lazily via `static int inited = 0` + `if (__builtin_expect(!inited, 0)) ...` adds two cycles to the post-init hot path (a load and a predicted-taken branch). The Fortran reference SAVEs these — equivalent.
