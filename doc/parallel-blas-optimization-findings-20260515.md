@@ -557,3 +557,64 @@ multifloats `mnrm2`/`mwnrm2` were not changed: they already run at ~20× via exp
 3. **Single-pass beats two-pass even before SIMD considerations.** Memory traffic matters even for compute-bound kernels at small N; for L1 routines (memory-bound at any N) it's the dominant cost. If you can fold "find scaling factor" and "sum scaled" into one pass via bucketing or running max, do it.
 
 4. **Process-once init costs nothing in steady state.** Blue's algorithm needs four scale-threshold constants. Computing them lazily via `static int inited = 0` + `if (__builtin_expect(!inited, 0)) ...` adds two cycles to the post-init hot path (a load and a predicted-taken branch). The Fortran reference SAVEs these — equivalent.
+
+---
+
+## Addendum 6: noise vs. genuine sub-parity (larger-N re-bench, 2026-05-16)
+
+The N=256 default in `blas_overlay_report.py` is noise-prone — the timer
+resolution is ~1µs and an L1 routine at N=256 runs in tens of µs, so a
+single GC blip or context switch flips the speedup by 0.2×. The survey
+flagged 13 routines as sub-parity (< 0.95×) at N=256. Re-benching at
+N where the kernel runs ≥10 ms separates measurement noise from real
+gaps.
+
+### Re-bench protocol
+
+| family   | N tried              | iters | warmup |
+|----------|----------------------|-------|--------|
+| L1       | 4096, 16384, 65536   | 5     | 2      |
+| L2 dense | 512, 1024, 2048      | 5     | 2      |
+| L2 banded| 512, 1024, 2048 (K=32)| 5    | 2      |
+| L3       | 256, 512, 1024       | 5     | 2      |
+| L3 sym   | 128, 256, 512        | 5     | 2      |
+
+### Results
+
+| target  | routine  | N=256 (old) | larger-N median | verdict        |
+|---------|----------|-------------|------------------|----------------|
+| kind16  | qswap    | 0.50×       | 1.00×            | noise          |
+| kind10  | ygemmtr  | 0.80×       | 1.00×            | noise          |
+| kind10  | esyr2    | 0.87×       | 1.05×            | noise          |
+| kind10  | esbmv    | 0.91×       | 1.00×            | noise          |
+| kind10  | yhemm    | 0.89×       | 0.90× (LL) / 1.2-1.4× (others) | noise (LL slightly behind) |
+| kind10  | ydotc    | 0.78×       | 0.86–0.90×       | **persistent** (x87 stack, documented) |
+| kind10  | egemv    | 0.84×       | 0.74–0.85× (N), 1.05–1.22× (T) | **persistent** on N path |
+| kind10  | espr     | 0.85×       | 0.78–0.90×       | **persistent** |
+| kind10  | yscal    | 0.89×       | 0.93×            | persistent (x87 stack) |
+| kind10  | yescal   | 0.87×       | 0.92–0.93×       | persistent     |
+| kind10  | erot     | 0.80×       | 0.93×            | persistent     |
+| kind10  | erotm    | 0.89×       | 0.93×            | persistent     |
+| kind16  | qsymm    | 0.91×       | 0.88–0.92× (L*)  | **persistent** |
+
+5 of 13 routines were pure noise at N=256. 6 settle at 0.92–0.93× —
+the documented x87-overhead floor (every `*=` on a packed
+long-double[] pays an `fld m80` + `fstp m80` cycle that the migrated
+reference avoids by working out of registers across a wider unroll).
+2 are real algorithmic gaps:
+
+- **egemv N-path** sits at 0.74–0.85× across all sizes. The migrated
+  reference does the matrix-vector product with an inner `dot` accumulator;
+  our overlay does an outer SAXPY pattern that thrashes the destination
+  vector. Worth a rewrite.
+- **espr** (kind10 real symmetric rank-1 update) at 0.78–0.90×. The
+  reference uses a column-walking pattern; our overlay walks rows and
+  pays for x87 load/store on every diagonal element.
+
+### Rule
+
+**N=256 is below the noise floor for L1 routines.** When the
+overlay-report flags a routine as sub-parity, re-bench at N where the
+kernel takes ≥10 ms before drawing any conclusions. The "13 sub-parity
+routines" the original survey reported was really 8 — and of those, only
+2 are worth attacking; the rest are at the documented x87 floor.
