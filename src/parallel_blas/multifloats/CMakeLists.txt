@@ -80,6 +80,11 @@ set(_kernels
     wtpmv.cpp
     mtpsv.cpp
     wtpsv.cpp
+    # L2 packed — sym/Herm rank-1 + rank-2
+    mspr.cpp
+    whpr.cpp
+    mspr2.cpp
+    whpr2.cpp
 )
 
 set(_routines "")
