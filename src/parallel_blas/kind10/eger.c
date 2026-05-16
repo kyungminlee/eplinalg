@@ -8,9 +8,7 @@
 
 #include <stddef.h>
 #include <ctype.h>
-#ifdef _OPENMP
-#include <omp.h>
-#endif
+#include "../common/blas_omp.h"
 
 #define EGER_OMP_MIN 64
 
@@ -33,10 +31,11 @@ void eger_(
     if (M == 0 || N == 0 || alpha == zero) return;
 
     if (incx == 1 && incy == 1) {
-#ifdef _OPENMP
-        const int use_omp = (N >= EGER_OMP_MIN && omp_get_max_threads() > 1);
+        /* blas_omp_max_threads is cached — avoids paying the libgomp
+         * function call on every BLAS invocation (was a ~15% hit at
+         * small N for x87 long double work). */
+        const int use_omp = (N >= EGER_OMP_MIN && blas_omp_max_threads() > 1);
         #pragma omp parallel for if(use_omp) schedule(static)
-#endif
         for (int j = 0; j < N; ++j) {
             const T yj = y[j];
             if (yj != zero) {
