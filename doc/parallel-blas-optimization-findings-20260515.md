@@ -370,3 +370,72 @@ jne    ...
 **Implication:** for any kind10 real routine whose inner loop is this 6-instruction sequence, the overlay can match migrated but cannot beat it via codegen. Sub-parity cells in this regime (etrmm's 0.91–0.99× cluster) are framing overhead or run-to-run noise, not a fixable codegen gap.
 
 **Practical rule:** before optimizing a real long-double scalar inner loop, disassemble both overlay and migrated. If the inner loops are byte-identical, stop — chase outer-loop framing or accept noise. Combined with methodology #10 (compare migrated to ceiling), this gives two independent ways to detect "no win possible" before sinking iter budget.
+
+## Addendum 3: `omp_get_max_threads()` per-call overhead — 2026-05-16
+
+`eger` was reported sub-parity vs migrated at OMP=1 (0.87× across all sizes). Inner-loop disassembly was byte-identical to the migrated reference (the "no codegen gap" condition from Addendum 2). The overhead was per-call, not per-iteration.
+
+### Root cause
+
+Every overlay using OMP had the pattern:
+
+```c
+#ifdef _OPENMP
+    const int use_omp = (N >= EGER_OMP_MIN && omp_get_max_threads() > 1);
+    #pragma omp parallel for if(use_omp) schedule(static)
+#endif
+```
+
+`omp_get_max_threads()` is a libgomp function call — not an intrinsic, not inlined. Each BLAS invocation paid ~15–50 ns to ask whether the runtime had >1 threads. The result never changes during a process's lifetime (the OpenMP spec allows it to change but BLAS callers never do, and the migrated reference doesn't honour mid-run changes either).
+
+At small N where the actual FP work is microseconds, this single call was 10–15% of total runtime.
+
+### Fix
+
+Cache the value in a relaxed-atomic static. New header at `src/parallel_blas/common/blas_omp.h`:
+
+```c
+static inline int blas_omp_max_threads(void)
+{
+    static int cached = 0;
+    int v = __atomic_load_n(&cached, __ATOMIC_RELAXED);
+    if (__builtin_expect(v == 0, 0)) {
+        v = omp_get_max_threads();
+        if (v < 1) v = 1;
+        __atomic_store_n(&cached, v, __ATOMIC_RELAXED);
+    }
+    return v;
+}
+```
+
+Hot path is a single .bss load. The benign race on cache init is fine — every writer stores the same value.
+
+### Result (sweep applied to all 90 overlays)
+
+Aggregate mean speedup vs migrated, OMP=1 / OMP=4 (size=256, iters=3):
+
+| target       | OMP=1 before / after | OMP=4 before / after |
+|--------------|----------------------|----------------------|
+| kind10       | 1.10× / **1.20×**    | 2.01× / 2.16×        |
+| kind16       | 0.98× / **1.01×**    | 1.80× / 1.84×        |
+| multifloats  | 8.15× / **8.47×**    | 13.94× / 14.52×      |
+
+Headline per-routine wins at OMP=1:
+
+- `wmscal`  14.42× → 21.48× (+7.1)
+- `ycopy`    3.49× →  6.99× (+3.5)
+- `maxpy`   10.40× → 12.99× (+2.6)
+- `wscal`    9.47× → 11.58× (+2.1)
+- `xcopy`    0.60× →  2.00× (+1.4)
+
+Routines previously sub-parity that returned to ≥1.0×: `eaxpy`, `ecopy`, `edot`, `eger`, `eswap`, `ydotu`, `qcopy`, `xcopy`, `xswap`. The single overlay we proved this on (`eger`) went 0.87× → 0.99× at N=256.
+
+### Generalizations / rules
+
+1. **Never call libgomp helpers (`omp_get_max_threads`, `omp_get_num_procs`, `omp_get_dynamic`) on the hot path.** They're real function calls into a shared library. Cache or hoist anything you query once per process.
+
+2. **The `if()` clause on `#pragma omp parallel for` is not free even when false.** GOMP_parallel still gets called and decides not to fork. For routines where the serial path is the common case (N below OMP threshold), branching around the pragma entirely is faster — but only if the loop body can be kept inline. Factoring the loop body into a separate function for code-sharing hurt eger's scalar x87 inner loop noticeably (lost the implicit `t` register reuse across iterations).
+
+3. **Per-call overhead is the right thing to chase once codegen is at parity.** Once the inner loop is byte-identical to migrated (Addendum 2 rule), the only remaining variable is what the caller pays *before* and *after* the loop. The libgomp call was 1 instruction in the source but 50 ns in practice — invisible to anyone who only reads C, obvious in the disassembly.
+
+4. **Apply OMP-overhead fixes broadly, then re-bench.** A handful of routines showed small (<10%) regressions in the after-sweep doc. Several of those (`escal`, `esyr2`, `mspr2`, etc.) sit in source files the sweep didn't touch — they're `BLAS_BENCH_ITERS=3` sampling noise, not real regressions. With this many routines × this many shapes, individual-cell variance is large; trust the aggregate means.
