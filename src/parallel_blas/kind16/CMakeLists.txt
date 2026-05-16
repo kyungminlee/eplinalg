@@ -81,6 +81,14 @@ set(_kernels
     xhpr.c
     qspr2.c
     xhpr2.c
+    # L1 misc — cabs1, iamax, Givens generators
+    qcabs1.c
+    iqamax.c
+    ixamax.c
+    qrotg.c
+    qrotm.c
+    qrotmg.c
+    xrotg.c
 )
 
 set(_routines "")

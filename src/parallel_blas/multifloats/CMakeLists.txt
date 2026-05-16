@@ -85,6 +85,14 @@ set(_kernels
     whpr.cpp
     mspr2.cpp
     whpr2.cpp
+    # L1 misc — cabs1, iamax, Givens generators
+    mcabs1.cpp
+    imamax.cpp
+    iwamax.cpp
+    mrotg.cpp
+    mrotm.cpp
+    mrotmg.cpp
+    wrotg.cpp
 )
 
 set(_routines "")

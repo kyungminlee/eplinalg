@@ -86,6 +86,14 @@ set(_kernels
     yhpr.c
     espr2.c
     yhpr2.c
+    # L1 misc — cabs1, iamax, Givens generators
+    ecabs1.c
+    ieamax.c
+    iyamax.c
+    erotg.c
+    erotm.c
+    erotmg.c
+    yrotg.c
 )
 
 # Publish the overlay-covered routine names so the BLAS section in
