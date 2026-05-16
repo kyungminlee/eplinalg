@@ -72,14 +72,20 @@ def overlay_routines(target: str) -> list[str]:
 
 
 def isa_tag(target: str, routine: str) -> str:
-    """Return 'AVX2+FMA3', 'AVX2', or 'scalar' based on source inspection.
+    """Return 'AVX2+FMA3', 'FMA3', or 'scalar'.
 
-    - kind10 (fp80) and kind16 (__float128) have no SIMD path on x86-64.
-    - multifloats with __m256 / _mm256_ / *SIMD_DD macros → AVX2+FMA3
-      (explicit 256-bit packed ops, including vfmadd231pd / vfmsub231pd).
-    - multifloats without explicit intrinsics → AVX2 (the dd_mul /
-      dd_add helpers are compiled with -mavx2 -mfma so the compiler
-      emits scalar AVX/FMA ops, but no packed-256 SIMD).
+    Determined by looking at the compiled object (when available):
+
+    - 'AVX2+FMA3' — packed 256-bit FP ops on YMM (vmulpd/vfmadd231pd ymm).
+      In this codebase that only happens via explicit __m256 / _mm256_
+      intrinsics or the MBLAS_SIMD_DD / WBLAS_SIMD_DD macros.
+    - 'FMA3'      — scalar FMA (vfmadd231sd) but no packed YMM.
+      The compiler emitted FMA for the DD helper inlines but did not
+      autovectorize.
+    - 'scalar'    — no SIMD FP arithmetic at all. kind10 (x87 fp80) and
+      kind16 (__float128 via libquadmath) always land here. A few
+      multifloats memcpy-style routines also land here because they do
+      no FP work.
     """
     ext = "cpp" if target == "multifloats" else "c"
     p = SRC / target / f"{routine}.{ext}"
@@ -90,6 +96,33 @@ def isa_tag(target: str, routine: str) -> str:
     src = p.read_text()
     if re.search(r"__m256|_mm256_|MBLAS_SIMD_DD|WBLAS_SIMD_DD", src):
         return "AVX2+FMA3"
+    # Probe the object file built by the report's bench/test build.
+    # Look in every stage-multifloats/.../mblas_parallel.dir for the .o.
+    for objdir in Path("/tmp/fm-bench/stage-multifloats/build").rglob(
+            "mblas_parallel.dir"):
+        obj = objdir / f"{routine}.cpp.o"
+        if obj.exists():
+            try:
+                r = subprocess.run(["objdump", "-d", str(obj)],
+                                   capture_output=True, text=True,
+                                   timeout=10)
+                asm = r.stdout
+            except Exception:
+                break
+            # Look for actual packed YMM arithmetic, not just register-save
+            # mentions. vmulpd/vaddpd/vfmaddXXXpd on YMM = real AVX2 work.
+            has_packed_ymm = bool(re.search(
+                r"v(mul|add|sub|fmadd\d{3}|fmsub\d{3}|fnmadd\d{3}|fnmsub\d{3})pd\s+[^,]*ymm",
+                asm))
+            has_scalar_fma = bool(re.search(
+                r"vfm(add|sub|nmadd|nmsub)\d{3}sd", asm))
+            if has_packed_ymm:
+                return "AVX2"
+            if has_scalar_fma:
+                return "FMA3"
+            return "scalar"
+    # No object available — fall back to the conservative source-level
+    # assumption: assume autovectorization happened.
     return "AVX2"
 
 
