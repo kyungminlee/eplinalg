@@ -6,250 +6,246 @@ Placeholder `—` = data unavailable (no bench shim, build failure, or no matchi
 
 **Coverage:**
 
-- kind10: 75 overlay routines, 72 with bench data (96%), 75 with fuzz data (100%)
-- kind16: 75 overlay routines, 72 with bench data (96%), 74 with fuzz data (98%)
-- multifloats: 75 overlay routines, 52 with bench data (69%), 73 with fuzz data (97%)
-
-Bench gaps are concentrated on the small scalar generators (rotg, rotmg,
-cabs1) and a handful of multifloats L2 routines whose runtime at N=256 is
-below the system_clock resolution. Fuzz coverage is essentially complete.
+- kind10: 75 overlay routines, **75 with bench data (100%)**, **75 with fuzz data (100%)**
+- kind16: 75 overlay routines, **75 with bench data (100%)**, **75 with fuzz data (100%)**
+- multifloats: 75 overlay routines, **75 with bench data (100%)**, **75 with fuzz data (100%)**
 
 ## kind10
 
 | routine | algorithm | ISA | err digits (min/med/max) | GFLOP/s (OMP=1) | speedup OMP=1 | speedup OMP=4 |
 |---------|-----------|-----|---------------------------|----------------:|--------------:|--------------:|
-| `egemm` | kind10 (REAL(KIND=10), x86-64 80-bit long double) GEMM overlay | scalar | 18.1 / >32 / >32 | 2.771 | 1.81× | 2.63× |
-| `ygemm` | kind10 complex GEMM overlay | scalar | 18.2 / >32 / >32 | 2.312 | 1.01× | 2.98× |
-| `egemmtr` | kind10 real (long double) triangular GEMM update | scalar | 18.3 / >32 / >32 | 1.972 | 1.22× | 2.66× |
-| `ygemmtr` | kind10 complex (_Complex long double) triangular GEMM update | scalar | >32 / >32 / >32 | 1.904 | 0.98× | 3.22× |
-| `etrsm` | kind10 (REAL(KIND=10) / `long double`) triangular solve | scalar | >32 / >32 / >32 | 1.468 | 1.04× | 2.14× |
-| `ytrsm` | kind10 complex (COMPLEX(KIND=10) / `_Complex long double`) | scalar | >32 / >32 / >32 | 1.992 | 0.99× | 1.81× |
-| `etrmm` | kind10 (REAL(KIND=10) / `long double`) triangular multiply | scalar | >32 / >32 / >32 | 1.933 | 1.64× | 5.32× |
-| `ytrmm` | kind10 complex (COMPLEX(KIND=10) / `_Complex long double`) | scalar | 18.4 / >32 / >32 | 2.391 | 1.23× | 4.11× |
-| `esyrk` | kind10 (REAL(KIND=10) / `long double`) symmetric rank-k update | scalar | 18.5 / >32 / >32 | 1.934 | 1.34× | 3.19× |
-| `ysyrk` | kind10 complex (`_Complex long double`) symmetric rank-k | scalar | 18.5 / >32 / >32 | 2.617 | 1.11× | 3.69× |
-| `yherk` | kind10 complex (`_Complex long double`) Hermitian rank-k | scalar | 18.8 / >32 / >32 | 2.591 | 1.13× | 3.65× |
-| `esyr2k` | kind10 (REAL(KIND=10) / `long double`) symmetric rank-2k update | scalar | 17.7 / 19.0 / >32 | 2.416 | 1.13× | 2.02× |
-| `ysyr2k` | kind10 complex (`_Complex long double`) symmetric rank-2k | scalar | 18.1 / 19.1 / >32 | 2.637 | 1.04× | 3.25× |
-| `yher2k` | kind10 complex (`_Complex long double`) Hermitian rank-2k | scalar | 18.2 / 19.2 / >32 | 2.520 | 1.11× | 3.48× |
-| `egemv` | kind10 (REAL(KIND=10) / `long double`) general matrix-vector | scalar | 18.1 / 19.0 / >32 | 2.001 | 1.02× | 1.57× |
-| `ygemv` | kind10 complex (`_Complex long double`) general matrix-vector | scalar | 18.3 / >32 / >32 | 2.828 | 1.03× | 3.71× |
-| `eger` | kind10 (REAL(KIND=10)) general rank-1 update | scalar | >32 / >32 / >32 | 1.052 | 0.87× | 2.68× |
-| `ygeru` | kind10 complex unconjugated rank-1 update | scalar | >32 / >32 / >32 | 1.945 | 0.99× | 3.48× |
-| `ygerc` | kind10 complex conjugated rank-1 update | scalar | >32 / >32 / >32 | 1.925 | 0.99× | 3.99× |
-| `esymv` | kind10 (REAL(KIND=10)) symmetric matrix-vector multiply | scalar | 18.8 / >32 / >32 | 1.581 | 1.01× | 1.00× |
-| `yhemv` | kind10 complex Hermitian matrix-vector multiply | scalar | 18.9 / >32 / >32 | 2.609 | 1.22× | 1.22× |
-| `etrsv` | kind10 (REAL(KIND=10)) triangular solve | scalar | 17.8 / >32 / >32 | 1.580 | 0.99× | 1.00× |
-| `ytrsv` | kind10 complex triangular solve | scalar | 17.9 / >32 / >32 | 2.774 | 1.04× | 1.03× |
-| `esymm` | kind10 (REAL(KIND=10) / `long double`) symmetric matrix multiply | scalar | 18.3 / >32 / >32 | 1.996 | 1.46× | 5.66× |
-| `ysymm` | kind10 complex (`_Complex long double`) symmetric matrix mul | scalar | 18.4 / >32 / >32 | 2.381 | 1.19× | 4.15× |
-| `yhemm` | kind10 complex (`_Complex long double`) Hermitian matrix mul | scalar | 18.4 / >32 / >32 | 2.262 | 1.13× | 3.90× |
-| `etrmv` | kind10 (REAL(KIND=10)) triangular matrix-vector | scalar | 18.5 / >32 / >32 | 1.526 | 1.07× | 1.06× |
-| `ytrmv` | kind10 complex (`_Complex long double`) triangular matrix-vector | scalar | 18.4 / >32 / >32 | 2.361 | 0.98× | 1.00× |
-| `esyr` | kind10 (REAL(KIND=10)) symmetric rank-1 update | scalar | >32 / >32 / >32 | 0.996 | 0.91× | 1.77× |
-| `yher` | kind10 complex Hermitian rank-1 update | scalar | >32 / >32 / >32 | 1.781 | 0.91× | 2.13× |
-| `esyr2` | kind10 (REAL(KIND=10)) symmetric rank-2 update | scalar | 19.0 / 19.3 / >32 | 1.520 | 0.87× | 2.89× |
-| `yher2` | kind10 complex Hermitian rank-2 update | scalar | 19.0 / 19.3 / >32 | 2.292 | 0.91× | 1.72× |
-| `escal` | kind10 real: X := α · X. x87 fp80, no SIMD path | scalar | >32 / >32 / >32 | 0.512 | 0.70× | 0.89× |
-| `eaxpy` | kind10 real: Y := α·X + Y | scalar | >32 / >32 / >32 | 0.855 | 0.75× | 0.73× |
-| `ecopy` | kind10 real: Y := X | scalar | >32 / >32 / >32 | 2.560 | 2.00× | 2.33× |
-| `eswap` | kind10 real: swap X ↔ Y | scalar | >32 / >32 / >32 | 1.282 | 0.87× | 0.93× |
-| `erot` | kind10 real Givens rotation | scalar | >32 / >32 / >32 | 1.709 | 0.94× | 0.90× |
-| `edot` | kind10 real: returns Σ X·Y | scalar | 16.9 / >32 / >32 | 2.056 | 1.20× | 0.83× |
-| `enrm2` | kind10 real: returns \|\|X\|\|₂ = sqrt(Σ X·X) | scalar | 18.0 / 19.2 / >32 | 0.603 | 0.88× | 0.82× |
-| `easum` | kind10 real: returns Σ \|X\| | scalar | >32 / >32 / >32 | 2.573 | 1.01× | 1.33× |
-| `yscal` | kind10 complex: X := α·X (α and X both complex) | scalar | >32 / >32 / >32 | 1.539 | 0.85× | 0.80× |
-| `yescal` | kind10: X := α·X with α real, X complex (CSSCAL/ZDSCAL analog) | scalar | >32 / >32 / >32 | 0.603 | 0.82× | 0.82× |
-| `yaxpy` | kind10 complex: Y := α·X + Y | scalar | >32 / >32 / >32 | 1.954 | 0.95× | 1.00× |
-| `ycopy` | kind10 complex: Y := X | scalar | >32 / >32 / >32 | 4.104 | 2.80× | 3.25× |
-| `yswap` | kind10 complex: swap X ↔ Y | scalar | >32 / >32 / >32 | 1.415 | 0.97× | 0.97× |
-| `yerot` | kind10: complex Givens with real c, s | scalar | >32 / >32 / >32 | 1.663 | 1.73× | 1.64× |
-| `ydotu` | kind10 complex: returns Σ X·Y (no conjugate) | scalar | 17.6 / >32 / >32 | 2.734 | 0.93× | 0.93× |
-| `ydotc` | kind10 complex: returns Σ conj(X)·Y | scalar | 17.7 / >32 / >32 | 2.278 | 0.83× | 0.79× |
-| `eynrm2` | kind10: returns \|\|X\|\|₂ for complex X (real result, complex input) | scalar | 18.0 / 19.1 / >32 | 0.641 | 0.81× | 0.81× |
-| `eyasum` | kind10: Σ (\|re(X)\| + \|im(X)\|) for complex X | scalar | >32 / >32 / >32 | 2.566 | 1.75× | 1.75× |
-| `egbmv` | kind10 (long double) general band matrix-vector multiply | scalar | >32 / >32 / >32 | 1.392 | 0.97× | 1.35× |
-| `ygbmv` | kind10 complex (_Complex long double) general band matrix-vector multiply | scalar | >32 / >32 / >32 | 2.831 | 0.98× | 2.59× |
-| `esbmv` | kind10 (long double) symmetric band matrix-vector multiply | scalar | 18.9 / >32 / >32 | 0.958 | 0.79× | 1.09× |
-| `yhbmv` | kind10 complex Hermitian band matrix-vector multiply | scalar | 18.8 / >32 / >32 | 2.711 | 1.22× | 1.37× |
-| `espmv` | kind10 (long double) symmetric packed matrix-vector multiply | scalar | 18.8 / >32 / >32 | 1.547 | 0.91× | 0.91× |
-| `yhpmv` | kind10 complex Hermitian packed matrix-vector multiply | scalar | 18.8 / >32 / >32 | 2.354 | 1.32× | 1.21× |
-| `etbmv` | kind10 (long double) triangular band matrix-vector | scalar | >32 / >32 / >32 | 0.912 | 0.99× | 1.00× |
-| `ytbmv` | kind10 complex triangular band matrix-vector | scalar | >32 / >32 / >32 | 1.376 | 1.00× | 1.00× |
-| `etbsv` | kind10 (long double) triangular band solve | scalar | >32 / >32 / >32 | 0.677 | 1.00× | 1.01× |
-| `ytbsv` | kind10 complex triangular band solve | scalar | >32 / >32 / >32 | 1.437 | 1.00× | 1.00× |
-| `etpmv` | kind10 (long double) triangular packed matrix-vector | scalar | >32 / >32 / >32 | 1.509 | 1.00× | 1.00× |
-| `ytpmv` | kind10 complex triangular packed matrix-vector | scalar | >32 / >32 / >32 | 2.751 | 1.00× | 0.99× |
-| `etpsv` | kind10 (long double) triangular packed solve | scalar | >32 / >32 / >32 | 1.229 | 1.00× | 1.00× |
-| `ytpsv` | kind10 complex triangular packed solve | scalar | >32 / >32 / >32 | 2.755 | 1.00× | 1.00× |
-| `espr` | kind10 (long double) symmetric packed rank-1 update | scalar | >32 / >32 / >32 | 1.028 | 0.92× | 2.14× |
-| `yhpr` | kind10 complex Hermitian packed rank-1 update | scalar | >32 / >32 / >32 | 1.646 | 1.17× | 2.60× |
-| `espr2` | kind10 (long double) symmetric packed rank-2 update | scalar | 18.5 / 19.2 / >32 | 1.517 | 0.78× | 1.87× |
-| `yhpr2` | kind10 complex Hermitian packed rank-2 update | scalar | 19.0 / 19.3 / >32 | 2.530 | 0.98× | 2.19× |
+| `egemm` | kind10 (REAL(KIND=10), x86-64 80-bit long double) GEMM overlay | scalar | 18.1 / >32 / >32 | 2.885 | 1.81× | 2.65× |
+| `ygemm` | kind10 complex GEMM overlay | scalar | 18.2 / >32 / >32 | 2.432 | 0.99× | 3.37× |
+| `egemmtr` | kind10 real (long double) triangular GEMM update | scalar | 18.3 / >32 / >32 | 1.988 | 1.19× | 2.89× |
+| `ygemmtr` | kind10 complex (_Complex long double) triangular GEMM update | scalar | >32 / >32 / >32 | 2.000 | 0.99× | 3.25× |
+| `etrsm` | kind10 (REAL(KIND=10) / `long double`) triangular solve | scalar | >32 / >32 / >32 | 1.533 | 1.03× | 2.04× |
+| `ytrsm` | kind10 complex (COMPLEX(KIND=10) / `_Complex long double`) | scalar | >32 / >32 / >32 | 2.066 | 1.00× | 1.98× |
+| `etrmm` | kind10 (REAL(KIND=10) / `long double`) triangular multiply | scalar | >32 / >32 / >32 | 2.044 | 1.65× | 5.82× |
+| `ytrmm` | kind10 complex (COMPLEX(KIND=10) / `_Complex long double`) | scalar | 18.2 / >32 / >32 | 2.528 | 1.22× | 4.18× |
+| `esyrk` | kind10 (REAL(KIND=10) / `long double`) symmetric rank-k update | scalar | 18.2 / >32 / >32 | 2.104 | 1.37× | 3.22× |
+| `ysyrk` | kind10 complex (`_Complex long double`) symmetric rank-k | scalar | 18.6 / >32 / >32 | 2.717 | 1.10× | 3.74× |
+| `yherk` | kind10 complex (`_Complex long double`) Hermitian rank-k | scalar | 18.7 / >32 / >32 | 2.677 | 1.12× | 3.64× |
+| `esyr2k` | kind10 (REAL(KIND=10) / `long double`) symmetric rank-2k update | scalar | 18.1 / 19.0 / >32 | 2.639 | 1.13× | 1.96× |
+| `ysyr2k` | kind10 complex (`_Complex long double`) symmetric rank-2k | scalar | 18.1 / 19.1 / >32 | 2.703 | 1.02× | 3.52× |
+| `yher2k` | kind10 complex (`_Complex long double`) Hermitian rank-2k | scalar | 18.2 / 19.2 / >32 | 2.531 | 1.11× | 3.83× |
+| `egemv` | kind10 (REAL(KIND=10) / `long double`) general matrix-vector | scalar | 18.2 / 19.1 / >32 | 2.098 | 0.98× | 2.42× |
+| `ygemv` | kind10 complex (`_Complex long double`) general matrix-vector | scalar | 18.4 / >32 / >32 | 2.930 | 1.00× | 3.40× |
+| `eger` | kind10 (REAL(KIND=10)) general rank-1 update | scalar | >32 / >32 / >32 | 1.092 | 0.87× | 3.34× |
+| `ygeru` | kind10 complex unconjugated rank-1 update | scalar | >32 / >32 / >32 | 2.067 | 1.02× | 3.82× |
+| `ygerc` | kind10 complex conjugated rank-1 update | scalar | >32 / >32 / >32 | 1.653 | 1.01× | 2.88× |
+| `esymv` | kind10 (REAL(KIND=10)) symmetric matrix-vector multiply | scalar | 18.8 / >32 / >32 | 1.918 | 1.17× | 0.99× |
+| `yhemv` | kind10 complex Hermitian matrix-vector multiply | scalar | 18.7 / >32 / >32 | 2.788 | 1.23× | 1.23× |
+| `etrsv` | kind10 (REAL(KIND=10)) triangular solve | scalar | 18.0 / >32 / >32 | 1.488 | 1.00× | 0.99× |
+| `ytrsv` | kind10 complex triangular solve | scalar | 17.8 / >32 / >32 | 2.845 | 1.01× | 1.00× |
+| `esymm` | kind10 (REAL(KIND=10) / `long double`) symmetric matrix multiply | scalar | 18.3 / >32 / >32 | 2.131 | 1.46× | 5.39× |
+| `ysymm` | kind10 complex (`_Complex long double`) symmetric matrix mul | scalar | 18.4 / >32 / >32 | 2.514 | 1.19× | 3.72× |
+| `yhemm` | kind10 complex (`_Complex long double`) Hermitian matrix mul | scalar | 18.5 / >32 / >32 | 2.425 | 1.13× | 4.10× |
+| `etrmv` | kind10 (REAL(KIND=10)) triangular matrix-vector | scalar | 18.4 / >32 / >32 | 1.356 | 1.04× | 1.11× |
+| `ytrmv` | kind10 complex (`_Complex long double`) triangular matrix-vector | scalar | 18.4 / >32 / >32 | 2.890 | 1.00× | 0.99× |
+| `esyr` | kind10 (REAL(KIND=10)) symmetric rank-1 update | scalar | >32 / >32 / >32 | 1.196 | 1.03× | 2.45× |
+| `yher` | kind10 complex Hermitian rank-1 update | scalar | >32 / >32 / >32 | 1.908 | 1.00× | 2.17× |
+| `esyr2` | kind10 (REAL(KIND=10)) symmetric rank-2 update | scalar | 18.9 / 19.3 / >32 | 1.802 | 0.99× | 1.93× |
+| `yher2` | kind10 complex Hermitian rank-2 update | scalar | 19.0 / 19.4 / >32 | 2.615 | 0.96× | 2.35× |
+| `escal` | kind10 real: X := α · X. x87 fp80, no SIMD path | scalar | >32 / >32 / >32 | 0.595 | 0.89× | 0.89× |
+| `eaxpy` | kind10 real: Y := α·X + Y | scalar | >32 / >32 / >32 | 0.892 | 0.75× | 0.77× |
+| `ecopy` | kind10 real: Y := X | scalar | >32 / >32 / >32 | 3.581 | 2.34× | 2.67× |
+| `eswap` | kind10 real: swap X ↔ Y | scalar | >32 / >32 / >32 | 1.428 | 0.87× | 1.00× |
+| `erot` | kind10 real Givens rotation | scalar | >32 / >32 / >32 | 1.785 | 1.00× | 0.90× |
+| `edot` | kind10 real: returns Σ X·Y | scalar | 17.6 / >32 / >32 | 1.781 | 1.00× | 1.00× |
+| `enrm2` | kind10 real: returns \|\|X\|\|₂ = sqrt(Σ X·X) | scalar | 18.1 / 19.1 / >32 | 0.669 | 9.06× | 0.88× |
+| `easum` | kind10 real: returns Σ \|X\| | scalar | >32 / >32 / >32 | 2.142 | 1.00× | 1.00× |
+| `yscal` | kind10 complex: X := α·X (α and X both complex) | scalar | >32 / >32 / >32 | 1.691 | 0.84× | 0.80× |
+| `yescal` | kind10: X := α·X with α real, X complex (CSSCAL/ZDSCAL analog) | scalar | >32 / >32 / >32 | 0.630 | 0.76× | 0.82× |
+| `yaxpy` | kind10 complex: Y := α·X + Y | scalar | >32 / >32 / >32 | 1.863 | 0.96× | 0.95× |
+| `ycopy` | kind10 complex: Y := X | scalar | >32 / >32 / >32 | 5.347 | 3.49× | 2.80× |
+| `yswap` | kind10 complex: swap X ↔ Y | scalar | >32 / >32 / >32 | 1.477 | 1.00× | 0.97× |
+| `yerot` | kind10: complex Givens with real c, s | scalar | >32 / >32 / >32 | 1.836 | 1.80× | 1.77× |
+| `ydotu` | kind10 complex: returns Σ X·Y (no conjugate) | scalar | 17.9 / >32 / >32 | 2.856 | 0.87× | 0.93× |
+| `ydotc` | kind10 complex: returns Σ conj(X)·Y | scalar | 17.9 / >32 / >32 | 2.380 | 0.83× | 0.79× |
+| `eynrm2` | kind10: returns \|\|X\|\|₂ for complex X (real result, complex input) | scalar | 17.7 / 19.1 / >32 | 0.691 | 0.84× | 0.81× |
+| `eyasum` | kind10: Σ (\|re(X)\| + \|im(X)\|) for complex X | scalar | >32 / >32 / >32 | 3.061 | 1.86× | 1.75× |
+| `egbmv` | kind10 (long double) general band matrix-vector multiply | scalar | >32 / >32 / >32 | 1.616 | 0.90× | 1.48× |
+| `ygbmv` | kind10 complex (_Complex long double) general band matrix-vector multiply | scalar | >32 / >32 / >32 | 2.965 | 0.97× | 3.38× |
+| `esbmv` | kind10 (long double) symmetric band matrix-vector multiply | scalar | 18.9 / >32 / >32 | 2.126 | 1.09× | 0.96× |
+| `yhbmv` | kind10 complex Hermitian band matrix-vector multiply | scalar | 18.7 / >32 / >32 | 2.842 | 1.22× | 1.22× |
+| `espmv` | kind10 (long double) symmetric packed matrix-vector multiply | scalar | 18.7 / >32 / >32 | 1.134 | 0.85× | 1.02× |
+| `yhpmv` | kind10 complex Hermitian packed matrix-vector multiply | scalar | 18.9 / >32 / >32 | 2.613 | 1.35× | 1.23× |
+| `etbmv` | kind10 (long double) triangular band matrix-vector | scalar | >32 / >32 / >32 | 0.767 | 1.00× | 1.00× |
+| `ytbmv` | kind10 complex triangular band matrix-vector | scalar | >32 / >32 / >32 | 1.579 | 1.00× | 1.00× |
+| `etbsv` | kind10 (long double) triangular band solve | scalar | >32 / >32 / >32 | 0.895 | 1.00× | 1.01× |
+| `ytbsv` | kind10 complex triangular band solve | scalar | >32 / >32 / >32 | 1.543 | 1.00× | 1.00× |
+| `etpmv` | kind10 (long double) triangular packed matrix-vector | scalar | >32 / >32 / >32 | 1.565 | 1.00× | 1.02× |
+| `ytpmv` | kind10 complex triangular packed matrix-vector | scalar | >32 / >32 / >32 | 2.853 | 1.00× | 1.00× |
+| `etpsv` | kind10 (long double) triangular packed solve | scalar | >32 / >32 / >32 | 1.636 | 1.00× | 1.00× |
+| `ytpsv` | kind10 complex triangular packed solve | scalar | >32 / >32 / >32 | 2.607 | 1.03× | 1.00× |
+| `espr` | kind10 (long double) symmetric packed rank-1 update | scalar | >32 / >32 / >32 | 1.129 | 0.97× | 2.07× |
+| `yhpr` | kind10 complex Hermitian packed rank-1 update | scalar | >32 / >32 / >32 | 2.037 | 1.01× | 2.28× |
+| `espr2` | kind10 (long double) symmetric packed rank-2 update | scalar | 19.0 / 19.3 / >32 | 1.704 | 0.84× | 1.82× |
+| `yhpr2` | kind10 complex Hermitian packed rank-2 update | scalar | 19.0 / 19.3 / >32 | 2.620 | 0.94× | 2.22× |
 | `ecabs1` | kind10: \|re(z)\| + \|im(z)\| for one complex long double | scalar | >32 / >32 / >32 | — | — | — |
-| `ieamax` | kind10 real: 1-based argmax(\|X\|) | scalar | >32 / >32 / >32 | 1.467 | 1.15× | 1.17× |
-| `iyamax` | kind10 complex: 1-based argmax(\|re\|+\|im\|) | scalar | >32 / >32 / >32 | 1.283 | 1.31× | 1.20× |
-| `erotg` | kind10 real Givens generator | scalar | >32 / >32 / >32 | — | — | — |
-| `erotm` | kind10 real: apply modified Givens | scalar | >32 / >32 / >32 | 1.538 | 0.85× | 0.85× |
-| `erotmg` | kind10 real: generate modified Givens. Port of LAPACK DROTMG | scalar | >32 / >32 / >32 | — | — | — |
-| `yrotg` | kind10 complex Givens generator (ZROTG analog) | scalar | 18.7 / 19.1 / >32 | — | — | — |
+| `ieamax` | kind10 real: 1-based argmax(\|X\|) | scalar | >32 / >32 / >32 | 1.531 | 1.14× | 1.14× |
+| `iyamax` | kind10 complex: 1-based argmax(\|re\|+\|im\|) | scalar | >32 / >32 / >32 | 2.140 | 1.20× | 1.20× |
+| `erotg` | kind10 real Givens generator | scalar | >32 / >32 / >32 | 0.402 | 1.24× | 1.28× |
+| `erotm` | kind10 real: apply modified Givens | scalar | >32 / >32 / >32 | 1.530 | 0.76× | 0.84× |
+| `erotmg` | kind10 real: generate modified Givens. Port of LAPACK DROTMG | scalar | >32 / >32 / >32 | 0.414 | 1.16× | 1.16× |
+| `yrotg` | kind10 complex Givens generator (ZROTG analog) | scalar | 18.7 / 19.1 / >32 | 0.286 | 0.49× | 0.49× |
 
 ## kind16
 
 | routine | algorithm | ISA | err digits (min/med/max) | GFLOP/s (OMP=1) | speedup OMP=1 | speedup OMP=4 |
 |---------|-----------|-----|---------------------------|----------------:|--------------:|--------------:|
-| `qgemm` | kind16 (REAL(KIND=16) / __float128) GEMM overlay | scalar | >32 / >32 / >32 | 0.052 | 1.00× | 3.38× |
-| `xgemm` | kind16 complex (__complex128 / COMPLEX(KIND=16)) GEMM overlay | scalar | >32 / >32 / >32 | 0.053 | 0.99× | 3.30× |
-| `qgemmtr` | kind16 real triangular GEMM update | scalar | >32 / >32 / >32 | 0.052 | 1.00× | 3.17× |
-| `xgemmtr` | kind16 complex triangular GEMM update | scalar | >32 / >32 / >32 | 0.053 | 1.01× | 3.25× |
-| `qtrsm` | kind16 (REAL(KIND=16) / `__float128`) triangular solve | scalar | >32 / >32 / >32 | 0.055 | 1.01× | 3.09× |
-| `xtrsm` | kind16 complex (COMPLEX(KIND=16) / `__complex128`) | scalar | >32 / >32 / >32 | 0.050 | 1.00× | 3.10× |
-| `qtrmm` | kind16 (REAL(KIND=16) / `__float128`) triangular multiply | scalar | >32 / >32 / >32 | 0.057 | 0.98× | 3.13× |
-| `xtrmm` | kind16 complex (COMPLEX(KIND=16) / `__complex128`) | scalar | >32 / >32 / >32 | 0.051 | 1.00× | 2.97× |
-| `qsyrk` | kind16 (REAL(KIND=16) / `__float128`) symmetric rank-k update | scalar | >32 / >32 / >32 | 0.054 | 1.02× | 2.17× |
-| `xsyrk` | kind16 complex (__complex128 / COMPLEX(KIND=16)) symmetric | scalar | >32 / >32 / >32 | 0.052 | 1.01× | 2.03× |
-| `xherk` | kind16 complex (__complex128) Hermitian rank-k update | scalar | >32 / >32 / >32 | 0.052 | 1.01× | 2.00× |
-| `qsymm` | kind16 (REAL(KIND=16)) symmetric matrix multiply | scalar | 33.1 / >32 / >32 | 0.050 | 0.96× | 3.18× |
-| `xsymm` | kind16 complex (`__complex128`) symmetric matrix multiply | scalar | 33.2 / >32 / >32 | 0.049 | 0.98× | 3.13× |
-| `xhemm` | kind16 complex (`__complex128`) Hermitian matrix multiply | scalar | 33.1 / >32 / >32 | 0.048 | 0.97× | 3.15× |
-| `qsyr2k` | kind16 (REAL(KIND=16) / `__float128`) symmetric rank-2k | scalar | 32.8 / 34.0 / >32 | 0.051 | 0.94× | 2.09× |
-| `xsyr2k` | kind16 complex (__complex128) symmetric rank-2k update | scalar | 32.9 / 34.1 / >32 | 0.048 | 0.98× | 2.07× |
-| `xher2k` | kind16 complex (__complex128) Hermitian rank-2k update | scalar | 33.0 / 34.2 / >32 | 0.047 | 0.98× | 2.10× |
-| `qgemv` | kind16 (__float128) general matrix-vector multiply | scalar | >32 / >32 / >32 | 0.056 | 1.03× | 3.44× |
-| `xgemv` | kind16 complex (__complex128) general matrix-vector multiply | scalar | >32 / >32 / >32 | 0.056 | 1.00× | 3.78× |
-| `qger` | kind16 (__float128) rank-1 update | scalar | >32 / >32 / >32 | 0.049 | 0.99× | 3.66× |
-| `xgeru` | kind16 complex unconjugated rank-1 | scalar | >32 / >32 / >32 | 0.048 | 0.99× | 4.06× |
-| `xgerc` | kind16 complex conjugated rank-1 | scalar | >32 / >32 / >32 | 0.048 | 0.99× | 3.92× |
-| `qsymv` | kind16 symmetric matrix-vector multiply | scalar | 33.6 / >32 / >32 | 0.049 | 1.00× | 1.01× |
-| `xhemv` | kind16 Hermitian matrix-vector multiply | scalar | 33.8 / >32 / >32 | 0.052 | 1.01× | 0.99× |
-| `qtrsv` | kind16 triangular solve | scalar | 32.5 / >32 / >32 | 0.052 | 0.98× | 0.99× |
-| `xtrsv` | kind16 complex triangular solve | scalar | 32.8 / >32 / >32 | 0.048 | 0.99× | 1.01× |
-| `qtrmv` | kind16 (__float128) triangular matrix-vector | scalar | >32 / >32 / >32 | 0.060 | 1.00× | 0.99× |
-| `xtrmv` | kind16 complex triangular matrix-vector | scalar | >32 / >32 / >32 | 0.057 | 1.00× | 0.99× |
-| `qsyr` | kind16 (__float128) symmetric rank-1 update | scalar | >32 / >32 / >32 | 0.049 | 0.99× | 1.98× |
-| `xher` | kind16 complex Hermitian rank-1 update | scalar | >32 / >32 / >32 | 0.043 | 0.93× | 2.22× |
-| `qsyr2` | kind16 (__float128) symmetric rank-2 update | scalar | 33.7 / 34.0 / >32 | 0.048 | 0.98× | 2.11× |
-| `xher2` | kind16 complex Hermitian rank-2 update | scalar | 33.8 / 34.2 / >32 | 0.047 | 0.99× | 2.23× |
-| `qscal` | kind16 real: X := α · X | scalar | >32 / >32 / >32 | 0.037 | 0.92× | 0.97× |
-| `qaxpy` | kind16 real: Y := α·X + Y | scalar | >32 / >32 / >32 | 0.030 | 0.96× | 0.90× |
-| `qcopy` | kind16 real: Y := X | scalar | >32 / >32 / >32 | 3.425 | 0.67× | 0.50× |
-| `qswap` | kind16 real: swap X ↔ Y | scalar | >32 / >32 / >32 | 5.146 | 1.00× | 0.60× |
-| `qrot` | kind16 real Givens rotation | scalar | >32 / >32 / >32 | 0.051 | 1.01× | 1.28× |
-| `qdot` | kind16 real: returns Σ X·Y | scalar | >32 / >32 / >32 | 0.066 | 0.97× | 0.99× |
-| `qnrm2` | kind16 real: returns \|\|X\|\|₂. Two-pass scaled | scalar | 31.6 / 34.0 / >32 | 0.019 | 0.34× | 0.35× |
-| `qasum` | kind16 real: returns Σ \|X\| | scalar | >32 / >32 / >32 | 0.117 | 0.73× | 0.73× |
-| `xscal` | kind16 complex: X := α·X (α complex) | scalar | >32 / >32 / >32 | 0.059 | 0.99× | 0.97× |
-| `xqscal` | kind16: X := α·X with α real __float128, X complex | scalar | >32 / >32 / >32 | 0.067 | 0.98× | 1.67× |
-| `xaxpy` | kind16 complex: Y := α·X + Y | scalar | >32 / >32 / >32 | 0.052 | 0.97× | 0.97× |
-| `xcopy` | kind16 complex: Y := X | scalar | >32 / >32 / >32 | 5.146 | 0.50× | 0.80× |
-| `xswap` | kind16 complex: swap X ↔ Y | scalar | >32 / >32 / >32 | 5.139 | 0.75× | 0.62× |
-| `xqrot` | kind16: complex Givens with real c, s (CSROT/ZDROT analog) | scalar | >32 / >32 / >32 | 0.049 | 1.50× | 1.49× |
-| `xdotu` | kind16 complex: returns Σ X·Y | scalar | >32 / >32 / >32 | 0.061 | 1.00× | 0.99× |
-| `xdotc` | kind16 complex: returns Σ conj(X)·Y | scalar | >32 / >32 / >32 | 0.060 | 1.01× | 1.00× |
-| `qxnrm2` | kind16: \|\|X\|\|₂ for complex X (real result). Two-pass scaled | scalar | 31.4 / 33.9 / >32 | 0.019 | 0.34× | 0.34× |
-| `qxasum` | kind16: Σ (\|re(X)\| + \|im(X)\|) for complex X | scalar | >32 / >32 / >32 | 0.075 | 0.63× | 0.70× |
-| `qgbmv` | kind16 (__float128) general band matrix-vector multiply | scalar | >32 / >32 / >32 | 0.057 | 1.01× | 2.30× |
-| `xgbmv` | kind16 complex general band matrix-vector multiply | scalar | >32 / >32 / >32 | 0.058 | 1.03× | 3.16× |
-| `qsbmv` | kind16 (__float128) symmetric band matrix-vector multiply | scalar | 33.4 / >32 / >32 | 0.054 | 1.01× | 0.98× |
-| `xhbmv` | kind16 complex Hermitian band matrix-vector multiply | scalar | 33.7 / >32 / >32 | 0.052 | 1.01× | 0.99× |
-| `qspmv` | kind16 (__float128) symmetric packed matrix-vector multiply | scalar | 33.5 / >32 / >32 | 0.055 | 0.99× | 1.00× |
-| `xhpmv` | kind16 complex Hermitian packed matrix-vector multiply | scalar | 33.6 / >32 / >32 | 0.052 | 1.01× | 1.08× |
-| `qtbmv` | kind16 (__float128) triangular band matrix-vector | scalar | >32 / >32 / >32 | 0.032 | 1.00× | 1.00× |
-| `xtbmv` | kind16 complex triangular band matrix-vector | scalar | >32 / >32 / >32 | 0.030 | 1.00× | 1.00× |
-| `qtbsv` | kind16 (__float128) triangular band solve | scalar | >32 / >32 / >32 | 0.028 | 1.02× | 1.01× |
-| `xtbsv` | kind16 complex triangular band solve | scalar | >32 / >32 / >32 | 0.024 | 1.00× | 1.00× |
-| `qtpmv` | kind16 (__float128) triangular packed matrix-vector | scalar | >32 / >32 / >32 | 0.060 | 0.99× | 0.99× |
-| `xtpmv` | kind16 complex triangular packed matrix-vector | scalar | >32 / >32 / >32 | 0.056 | 0.99× | 1.01× |
-| `qtpsv` | kind16 (__float128) triangular packed solve | scalar | >32 / >32 / >32 | 0.050 | 0.98× | 1.01× |
-| `xtpsv` | kind16 complex triangular packed solve | scalar | >32 / >32 / >32 | 0.045 | 0.98× | 1.00× |
-| `qspr` | kind16 (__float128) symmetric packed rank-1 update | scalar | >32 / >32 / >32 | 0.049 | 1.00× | 2.03× |
-| `xhpr` | kind16 complex Hermitian packed rank-1 update | scalar | >32 / >32 / >32 | 0.043 | 1.02× | 2.19× |
-| `qspr2` | kind16 (__float128) symmetric packed rank-2 update | scalar | 33.7 / 34.0 / >32 | 0.048 | 0.98× | 2.08× |
-| `xhpr2` | kind16 complex Hermitian packed rank-2 update | scalar | 33.7 / 34.5 / >32 | 0.046 | 0.98× | 2.05× |
+| `qgemm` | kind16 (REAL(KIND=16) / __float128) GEMM overlay | scalar | >32 / >32 / >32 | 0.054 | 1.00× | 3.27× |
+| `xgemm` | kind16 complex (__complex128 / COMPLEX(KIND=16)) GEMM overlay | scalar | >32 / >32 / >32 | 0.055 | 0.99× | 3.26× |
+| `qgemmtr` | kind16 real triangular GEMM update | scalar | >32 / >32 / >32 | 0.055 | 1.02× | 3.39× |
+| `xgemmtr` | kind16 complex triangular GEMM update | scalar | >32 / >32 / >32 | 0.054 | 1.01× | 3.23× |
+| `qtrsm` | kind16 (REAL(KIND=16) / `__float128`) triangular solve | scalar | >32 / >32 / >32 | 0.058 | 1.00× | 3.20× |
+| `xtrsm` | kind16 complex (COMPLEX(KIND=16) / `__complex128`) | scalar | >32 / >32 / >32 | 0.052 | 1.00× | 3.18× |
+| `qtrmm` | kind16 (REAL(KIND=16) / `__float128`) triangular multiply | scalar | >32 / >32 / >32 | 0.059 | 0.99× | 3.00× |
+| `xtrmm` | kind16 complex (COMPLEX(KIND=16) / `__complex128`) | scalar | >32 / >32 / >32 | 0.054 | 1.00× | 3.12× |
+| `qsyrk` | kind16 (REAL(KIND=16) / `__float128`) symmetric rank-k update | scalar | >32 / >32 / >32 | 0.057 | 1.00× | 2.22× |
+| `xsyrk` | kind16 complex (__complex128 / COMPLEX(KIND=16)) symmetric | scalar | >32 / >32 / >32 | 0.054 | 1.00× | 2.13× |
+| `xherk` | kind16 complex (__complex128) Hermitian rank-k update | scalar | >32 / >32 / >32 | 0.054 | 1.01× | 2.13× |
+| `qsymm` | kind16 (REAL(KIND=16)) symmetric matrix multiply | scalar | 33.1 / >32 / >32 | 0.052 | 0.96× | 3.06× |
+| `xsymm` | kind16 complex (`__complex128`) symmetric matrix multiply | scalar | 33.2 / >32 / >32 | 0.051 | 0.98× | 3.03× |
+| `xhemm` | kind16 complex (`__complex128`) Hermitian matrix multiply | scalar | 33.2 / >32 / >32 | 0.052 | 0.99× | 3.25× |
+| `qsyr2k` | kind16 (REAL(KIND=16) / `__float128`) symmetric rank-2k | scalar | 32.6 / 34.1 / >32 | 0.054 | 0.95× | 1.98× |
+| `xsyr2k` | kind16 complex (__complex128) symmetric rank-2k update | scalar | 33.0 / 34.1 / >32 | 0.052 | 0.97× | 2.02× |
+| `xher2k` | kind16 complex (__complex128) Hermitian rank-2k update | scalar | 33.0 / 34.1 / >32 | 0.053 | 0.99× | 2.04× |
+| `qgemv` | kind16 (__float128) general matrix-vector multiply | scalar | >32 / >32 / >32 | 0.052 | 1.02× | 3.61× |
+| `xgemv` | kind16 complex (__complex128) general matrix-vector multiply | scalar | >32 / >32 / >32 | 0.059 | 1.00× | 3.28× |
+| `qger` | kind16 (__float128) rank-1 update | scalar | >32 / >32 / >32 | 0.052 | 1.02× | 2.62× |
+| `xgeru` | kind16 complex unconjugated rank-1 | scalar | >32 / >32 / >32 | 0.050 | 0.98× | 3.90× |
+| `xgerc` | kind16 complex conjugated rank-1 | scalar | >32 / >32 / >32 | 0.050 | 0.99× | 3.88× |
+| `qsymv` | kind16 symmetric matrix-vector multiply | scalar | 33.6 / >32 / >32 | 0.057 | 1.05× | 1.14× |
+| `xhemv` | kind16 Hermitian matrix-vector multiply | scalar | 33.6 / >32 / >32 | 0.054 | 1.02× | 0.99× |
+| `qtrsv` | kind16 triangular solve | scalar | 32.8 / >32 / >32 | 0.057 | 1.00× | 0.98× |
+| `xtrsv` | kind16 complex triangular solve | scalar | 32.5 / >32 / >32 | 0.052 | 1.00× | 1.01× |
+| `qtrmv` | kind16 (__float128) triangular matrix-vector | scalar | >32 / >32 / >32 | 0.062 | 1.00× | 0.97× |
+| `xtrmv` | kind16 complex triangular matrix-vector | scalar | >32 / >32 / >32 | 0.058 | 1.00× | 1.00× |
+| `qsyr` | kind16 (__float128) symmetric rank-1 update | scalar | >32 / >32 / >32 | 0.052 | 1.00× | 2.01× |
+| `xher` | kind16 complex Hermitian rank-1 update | scalar | >32 / >32 / >32 | 0.049 | 1.00× | 2.15× |
+| `qsyr2` | kind16 (__float128) symmetric rank-2 update | scalar | 33.7 / 34.0 / >32 | 0.049 | 0.97× | 2.16× |
+| `xher2` | kind16 complex Hermitian rank-2 update | scalar | 33.8 / 34.2 / >32 | 0.049 | 0.99× | 2.24× |
+| `qscal` | kind16 real: X := α · X | scalar | >32 / >32 / >32 | 0.070 | 0.99× | 0.99× |
+| `qaxpy` | kind16 real: Y := α·X + Y | scalar | >32 / >32 / >32 | 0.049 | 0.90× | 0.93× |
+| `qcopy` | kind16 real: Y := X | scalar | >32 / >32 / >32 | 3.568 | 0.66× | 0.50× |
+| `qswap` | kind16 real: swap X ↔ Y | scalar | >32 / >32 / >32 | 4.293 | 0.60× | 0.40× |
+| `qrot` | kind16 real Givens rotation | scalar | >32 / >32 / >32 | 0.032 | 1.00× | 0.99× |
+| `qdot` | kind16 real: returns Σ X·Y | scalar | >32 / >32 / >32 | 0.072 | 0.99× | 1.01× |
+| `qnrm2` | kind16 real: returns \|\|X\|\|₂. Two-pass scaled | scalar | 31.6 / 34.0 / >32 | 0.020 | 0.35× | 0.35× |
+| `qasum` | kind16 real: returns Σ \|X\| | scalar | >32 / >32 / >32 | 0.121 | 0.71× | 0.82× |
+| `xscal` | kind16 complex: X := α·X (α complex) | scalar | >32 / >32 / >32 | 0.062 | 0.97× | 0.97× |
+| `xqscal` | kind16: X := α·X with α real __float128, X complex | scalar | >32 / >32 / >32 | 0.071 | 1.00× | 0.99× |
+| `xaxpy` | kind16 complex: Y := α·X + Y | scalar | >32 / >32 / >32 | 0.053 | 0.98× | 0.98× |
+| `xcopy` | kind16 complex: Y := X | scalar | >32 / >32 / >32 | 4.294 | 0.60× | 1.00× |
+| `xswap` | kind16 complex: swap X ↔ Y | scalar | >32 / >32 / >32 | 5.368 | 0.75× | 1.00× |
+| `xqrot` | kind16: complex Givens with real c, s (CSROT/ZDROT analog) | scalar | >32 / >32 / >32 | 0.047 | 1.39× | 1.61× |
+| `xdotu` | kind16 complex: returns Σ X·Y | scalar | >32 / >32 / >32 | 0.062 | 1.00× | 1.01× |
+| `xdotc` | kind16 complex: returns Σ conj(X)·Y | scalar | >32 / >32 / >32 | 0.061 | 1.00× | 0.99× |
+| `qxnrm2` | kind16: \|\|X\|\|₂ for complex X (real result). Two-pass scaled | scalar | 31.4 / 34.0 / >32 | 0.020 | 0.41× | 0.33× |
+| `qxasum` | kind16: Σ (\|re(X)\| + \|im(X)\|) for complex X | scalar | >32 / >32 / >32 | 0.070 | 0.65× | 0.69× |
+| `qgbmv` | kind16 (__float128) general band matrix-vector multiply | scalar | >32 / >32 / >32 | 0.059 | 0.99× | 2.38× |
+| `xgbmv` | kind16 complex general band matrix-vector multiply | scalar | >32 / >32 / >32 | 0.057 | 0.99× | 2.87× |
+| `qsbmv` | kind16 (__float128) symmetric band matrix-vector multiply | scalar | 33.7 / >32 / >32 | 0.050 | 0.99× | 1.05× |
+| `xhbmv` | kind16 complex Hermitian band matrix-vector multiply | scalar | 33.6 / >32 / >32 | 0.053 | 1.01× | 1.02× |
+| `qspmv` | kind16 (__float128) symmetric packed matrix-vector multiply | scalar | 33.8 / >32 / >32 | 0.057 | 0.99× | 0.99× |
+| `xhpmv` | kind16 complex Hermitian packed matrix-vector multiply | scalar | 33.7 / >32 / >32 | 0.049 | 0.97× | 1.00× |
+| `qtbmv` | kind16 (__float128) triangular band matrix-vector | scalar | >32 / >32 / >32 | 0.032 | 0.99× | 0.99× |
+| `xtbmv` | kind16 complex triangular band matrix-vector | scalar | >32 / >32 / >32 | 0.031 | 1.01× | 1.00× |
+| `qtbsv` | kind16 (__float128) triangular band solve | scalar | >32 / >32 / >32 | 0.028 | 0.99× | 0.98× |
+| `xtbsv` | kind16 complex triangular band solve | scalar | >32 / >32 / >32 | 0.026 | 1.01× | 1.00× |
+| `qtpmv` | kind16 (__float128) triangular packed matrix-vector | scalar | >32 / >32 / >32 | 0.061 | 0.99× | 1.01× |
+| `xtpmv` | kind16 complex triangular packed matrix-vector | scalar | >32 / >32 / >32 | 0.059 | 1.00× | 1.00× |
+| `qtpsv` | kind16 (__float128) triangular packed solve | scalar | >32 / >32 / >32 | 0.049 | 1.00× | 1.02× |
+| `xtpsv` | kind16 complex triangular packed solve | scalar | >32 / >32 / >32 | 0.048 | 1.00× | 0.99× |
+| `qspr` | kind16 (__float128) symmetric packed rank-1 update | scalar | >32 / >32 / >32 | 0.052 | 1.00× | 1.98× |
+| `xhpr` | kind16 complex Hermitian packed rank-1 update | scalar | >32 / >32 / >32 | 0.048 | 1.02× | 2.02× |
+| `qspr2` | kind16 (__float128) symmetric packed rank-2 update | scalar | 33.7 / 34.1 / >32 | 0.046 | 0.99× | 2.12× |
+| `xhpr2` | kind16 complex Hermitian packed rank-2 update | scalar | 33.8 / 34.2 / >32 | 0.049 | 1.00× | 2.25× |
 | `qcabs1` | kind16: \|re(z)\| + \|im(z)\| | scalar | >32 / >32 / >32 | — | — | — |
-| `iqamax` | kind16 real: 1-based argmax(\|X\|) | scalar | >32 / >32 / >32 | 0.147 | 0.53× | 0.48× |
-| `ixamax` | kind16 complex: 1-based argmax(\|re\|+\|im\|) | scalar | >32 / >32 / >32 | 0.070 | 0.80× | 0.69× |
-| `qrotg` | kind16 real Givens generator | scalar | >32 / >32 / >32 | — | — | — |
-| `qrotm` | kind16 real: apply modified Givens | scalar | >32 / >32 / >32 | 0.054 | 0.98× | 0.98× |
-| `qrotmg` | kind16 real: generate modified Givens | scalar | — | — | — | — |
-| `xrotg` | kind16 complex Givens generator | scalar | 33.4 / 33.8 / >32 | — | — | — |
+| `iqamax` | kind16 real: 1-based argmax(\|X\|) | scalar | >32 / >32 / >32 | 0.163 | 0.55× | 0.55× |
+| `ixamax` | kind16 complex: 1-based argmax(\|re\|+\|im\|) | scalar | >32 / >32 / >32 | 0.107 | 0.58× | 0.65× |
+| `qrotg` | kind16 real Givens generator | scalar | >32 / >32 / >32 | 0.008 | 1.01× | 1.04× |
+| `qrotm` | kind16 real: apply modified Givens | scalar | >32 / >32 / >32 | 0.057 | 0.98× | 0.97× |
+| `qrotmg` | kind16 real: generate modified Givens | scalar | >32 / >32 / >32 | 0.029 | 0.94× | 0.93× |
+| `xrotg` | kind16 complex Givens generator | scalar | 33.4 / 33.8 / >32 | 0.009 | 0.75× | 0.83× |
 
 ## multifloats
 
 | routine | algorithm | ISA | err digits (min/med/max) | GFLOP/s (OMP=1) | speedup OMP=1 | speedup OMP=4 |
 |---------|-----------|-----|---------------------------|----------------:|--------------:|--------------:|
-| `mgemm` | multifloats real GEMM overlay (float64x2, double-double) | AVX2+FMA3 | 31.0 / 32.0 / >32 | 2.442 | 24.90× | 23.52× |
-| `wgemm` | multifloats complex GEMM overlay (complex64x2) | AVX2+FMA3 | 31.1 / 31.9 / >32 | 1.970 | 14.52× | 13.95× |
-| `mgemmtr` | multifloats real (DD) triangular GEMM update | FMA3 | — | — | — | — |
-| `wgemmtr` | multifloats complex DD triangular GEMM update | FMA3 | — | — | — | — |
-| `mtrsm` | multifloats real (double-double) triangular solve | AVX2+FMA3 | 31.0 / >32 / >32 | 1.214 | 12.69× | 32.59× |
-| `wtrsm` | multifloats complex (complex64x2) triangular solve | AVX2+FMA3 | 31.0 / 31.9 / >32 | 0.436 | 11.00× | 22.95× |
-| `mtrmm` | multifloats real (double-double) triangular multiply | AVX2+FMA3 | 30.8 / 31.7 / >32 | 1.809 | 18.70× | 58.85× |
-| `wtrmm` | multifloats complex (complex64x2) triangular multiply | AVX2+FMA3 | 31.0 / 31.9 / >32 | 0.439 | 10.55× | 40.34× |
-| `msyrk` | multifloats real (DD) symmetric rank-k update | AVX2+FMA3 | 31.3 / 32.2 / >32 | 1.439 | 14.75× | 41.33× |
-| `wsyrk` | multifloats complex (DD) symmetric rank-k update. TRANS ∈ {N, T} | AVX2+FMA3 | 31.3 / 32.0 / >32 | 0.444 | 11.45× | 27.61× |
-| `wherk` | multifloats complex (DD) Hermitian rank-k | AVX2+FMA3 | 31.2 / 32.0 / >32 | 0.449 | 12.39× | 28.31× |
-| `msymm` | multifloats real (DD) symmetric matrix multiply | AVX2+FMA3 | 31.1 / 31.9 / >32 | 1.776 | 17.83× | 69.81× |
-| `wsymm` | multifloats complex (DD) symmetric matrix multiply | AVX2+FMA3 | 31.2 / 32.0 / >32 | 0.386 | 10.04× | — |
-| `whemm` | multifloats complex (DD) Hermitian matrix multiply | AVX2+FMA3 | 31.2 / 31.9 / >32 | 0.408 | 10.55× | 40.41× |
-| `msyr2k` | multifloats real (DD) symmetric rank-2k | AVX2+FMA3 | 30.2 / 32.0 / >32 | 0.951 | 18.72× | 46.24× |
-| `wsyr2k` | multifloats complex (DD) symmetric rank-2k | AVX2+FMA3 | 31.0 / 31.9 / >32 | 0.215 | 11.50× | 26.87× |
-| `wher2k` | multifloats complex (DD) Hermitian rank-2k | AVX2+FMA3 | 30.0 / 31.9 / >32 | 0.211 | 11.28× | 27.24× |
-| `mgemv` | multifloats real DD general matrix-vector multiply | AVX2+FMA3 | 31.2 / >32 / >32 | 1.079 | 10.90× | 11.95× |
-| `wgemv` | multifloats complex DD general matrix-vector multiply | AVX2+FMA3 | 31.3 / >32 / >32 | 1.858 | 11.55× | 12.34× |
-| `mger` | multifloats real DD rank-1 update | AVX2+FMA3 | 31.7 / 33.4 / >32 | 1.369 | 13.69× | 10.92× |
-| `wgeru` | multifloats complex DD unconjugated rank-1 | AVX2+FMA3 | 31.7 / 32.8 / >32 | 1.973 | 12.33× | 20.16× |
-| `wgerc` | multifloats complex DD conjugated rank-1 | AVX2+FMA3 | 31.7 / 32.9 / >32 | 1.937 | 12.60× | 18.86× |
-| `msymv` | multifloats real DD symmetric matrix-vector | AVX2+FMA3 | 31.3 / >32 / >32 | 1.499 | 14.84× | 14.28× |
-| `whemv` | multifloats Hermitian matrix-vector | AVX2+FMA3 | 31.4 / 32.5 / >32 | 1.789 | 11.55× | 11.30× |
-| `mtrsv` | multifloats real DD triangular solve | AVX2+FMA3 | 30.5 / 32.1 / >32 | 1.120 | 11.13× | 11.11× |
-| `wtrsv` | multifloats complex DD triangular solve | AVX2+FMA3 | 31.0 / 31.8 / >32 | 1.812 | 12.00× | 12.19× |
-| `mtrmv` | multifloats real DD triangular matrix-vector | FMA3 | 31.0 / >32 / >32 | 0.258 | 2.56× | 2.54× |
-| `wtrmv` | multifloats complex DD triangular matrix-vector | FMA3 | 31.3 / >32 / >32 | 0.312 | 2.01× | 2.11× |
-| `msyr` | multifloats real DD symmetric rank-1 update | FMA3 | >32 / >32 / >32 | 0.366 | 3.63× | 8.18× |
-| `wher` | multifloats Hermitian rank-1 update (alpha real, diag real) | FMA3 | 32.2 / >32 / >32 | 0.341 | 2.18× | 4.26× |
-| `msyr2` | multifloats real DD symmetric rank-2 update | FMA3 | >32 / >32 / >32 | 0.712 | 6.97× | 9.07× |
-| `wher2` | multifloats Hermitian rank-2 update (alpha complex, diag real) | FMA3 | 31.8 / 32.4 / >32 | 0.714 | 4.48× | 8.00× |
-| `mscal` | multifloats real DD vector scale: X := α · X | AVX2+FMA3 | >32 / >32 / >32 | 0.858 | 4.49× | 4.50× |
-| `wscal` | multifloats complex DD: X := α · X (α complex) | AVX2+FMA3 | >32 / >32 / >32 | 1.817 | 9.53× | 9.71× |
-| `wmscal` | multifloats: X := α · X with α real DD, X complex DD | AVX2+FMA3 | >32 / >32 / >32 | 0.937 | 15.64× | 17.30× |
-| `maxpy` | multifloats real DD: Y := α · X + Y | AVX2+FMA3 | >32 / >32 / >32 | 1.145 | 11.57× | 11.43× |
-| `waxpy` | multifloats complex DD: Y := α · X + Y | AVX2+FMA3 | >32 / >32 / >32 | 1.874 | 11.14× | 11.32× |
-| `mcopy` | multifloats real DD: Y := X | FMA3 | >32 / >32 / >32 | 5.172 | 3.01× | 1.66× |
-| `wcopy` | multifloats complex DD: Y := X | FMA3 | >32 / >32 / >32 | 4.121 | 1.00× | 2.00× |
-| `mswap` | multifloats real DD: swap X ↔ Y | FMA3 | >32 / >32 / >32 | 5.146 | 1.75× | 1.50× |
-| `wswap` | multifloats complex DD: swap X ↔ Y | FMA3 | >32 / >32 / >32 | 5.894 | 1.14× | 1.50× |
-| `mrot` | multifloats real DD Givens rotation: | AVX2+FMA3 | 31.9 / >32 / >32 | 1.931 | 14.93× | 15.94× |
-| `wmrot` | multifloats: complex DD Givens rotation with real DD c, s | AVX2+FMA3 | 32.0 / >32 / >32 | 2.208 | 27.49× | 26.47× |
-| `mdot` | multifloats real DD: Σ X·Y | AVX2+FMA3 | 30.3 / >32 / >32 | 1.144 | 11.54× | 11.45× |
-| `masum` | multifloats real DD: Σ \|X\| | AVX2+FMA3 | >32 / >32 / >32 | 0.644 | 11.50× | 13.14× |
-| `mnrm2` | multifloats real DD: \|\|X\|\|₂ via two-pass scaled | AVX2+FMA3 | 30.9 / 31.8 / >32 | 0.859 | 18.60× | 18.58× |
-| `mwasum` | multifloats: Σ (\|re(X)\| + \|im(X)\|) for complex DD X | AVX2+FMA3 | >32 / >32 / >32 | 0.936 | 97.50× | 97.59× |
-| `mwnrm2` | multifloats: \|\|X\|\|₂ for complex DD X, returns real DD | AVX2+FMA3 | 30.4 / 31.7 / >32 | 0.859 | 20.02× | 24.49× |
-| `wdotu` | multifloats complex DD: Σ X·Y (unconjugated) | AVX2+FMA3 | 30.6 / >32 / >32 | 1.717 | 10.46× | 11.00× |
-| `wdotc` | multifloats complex DD: Σ conj(X)·Y | AVX2+FMA3 | 30.6 / >32 / >32 | 1.717 | 10.50× | 10.40× |
-| `mgbmv` | multifloats real DD general band matrix-vector multiply | FMA3 | >32 / >32 / >32 | — | — | — |
-| `wgbmv` | multifloats complex DD general band matrix-vector multiply | FMA3 | 32.6 / >32 / >32 | — | — | — |
-| `msbmv` | multifloats real DD symmetric band matrix-vector multiply | FMA3 | >32 / >32 / >32 | — | — | — |
-| `whbmv` | multifloats complex DD Hermitian band matrix-vector multiply | FMA3 | 31.7 / >32 / >32 | — | — | — |
-| `mspmv` | multifloats real DD symmetric packed matrix-vector multiply | FMA3 | >32 / >32 / >32 | — | — | — |
-| `whpmv` | multifloats complex DD Hermitian packed matrix-vector multiply | FMA3 | 31.5 / >32 / >32 | — | — | — |
-| `mtbmv` | multifloats real DD triangular band matrix-vector | FMA3 | >32 / >32 / >32 | — | — | — |
-| `wtbmv` | multifloats complex DD triangular band matrix-vector | FMA3 | >32 / >32 / >32 | — | — | — |
-| `mtbsv` | multifloats real DD triangular band solve | FMA3 | >32 / >32 / >32 | — | — | — |
-| `wtbsv` | multifloats complex DD triangular band solve | FMA3 | 31.4 / 32.3 / >32 | — | — | — |
-| `mtpmv` | multifloats real DD triangular packed matrix-vector | FMA3 | >32 / >32 / >32 | — | — | — |
-| `wtpmv` | multifloats complex DD triangular packed matrix-vector | FMA3 | >32 / >32 / >32 | — | — | — |
-| `mtpsv` | multifloats real DD triangular packed solve | FMA3 | >32 / >32 / >32 | — | — | — |
-| `wtpsv` | multifloats complex DD triangular packed solve | FMA3 | 31.1 / 32.2 / >32 | — | — | — |
-| `mspr` | multifloats real DD symmetric packed rank-1 update | FMA3 | >32 / >32 / >32 | — | — | — |
-| `whpr` | multifloats complex DD Hermitian packed rank-1 update | FMA3 | 32.3 / >32 / >32 | — | — | — |
-| `mspr2` | multifloats real DD symmetric packed rank-2 update | FMA3 | >32 / >32 / >32 | — | — | — |
-| `whpr2` | multifloats complex DD Hermitian packed rank-2 update | FMA3 | 31.7 / 32.5 / >32 | — | — | — |
+| `mgemm` | multifloats real GEMM overlay (float64x2, double-double) | AVX2+FMA3 | 30.9 / 32.0 / >32 | 2.612 | 25.15× | 24.46× |
+| `wgemm` | multifloats complex GEMM overlay (complex64x2) | AVX2+FMA3 | 31.0 / 31.8 / >32 | 2.208 | 14.67× | 13.61× |
+| `mgemmtr` | multifloats real (DD) triangular GEMM update | FMA3 | 31.2 / >32 / >32 | 0.948 | 9.20× | 28.04× |
+| `wgemmtr` | multifloats complex DD triangular GEMM update | FMA3 | 31.4 / >32 / >32 | 0.886 | 5.48× | 16.27× |
+| `mtrsm` | multifloats real (double-double) triangular solve | AVX2+FMA3 | 31.0 / >32 / >32 | 1.342 | 12.71× | 32.27× |
+| `wtrsm` | multifloats complex (complex64x2) triangular solve | AVX2+FMA3 | 31.2 / 32.0 / >32 | 0.468 | 10.70× | 27.12× |
+| `mtrmm` | multifloats real (double-double) triangular multiply | AVX2+FMA3 | 30.9 / 31.7 / >32 | 1.965 | 18.96× | 66.32× |
+| `wtrmm` | multifloats complex (complex64x2) triangular multiply | AVX2+FMA3 | 31.1 / 31.9 / >32 | 0.490 | 10.97× | 41.78× |
+| `msyrk` | multifloats real (DD) symmetric rank-k update | AVX2+FMA3 | 31.1 / 32.2 / >32 | 1.630 | 15.64× | 36.44× |
+| `wsyrk` | multifloats complex (DD) symmetric rank-k update. TRANS ∈ {N, T} | AVX2+FMA3 | 31.4 / 32.0 / >32 | 0.447 | 11.15× | 27.85× |
+| `wherk` | multifloats complex (DD) Hermitian rank-k | AVX2+FMA3 | 31.3 / 32.0 / >32 | 0.450 | 11.23× | 27.60× |
+| `msymm` | multifloats real (DD) symmetric matrix multiply | AVX2+FMA3 | 31.0 / 31.9 / >32 | 1.885 | 18.02× | 68.13× |
+| `wsymm` | multifloats complex (DD) symmetric matrix multiply | AVX2+FMA3 | 31.2 / 32.0 / >32 | 0.434 | 10.72× | 39.29× |
+| `whemm` | multifloats complex (DD) Hermitian matrix multiply | AVX2+FMA3 | 31.2 / 32.0 / >32 | 0.418 | 10.43× | 38.05× |
+| `msyr2k` | multifloats real (DD) symmetric rank-2k | AVX2+FMA3 | 30.1 / 31.9 / >32 | 0.974 | 18.64× | 43.54× |
+| `wsyr2k` | multifloats complex (DD) symmetric rank-2k | AVX2+FMA3 | 31.1 / 31.9 / >32 | 0.220 | 11.29× | 25.49× |
+| `wher2k` | multifloats complex (DD) Hermitian rank-2k | AVX2+FMA3 | 30.8 / 31.8 / >32 | 0.223 | 11.68× | 26.99× |
+| `mgemv` | multifloats real DD general matrix-vector multiply | AVX2+FMA3 | 31.4 / >32 / >32 | 1.127 | 11.07× | 11.42× |
+| `wgemv` | multifloats complex DD general matrix-vector multiply | AVX2+FMA3 | 31.3 / >32 / >32 | 1.895 | 11.47× | 12.01× |
+| `mger` | multifloats real DD rank-1 update | AVX2+FMA3 | 31.7 / >32 / >32 | 1.635 | 15.61× | 10.13× |
+| `wgeru` | multifloats complex DD unconjugated rank-1 | AVX2+FMA3 | 31.6 / 33.0 / >32 | 2.089 | 12.75× | 18.29× |
+| `wgerc` | multifloats complex DD conjugated rank-1 | AVX2+FMA3 | 31.7 / >32 / >32 | 2.098 | 12.66× | 18.92× |
+| `msymv` | multifloats real DD symmetric matrix-vector | AVX2+FMA3 | 31.2 / >32 / >32 | 1.504 | 14.26× | 13.99× |
+| `whemv` | multifloats Hermitian matrix-vector | AVX2+FMA3 | 31.3 / 32.5 / >32 | 1.880 | 11.71× | 11.80× |
+| `mtrsv` | multifloats real DD triangular solve | AVX2+FMA3 | 31.0 / 32.6 / >32 | 1.172 | 11.27× | 9.89× |
+| `wtrsv` | multifloats complex DD triangular solve | AVX2+FMA3 | 30.7 / 31.8 / >32 | 1.729 | 11.55× | 12.37× |
+| `mtrmv` | multifloats real DD triangular matrix-vector | FMA3 | 31.1 / >32 / >32 | 0.270 | 2.57× | 2.53× |
+| `wtrmv` | multifloats complex DD triangular matrix-vector | FMA3 | 31.3 / >32 / >32 | 0.322 | 2.05× | 2.04× |
+| `msyr` | multifloats real DD symmetric rank-1 update | FMA3 | >32 / >32 / >32 | 0.385 | 3.65× | 8.05× |
+| `wher` | multifloats Hermitian rank-1 update (alpha real, diag real) | FMA3 | 32.3 / >32 / >32 | 0.358 | 2.20× | 4.59× |
+| `msyr2` | multifloats real DD symmetric rank-2 update | FMA3 | >32 / >32 / >32 | 0.757 | 7.17× | 9.02× |
+| `wher2` | multifloats Hermitian rank-2 update (alpha complex, diag real) | FMA3 | 31.7 / 32.4 / >32 | 0.751 | 4.50× | 7.96× |
+| `mscal` | multifloats real DD vector scale: X := α · X | AVX2+FMA3 | >32 / >32 / >32 | 0.770 | 3.71× | 4.50× |
+| `wscal` | multifloats complex DD: X := α · X (α complex) | AVX2+FMA3 | >32 / >32 / >32 | 1.902 | 9.47× | 10.06× |
+| `wmscal` | multifloats: X := α · X with α real DD, X complex DD | AVX2+FMA3 | >32 / >32 / >32 | 0.898 | 14.42× | 17.30× |
+| `maxpy` | multifloats real DD: Y := α · X + Y | AVX2+FMA3 | >32 / >32 / >32 | 1.078 | 10.40× | 11.56× |
+| `waxpy` | multifloats complex DD: Y := α · X + Y | AVX2+FMA3 | >32 / >32 / >32 | 1.391 | 13.52× | 10.57× |
+| `mcopy` | multifloats real DD: Y := X | FMA3 | >32 / >32 / >32 | 3.593 | 2.00× | 1.67× |
+| `wcopy` | multifloats complex DD: Y := X | FMA3 | >32 / >32 / >32 | 7.186 | 1.67× | 1.20× |
+| `mswap` | multifloats real DD: swap X ↔ Y | FMA3 | >32 / >32 / >32 | 4.311 | 1.20× | 2.00× |
+| `wswap` | multifloats complex DD: swap X ↔ Y | FMA3 | >32 / >32 / >32 | 6.160 | 1.29× | 1.80× |
+| `mrot` | multifloats real DD Givens rotation: | AVX2+FMA3 | 31.9 / >32 / >32 | 2.021 | 14.82× | 14.87× |
+| `wmrot` | multifloats: complex DD Givens rotation with real DD c, s | AVX2+FMA3 | 32.1 / >32 / >32 | 2.310 | 27.08× | 27.08× |
+| `mdot` | multifloats real DD: Σ X·Y | AVX2+FMA3 | 30.4 / >32 / >32 | 1.198 | 11.44× | 11.66× |
+| `masum` | multifloats real DD: Σ \|X\| | AVX2+FMA3 | >32 / >32 / >32 | 0.599 | 10.32× | 10.32× |
+| `mnrm2` | multifloats real DD: \|\|X\|\|₂ via two-pass scaled | AVX2+FMA3 | 30.8 / 31.9 / >32 | 0.898 | 18.60× | 20.29× |
+| `mwasum` | multifloats: Σ (\|re(X)\| + \|im(X)\|) for complex DD X | AVX2+FMA3 | >32 / >32 / >32 | 0.829 | 82.92× | 107.68× |
+| `mwnrm2` | multifloats: \|\|X\|\|₂ for complex DD X, returns real DD | AVX2+FMA3 | 30.6 / 31.9 / >32 | 0.862 | 20.34× | 24.51× |
+| `wdotu` | multifloats complex DD: Σ X·Y (unconjugated) | AVX2+FMA3 | 30.9 / >32 / >32 | 1.796 | 10.54× | 10.67× |
+| `wdotc` | multifloats complex DD: Σ conj(X)·Y | AVX2+FMA3 | 30.3 / >32 / >32 | 1.796 | 11.00× | 10.72× |
+| `mgbmv` | multifloats real DD general band matrix-vector multiply | FMA3 | >32 / >32 / >32 | 0.248 | 2.65× | 5.71× |
+| `wgbmv` | multifloats complex DD general band matrix-vector multiply | FMA3 | 32.1 / >32 / >32 | 0.370 | 2.30× | 4.51× |
+| `msbmv` | multifloats real DD symmetric band matrix-vector multiply | FMA3 | >32 / >32 / >32 | 0.379 | 3.50× | 3.40× |
+| `whbmv` | multifloats complex DD Hermitian band matrix-vector multiply | FMA3 | 31.5 / >32 / >32 | 0.327 | 1.97× | 2.04× |
+| `mspmv` | multifloats real DD symmetric packed matrix-vector multiply | FMA3 | >32 / >32 / >32 | 0.376 | 3.60× | 3.32× |
+| `whpmv` | multifloats complex DD Hermitian packed matrix-vector multiply | FMA3 | 31.4 / >32 / >32 | 0.280 | 2.17× | 1.99× |
+| `mtbmv` | multifloats real DD triangular band matrix-vector | FMA3 | >32 / >32 / >32 | 0.338 | 3.19× | 3.09× |
+| `wtbmv` | multifloats complex DD triangular band matrix-vector | FMA3 | >32 / >32 / >32 | 0.359 | 2.16× | 2.15× |
+| `mtbsv` | multifloats real DD triangular band solve | FMA3 | >32 / >32 / >32 | 0.317 | 2.79× | 2.80× |
+| `wtbsv` | multifloats complex DD triangular band solve | FMA3 | 30.9 / 32.2 / >32 | 0.337 | 2.06× | 2.04× |
+| `mtpmv` | multifloats real DD triangular packed matrix-vector | FMA3 | >32 / >32 / >32 | 0.604 | 2.84× | 2.82× |
+| `wtpmv` | multifloats complex DD triangular packed matrix-vector | FMA3 | >32 / >32 / >32 | 0.649 | 2.06× | 2.07× |
+| `mtpsv` | multifloats real DD triangular packed solve | FMA3 | >32 / >32 / >32 | 0.576 | 2.81× | 2.82× |
+| `wtpsv` | multifloats complex DD triangular packed solve | FMA3 | 31.2 / 32.2 / >32 | 0.633 | 1.99× | 1.99× |
+| `mspr` | multifloats real DD symmetric packed rank-1 update | FMA3 | >32 / >32 / >32 | 0.780 | 3.74× | 8.44× |
+| `whpr` | multifloats complex DD Hermitian packed rank-1 update | FMA3 | 32.2 / >32 / >32 | 0.719 | 2.21× | 4.18× |
+| `mspr2` | multifloats real DD symmetric packed rank-2 update | FMA3 | >32 / >32 / >32 | 0.676 | 3.27× | 5.33× |
+| `whpr2` | multifloats complex DD Hermitian packed rank-2 update | FMA3 | 31.8 / 32.4 / >32 | 0.618 | 1.85× | 3.70× |
 | `mcabs1` | multifloats: \|re(z)\| + \|im(z)\| for a single complex DD | FMA3 | >32 / >32 / >32 | — | — | — |
-| `imamax` | multifloats real DD: 1-based argmax(\|X\|) | FMA3 | >32 / >32 / >32 | 0.234 | 1.00× | 0.96× |
-| `iwamax` | multifloats complex DD: 1-based argmax(\|re\|+\|im\|) | FMA3 | >32 / >32 / >32 | 0.156 | 8.53× | 8.84× |
-| `mrotg` | real DD Givens generator | FMA3 | 31.4 / 32.4 / >32 | — | — | — |
-| `mrotm` | multifloats real DD: apply modified Givens rotation | FMA3 | >32 / >32 / >32 | 0.391 | 3.04× | 3.13× |
-| `mrotmg` | multifloats real DD: generate modified Givens | FMA3 | >32 / >32 / >32 | — | — | — |
-| `wrotg` | multifloats: complex Givens generator (ZROTG analog) | FMA3 | 31.2 / 31.7 / 32.5 | — | — | — |
+| `imamax` | multifloats real DD: 1-based argmax(\|X\|) | FMA3 | >32 / >32 / >32 | 0.229 | 0.94× | 0.91× |
+| `iwamax` | multifloats complex DD: 1-based argmax(\|re\|+\|im\|) | FMA3 | >32 / >32 / >32 | 0.162 | 7.83× | 7.93× |
+| `mrotg` | real DD Givens generator | FMA3 | 31.5 / 32.6 / >32 | 0.075 | 4.57× | 4.57× |
+| `mrotm` | multifloats real DD: apply modified Givens rotation | FMA3 | >32 / >32 / >32 | 0.420 | 3.13× | 3.12× |
+| `mrotmg` | multifloats real DD: generate modified Givens | FMA3 | >32 / >32 / >32 | 0.098 | 2.40× | 2.40× |
+| `wrotg` | multifloats: complex Givens generator (ZROTG analog) | FMA3 | 31.1 / 31.7 / 32.4 | 0.092 | 3.42× | 3.42× |
