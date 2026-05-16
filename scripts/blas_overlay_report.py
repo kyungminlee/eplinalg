@@ -72,13 +72,14 @@ def overlay_routines(target: str) -> list[str]:
 
 
 def isa_tag(target: str, routine: str) -> str:
-    """Return 'AVX2+FMA3', 'FMA3', or 'scalar' based on source inspection.
+    """Return 'AVX2+FMA3', 'AVX2', or 'scalar' based on source inspection.
 
     - kind10 (fp80) and kind16 (__float128) have no SIMD path on x86-64.
-    - multifloats with __m256 / _mm256_ / *SIMD_DD macros → AVX2+FMA3.
-    - multifloats without explicit intrinsics still picks up FMA3
-      through the underlying dd_mul / dd_add helpers (compiled with
-      -mfma), so we tag those FMA3.
+    - multifloats with __m256 / _mm256_ / *SIMD_DD macros → AVX2+FMA3
+      (explicit 256-bit packed ops, including vfmadd231pd / vfmsub231pd).
+    - multifloats without explicit intrinsics → AVX2 (the dd_mul /
+      dd_add helpers are compiled with -mavx2 -mfma so the compiler
+      emits scalar AVX/FMA ops, but no packed-256 SIMD).
     """
     ext = "cpp" if target == "multifloats" else "c"
     p = SRC / target / f"{routine}.{ext}"
@@ -89,7 +90,7 @@ def isa_tag(target: str, routine: str) -> str:
     src = p.read_text()
     if re.search(r"__m256|_mm256_|MBLAS_SIMD_DD|WBLAS_SIMD_DD", src):
         return "AVX2+FMA3"
-    return "FMA3"
+    return "AVX2"
 
 
 def algorithm_summary(target: str, routine: str) -> str:

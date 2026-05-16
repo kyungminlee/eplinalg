@@ -176,8 +176,8 @@ Placeholder `—` = data unavailable (no bench shim, build failure, or no matchi
 |---------|-----------|-----|---------------------------|----------------:|--------------:|--------------:|
 | `mgemm` | multifloats real GEMM overlay (float64x2, double-double) | AVX2+FMA3 | 30.9 / 32.0 / >32 | 2.612 | 25.15× | 24.46× |
 | `wgemm` | multifloats complex GEMM overlay (complex64x2) | AVX2+FMA3 | 31.0 / 31.8 / >32 | 2.208 | 14.67× | 13.61× |
-| `mgemmtr` | multifloats real (DD) triangular GEMM update | FMA3 | 31.2 / >32 / >32 | 0.948 | 9.20× | 28.04× |
-| `wgemmtr` | multifloats complex DD triangular GEMM update | FMA3 | 31.4 / >32 / >32 | 0.886 | 5.48× | 16.27× |
+| `mgemmtr` | multifloats real (DD) triangular GEMM update | AVX2 | 31.2 / >32 / >32 | 0.948 | 9.20× | 28.04× |
+| `wgemmtr` | multifloats complex DD triangular GEMM update | AVX2 | 31.4 / >32 / >32 | 0.886 | 5.48× | 16.27× |
 | `mtrsm` | multifloats real (double-double) triangular solve | AVX2+FMA3 | 31.0 / >32 / >32 | 1.342 | 12.71× | 32.27× |
 | `wtrsm` | multifloats complex (complex64x2) triangular solve | AVX2+FMA3 | 31.2 / 32.0 / >32 | 0.468 | 10.70× | 27.12× |
 | `mtrmm` | multifloats real (double-double) triangular multiply | AVX2+FMA3 | 30.9 / 31.7 / >32 | 1.965 | 18.96× | 66.32× |
@@ -200,21 +200,21 @@ Placeholder `—` = data unavailable (no bench shim, build failure, or no matchi
 | `whemv` | multifloats Hermitian matrix-vector | AVX2+FMA3 | 31.3 / 32.5 / >32 | 1.880 | 11.71× | 11.80× |
 | `mtrsv` | multifloats real DD triangular solve | AVX2+FMA3 | 31.0 / 32.6 / >32 | 1.172 | 11.27× | 9.89× |
 | `wtrsv` | multifloats complex DD triangular solve | AVX2+FMA3 | 30.7 / 31.8 / >32 | 1.729 | 11.55× | 12.37× |
-| `mtrmv` | multifloats real DD triangular matrix-vector | FMA3 | 31.1 / >32 / >32 | 0.270 | 2.57× | 2.53× |
-| `wtrmv` | multifloats complex DD triangular matrix-vector | FMA3 | 31.3 / >32 / >32 | 0.322 | 2.05× | 2.04× |
-| `msyr` | multifloats real DD symmetric rank-1 update | FMA3 | >32 / >32 / >32 | 0.385 | 3.65× | 8.05× |
-| `wher` | multifloats Hermitian rank-1 update (alpha real, diag real) | FMA3 | 32.3 / >32 / >32 | 0.358 | 2.20× | 4.59× |
-| `msyr2` | multifloats real DD symmetric rank-2 update | FMA3 | >32 / >32 / >32 | 0.757 | 7.17× | 9.02× |
-| `wher2` | multifloats Hermitian rank-2 update (alpha complex, diag real) | FMA3 | 31.7 / 32.4 / >32 | 0.751 | 4.50× | 7.96× |
+| `mtrmv` | multifloats real DD triangular matrix-vector | AVX2 | 31.1 / >32 / >32 | 0.270 | 2.57× | 2.53× |
+| `wtrmv` | multifloats complex DD triangular matrix-vector | AVX2 | 31.3 / >32 / >32 | 0.322 | 2.05× | 2.04× |
+| `msyr` | multifloats real DD symmetric rank-1 update | AVX2 | >32 / >32 / >32 | 0.385 | 3.65× | 8.05× |
+| `wher` | multifloats Hermitian rank-1 update (alpha real, diag real) | AVX2 | 32.3 / >32 / >32 | 0.358 | 2.20× | 4.59× |
+| `msyr2` | multifloats real DD symmetric rank-2 update | AVX2 | >32 / >32 / >32 | 0.757 | 7.17× | 9.02× |
+| `wher2` | multifloats Hermitian rank-2 update (alpha complex, diag real) | AVX2 | 31.7 / 32.4 / >32 | 0.751 | 4.50× | 7.96× |
 | `mscal` | multifloats real DD vector scale: X := α · X | AVX2+FMA3 | >32 / >32 / >32 | 0.770 | 3.71× | 4.50× |
 | `wscal` | multifloats complex DD: X := α · X (α complex) | AVX2+FMA3 | >32 / >32 / >32 | 1.902 | 9.47× | 10.06× |
 | `wmscal` | multifloats: X := α · X with α real DD, X complex DD | AVX2+FMA3 | >32 / >32 / >32 | 0.898 | 14.42× | 17.30× |
 | `maxpy` | multifloats real DD: Y := α · X + Y | AVX2+FMA3 | >32 / >32 / >32 | 1.078 | 10.40× | 11.56× |
 | `waxpy` | multifloats complex DD: Y := α · X + Y | AVX2+FMA3 | >32 / >32 / >32 | 1.391 | 13.52× | 10.57× |
-| `mcopy` | multifloats real DD: Y := X | FMA3 | >32 / >32 / >32 | 3.593 | 2.00× | 1.67× |
-| `wcopy` | multifloats complex DD: Y := X | FMA3 | >32 / >32 / >32 | 7.186 | 1.67× | 1.20× |
-| `mswap` | multifloats real DD: swap X ↔ Y | FMA3 | >32 / >32 / >32 | 4.311 | 1.20× | 2.00× |
-| `wswap` | multifloats complex DD: swap X ↔ Y | FMA3 | >32 / >32 / >32 | 6.160 | 1.29× | 1.80× |
+| `mcopy` | multifloats real DD: Y := X | AVX2 | >32 / >32 / >32 | 3.593 | 2.00× | 1.67× |
+| `wcopy` | multifloats complex DD: Y := X | AVX2 | >32 / >32 / >32 | 7.186 | 1.67× | 1.20× |
+| `mswap` | multifloats real DD: swap X ↔ Y | AVX2 | >32 / >32 / >32 | 4.311 | 1.20× | 2.00× |
+| `wswap` | multifloats complex DD: swap X ↔ Y | AVX2 | >32 / >32 / >32 | 6.160 | 1.29× | 1.80× |
 | `mrot` | multifloats real DD Givens rotation: | AVX2+FMA3 | 31.9 / >32 / >32 | 2.021 | 14.82× | 14.87× |
 | `wmrot` | multifloats: complex DD Givens rotation with real DD c, s | AVX2+FMA3 | 32.1 / >32 / >32 | 2.310 | 27.08× | 27.08× |
 | `mdot` | multifloats real DD: Σ X·Y | AVX2+FMA3 | 30.4 / >32 / >32 | 1.198 | 11.44× | 11.66× |
@@ -224,28 +224,28 @@ Placeholder `—` = data unavailable (no bench shim, build failure, or no matchi
 | `mwnrm2` | multifloats: \|\|X\|\|₂ for complex DD X, returns real DD | AVX2+FMA3 | 30.6 / 31.9 / >32 | 0.862 | 20.34× | 24.51× |
 | `wdotu` | multifloats complex DD: Σ X·Y (unconjugated) | AVX2+FMA3 | 30.9 / >32 / >32 | 1.796 | 10.54× | 10.67× |
 | `wdotc` | multifloats complex DD: Σ conj(X)·Y | AVX2+FMA3 | 30.3 / >32 / >32 | 1.796 | 11.00× | 10.72× |
-| `mgbmv` | multifloats real DD general band matrix-vector multiply | FMA3 | >32 / >32 / >32 | 0.248 | 2.65× | 5.71× |
-| `wgbmv` | multifloats complex DD general band matrix-vector multiply | FMA3 | 32.1 / >32 / >32 | 0.370 | 2.30× | 4.51× |
-| `msbmv` | multifloats real DD symmetric band matrix-vector multiply | FMA3 | >32 / >32 / >32 | 0.379 | 3.50× | 3.40× |
-| `whbmv` | multifloats complex DD Hermitian band matrix-vector multiply | FMA3 | 31.5 / >32 / >32 | 0.327 | 1.97× | 2.04× |
-| `mspmv` | multifloats real DD symmetric packed matrix-vector multiply | FMA3 | >32 / >32 / >32 | 0.376 | 3.60× | 3.32× |
-| `whpmv` | multifloats complex DD Hermitian packed matrix-vector multiply | FMA3 | 31.4 / >32 / >32 | 0.280 | 2.17× | 1.99× |
-| `mtbmv` | multifloats real DD triangular band matrix-vector | FMA3 | >32 / >32 / >32 | 0.338 | 3.19× | 3.09× |
-| `wtbmv` | multifloats complex DD triangular band matrix-vector | FMA3 | >32 / >32 / >32 | 0.359 | 2.16× | 2.15× |
-| `mtbsv` | multifloats real DD triangular band solve | FMA3 | >32 / >32 / >32 | 0.317 | 2.79× | 2.80× |
-| `wtbsv` | multifloats complex DD triangular band solve | FMA3 | 30.9 / 32.2 / >32 | 0.337 | 2.06× | 2.04× |
-| `mtpmv` | multifloats real DD triangular packed matrix-vector | FMA3 | >32 / >32 / >32 | 0.604 | 2.84× | 2.82× |
-| `wtpmv` | multifloats complex DD triangular packed matrix-vector | FMA3 | >32 / >32 / >32 | 0.649 | 2.06× | 2.07× |
-| `mtpsv` | multifloats real DD triangular packed solve | FMA3 | >32 / >32 / >32 | 0.576 | 2.81× | 2.82× |
-| `wtpsv` | multifloats complex DD triangular packed solve | FMA3 | 31.2 / 32.2 / >32 | 0.633 | 1.99× | 1.99× |
-| `mspr` | multifloats real DD symmetric packed rank-1 update | FMA3 | >32 / >32 / >32 | 0.780 | 3.74× | 8.44× |
-| `whpr` | multifloats complex DD Hermitian packed rank-1 update | FMA3 | 32.2 / >32 / >32 | 0.719 | 2.21× | 4.18× |
-| `mspr2` | multifloats real DD symmetric packed rank-2 update | FMA3 | >32 / >32 / >32 | 0.676 | 3.27× | 5.33× |
-| `whpr2` | multifloats complex DD Hermitian packed rank-2 update | FMA3 | 31.8 / 32.4 / >32 | 0.618 | 1.85× | 3.70× |
-| `mcabs1` | multifloats: \|re(z)\| + \|im(z)\| for a single complex DD | FMA3 | >32 / >32 / >32 | — | — | — |
-| `imamax` | multifloats real DD: 1-based argmax(\|X\|) | FMA3 | >32 / >32 / >32 | 0.229 | 0.94× | 0.91× |
-| `iwamax` | multifloats complex DD: 1-based argmax(\|re\|+\|im\|) | FMA3 | >32 / >32 / >32 | 0.162 | 7.83× | 7.93× |
-| `mrotg` | real DD Givens generator | FMA3 | 31.5 / 32.6 / >32 | 0.075 | 4.57× | 4.57× |
-| `mrotm` | multifloats real DD: apply modified Givens rotation | FMA3 | >32 / >32 / >32 | 0.420 | 3.13× | 3.12× |
-| `mrotmg` | multifloats real DD: generate modified Givens | FMA3 | >32 / >32 / >32 | 0.098 | 2.40× | 2.40× |
-| `wrotg` | multifloats: complex Givens generator (ZROTG analog) | FMA3 | 31.1 / 31.7 / 32.4 | 0.092 | 3.42× | 3.42× |
+| `mgbmv` | multifloats real DD general band matrix-vector multiply | AVX2 | >32 / >32 / >32 | 0.248 | 2.65× | 5.71× |
+| `wgbmv` | multifloats complex DD general band matrix-vector multiply | AVX2 | 32.1 / >32 / >32 | 0.370 | 2.30× | 4.51× |
+| `msbmv` | multifloats real DD symmetric band matrix-vector multiply | AVX2 | >32 / >32 / >32 | 0.379 | 3.50× | 3.40× |
+| `whbmv` | multifloats complex DD Hermitian band matrix-vector multiply | AVX2 | 31.5 / >32 / >32 | 0.327 | 1.97× | 2.04× |
+| `mspmv` | multifloats real DD symmetric packed matrix-vector multiply | AVX2 | >32 / >32 / >32 | 0.376 | 3.60× | 3.32× |
+| `whpmv` | multifloats complex DD Hermitian packed matrix-vector multiply | AVX2 | 31.4 / >32 / >32 | 0.280 | 2.17× | 1.99× |
+| `mtbmv` | multifloats real DD triangular band matrix-vector | AVX2 | >32 / >32 / >32 | 0.338 | 3.19× | 3.09× |
+| `wtbmv` | multifloats complex DD triangular band matrix-vector | AVX2 | >32 / >32 / >32 | 0.359 | 2.16× | 2.15× |
+| `mtbsv` | multifloats real DD triangular band solve | AVX2 | >32 / >32 / >32 | 0.317 | 2.79× | 2.80× |
+| `wtbsv` | multifloats complex DD triangular band solve | AVX2 | 30.9 / 32.2 / >32 | 0.337 | 2.06× | 2.04× |
+| `mtpmv` | multifloats real DD triangular packed matrix-vector | AVX2 | >32 / >32 / >32 | 0.604 | 2.84× | 2.82× |
+| `wtpmv` | multifloats complex DD triangular packed matrix-vector | AVX2 | >32 / >32 / >32 | 0.649 | 2.06× | 2.07× |
+| `mtpsv` | multifloats real DD triangular packed solve | AVX2 | >32 / >32 / >32 | 0.576 | 2.81× | 2.82× |
+| `wtpsv` | multifloats complex DD triangular packed solve | AVX2 | 31.2 / 32.2 / >32 | 0.633 | 1.99× | 1.99× |
+| `mspr` | multifloats real DD symmetric packed rank-1 update | AVX2 | >32 / >32 / >32 | 0.780 | 3.74× | 8.44× |
+| `whpr` | multifloats complex DD Hermitian packed rank-1 update | AVX2 | 32.2 / >32 / >32 | 0.719 | 2.21× | 4.18× |
+| `mspr2` | multifloats real DD symmetric packed rank-2 update | AVX2 | >32 / >32 / >32 | 0.676 | 3.27× | 5.33× |
+| `whpr2` | multifloats complex DD Hermitian packed rank-2 update | AVX2 | 31.8 / 32.4 / >32 | 0.618 | 1.85× | 3.70× |
+| `mcabs1` | multifloats: \|re(z)\| + \|im(z)\| for a single complex DD | AVX2 | >32 / >32 / >32 | — | — | — |
+| `imamax` | multifloats real DD: 1-based argmax(\|X\|) | AVX2 | >32 / >32 / >32 | 0.229 | 0.94× | 0.91× |
+| `iwamax` | multifloats complex DD: 1-based argmax(\|re\|+\|im\|) | AVX2 | >32 / >32 / >32 | 0.162 | 7.83× | 7.93× |
+| `mrotg` | real DD Givens generator | AVX2 | 31.5 / 32.6 / >32 | 0.075 | 4.57× | 4.57× |
+| `mrotm` | multifloats real DD: apply modified Givens rotation | AVX2 | >32 / >32 / >32 | 0.420 | 3.13× | 3.12× |
+| `mrotmg` | multifloats real DD: generate modified Givens | AVX2 | >32 / >32 / >32 | 0.098 | 2.40× | 2.40× |
+| `wrotg` | multifloats: complex Givens generator (ZROTG analog) | AVX2 | 31.1 / 31.7 / 32.4 | 0.092 | 3.42× | 3.42× |
