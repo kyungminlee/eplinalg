@@ -1355,9 +1355,6 @@
 {"routine":"mspr","key":"L","size":256,"iters":20,"t_ov":1.838388e-04,"t_mg":6.177205e-04,"gflops_ov":0.3565,"gflops_mg":0.1061,"ratio":3.3601}
 {"routine":"mspr","key":"L","size":512,"iters":20,"t_ov":7.222421e-04,"t_mg":2.466693e-03,"gflops_ov":0.3630,"gflops_mg":0.1063,"ratio":3.4153}
 {"routine":"mspr","key":"L","size":1024,"iters":20,"t_ov":3.129570e-03,"t_mg":1.002314e-02,"gflops_ov":0.3351,"gflops_mg":0.1046,"ratio":3.2027}
-{"routine":"mswap","key":"-","size":4096,"iters":20,"t_ov":7.037900e-06,"t_mg":5.307700e-06,"gflops_ov":37.2475,"gflops_mg":49.3894,"ratio":0.7542}
-{"routine":"mswap","key":"-","size":16384,"iters":20,"t_ov":2.880325e-05,"t_mg":2.657235e-05,"gflops_ov":36.4048,"gflops_mg":39.4612,"ratio":0.9225}
-{"routine":"mswap","key":"-","size":65536,"iters":20,"t_ov":1.148187e-04,"t_mg":1.136519e-04,"gflops_ov":36.5298,"gflops_mg":36.9048,"ratio":0.9898}
 {"routine":"msymm","key":"LU","size":64,"iters":10,"t_ov":2.475461e-04,"t_mg":4.938789e-03,"gflops_ov":2.1179,"gflops_mg":0.1062,"ratio":19.9510}
 {"routine":"msymm","key":"LU","size":128,"iters":10,"t_ov":1.952829e-03,"t_mg":3.832526e-02,"gflops_ov":2.1478,"gflops_mg":0.1094,"ratio":19.6255}
 {"routine":"msymm","key":"LU","size":256,"iters":10,"t_ov":1.376146e-02,"t_mg":3.045819e-01,"gflops_ov":2.4383,"gflops_mg":0.1102,"ratio":22.1330}
@@ -2475,3 +2472,6 @@
 {"routine":"espr","key":"L","size":256,"iters":20,"t_ov":8.019735e-05,"t_mg":8.005680e-05,"gflops_ov":0.8172,"gflops_mg":0.8186,"ratio":0.9982}
 {"routine":"espr","key":"L","size":512,"iters":20,"t_ov":3.114873e-04,"t_mg":3.115662e-04,"gflops_ov":0.8416,"gflops_mg":0.8414,"ratio":1.0003}
 {"routine":"espr","key":"L","size":1024,"iters":20,"t_ov":1.585744e-03,"t_mg":1.468747e-03,"gflops_ov":0.6613,"gflops_mg":0.7139,"ratio":0.9262}
+{"routine":"mswap","key":"-","size":4096,"iters":100,"t_ov":5.669160e-06,"t_mg":5.733890e-06,"gflops_ov":46.2404,"gflops_mg":45.7184,"ratio":1.0114}
+{"routine":"mswap","key":"-","size":16384,"iters":100,"t_ov":2.938575e-05,"t_mg":2.914070e-05,"gflops_ov":35.6831,"gflops_mg":35.9832,"ratio":0.9917}
+{"routine":"mswap","key":"-","size":65536,"iters":100,"t_ov":1.196310e-04,"t_mg":1.190800e-04,"gflops_ov":35.0603,"gflops_mg":35.2226,"ratio":0.9954}

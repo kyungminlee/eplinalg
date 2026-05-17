@@ -1222,9 +1222,6 @@ multifloats	mspr	L	128	20	0.3578	0.0952	3.758
 multifloats	mspr	L	256	20	0.3565	0.1061	3.360
 multifloats	mspr	L	512	20	0.3630	0.1063	3.415
 multifloats	mspr	L	1024	20	0.3351	0.1046	3.203
-multifloats	mswap	-	4096	20	37.2475	49.3894	0.754
-multifloats	mswap	-	16384	20	36.4048	39.4612	0.923
-multifloats	mswap	-	65536	20	36.5298	36.9048	0.990
 multifloats	msymm	LU	64	10	2.1179	0.1062	19.951
 multifloats	msymm	LU	128	10	2.1478	0.1094	19.626
 multifloats	msymm	LU	256	10	2.4383	0.1102	22.133
@@ -2264,3 +2261,6 @@ kind10	espr	L	128	20	0.8506	0.8561	0.994
 kind10	espr	L	256	20	0.8172	0.8186	0.998
 kind10	espr	L	512	20	0.8416	0.8414	1.000
 kind10	espr	L	1024	20	0.6613	0.7139	0.926
+multifloats	mswap	-	4096	100	46.2404	45.7184	1.011
+multifloats	mswap	-	16384	100	35.6831	35.9832	0.992
+multifloats	mswap	-	65536	100	35.0603	35.2226	0.995

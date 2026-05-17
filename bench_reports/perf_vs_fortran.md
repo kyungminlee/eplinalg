@@ -153,7 +153,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | multifloats | `mscal` | — | 3.462 | 0 | 3 | — |
 | multifloats | `mspmv` | — | 3.605 | 0 | 8 | — |
 | multifloats | `mspr` | — | 3.371 | 0 | 8 | — |
-| multifloats | `mswap` | — | 0.923 | 0 | 3 | — |
+| multifloats | `mswap` | — | 0.995 | 0 | 3 | — |
 | multifloats | `msymm` | — | 20.086 | 0 | 16 | — |
 | multifloats | `msymv` | — | 18.160 | 0 | 8 | — |
 | multifloats | `msyr` | — | 3.173 | 0 | 8 | — |
