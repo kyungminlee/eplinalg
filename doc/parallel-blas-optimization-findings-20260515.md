@@ -806,3 +806,54 @@ operation order of the counter loop.
    gcc handles the 2-pointer case fine when the loop is written as
    pointer-compare; for 3+ pointers it still loses to fortran unless
    you go through `char*`.
+
+---
+
+## Addendum 9: shared-index applies to 2-pointer rotations (2026-05-16)
+
+`erot` benched at 0.93× across all N (4096–65536). Same diagnosis: the
+inner loop walks two arrays in lockstep, and gcc emits two pointer
+increments instead of one shared-index walk.
+
+| metric           | overlay | migrated |
+|------------------|--------:|---------:|
+| insts/inner iter | 18      | 16       |
+| cycles (N=16384×200) | 51M | 48M      |
+| insts  (N=16384×200) | 60M | 57M      |
+
+Reference DROT at `-O3` uses shared `(%rax,%rdx,1)` / `(%rsi,%rdx,1)`
+addressing — one increment. Applying the same `char*` byte-offset
+walk from Addendum 7:
+
+| N      | before | after |
+|--------|-------:|------:|
+| 4096   | 0.93×  | 0.99× |
+| 16384  | 0.93×  | 1.00× |
+| 65536  | 0.93×  | 1.07× |
+
+Bit-exact under fuzz.
+
+### Negative result: erotm doesn't benefit
+
+Tried the same trick on `erotm`. **Both** the byte-offset walk and a
+pointer-compare walk made it *slower* (0.93× → 0.87×, then 0.82× at
+N=65536).
+
+Cause: `erotm`'s inner body is a 3-way dispatch on `flag` inside a
+`static inline step()` helper. With `for (int i ...) step(..., &x[i],
+&y[i])` gcc hoists the flag check out of the loop, specializes the
+body per case, and reuses one register-allocation across the
+specialized loops. With the pointer-walk or byte-offset form, the
+inliner re-runs the dispatch per iter (or emits more spills around
+it), losing the benefit. Reverted to the original counter form.
+
+### Rule
+
+7. **Helper functions with internal branches block the codegen tricks
+   from Addenda 7 & 8.** The byte-offset shared-index walk works when
+   the loop body is straight-line floating-point arithmetic. When the
+   body calls a `static inline` helper that itself branches, the
+   helper's specialization machinery interacts with whatever loop
+   shape gcc sees, and a different shape can defeat the
+   specialization. Check assembly **and** benchmarks before
+   committing; don't trust either alone.
