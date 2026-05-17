@@ -65,17 +65,27 @@ void espr_(
                     }
                 }
             } else {
-                /* Pointer-walk: gcc emits one `add` + one `cmp` per iter
-                 * (9 insns) instead of counter-and-cmp (10 insns). Matches
-                 * reference DSPR codegen. */
+                /* Inner loop uses Addendum-7 char* byte-offset shared-
+                 * index walk so gcc emits one `add` per iter (8 insns)
+                 * instead of two pointer increments (9 insns). Migrated
+                 * gfortran picks shared-index for the L path naturally
+                 * but not for U — the U path's two pointers start at
+                 * different bases (apk = &ap[kk], xp = &x[0]) so gcc
+                 * doesn't fold them; the explicit char* form forces it. */
+                T *restrict apk_base = ap;
                 for (int j = 0; j < N; ++j) {
                     if (x[j] != zero) {
                         const T tmp = alpha * x[j];
-                        T *restrict apk  = &ap[(size_t)j * (j + 1) / 2];
-                        T *restrict aend = apk + j + 1;
-                        const T *restrict xp = x;
-                        for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
+                        char *restrict apkb = (char *)apk_base;
+                        const char *restrict xpb = (const char *)x;
+                        const size_t end = (size_t)(j + 1) * sizeof(T);
+                        for (size_t k = 0; k < end; k += sizeof(T)) {
+                            T *apk  = (T *)(apkb + k);
+                            const T *xp = (const T *)(xpb + k);
+                            *apk += *xp * tmp;
+                        }
                     }
+                    apk_base += (j + 1);
                 }
             }
         } else {
