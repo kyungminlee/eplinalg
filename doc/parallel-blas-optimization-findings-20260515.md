@@ -938,3 +938,71 @@ lockstep AXPY loop:
    write the surrounding comment so the next reader knows whether the
    workaround is needed in their context. Otherwise it cargo-cults
    into places it doesn't belong.
+
+---
+
+## Addendum 11: verifying espr is the same OMP blocker (2026-05-16)
+
+After Addendum 10 reframed egemv's gap as OMP-specific, re-tested espr
+to check whether the pointer-walk fix in Addendum 8 was also working
+around the same OMP issue rather than a general 2-pointer-lockstep
+codegen limitation.
+
+Standalone test with `gcc -O3`, natural counter form `for (int i = 0;
+i <= j; ++i) ap[kk + i] += x[i] * tmp`:
+
+| compile             | inner-loop insts/iter | shape                |
+|---------------------|----------------------:|----------------------|
+| `gcc -O3 -c`        | 8                     | shared-index, single `add` |
+| `gcc -O3 -fopenmp` (inside `#pragma omp parallel for`) | 10 | counter + 2 ptr adds |
+
+The "10 insts" form has three `add`s per iter:
+- `add $0x1,%esi`  (counter)
+- `add $0x10,%rcx` (ap pointer)
+- `add $0x10,%rdi` (x pointer)
+
+Without OMP, gcc would have folded all three into one shared-index walk.
+Same exact blocker as egemv (Addendum 10).
+
+The pointer-walk fix in Addendum 8 reached parity by a different
+mechanism: it removed the counter (saving 1 insn) and let gcc compare
+two pointers instead. That's 9 insts/iter vs the natural form's 10
+under OMP — enough to hit parity with gfortran's 9-insn migrated loop,
+but not the same root-cause fix.
+
+**Equivalent fix would have been the `char*` byte-offset walk from
+Addendum 7.** Not retrofit-tested because the pointer-walk already at
+parity (0.97–1.09× vs migrated), and changing the source twice for
+the same outcome is not worth it.
+
+### The mistake pattern
+
+This is the third (egemv, erot, espr) case where I diagnosed an
+overlay gap as "gcc emits worse code than gfortran for this loop
+shape" without first compiling the inner loop **standalone** to verify.
+In all three the standalone gcc was fine; the gap was in the
+*surrounding context*:
+
+| overlay | blocker (initial guess vs actual) |
+|---------|------------------------------------|
+| egemv   | "gcc can't shared-index from natural C" → OMP outlining |
+| erot    | "gcc keeps 2 pointers from natural C" → pointer-walk source form |
+| espr    | "counter loop is worse than pointer-walk" → OMP outlining (same as egemv) |
+
+### Rule
+
+9. **When an overlay benches slower than migrated, compile the inner
+   loop standalone before designing a workaround.** A standalone test
+   distinguishes "gcc-vs-gfortran codegen gap" (rare) from
+   "surrounding-context optimizer blocker" (common). The candidate
+   blockers in this codebase:
+   - `#pragma omp parallel` / `parallel for` outlining
+   - pointer-walk source form (`for (; xp < xe; ++xp, ++yp)`)
+   - `static inline` helper with a loop-invariant branch in its body
+   - `restrict` placement that limits the alias-analysis loop
+     transforms expect
+
+   Skipping the standalone test costs honest framing in the commit
+   message and in the findings doc. The patch may still land at
+   parity, but for the wrong stated reason — and the next reader
+   inherits a misleading explanation.
