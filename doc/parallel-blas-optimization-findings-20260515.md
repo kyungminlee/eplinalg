@@ -1189,3 +1189,84 @@ noinline helper.
     workarounds that survive testing are (a) `char*` byte-offset walk
     and (b) `__attribute__((noinline))` helper with `restrict`
     parameters. Prefer (b): normal C, same codegen, no cast trickery.
+
+---
+
+## Addendum 14: the Fortran bench's "residual gap" is a measurement artifact (2026-05-16)
+
+After restoring the char* shared-index walk for egemv N (Addendum 7
+form), the Fortran bench still reported overlay at 0.91× of migrated
+at OMP=1. Spent a session trying to explain the residual as a
+scheduling / port-pressure / outer-loop-shape gap. **It was none of
+those — it was a measurement artifact in the bench harness.** Two
+distinct effects compounded:
+
+### Effect 1: link layout / iTLB
+
+The Fortran bench links `libeblas_parallel-gfortran-13.a` (the full
+overlay archive) plus `libeblas_migrated.a`. Static-archive selection
+pulls in `egemv.c.o` from overlay and its dependencies (the OMP
+outlined helpers, `blas_omp_max_threads`, libgomp stubs, etc.), but
+*also* pulls in everything those reference. The result: overlay's
+egemv ends up ~123 KB from migrated's egemv in the linked binary,
+spread across many code pages.
+
+In the steady-state bench loop:
+- Each overlay call jumps into `egemv_`, which calls a libgomp helper,
+  then the outlined `egemv_._omp_fn.0`, then back. Several code
+  pages touched per call.
+- Migrated is a single Fortran `.o` — 1–2 code pages.
+
+The iTLB (~64–128 entries) holds page translations for instruction
+fetches. With both functions in a small standalone binary (within
+~2 KB), every needed page stays resident. With overlay spread across
+distant pages, the iTLB churns on each invocation — a page-walk costs
+~10–50 cycles, and a few of them per inner-loop pass compounds to a
+steady 5–10% throughput hit on the further function. Looks
+indistinguishable from "this kernel is slower."
+
+Confirmed by toggling `-Wl,--gc-sections` on the standalone C perf
+harness: with the flag, the linker drops unused parallel BLAS
+kernels, overlay's egemv code collapses to ~few KB, and the ratio
+goes from 0.91× to 1.00× without touching any kernel code.
+
+### Effect 2: gfortran's allocatable-LHS reallocation
+
+Independent of layout, the Fortran bench's per-iter `Y = Y_init`
+expands (under default flags, despite `-std=legacy`) into:
+1. `realloc(Y, size)` — no-op when size unchanged, but still enters
+   the glibc allocator state machine
+2. Element-by-element scalar x87 copy loop (`fldt`/`fstpt`)
+
+Both ov and mig calls do this before their timed section, but the
+combination of `realloc` overhead + cache state asymmetry between
+adjacent ov/mig calls penalizes the *second* call inconsistently.
+This adds noise on top of effect 1; isolating it would need a
+gfortran flag sweep that wasn't worth doing once we had the C
+harness.
+
+### How to get honest numbers
+
+`tests/blas_parallel/perf/target_<name>/perf_*.c` — C harness with:
+- Direct extern calls (no Fortran interface block)
+- Aligned `aligned_alloc(64)` for A, X, Y
+- Block timing (one clock pair per N calls — no per-call timer noise)
+- One Y reset per timed block (avoids x87-slow value drift across
+  many compounding GEMVs)
+- CMake adds `-ffunction-sections -Wl,--gc-sections` per executable
+
+With this harness, post-fix egemv reports parity with migrated:
+N path 0.92–1.03× across N ∈ {128, 256, 512, 1024, 2048}; T path
+1.04–1.45× (overlay ahead).
+
+### Rule
+
+12. **Bench numbers under 1.0× need verification before chasing.**
+    The Fortran bench can manufacture 5–10% phantom gaps from binary
+    layout alone. Before assuming a kernel is slow:
+    (a) re-measure with the C perf harness (+ `--gc-sections`), and
+    (b) if there's still a gap, compare inner-loop disassembly
+    against migrated. A "residual sub-parity" without an inner-loop
+    asm difference is almost certainly harness overhead, not kernel
+    codegen.
+
