@@ -123,13 +123,9 @@ These were tested empirically and rejected. **Don't re-try without a different m
 **Why**: libgomp's single-thread path is near-trivial. Not a real source of per-call overhead.
 
 ### 3. MR=3 tail-row hypothesis (multifloats)
-**Hypothesis**: at M=64 with MR=3, one tail row of M%MR=1 goes through the scalar fallback path inside `inner_kernel_simd_t`. Eliminating it (e.g. MR=4 divides 64 evenly) should help s=64.
+**Hypothesis**: at M=64 with MR=3, the M%MR=1 tail row goes through the scalar fallback in `inner_kernel_simd_t`. Eliminating it (MR=4 divides 64 evenly) should help s=64.
 
-**Test**: rebuilt with `MBLAS_SIMD_MR=4`. Bench at 80 iters.
-
-**Result**: s=64 actually **regressed** by 1.2% (within noise). s≥128 improved by 5%.
-
-**Why**: bigger tile has more register pressure (8 acc + 4 broadcasts = 12 ymm before B-loads). The win from no-tail-row at s=64 is offset by reduced register headroom and scheduling slack. The tail row was never the bottleneck.
+**Result**: MR=4 shipped for the s≥128 gain (see multifloats section above), but the motivating s=64 case **regressed** 1.2% (within noise). The tail row was never the bottleneck; at small M the extra register pressure (8 acc + 4 broadcasts) eats scheduling slack and offsets the no-tail-row win.
 
 ### 4. simd_writeback scratch round-trip avoidance (multifloats)
 **Hypothesis**: `_mm256_store_pd(ph_a, ph); ... r.limbs[0] = ph_a[j];` causes a SIMD-store→scalar-load round-trip with store-forwarding stall.
@@ -150,22 +146,10 @@ These were tested empirically and rejected. **Don't re-try without a different m
 **Why**: mgemm's MR=3 (4) micro-kernel hits asymptote at s=128 already; adaptive MC doesn't move the L2 working set into a faster regime at these sizes.
 
 ### 6. MR×NR register tile for kind10 complex (ygemm)
-**Hypothesis**: same MR=2 NR=2 tile that worked for egemm should work for ygemm.
-
-**Test**: implemented and benched.
-
-**Result**: 1.6 → 1.5 GF/s, **slight regression**.
-
-**Why**: see kind10 complex section above — x87 stack capacity exhausted by complex multiply temps.
+The egemm MR=2 NR=2 tile regressed ygemm 1.6 → 1.5 GF/s — x87 stack capacity exhausted by complex-multiply temps. Full discussion in the kind10 complex section above.
 
 ### 7. K-axis unroll on ygemm dot-product paths
-**Hypothesis**: K-unroll helped rank-1 (NN/NT/NC); should also help dot-product paths.
-
-**Test**: split `acc` into `acc0, acc1`, accumulate each over l, l+1 strides.
-
-**Result**: TN/CN regressed 1.00× → 0.80×; **CT/CC regressed 0.99× → 0.35–0.56×**.
-
-**Why**: gcc's scalar single-acc loop was already well-scheduled; the split disrupted its register allocation. The conditional `conj_b ? ~bv0 : bv0` inside an unrolled hot loop wasn't constant-folded, putting a runtime branch in the critical path.
+K-unroll helped ygemm rank-1 (NN/NT/NC) but regressed dot-product paths. Full discussion (and the contrasting positive result on real esyrk) in the "K-axis 2-unroll" section in Addendum 1 below.
 
 ---
 
@@ -305,9 +289,7 @@ Closing the gap would require:
 Not pursued. The remaining 7% is below the noise floor of any realistic OMP>1 win.
 
 ### The `nb` choice splits real vs complex
-Real long-double (`egemm`, `esyrk`): keep nb ≥ 64. egemm at K=32 doesn't amortize its packing overhead — the scalar inner kernel has enough ILP on x87 that the gemm-via-pack isn't a win until K is large.
-
-Complex long-double (`ygemm`, `ysyrk`, etc.): nb=32 is fine. Each complex op is ~8× heavier than scalar long-double, so the packing fraction of total work shrinks and gemm pays off at K=32.
+Underlying principle behind fix C above: each complex long-double op is ~8× heavier than scalar long-double, so the packing fraction of total work shrinks and ygemm pays off at K=32. Real long-double's lighter per-op work means egemm needs larger K (≥ 64) before packing amortizes — the scalar inner kernel has enough x87 ILP that gemm-via-pack isn't a win until then.
 
 ### Aliasing pessimism is real and `restrict` is free
 This is the most important takeaway from the L3 round. Three lines of code (`restrict` on a, b, c at the entry-point + helper) closed several percentage points of margin across complex routines. The disassembly proof made this obvious — but it would have been easy to miss had I not been looking at the actual generated code.
@@ -346,8 +328,8 @@ for (; l < K; ++l) s += Ai[l] * Aj[l];
 
 **Real long-double (esyrk TR='T')**: cleanly doubles throughput on a serial fadd-chain kernel. esyrk L/T 64: 0.85× → 0.98×; every other L/T,U/T cell pinned to ≥0.98×. Matches gfortran's reference DSYRK rate.
 
-**Complex long-double dot product paths (ygemm TN/CN, CT/CC; ysyrk/yherk T/C)**: regressed under the same pattern, or already at parity so the unroll buys nothing. Two reasons:
-1. Complex multiplication is itself ~4× heavier than real, so the single-chain bottleneck is less of the runtime (chain latency hidden by cmul work).
+**Complex long-double dot product paths (ygemm TN/CN, CT/CC; ysyrk/yherk T/C)**: regressed under the same pattern, or already at parity so the unroll buys nothing. ygemm bench: TN/CN 1.00× → 0.80×; CT/CC 0.99× → 0.35–0.56×. Two reasons:
+1. Complex multiplication is itself ~4× heavier than real, so the single-chain bottleneck is less of the runtime (chain latency hidden by cmul work). gcc's scalar single-acc loop was already well-scheduled; the split disrupted its register allocation.
 2. ygemm had a `conj_b ? ~bv0 : bv0` conditional inside the loop body that wasn't constant-folded; the K-unroll put a runtime branch in the critical path. Even without that, naïve K-unroll on complex would help less.
 
 **Rule of thumb:** K-axis 2-unroll is the right structural move on **real scalar long-double dot-product reductions**. For complex types, leave the inner loop single-accumulator — gcc's scheduler does better when there's only one cmul chain to lay out on the x87 stack.
