@@ -77,16 +77,48 @@ void ygemmtr_(const char *uplo, const char *transa, const char *transb,
         if (!trans_a) {
             if (beta == zero)      for (int i = is; i < ie; ++i) cj[i]  = zero;
             else if (beta != one)  for (int i = is; i < ie; ++i) cj[i] *= beta;
-            for (int l = 0; l < K; ++l) {
+            /* K-unroll by 2 — expose two independent FMA chains per i to
+             * mask x87 fmul latency. Same trick as ygemm's NN/NT paths
+             * (findings doc Addendum 1 §kind10 complex). Conj_b is hoisted
+             * out of the hot loop; a runtime branch inside the K-unrolled
+             * body defeats gcc's scheduling for this kind10 complex pattern. */
+            int l = 0;
+            if (!trans_b) {
+                for (; l + 1 < K; l += 2) {
+                    const T t0 = alpha * B_(l,     j);
+                    const T t1 = alpha * B_(l + 1, j);
+                    const T *al0 = &A_(0, l);
+                    const T *al1 = &A_(0, l + 1);
+                    for (int i = is; i < ie; ++i)
+                        cj[i] += t0 * al0[i] + t1 * al1[i];
+                }
+            } else if (!conj_b) {
+                for (; l + 1 < K; l += 2) {
+                    const T t0 = alpha * B_(j, l);
+                    const T t1 = alpha * B_(j, l + 1);
+                    const T *al0 = &A_(0, l);
+                    const T *al1 = &A_(0, l + 1);
+                    for (int i = is; i < ie; ++i)
+                        cj[i] += t0 * al0[i] + t1 * al1[i];
+                }
+            } else {
+                for (; l + 1 < K; l += 2) {
+                    const T t0 = alpha * ~B_(j, l);
+                    const T t1 = alpha * ~B_(j, l + 1);
+                    const T *al0 = &A_(0, l);
+                    const T *al1 = &A_(0, l + 1);
+                    for (int i = is; i < ie; ++i)
+                        cj[i] += t0 * al0[i] + t1 * al1[i];
+                }
+            }
+            for (; l < K; ++l) {
                 T bl;
                 if (!trans_b)      bl = B_(l, j);
                 else if (!conj_b)  bl = B_(j, l);
                 else               bl = ~B_(j, l);
-                if (bl != zero) {
-                    const T t = alpha * bl;
-                    const T *al = &A_(0, l);
-                    for (int i = is; i < ie; ++i) cj[i] += t * al[i];
-                }
+                const T t = alpha * bl;
+                const T *al = &A_(0, l);
+                for (int i = is; i < ie; ++i) cj[i] += t * al[i];
             }
         } else {
             for (int i = is; i < ie; ++i) {
