@@ -67,16 +67,29 @@ void egbmv_(
     } else if (TR != 'N' && incx == 1 && incy == 1) {
 #ifdef _OPENMP
         const int use_omp = (N >= EGBMV_OMP_MIN && blas_omp_max_threads() > 1);
-        #pragma omp parallel for if(use_omp) schedule(static)
+#else
+        const int use_omp = 0;
 #endif
-        for (int j = 0; j < N; ++j) {
-            T s = zero;
-            const int i_lo = (j - KU > 0) ? (j - KU) : 0;
-            const int i_hi = (j + KL + 1 < M) ? (j + KL + 1) : M;
-            const int k = KU - j;
-            for (int i = i_lo; i < i_hi; ++i) s += A_(k + i, j) * x[i];
-            y[j] += alpha * s;
+        /* Branch on use_omp in C source — `if(use_omp)` on the pragma
+         * still outlines (see Addendum 16). */
+#define EGBMV_T_BODY                                                         \
+        for (int j = 0; j < N; ++j) {                                        \
+            T s = zero;                                                      \
+            const int i_lo = (j - KU > 0) ? (j - KU) : 0;                    \
+            const int i_hi = (j + KL + 1 < M) ? (j + KL + 1) : M;            \
+            const int k = KU - j;                                            \
+            for (int i = i_lo; i < i_hi; ++i) s += A_(k + i, j) * x[i];      \
+            y[j] += alpha * s;                                               \
         }
+        if (use_omp) {
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static)
+#endif
+            EGBMV_T_BODY
+        } else {
+            EGBMV_T_BODY
+        }
+#undef EGBMV_T_BODY
     } else {
         int kx = (incx < 0) ? -(lenx - 1) * incx : 0;
         int ky = (incy < 0) ? -(leny - 1) * incy : 0;

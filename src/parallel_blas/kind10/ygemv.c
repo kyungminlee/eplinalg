@@ -78,37 +78,44 @@ void ygemv_(
         if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
             const int use_omp = (M >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1);
+#else
+            const int use_omp = 0;
 #endif
-            int i_lo = 0, i_hi = M;
-            (void)i_lo; (void)i_hi;
+            /* Branch on use_omp in C source — `if(use_omp)` pragma clause
+             * still outlines the body into a `._omp_fn` function and pays
+             * GOMP_parallel + omp_get_* overhead per call (Addendum 16). */
+#define YGEMV_N_BODY(I_LO, I_HI)                                             \
+            do {                                                             \
+                int j = 0;                                                   \
+                for (; j + 1 < N; j += 2) {                                  \
+                    const T t0 = alpha * x[j];                               \
+                    const T t1 = alpha * x[j + 1];                           \
+                    const T *a0 = &A_(0, j);                                 \
+                    const T *a1 = &A_(0, j + 1);                             \
+                    for (int i = (I_LO); i < (I_HI); ++i)                    \
+                        y[i] += t0 * a0[i] + t1 * a1[i];                     \
+                }                                                            \
+                for (; j < N; ++j) {                                         \
+                    const T t = alpha * x[j];                                \
+                    const T *aj = &A_(0, j);                                 \
+                    for (int i = (I_LO); i < (I_HI); ++i) y[i] += t * aj[i]; \
+                }                                                            \
+            } while (0)
+            if (use_omp) {
 #ifdef _OPENMP
-            #pragma omp parallel if(use_omp) firstprivate(i_lo, i_hi)
-            {
-                if (use_omp) {
+                #pragma omp parallel
+                {
                     const int tid = omp_get_thread_num();
                     const int nt  = omp_get_num_threads();
-                    i_lo = ((long long)M * tid) / nt;
-                    i_hi = ((long long)M * (tid + 1)) / nt;
+                    const int i_lo = ((long long)M * tid) / nt;
+                    const int i_hi = ((long long)M * (tid + 1)) / nt;
+                    YGEMV_N_BODY(i_lo, i_hi);
                 }
 #endif
-                int j = 0;
-                for (; j + 1 < N; j += 2) {
-                    const T t0 = alpha * x[j];
-                    const T t1 = alpha * x[j + 1];
-                    const T *a0 = &A_(0, j);
-                    const T *a1 = &A_(0, j + 1);
-                    for (int i = i_lo; i < i_hi; ++i) {
-                        y[i] += t0 * a0[i] + t1 * a1[i];
-                    }
-                }
-                for (; j < N; ++j) {
-                    const T t = alpha * x[j];
-                    const T *aj = &A_(0, j);
-                    for (int i = i_lo; i < i_hi; ++i) y[i] += t * aj[i];
-                }
-#ifdef _OPENMP
+            } else {
+                YGEMV_N_BODY(0, M);
             }
-#endif
+#undef YGEMV_N_BODY
         } else {
             int jx = (incx < 0) ? -(N - 1) * incx : 0;
             for (int j = 0; j < N; ++j) {
@@ -133,18 +140,31 @@ void ygemv_(
         if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
             const int use_omp = (N >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1);
-            #pragma omp parallel for if(use_omp) schedule(static)
+#else
+            const int use_omp = 0;
 #endif
-            for (int j = 0; j < N; ++j) {
-                const T *aj = &A_(0, j);
-                T s = ZERO;
-                if (conj_a) {
-                    for (int i = 0; i < M; ++i) s += cconj(aj[i]) * x[i];
-                } else {
-                    for (int i = 0; i < M; ++i) s += aj[i] * x[i];
-                }
-                y[j] += alpha * s;
+            /* Branch on use_omp in C source — `if(use_omp)` pragma clause
+             * still outlines (see Addendum 16). */
+#define YGEMV_T_BODY                                                         \
+            for (int j = 0; j < N; ++j) {                                    \
+                const T *aj = &A_(0, j);                                     \
+                T s = ZERO;                                                  \
+                if (conj_a) {                                                \
+                    for (int i = 0; i < M; ++i) s += cconj(aj[i]) * x[i];    \
+                } else {                                                     \
+                    for (int i = 0; i < M; ++i) s += aj[i] * x[i];           \
+                }                                                            \
+                y[j] += alpha * s;                                           \
             }
+            if (use_omp) {
+#ifdef _OPENMP
+                #pragma omp parallel for schedule(static)
+#endif
+                YGEMV_T_BODY
+            } else {
+                YGEMV_T_BODY
+            }
+#undef YGEMV_T_BODY
         } else {
             int jy = (incy < 0) ? -(N - 1) * incy : 0;
             for (int j = 0; j < N; ++j) {

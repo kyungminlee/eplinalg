@@ -40,20 +40,35 @@ void esyr_(
     if (incx == 1) {
 #ifdef _OPENMP
         const int use_omp = (N >= ESYR_OMP_MIN && blas_omp_max_threads() > 1);
-        #pragma omp parallel for if(use_omp) schedule(static)
+#else
+        const int use_omp = 0;
 #endif
-        for (int j = 0; j < N; ++j) {
-            const T xj = x[j];
-            if (xj != zero) {
-                const T t = alpha * xj;
-                T *aj = &A_(0, j);
-                if (UPLO == 'L') {
-                    for (int i = j; i < N; ++i) aj[i] += t * x[i];
-                } else {
-                    for (int i = 0; i <= j; ++i) aj[i] += t * x[i];
-                }
-            }
+        /* Branch on use_omp at C source level — `#pragma omp parallel for
+         * if(use_omp)` outlines unconditionally; at OMP=1 the GOMP_parallel
+         * + omp_get_* overhead is a visible fraction of the per-call cost
+         * for this small kernel. See Addendum 16. */
+#define ESYR_BODY                                                            \
+        for (int j = 0; j < N; ++j) {                                        \
+            const T xj = x[j];                                               \
+            if (xj != zero) {                                                \
+                const T t = alpha * xj;                                      \
+                T *aj = &A_(0, j);                                           \
+                if (UPLO == 'L') {                                           \
+                    for (int i = j; i < N; ++i) aj[i] += t * x[i];           \
+                } else {                                                     \
+                    for (int i = 0; i <= j; ++i) aj[i] += t * x[i];          \
+                }                                                            \
+            }                                                                \
         }
+        if (use_omp) {
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static)
+#endif
+            ESYR_BODY
+        } else {
+            ESYR_BODY
+        }
+#undef ESYR_BODY
     } else {
         int kx = (incx < 0) ? -(N - 1) * incx : 0;
         for (int j = 0; j < N; ++j) {

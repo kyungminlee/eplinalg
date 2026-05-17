@@ -8,7 +8,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `eaxpy` | — | 1.003 | 0 | 3 | — |
 | kind10 | `ecopy` | — | 1.787 | 0 | 3 | — |
 | kind10 | `edot` | — | 1.032 | 0 | 3 | — |
-| kind10 | `egbmv` | — | 0.979 | 0 | 8 | — |
+| kind10 | `egbmv` | — | 1.010 | 0 | 8 | — |
 | kind10 | `egemm` | 1.535 | 1.529 | 72 | 16 | -0.006 |
 | kind10 | `egemmtr` | — | 0.992 | 0 | 24 | — |
 | kind10 | `egemv` | — | 1.061 | 0 | 10 | — |
@@ -24,7 +24,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `eswap` | — | 0.998 | 0 | 3 | — |
 | kind10 | `esymm` | — | 1.167 | 0 | 16 | — |
 | kind10 | `esymv` | 0.925 | 0.998 | 6 | 8 | +0.073 · |
-| kind10 | `esyr` | — | 0.985 | 0 | 8 | — |
+| kind10 | `esyr` | — | 1.002 | 0 | 8 | — |
 | kind10 | `esyrk` | — | 1.144 | 0 | 16 | — |
 | kind10 | `etbmv` | — | 1.004 | 0 | 16 | — |
 | kind10 | `etbsv` | — | 0.999 | 0 | 16 | — |
@@ -46,7 +46,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `ygbmv` | — | 0.990 | 0 | 12 | — |
 | kind10 | `ygemm` | 0.980 | 1.019 | 72 | 24 | +0.039 |
 | kind10 | `ygemmtr` | — | 0.984 | 0 | 24 | — |
-| kind10 | `ygemv` | — | 0.992 | 0 | 15 | — |
+| kind10 | `ygemv` | — | 1.000 | 0 | 15 | — |
 | kind10 | `ygerc` | — | 0.994 | 0 | 4 | — |
 | kind10 | `ygeru` | — | 0.988 | 0 | 4 | — |
 | kind10 | `yhbmv` | — | 1.194 | 0 | 8 | — |
