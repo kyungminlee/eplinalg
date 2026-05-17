@@ -263,10 +263,10 @@ static void run_{name}(int N, int iters, int warmup) {{
     free(X); free(Y); free(Yi);
 }}
 
-static const int default_sizes[] = {{4096, 16384, 65536}};
+static const int default_sizes[] = {{64, 128, 256, 512, 1024, 2048, 4096, 16384, 65536}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -325,10 +325,10 @@ static void run_{name}(int N, int iters, int warmup) {{
     free(X); free(Y); free(Xi); free(Yi);
 }}
 
-static const int default_sizes[] = {{4096, 16384, 65536}};
+static const int default_sizes[] = {{64, 128, 256, 512, 1024, 2048, 4096, 16384, 65536}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -383,10 +383,10 @@ static void run_{name}(int N, int iters, int warmup) {{
     free(X); free(Xi);
 }}
 
-static const int default_sizes[] = {{4096, 16384, 65536}};
+static const int default_sizes[] = {{64, 128, 256, 512, 1024, 2048, 4096, 16384, 65536}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -455,8 +455,8 @@ static void run_one(char trans, int M, int N, int iters, int warmup) {{
 
 static const int default_sizes[] = {{128, 256, 512, 1024, 2048}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -524,8 +524,8 @@ static void run_one(int M, int N, int iters, int warmup) {{
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -671,10 +671,10 @@ static void run_one(int N, int iters, int warmup) {{
     free(X); free(Y);
 }}
 
-static const int default_sizes[] = {{4096, 16384, 65536}};
+static const int default_sizes[] = {{64, 128, 256, 512, 1024, 2048, 4096, 16384, 65536}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -719,10 +719,10 @@ static void run_one(int N, int iters, int warmup) {{
     free(X);
 }}
 
-static const int default_sizes[] = {{4096, 16384, 65536}};
+static const int default_sizes[] = {{64, 128, 256, 512, 1024, 2048, 4096, 16384, 65536}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -763,10 +763,10 @@ static void run_one(int N, int iters, int warmup) {{
     free(X);
 }}
 
-static const int default_sizes[] = {{4096, 16384, 65536}};
+static const int default_sizes[] = {{64, 128, 256, 512, 1024, 2048, 4096, 16384, 65536}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -826,8 +826,8 @@ static void run_one(char uplo, int N, int iters, int warmup) {{
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -893,8 +893,8 @@ static void run_one(char uplo, int N, int iters, int warmup) {{
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -960,8 +960,8 @@ static void run_one(char uplo, int N, int iters, int warmup) {{
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -1025,8 +1025,8 @@ static void run_one(char uplo, int N, int iters, int warmup) {{
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -1095,8 +1095,8 @@ static void run_one(char uplo, char trans, char diag, int N, int iters, int warm
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -1171,8 +1171,8 @@ static void run_one(char uplo, char trans, char diag, int N, int iters, int warm
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -1243,8 +1243,8 @@ static void run_one(char trans, int M, int N, int KL, int KU, int iters, int war
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -1310,8 +1310,8 @@ static void run_one(char uplo, int N, int K, int iters, int warmup) {{
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -1378,8 +1378,8 @@ static void run_one(char uplo, char trans, char diag, int N, int K, int iters, i
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -1746,10 +1746,10 @@ static void run_one(int N, int iters, int warmup) {{
     free(X); free(Y); free(Xi); free(Yi);
 }}
 
-static const int default_sizes[] = {{4096, 16384, 65536}};
+static const int default_sizes[] = {{64, 128, 256, 512, 1024, 2048, 4096, 16384, 65536}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
@@ -1810,10 +1810,10 @@ static void run_one(int N, int iters, int warmup) {{
     free(X); free(Y); free(Xi); free(Yi);
 }}
 
-static const int default_sizes[] = {{4096, 16384, 65536}};
+static const int default_sizes[] = {{64, 128, 256, 512, 1024, 2048, 4096, 16384, 65536}};
 int main(void) {{
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
