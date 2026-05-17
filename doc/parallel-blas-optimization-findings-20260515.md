@@ -871,3 +871,70 @@ Reverted to the original counter form.
    `fstpt` (or whatever store insn the body emits) in `objdump -d`
    before benching: a 3× drop in store count between variants means
    unswitching was lost.
+
+---
+
+## Addendum 10: the shared-index gap is OMP-specific, not general (2026-05-16)
+
+Tested Addendum 7's premise — "gcc only emits shared-index from
+byte-offset walk, not from natural `for (int i...)` C" — by compiling
+isolated variants:
+
+| compiler | OMP outlining? | natural C form    |
+|----------|----------------|-------------------|
+| gcc      | no             | **shared-index** ✓ (one `add`/iter) |
+| gcc      | yes            | two pointers (two `add`/iter)       |
+| icx      | no             | shared-index ✓ AND auto-unrolls outer loop by 2 |
+
+The premise was wrong as stated. gcc with `-O3` *does* emit shared-index
+from natural `for (int i = 0; i < n; ++i) y[i] = ... x[i] ...` C.
+The Addendum-7 case (egemv) failed only because of the `#pragma omp
+parallel if(use_omp) firstprivate(i_lo, i_hi)` wrapper — the OMP
+outlining (capturing variables into a struct and passing through an
+`._omp_fn.0` function) disables gcc's shared-index transform.
+
+The `char*` byte-offset workaround **does** re-enable shared-index
+through OMP outlining, so the egemv fix stands. But it's a workaround
+for an OMP-codegen interaction, not a general C codegen limitation.
+
+### Cleanup: erot reverted to natural form
+
+`erot` has no OMP wrapper, so the `char*` trick was unnecessary. Reverted
+to:
+
+```c
+for (int i = 0; i < n; ++i) {
+    T tx = c * x[i] + s * y[i];
+    y[i] = c * y[i] - s * x[i];
+    x[i] = tx;
+}
+```
+
+Same shared-index codegen (16 insns/iter), same bench result
+(0.94–1.01×), bit-exact.
+
+### Decision tree
+
+When you see two `add`s per iter in `objdump` of a 2-or-3-array
+lockstep AXPY loop:
+
+1. **Is the source already `for (int i...) ... a[i] ... b[i] ...`?**
+   If gcc *still* emits two pointer increments, check if the function
+   sits inside an `#pragma omp parallel` block (outlined into a
+   `_omp_fn` function).
+2. **OMP-outlined?** → apply the `char*` byte-offset walk (Addendum 7).
+   The cast is the cost of working around gcc's OMP-context loop opt.
+3. **Not OMP-outlined?** → the natural form already works; the byte-
+   offset trick is just visual noise. Don't add it.
+4. **Source is pointer-walk** (`for (; xp<xe; ++xp, ++yp)`) → switch
+   to natural `for (int i...)`. Pointer-walk form blocks gcc's
+   shared-index transform even outside OMP.
+
+### Rule
+
+8. **Workarounds need to point at what they work around.** "gcc can't
+   do X" is a different claim from "gcc can't do X under OMP
+   outlining". When the workaround is ugly (here, a `char*` cast),
+   write the surrounding comment so the next reader knows whether the
+   workaround is needed in their context. Otherwise it cargo-cults
+   into places it doesn't belong.
