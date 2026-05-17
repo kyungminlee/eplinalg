@@ -45,7 +45,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `yescal` | — | 0.942 | 0 | 3 | — |
 | kind10 | `ygbmv` | — | 0.990 | 0 | 12 | — |
 | kind10 | `ygemm` | 0.980 | 1.019 | 72 | 24 | +0.039 |
-| kind10 | `ygemmtr` | — | 0.806 | 0 | 24 | — |
+| kind10 | `ygemmtr` | — | 0.984 | 0 | 24 | — |
 | kind10 | `ygemv` | — | 0.992 | 0 | 15 | — |
 | kind10 | `ygerc` | — | 0.994 | 0 | 4 | — |
 | kind10 | `ygeru` | — | 0.988 | 0 | 4 | — |
@@ -67,7 +67,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `ytpsv` | — | 0.998 | 0 | 24 | — |
 | kind10 | `ytrmm` | — | 1.157 | 0 | 48 | — |
 | kind10 | `ytrmv` | — | 1.008 | 0 | 24 | — |
-| kind10 | `ytrsm` | — | 1.010 | 0 | 36 | — |
+| kind10 | `ytrsm` | — | 1.007 | 0 | 48 | — |
 | kind10 | `ytrsv` | — | 0.992 | 0 | 24 | — |
 | kind16 | `iqamax` | — | 1.026 | 0 | 3 | — |
 | kind16 | `ixamax` | — | 1.061 | 0 | 3 | — |
@@ -76,8 +76,8 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind16 | `qcopy` | — | 1.133 | 0 | 3 | — |
 | kind16 | `qdot` | — | 1.001 | 0 | 3 | — |
 | kind16 | `qgbmv` | — | 0.995 | 0 | 8 | — |
-| kind16 | `qgemm` | 1.000 | 0.992 | 54 | 12 | -0.008 |
-| kind16 | `qgemmtr` | — | 1.007 | 0 | 18 | — |
+| kind16 | `qgemm` | 1.000 | 0.996 | 54 | 16 | -0.004 |
+| kind16 | `qgemmtr` | — | 1.007 | 0 | 24 | — |
 | kind16 | `qgemv` | 1.000 | 1.012 | 6 | 10 | +0.012 |
 | kind16 | `qger` | — | 0.994 | 0 | 4 | — |
 | kind16 | `qrot` | — | 1.014 | 0 | 3 | — |
@@ -89,7 +89,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind16 | `qspmv` | — | 0.994 | 0 | 8 | — |
 | kind16 | `qspr` | — | 1.002 | 0 | 8 | — |
 | kind16 | `qswap` | — | 0.994 | 0 | 3 | — |
-| kind16 | `qsymm` | — | 1.001 | 0 | 12 | — |
+| kind16 | `qsymm` | — | 0.996 | 0 | 16 | — |
 | kind16 | `qsymv` | 1.000 | 0.994 | 6 | 8 | -0.006 |
 | kind16 | `qsyr` | — | 1.007 | 0 | 8 | — |
 | kind16 | `qsyrk` | — | 0.997 | 0 | 16 | — |
@@ -97,9 +97,9 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind16 | `qtbsv` | — | 0.992 | 0 | 16 | — |
 | kind16 | `qtpmv` | — | 1.002 | 0 | 16 | — |
 | kind16 | `qtpsv` | — | 0.996 | 0 | 16 | — |
-| kind16 | `qtrmm` | — | 0.999 | 0 | 24 | — |
+| kind16 | `qtrmm` | — | 0.998 | 0 | 32 | — |
 | kind16 | `qtrmv` | — | 1.000 | 0 | 16 | — |
-| kind16 | `qtrsm` | — | 0.999 | 0 | 24 | — |
+| kind16 | `qtrsm` | — | 1.000 | 0 | 32 | — |
 | kind16 | `qtrsv` | — | 0.999 | 0 | 16 | — |
 | kind16 | `qxasum` | — | 1.002 | 0 | 3 | — |
 | kind16 | `xaxpy` | — | 1.007 | 0 | 3 | — |
