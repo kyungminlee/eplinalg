@@ -1283,3 +1283,145 @@ N path 0.92–1.03× across N ∈ {128, 256, 512, 1024, 2048}; T path
     asm difference is almost certainly harness overhead, not kernel
     codegen.
 
+---
+
+## Addendum 15: full-overlay C-harness sweep (2026-05-17)
+
+Generalized the kernel-isolated harness from §egemv (Addendum 14) to
+every overlay routine and ran the full matrix at OMP=1, P-core pinned.
+Generator at `scripts/gen_perf_harnesses.py` emits one
+`perf_<name>.{c,cpp}` per (target, routine) — 195 harnesses across
+kind10 / kind16 / multifloats. Sweep driver
+(`scripts/run_perf_sweep.sh`) runs them all with per-routine `timeout`
+so a single crash (or kind16 L3 hitting the 5-min cap) doesn't kill
+the rest. Aggregator at `scripts/aggregate_perf_sweep.py` emits the
+per-routine summary; `scripts/compare_perf_vs_fortran.py` cross-
+references against the prior Fortran bench numbers under
+`bench_reports/{full-omp1,l2,l3-other,gemm-only}`.
+
+Aggregate results in `bench_reports/perf_sweep.{tsv,json,md}`;
+divergence vs Fortran bench in `bench_reports/perf_vs_fortran.md`.
+
+### What the comparison shows: Addendum 14 generalizes
+
+The most striking effect across the whole overlay: routines that the
+Fortran bench reported as sub-parity collapse to parity under the C
+harness. Top divergent cells (|Δ ratio| > 0.20):
+
+| routine | key | size | Fortran | C harness | Δ |
+|---------|-----|-----:|--------:|----------:|---:|
+| egemm   | TT  | 256  | 1.760   | 2.689     | +0.929 |
+| egemm   | TT  | 128  | 1.090   | 1.955     | +0.865 |
+| egemm   | TT  | 512  | 3.560   | 2.902     | −0.658 |
+| ygemm   | TN  | 64   | 0.600   | 0.989     | +0.389 |
+| ygemm   | TT  | 128  | 0.620   | 1.005     | +0.385 |
+| ygemm   | TN  | 128  | 0.590   | 0.968     | +0.378 |
+| ygemm   | CN  | 64   | 0.650   | 0.996     | +0.346 |
+| ygemm   | NN  | 64   | 0.730   | 1.062     | +0.332 |
+| yhemv   | L   | 256  | 1.380   | 1.131     | −0.249 |
+| yhemv   | L   | 512  | 1.390   | 1.141     | −0.249 |
+
+All ~16 ygemm sub-parity cells the Fortran bench reported (0.59–0.85×)
+flip to ~1.0× on the C harness. The pattern is consistent: every
+routine the prior survey flagged as sub-parity for the overlay, where
+the inner-loop disassembly is byte-identical to migrated, was the
+iTLB / link-layout artifact — not codegen.
+
+### One real codegen gap found: ygemmtr `!trans_a` path
+
+ygemmtr (kind10 complex triangular-result GEMM) sat at median 0.806×
+across all 24 (uplo × {NN,TN,NT} × size) cells in the sweep — the
+only routine with a real gap after the C-harness filter.
+
+Disasm showed the slow path was the `!trans_a` branch in the inner
+loop:
+
+```c
+for (int l = 0; l < K; ++l) {
+    T bl = B_(l, j);          /* or B_(j,l), or ~B_(j,l) */
+    if (bl != zero) {
+        const T t = alpha * bl;
+        const T *al = &A_(0, l);
+        for (int i = is; i < ie; ++i) cj[i] += t * al[i];
+    }
+}
+```
+
+Single FMA chain per `i`, gated on a runtime `bl != zero` check. This
+is exactly the pattern Addendum 1 §kind10 complex documented as the
+ygemm pre-fix shape: ~10-cycle x87 fmul latency × one chain =
+throughput-bound at half of what 2 independent chains would reach.
+ygemm's NN/NT paths got the K-unroll-by-2 fix in that addendum;
+ygemmtr was missed.
+
+Applied the same fix — split the K loop on `!trans_b`, `trans_b
+&& !conj_b`, and `trans_b && conj_b` branches (hoisting the conj
+out of the hot loop, see Addendum 1 §7's note that the in-loop
+conditional defeats scheduling), each K-unrolled by 2:
+
+```c
+int l = 0;
+if (!trans_b) {
+    for (; l + 1 < K; l += 2) {
+        const T t0 = alpha * B_(l,     j);
+        const T t1 = alpha * B_(l + 1, j);
+        const T *al0 = &A_(0, l);
+        const T *al1 = &A_(0, l + 1);
+        for (int i = is; i < ie; ++i)
+            cj[i] += t0 * al0[i] + t1 * al1[i];
+    }
+} else if (!conj_b) {
+    /* ...same, accessing B_(j, l) / B_(j, l+1)... */
+} else {
+    /* ...same with ~B_(j, l) / ~B_(j, l+1)... */
+}
+/* scalar tail for odd K */
+```
+
+Result: median 0.806× → **0.984×**, worst cell 0.748× → 0.910×.
+Fuzz still bit-exact (200/200 pass, max rel err 5.96e-19).
+
+### mswap: re-confirmation of Addendum 6's L1 noise rule
+
+The sweep also flagged multifloats/mswap at median 0.923× — but at
+20 iters and N=4096, the timed window is ~140 µs, below Addendum 6's
+10-ms threshold for L1 routines. Re-running at 100 iters: 1.046× /
+1.007× / 0.978× across N=4096/16384/65536. No gap.
+
+The migrated mswap *does* have a gfortran-emitted unroll-by-3 on the
+stride-1 path (visible as a `0xaaaaaaab` divide-by-3 magic constant
+in the disasm); the overlay's auto-vectorized unroll-by-1 path looks
+slower per-iteration on paper but reaches the same memory-bandwidth
+asymptote at N≥16384. The original 0.754× cell was just sub-
+threshold noise.
+
+### Rules
+
+13. **Build the per-routine C harness as a generator, not by hand.**
+    195 routines × shapes makes hand-writing impractical, and the
+    one bug in the dispatch (hardcoded `is_c=False` for symm,
+    silently giving ysymm/xsymm/wsymm real-typed buffers half the
+    needed size → heap corruption at runtime) is the kind that's
+    obvious once you see all the harnesses next to each other and
+    invisible when you're scanning one at a time. Lean on `extern "C"`
+    + `BLAS_EXTERN` macro so the same generator emits valid C for
+    kind10/kind16 and valid C++ for multifloats.
+
+14. **The Addendum 1 fix list isn't a "done" list — it's a recipe.**
+    Every place in the codebase with a single-FMA-chain rank-1 K loop
+    on kind10 complex is a candidate for K-unroll-by-2. ygemmtr had
+    the same shape and was missed. Look for: `for l in K` containing
+    `cj[i] += alpha * b[...] * a[i+...]`. If you find one and ygemm
+    has the K-unrolled form for the same orientation, port the same
+    fix.
+
+15. **20 iters at L1's smallest size is below the noise floor.**
+    The C harness's default iters=20 is fine for L2/L3 but not for
+    L1 routines at N=4096 (the wall-clock window is ~100 µs, timer
+    resolution is ~µs, GC and context-switch jitter swamps small
+    real effects). Either bump iters for L1 to ≥100 in the harness
+    defaults, or accept that the L1 column at the smallest size is
+    advisory only and require re-runs at higher iters before
+    investigating any 0.85–0.95× cell. Same point as Addendum 6
+    rule, applied to the new harness format.
+
