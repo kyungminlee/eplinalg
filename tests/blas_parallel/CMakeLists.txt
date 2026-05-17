@@ -87,3 +87,32 @@ if(IS_DIRECTORY ${_bench_target_dir})
         add_bench_test(${_s})
     endforeach()
 endif()
+
+# C perf harnesses — kernel-isolated timing without the Fortran bench's
+# per-iter realloc/copy asymmetry. Optional, glob per-target.
+set(_perf_target_dir
+    ${CMAKE_CURRENT_SOURCE_DIR}/perf/target_${TARGET_NAME})
+function(add_perf_test src_path)
+    get_filename_component(_name ${src_path} NAME_WE)
+    add_executable(${_name} ${src_path})
+    target_link_libraries(${_name} PRIVATE
+        ${LIB_PREFIX}blas
+        ${LIB_PREFIX}blas_migrated)
+    # Keep overlay and migrated entry points close in the linked binary.
+    # Without --gc-sections, the full eblas_parallel archive's other
+    # kernels get pulled in, pushing overlay's egemv ~100 KB away from
+    # migrated's egemv. That gap costs ~10% on the timed function via
+    # iTLB/page-walk overhead at the call site and would mask the actual
+    # kernel comparison.
+    target_compile_options(${_name} PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(${_name} PRIVATE LINKER:--gc-sections)
+    add_test(NAME blas_parallel_${_name} COMMAND ${_name})
+    set_tests_properties(blas_parallel_${_name} PROPERTIES LABELS "perf")
+endfunction()
+if(IS_DIRECTORY ${_perf_target_dir})
+    file(GLOB _perf_srcs CONFIGURE_DEPENDS
+        ${_perf_target_dir}/perf_*.c)
+    foreach(_s ${_perf_srcs})
+        add_perf_test(${_s})
+    endforeach()
+endif()
