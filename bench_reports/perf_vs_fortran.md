@@ -20,7 +20,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `esbmv` | — | 1.006 | 0 | 8 | — |
 | kind10 | `escal` | — | 1.000 | 0 | 3 | — |
 | kind10 | `espmv` | — | 1.004 | 0 | 8 | — |
-| kind10 | `espr` | — | 0.920 | 0 | 8 | — |
+| kind10 | `espr` | — | 0.975 | 0 | 8 | — |
 | kind10 | `eswap` | — | 0.998 | 0 | 3 | — |
 | kind10 | `esymm` | — | 1.167 | 0 | 16 | — |
 | kind10 | `esymv` | 0.925 | 0.998 | 6 | 8 | +0.073 · |

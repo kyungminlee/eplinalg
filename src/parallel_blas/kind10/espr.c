@@ -36,35 +36,71 @@ void espr_(
     if (N == 0 || alpha == zero) return;
 
     if (incx == 1) {
-        if (UPLO == 'U') {
 #ifdef _OPENMP
-            const int use_omp = (N >= ESPR_OMP_MIN && blas_omp_max_threads() > 1);
-            #pragma omp parallel for if(use_omp) schedule(static)
+        const int use_omp = (N >= ESPR_OMP_MIN && blas_omp_max_threads() > 1);
+#else
+        const int use_omp = 0;
 #endif
-            for (int j = 0; j < N; ++j) {
-                if (x[j] != zero) {
-                    const T tmp = alpha * x[j];
-                    /* Pointer-walk: gcc emits one `add` + one `cmp`
-                     * per iter (9 insns) instead of counter-and-cmp
-                     * (10 insns). Matches reference DSPR codegen. */
-                    T *restrict apk  = &ap[(size_t)j * (j + 1) / 2];
-                    T *restrict aend = apk + j + 1;
-                    const T *restrict xp = x;
-                    for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
+        /* Branching on use_omp at the outer level — gcc with -fopenmp
+         * still outlines the loop body into a `._omp_fn.0` function
+         * even with `if(use_omp)` clause on the pragma, and the runtime
+         * pays GOMP_parallel setup + omp_get_{num,thread}_num overhead
+         * per call (~µs scale). At OMP=1 that's a measurable fraction
+         * of the call for small-N. The L path happens to amortize this
+         * cost better; the U path's per-outer-j work is smaller, so
+         * the same fixed dispatch cost shows up as a bigger ratio gap.
+         * Two separate loop bodies, one with pragma, one without. */
+        if (UPLO == 'U') {
+            if (use_omp) {
+#ifdef _OPENMP
+                #pragma omp parallel for schedule(static)
+#endif
+                for (int j = 0; j < N; ++j) {
+                    if (x[j] != zero) {
+                        const T tmp = alpha * x[j];
+                        T *restrict apk  = &ap[(size_t)j * (j + 1) / 2];
+                        T *restrict aend = apk + j + 1;
+                        const T *restrict xp = x;
+                        for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
+                    }
+                }
+            } else {
+                /* Pointer-walk: gcc emits one `add` + one `cmp` per iter
+                 * (9 insns) instead of counter-and-cmp (10 insns). Matches
+                 * reference DSPR codegen. */
+                for (int j = 0; j < N; ++j) {
+                    if (x[j] != zero) {
+                        const T tmp = alpha * x[j];
+                        T *restrict apk  = &ap[(size_t)j * (j + 1) / 2];
+                        T *restrict aend = apk + j + 1;
+                        const T *restrict xp = x;
+                        for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
+                    }
                 }
             }
         } else {
+            if (use_omp) {
 #ifdef _OPENMP
-            const int use_omp = (N >= ESPR_OMP_MIN && blas_omp_max_threads() > 1);
-            #pragma omp parallel for if(use_omp) schedule(static)
+                #pragma omp parallel for schedule(static)
 #endif
-            for (int j = 0; j < N; ++j) {
-                if (x[j] != zero) {
-                    const T tmp = alpha * x[j];
-                    T *restrict apk  = &ap[(size_t)j * N - (size_t)j * (j - 1) / 2];
-                    T *restrict aend = apk + (N - j);
-                    const T *restrict xp = &x[j];
-                    for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
+                for (int j = 0; j < N; ++j) {
+                    if (x[j] != zero) {
+                        const T tmp = alpha * x[j];
+                        T *restrict apk  = &ap[(size_t)j * N - (size_t)j * (j - 1) / 2];
+                        T *restrict aend = apk + (N - j);
+                        const T *restrict xp = &x[j];
+                        for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
+                    }
+                }
+            } else {
+                for (int j = 0; j < N; ++j) {
+                    if (x[j] != zero) {
+                        const T tmp = alpha * x[j];
+                        T *restrict apk  = &ap[(size_t)j * N - (size_t)j * (j - 1) / 2];
+                        T *restrict aend = apk + (N - j);
+                        const T *restrict xp = &x[j];
+                        for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
+                    }
                 }
             }
         }
