@@ -42,7 +42,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `ydotc` | — | 0.992 | 0 | 3 | — |
 | kind10 | `ydotu` | — | 1.000 | 0 | 3 | — |
 | kind10 | `yerot` | — | 1.605 | 0 | 3 | — |
-| kind10 | `yescal` | — | 0.942 | 0 | 3 | — |
+| kind10 | `yescal` | — | 0.998 | 0 | 3 | — |
 | kind10 | `ygbmv` | — | 0.990 | 0 | 12 | — |
 | kind10 | `ygemm` | 0.980 | 1.019 | 72 | 24 | +0.039 |
 | kind10 | `ygemmtr` | — | 0.984 | 0 | 24 | — |
@@ -57,7 +57,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `yhpmv` | — | 1.276 | 0 | 8 | — |
 | kind10 | `yhpr` | — | 0.986 | 0 | 8 | — |
 | kind10 | `yrotg` | — | 12.544 | 0 | 1 | — |
-| kind10 | `yscal` | — | 0.931 | 0 | 3 | — |
+| kind10 | `yscal` | — | 0.995 | 0 | 3 | — |
 | kind10 | `yswap` | — | 1.028 | 0 | 3 | — |
 | kind10 | `ysymm` | — | 1.042 | 0 | 16 | — |
 | kind10 | `ysyrk` | — | 1.054 | 0 | 16 | — |
