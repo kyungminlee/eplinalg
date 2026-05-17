@@ -15,7 +15,7 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `eger` | — | 0.984 | 0 | 4 | — |
 | kind10 | `erot` | — | 0.996 | 0 | 3 | — |
 | kind10 | `erotg` | — | 1.217 | 0 | 1 | — |
-| kind10 | `erotm` | — | 0.946 | 0 | 3 | — |
+| kind10 | `erotm` | — | 1.000 | 0 | 3 | — |
 | kind10 | `erotmg` | — | 1.136 | 0 | 1 | — |
 | kind10 | `esbmv` | — | 1.006 | 0 | 8 | — |
 | kind10 | `escal` | — | 1.000 | 0 | 3 | — |

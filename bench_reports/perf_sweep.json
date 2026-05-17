@@ -68,9 +68,6 @@
 {"routine":"erot","key":"-","size":16384,"iters":20,"t_ov":7.058820e-05,"t_mg":7.220330e-05,"gflops_ov":1.3926,"gflops_mg":1.3615,"ratio":1.0229}
 {"routine":"erot","key":"-","size":65536,"iters":20,"t_ov":2.839756e-04,"t_mg":2.829574e-04,"gflops_ov":1.3847,"gflops_mg":1.3897,"ratio":0.9964}
 {"routine":"erotg","key":"-","size":100000,"iters":100000,"t_ov":1.449478e-08,"t_mg":1.764523e-08,"gflops_ov":0.6899,"gflops_mg":0.5667,"ratio":1.2174}
-{"routine":"erotm","key":"-","size":4096,"iters":20,"t_ov":1.619075e-05,"t_mg":1.543020e-05,"gflops_ov":1.0119,"gflops_mg":1.0618,"ratio":0.9530}
-{"routine":"erotm","key":"-","size":16384,"iters":20,"t_ov":7.072115e-05,"t_mg":6.671815e-05,"gflops_ov":0.9267,"gflops_mg":0.9823,"ratio":0.9434}
-{"routine":"erotm","key":"-","size":65536,"iters":20,"t_ov":2.795569e-04,"t_mg":2.645380e-04,"gflops_ov":0.9377,"gflops_mg":0.9910,"ratio":0.9463}
 {"routine":"erotmg","key":"-","size":100000,"iters":100000,"t_ov":2.791223e-08,"t_mg":3.170971e-08,"gflops_ov":0.7165,"gflops_mg":0.6307,"ratio":1.1361}
 {"routine":"esbmv","key":"U","size":128,"iters":20,"t_ov":4.697950e-06,"t_mg":4.729200e-06,"gflops_ov":1.7982,"gflops_mg":1.7863,"ratio":1.0067}
 {"routine":"esbmv","key":"U","size":256,"iters":20,"t_ov":9.668100e-06,"t_mg":9.709400e-06,"gflops_ov":1.7476,"gflops_mg":1.7402,"ratio":1.0043}
@@ -2475,3 +2472,6 @@
 {"routine":"yescal","key":"-","size":4096,"iters":20,"t_ov":1.441965e-05,"t_mg":1.439415e-05,"gflops_ov":1.7043,"gflops_mg":1.7074,"ratio":0.9982}
 {"routine":"yescal","key":"-","size":16384,"iters":20,"t_ov":6.291325e-05,"t_mg":6.265675e-05,"gflops_ov":1.5625,"gflops_mg":1.5689,"ratio":0.9959}
 {"routine":"yescal","key":"-","size":65536,"iters":20,"t_ov":2.470712e-04,"t_mg":2.480169e-04,"gflops_ov":1.5915,"gflops_mg":1.5854,"ratio":1.0038}
+{"routine":"erotm","key":"-","size":4096,"iters":20,"t_ov":1.805120e-05,"t_mg":1.816735e-05,"gflops_ov":0.9076,"gflops_mg":0.9018,"ratio":1.0064}
+{"routine":"erotm","key":"-","size":16384,"iters":20,"t_ov":7.953230e-05,"t_mg":7.951060e-05,"gflops_ov":0.8240,"gflops_mg":0.8242,"ratio":0.9997}
+{"routine":"erotm","key":"-","size":65536,"iters":20,"t_ov":3.241179e-04,"t_mg":3.222146e-04,"gflops_ov":0.8088,"gflops_mg":0.8136,"ratio":0.9941}
