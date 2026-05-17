@@ -111,7 +111,8 @@ function(add_perf_test src_path)
 endfunction()
 if(IS_DIRECTORY ${_perf_target_dir})
     file(GLOB _perf_srcs CONFIGURE_DEPENDS
-        ${_perf_target_dir}/perf_*.c)
+        ${_perf_target_dir}/perf_*.c
+        ${_perf_target_dir}/perf_*.cpp)
     foreach(_s ${_perf_srcs})
         add_perf_test(${_s})
     endforeach()
