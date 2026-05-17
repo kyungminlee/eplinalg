@@ -1540,3 +1540,195 @@ across the codebase in this round — flagged as a sweep candidate.
     (overlay) drops with smaller per-outer work is a tell that
     fixed per-call overhead is the cause.
 
+---
+
+## Addendum 17: closing every sub-parity routine — there is no x87 floor (2026-05-17)
+
+The C-harness sweep at OMP=1 flagged ~8 routines as sub-parity (median
+0.85–0.95×). Earlier addenda (1, 2, 6) had characterized these as
+"the documented x87 stack ceiling" or "the codegen floor" — the
+implication being that gcc's x87 backend couldn't be made to match
+gfortran's emission, and the gap was a fundamental ceiling. **That
+characterization was wrong on every single instance.** Each
+sub-parity routine turned out to have a specific, fixable cause; none
+were genuine floors. Working through them in order:
+
+### 1. ygemmtr — missing K-unroll-by-2
+
+`ygemmtr` (kind10 complex triangular-result GEMM) sat at median
+0.806×. Inner `!trans_a` loop was `cj[i] += (alpha*bl) * al[i]`
+across K — single FMA chain per i, bottlenecked by ~10-cycle x87
+fmul latency. **This is exactly the shape Addendum 1 §kind10
+complex documented for ygemm's NN/NT paths, and exactly the same
+fix (K-unroll-by-2 with two independent FMA chains, conj hoisted
+out of the loop) applied.** Median 0.806× → 0.984×. The Addendum 1
+fix list was a recipe, not a done list (rule 14).
+
+### 2-5. espr, esyr, egbmv, ygemv — OMP outline overhead at OMP=1
+
+Four kind10 routines using `#pragma omp parallel for if(use_omp)`
+showed asymmetric sub-parity at small N. Addendum 16 documented the
+root cause: that pragma outlines the loop body into a `._omp_fn`
+function unconditionally, and the caller pays GOMP_parallel + libgomp
+query overhead per call even when `use_omp` evaluates to false at
+runtime. Fix: branch `use_omp` in C source with two parallel loop
+bodies (one with the pragma, one without).
+
+  - `espr` U: 0.92× → 0.98× (initial), then 0.98 → 1.00× after
+    char* shared-index walk for the U non-OMP path inner loop
+  - `esyr`: 0.985 → 1.00
+  - `egbmv` T: 0.87 → 1.00
+  - `ygemv` T/C paths: 0.83–1.00 → 1.00–1.07
+
+### 6-7. ydotc, ydotu — 2-acc unroll overflowing x87 stack
+
+Addendum 1 §kind10 complex had warned: "each _Complex long double
+multiply needs ~6 fp80 slots; 2 accs + temp slots overflow the
+8-deep x87 stack and force fxch/spill." The 2-acc unroll added in
+commit add00f58 was meant to expose ILP, but the actual measurement
+contradicted the prediction — overlay's 2-acc inner loop has 16
+insns/element vs migrated's 1-acc 14 insns. Reverted to single
+accumulator with pointer-walk. Median ydotc 0.868 → 0.992; ydotu
+0.931 → 1.000. **The 2-acc was actively hurting.**
+
+### 8-10. yscal, yescal, erotm — gcc emits products in source order
+
+The most surprising group. yscal complex inner loop had 15 insns +
+2 fxch per element while migrated had 14 + 1 fxch — gcc emits one
+extra `fxch` after the first store, in the imag-part computation.
+Tried `restrict`, scheduler flags, `-fcx-fortran-rules` (already
+on) — none changed it.
+
+The actual cause: gcc emits the products of an `a*b + c*d` form
+**in source order**. For complex multiplication, the imag-part
+expansion is `xr*ai + xi*ar`. After the first store consumes
+some x87 stack, the value left on top is `xi`, not `xr`. So gcc's
+attempt to compute `xr*ai` first needs an `fxch` to bring `xr`
+to the top, then another `fxch` to set up the second multiply.
+gfortran (or gcc when expression-tree reordering kicks in) picks
+the order `xi*ar + xr*ai` — using the top-of-stack value first,
+saving one `fxch`.
+
+**Fix:** rewrite with explicit `__real__`/`__imag__` and the
+top-of-stack-first product order:
+```c
+const long double xr = p[0], xi = p[1];
+p[0] = xr * ar - xi * ai;
+p[1] = xi * ar + xr * ai;     /* xi term first */
+```
+Inner loop: 14 insns + 1 fxch — byte-equivalent to migrated.
+
+Same trick applied to erotm's flag-unswitched paths. yescal had a
+related pathology: `(__imag__ *p * alpha) * 1.0iL` triggered gcc's
+full complex-multiplication expansion (4 fmul + 2 fadd, including
+products by zero); rewriting as two independent real multiplies on
+the (re, im) pair eliminated half the work.
+
+  - `yscal`  0.931 → 0.999
+  - `yescal` 0.942 → 1.022  (overlay now ahead)
+  - `erotm`  0.946 → 1.003
+
+### 11. espr U — gcc misses shared-index fold across mismatched bases
+
+espr U direct path had inner loop:
+```c
+for (; apk < aend; ++apk, ++xp) *apk += *xp * tmp;
+```
+gcc emits TWO pointer increments per iter (apk and xp). Migrated's
+L path emits ONE — gfortran folds both into a single shared-index
+walk because both pointers start from offsets in a shared base
+register. gcc/gfortran neither fold this for the U path because
+apk and xp start from different bases (apk from &ap[kk], xp from
+&x[0]). The Addendum-7 char* byte-offset walk forces the fold —
+explicit byte index `k`, derive both T* from `(char*) + k`. Inner
+drops from 9 to 8 insns. Median 0.975 → 1.000.
+
+### 12. mswap — sweep size grid was blind to the real signal
+
+mswap (multifloats real DD swap) was flagged at median 0.923 in
+the sweep. Re-running at higher iters at the same sizes showed
+parity (1.0×). **But running at smaller N revealed the real
+picture**: overlay 2.67× faster at N=64, 2.58× at N=128, 1.90× at
+N=256, converging to parity by N=2048+. Migrated `mswap_` has
+~30-50 cycles of per-call overhead (stack canary, 5 callee-saved
+register pushes, 48-byte stack frame, magic-divisor count/3 setup
+for the gfortran-emitted unroll-by-3 path) that dominates at
+small N. Overlay's tight 6-insn SIMD-by-1 loop has no such
+per-call cost.
+
+This was the real lesson: **the sweep's L1 default size grid
+{4096, 16384, 65536} is in the memory-bandwidth-saturated regime
+where every L1 kernel reads the same number of cache lines per
+second.** Both overlay and migrated cap at ~35 GB/s there, ratios
+all collapse to ~1.0×, and the sweep flag of 0.923 was just sample
+jitter. The interesting signal is at smaller N where per-call
+overhead is the dominant cost — overlay's lean prologue/epilogue
+(no stack canary, fewer callee-saved pushes) translates to 1.4–7×
+wins.
+
+### The extended L1 size grid
+
+Updated `scripts/gen_perf_harnesses.py`: L1 default size grid changed
+from `{4096, 16384, 65536}` to `{64, 128, 256, 512, 1024, 2048, 4096,
+16384, 65536}`. Default iters bumped from 20 to 200, warmup from 3
+to 20 (so the smallest-N cells get ≥10 ms timed windows). Re-bench
+of all 57 L1 routines at the new grid shows:
+
+  - kind10 copy/swap: 5–6× at N=64
+  - kind10 function-return (asum/iamax/dot/nrm2): 1.1–2.5× at N=64
+  - kind10 vector ops: ~1.0× at all N (parity)
+  - kind16 (libquadmath): ~1.0× at all N (per-op libcall overhead
+    dominates so call setup is invisible)
+  - multifloats: 3–157× at N=64; 5–25× steady-state. The wins are
+    from SIMD DD kernels vs gfortran's scalar DD ops.
+
+### Bottom line
+
+**Zero sub-parity routines remain in the entire 195-routine sweep**
+after these fixes. The "x87 floor" framing from earlier addenda is
+retracted; there is no architectural floor. Every gap had a specific
+cause and a specific fix.
+
+The original wrong intuition ("gcc's x87 backend is at its limit")
+came from comparing insn counts and concluding the codegen was
+already optimal. The actual situation was that gcc was emitting
+1–2 extra instructions per iter from specific patterns (source-
+order product emission, missed shared-index fold, OMP-outline
+overhead, redundant complex-mul expansion of `* 1.0iL`) that small
+C-source rewrites could close.
+
+### Rules
+
+18. **"Codegen floor" is the wrong default explanation.** Every
+    sub-parity routine in this overlay turned out to have a
+    specific fixable cause. The categories encountered were:
+    missing reuse of an Addendum 1 recipe (K-unroll for kind10
+    complex rank-1), OMP-outline overhead at OMP=1 (Addendum 16),
+    over-unrolling that overflows x87 stack capacity, gcc's
+    source-order product emission picking the wrong operand to
+    leave on stack top, gcc's missed shared-index fold across
+    mismatched base registers, and idioms (`* 1.0iL`) triggering
+    expensive expansions. When the inner-loop disasm is identical
+    and the ratio is still below parity, check those in order
+    before assuming a hardware ceiling.
+
+19. **L1 routines need a small-N column in the sweep.** Default
+    L1 sizes of {4096, 16384, 65536} hide the interesting signal:
+    those sizes are all memory-bandwidth-saturated, every kernel
+    converges to the same throughput, and ratios collapse to ~1.0×
+    regardless of code quality. **The actual L1 performance
+    differentiator is per-call overhead**, which only shows up at
+    N≤~1024. Default L1 size grid is now `{64, 128, 256, 512, 1024,
+    2048, 4096, 16384, 65536}` with iters=200.
+
+20. **Per-call overhead matters more than inner-loop unrolling at
+    small N.** For mswap on multifloats DD: migrated has a tightly-
+    unrolled-by-3 inner loop, but its function setup (stack canary,
+    5 callee-saved regs, 48-byte stack frame, divide-by-3 count
+    arithmetic) costs ~30-50 cycles per call. Overlay's plain
+    SIMD loop with minimal prologue beats it 2.67× at N=64. The
+    unroll buys nothing once memory bandwidth is the cap, and
+    costs measurably at small N — a textbook "this optimization
+    is universally good" that's actually wrong in the regime
+    where it would supposedly matter.
+
