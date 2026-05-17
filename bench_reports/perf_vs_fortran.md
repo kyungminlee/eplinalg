@@ -39,8 +39,8 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 | kind10 | `iyamax` | — | 1.140 | 0 | 3 | — |
 | kind10 | `yaxpy` | — | 0.998 | 0 | 3 | — |
 | kind10 | `ycopy` | — | 1.929 | 0 | 3 | — |
-| kind10 | `ydotc` | — | 0.868 | 0 | 3 | — |
-| kind10 | `ydotu` | — | 0.931 | 0 | 3 | — |
+| kind10 | `ydotc` | — | 0.992 | 0 | 3 | — |
+| kind10 | `ydotu` | — | 1.000 | 0 | 3 | — |
 | kind10 | `yerot` | — | 1.605 | 0 | 3 | — |
 | kind10 | `yescal` | — | 0.942 | 0 | 3 | — |
 | kind10 | `ygbmv` | — | 0.990 | 0 | 12 | — |
