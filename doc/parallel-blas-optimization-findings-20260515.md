@@ -1425,3 +1425,118 @@ threshold noise.
     investigating any 0.85–0.95× cell. Same point as Addendum 6
     rule, applied to the new harness format.
 
+---
+
+## Addendum 16: `#pragma omp parallel for if(use_omp)` always outlines (2026-05-17)
+
+espr (kind10 real symmetric packed rank-1) sat at median 0.92×
+(worst 0.53× at U/128) for UPLO='U' while UPLO='L' was at parity.
+The asymmetry made this a strong diagnostic — same routine, same
+type, only the access pattern differs.
+
+### What the disasm said (and didn't)
+
+Comparing overlay's `espr_._omp_fn.{0,1}` against migrated's `espr_`:
+- Inner loop: **byte-identical** between U and L on overlay, AND
+  byte-identical to migrated (8 insns, single fldt→fmul→faddp→fstpt
+  chain, walking two pointers via `add $0x10, %rdx` / `add $0x10, %rcx`).
+- Outer overhead: U has slightly *less* per-outer-j work than L
+  (the `apk = &ap[j*(j+1)/2]` address compute is one imul+shr+shl;
+  L does similar plus a sub for the column-base offset).
+
+Per the codegen rule from Addendum 2 (inner loops identical → no
+codegen-level fix possible), nothing in the inner loop could explain
+the gap. The gap had to be in the *caller's* per-call cost.
+
+### What was actually wrong
+
+`#pragma omp parallel for if(use_omp)` does **not** generate two
+code paths (parallel vs serial). It always outlines the loop body
+into a separate `._omp_fn.N` function and calls
+`GOMP_parallel(_omp_fn, &data, 1, 0)` at runtime. The `if(use_omp)`
+clause only affects whether the runtime actually forks threads —
+the call into GOMP_parallel, the data-struct setup, the dispatch
+into the outlined function, the `omp_get_num_threads()` /
+`omp_get_thread_num()` queries at the start of `_omp_fn` — all of
+that happens regardless.
+
+At OMP_NUM_THREADS=1 this overhead is ~1–3 µs per espr_ call
+(libgomp's GOMP_parallel + struct pack + outlined-fn prologue +
+two libgomp queries). For an L1/L2 kernel whose pure inner work
+is also a few µs, this is a measurable fraction.
+
+espr's L path has more work per outer-j (longer inner loops at
+small j) so the fixed dispatch cost amortizes. U's outer-j work
+ramps from tiny (j=0: 1 element) upward, so the fixed cost is a
+bigger fraction. Same overhead, different visible ratio.
+
+### Fix: branch on `use_omp` in C source, two parallel loop bodies
+
+```c
+#ifdef _OPENMP
+const int use_omp = (N >= ESPR_OMP_MIN && blas_omp_max_threads() > 1);
+#else
+const int use_omp = 0;
+#endif
+
+if (use_omp) {
+    #pragma omp parallel for schedule(static)
+    for (int j = 0; j < N; ++j) { /* ...same body... */ }
+} else {
+    for (int j = 0; j < N; ++j) { /* ...same body, no pragma... */ }
+}
+```
+
+The plain `for` in the `else` branch isn't outlined. No GOMP_parallel
+call, no `_omp_fn` dispatch. The two bodies do duplicate source code
+— acceptable cost for the saved dispatch overhead at OMP=1.
+
+Result for espr:
+- U @ 128:  0.529× → 0.927× (cold benchmark)
+- U @ 256:  0.856× → 0.913×
+- U @ 1024: 0.913× → 0.923×
+- L:        unchanged (parity)
+- median:   0.920× → 0.975×
+- fuzz:     200/200 pass, bit-identical (max rel err 0.0)
+
+Residual ~7% gap on U is sub-call-overhead noise; both halves now
+sit at the same x87 codegen floor.
+
+### Why this is bigger than just espr
+
+Every parallel-BLAS overlay in this codebase uses the same
+`#pragma omp parallel for if(use_omp)` idiom. At OMP=1 (the common
+case for our perf sweep), every one of them is paying the same
+~1–3 µs/call dispatch overhead. The cost is invisible for L3 and
+large-N L2 kernels (per-call work is hundreds of µs), but for L1
+and small-N L2 it's a 5–15% fraction. Several of the "documented
+x87 floor" routines from Addendum 6 (yscal 0.93×, yescal 0.94×,
+ydotu 0.93×, etc.) may have a chunk of their gap from this same
+source — worth re-checking before chalking them up to codegen
+ceilings.
+
+The fix is mechanical: branch `use_omp` in C source. Not done
+across the codebase in this round — flagged as a sweep candidate.
+
+### Rules
+
+16. **`#pragma omp parallel for if(use_omp)` is not "OMP only when
+    needed."** It outlines unconditionally; the `if` clause only
+    skips the actual thread fork. Caller pays GOMP_parallel +
+    omp_get_* overhead per call regardless. At OMP=1 with a fast
+    inner kernel, this is a measurable fraction of the call.
+    When the per-routine ratio sits below 1.0× and the inner-loop
+    disasm matches migrated (the Addendum 2 "no codegen gap"
+    condition), check the omp pragma idiom before chasing more
+    exotic explanations. Fix is a two-body branch on `use_omp` in C
+    source.
+
+17. **Asymmetric ratios across (uplo, side, trans) at the same
+    routine are diagnostic.** If a routine has e.g. UPLO=U at
+    0.6× and UPLO=L at 1.0× with identical inner-loop disasm and
+    no algorithmic difference, the gap is in the outer / framing /
+    dispatch — not the kernel. The denominator (migrated rate)
+    being roughly constant across the two while the numerator
+    (overlay) drops with smaller per-outer work is a tell that
+    fixed per-call overhead is the cause.
+
