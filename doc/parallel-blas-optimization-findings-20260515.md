@@ -1006,3 +1006,76 @@ In all three the standalone gcc was fine; the gap was in the
    message and in the findings doc. The patch may still land at
    parity, but for the wrong stated reason — and the next reader
    inherits a misleading explanation.
+
+---
+
+## Addendum 12: why OMP outlining blocks shared-index, and the cleaner fix (2026-05-16)
+
+### Why
+
+`restrict` is a function-parameter qualifier. When gcc's `-fopenmp`
+outlines an `#pragma omp parallel` block, the captured pointers (`y`,
+`a0`, `a1`, etc.) go into a struct passed by pointer to the outlined
+function `func._omp_fn.0`. The outlined function loads pointers from
+struct fields:
+
+```c
+void func._omp_fn.0(struct .omp_data_s *data) {
+    T *y  = data->y;    // no restrict
+    T *a0 = data->a0;   // no restrict
+    T *a1 = data->a1;   // no restrict
+    for (...) { ... }
+}
+```
+
+The qualifier doesn't survive the trip through the struct. gcc's
+shared-index transform (induction-variable folding across multiple
+base pointers) needs to prove the bases don't overlap within the loop
+body. With `restrict` on function args, the proof is trivial; with
+struct-loaded pointers, gcc has to be conservative — three independent
+induction variables, three `add`s per iter.
+
+### Three workarounds, ranked
+
+Tested on the egemv-style 3-array AXPY inner inside an OMP region:
+
+| variant                                       | shared-index? | mechanism                                  |
+|-----------------------------------------------|---------------|--------------------------------------------|
+| natural C inside `_omp_fn`                    | ✗             | restrict lost through struct               |
+| local `T *restrict y2 = y; ...` inside region | ✗             | gcc still tracks back to the struct field  |
+| `char*` byte-offset walk                      | ✓             | bypasses IV-folding with one explicit IV   |
+| `__attribute__((noinline))` helper            | ✓             | helper has its own restrict args; alias OK |
+
+The `noinline` helper is the cleanest. Cost is one function call per
+outer iter (~20 cycles); for any realistic inner-loop length M it's
+negligible (<1% at M ≥ 64, <0.05% at M ≥ 1024).
+
+### egemv refactor
+
+Replaced the byte-offset walk with:
+
+```c
+__attribute__((noinline))
+static void egemv_n_axpy2(int span, T *restrict y,
+                          const T *restrict a0, const T *restrict a1,
+                          T t0, T t1)
+{
+    for (int i = 0; i < span; ++i)
+        y[i] = (y[i] + t0 * a0[i]) + t1 * a1[i];
+}
+```
+
+called from inside the `#pragma omp parallel` region. Same inner-loop
+codegen as the `char*` version (11 insns/iter, shared-index). Same
+bench results within noise. Fuzz still passes at full long double
+precision.
+
+### Rule
+
+10. **Inside an OMP-outlined region, factor the inner loop into a
+    `__attribute__((noinline))` helper with `restrict` parameters.**
+    The helper compiles in its own context where `restrict` is honored
+    and gcc's loop optimizer fires normally. Call overhead is trivial
+    (~20 cycles) compared to anything but pathologically short inner
+    loops (M < 16). Prefer this over the `char*` byte-offset trick:
+    same codegen, normal-looking C.

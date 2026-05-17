@@ -32,6 +32,28 @@ static inline char up(const char *p) {
 
 #define A_(i, j)  a[(size_t)(j) * lda + (i)]
 
+/* Non-inlined so the inner loop's `restrict` parameters aren't
+ * substituted into the OMP-outlined function (where pointers come
+ * from struct loads and lose their `restrict` qualifier). Keeping
+ * this as a separate function lets gcc emit the shared-index
+ * pointer-walk (11 insns/iter), matching gfortran reference DGEMV.
+ * See doc/parallel-blas-optimization-findings: Addendum 7+10+11. */
+__attribute__((noinline))
+static void egemv_n_axpy2(int span, T *restrict y,
+                          const T *restrict a0, const T *restrict a1,
+                          T t0, T t1)
+{
+    for (int i = 0; i < span; ++i)
+        y[i] = (y[i] + t0 * a0[i]) + t1 * a1[i];
+}
+
+__attribute__((noinline))
+static void egemv_n_axpy1(int span, T *restrict y,
+                          const T *restrict a, T t)
+{
+    for (int i = 0; i < span; ++i) y[i] += t * a[i];
+}
+
 void egemv_(
     const char *trans,
     const int *m_, const int *n_,
@@ -103,39 +125,13 @@ void egemv_(
                 const int span = i_hi - i_lo;
                 int j = 0;
                 for (; j + 1 < N; j += 2) {
-                    const T t0 = alpha * x[j];
-                    const T t1 = alpha * x[j + 1];
-                    /* Shared-index walk: one base pointer + a byte
-                     * offset that's added once per iter, used as the
-                     * `index` operand for all three loads. Mirrors
-                     * gfortran reference DGEMV codegen (one `add` +
-                     * one `cmp` per iter; three bases share a single
-                     * index register). Parenthesization on the inner
-                     * expression matches gfortran's interleaved
-                     * fmul/fadd schedule. */
-                    /* gcc emits a shared-index pointer-walk only when
-                     * the inner loop is structured as one byte offset
-                     * `k` added to three different base pointers. With
-                     * the natural `for (i ...) yp[i] = ... a0[i]
-                     * ... a1[i]` shape, gcc keeps three independent
-                     * pointers and emits 3 `add`s per iter (13 insns).
-                     * The byte-offset form drops to 11 insns per iter
-                     * and matches gfortran reference DGEMV codegen. */
-                    char *restrict yp = (char *)(y + i_lo);
-                    const char *restrict a0 = (const char *)&A_(i_lo, j);
-                    const char *restrict a1 = (const char *)&A_(i_lo, j + 1);
-                    const size_t end = (size_t)span * sizeof(T);
-                    for (size_t k = 0; k < end; k += sizeof(T)) {
-                        T *yk        = (T *)(yp + k);
-                        const T *a0k = (const T *)(a0 + k);
-                        const T *a1k = (const T *)(a1 + k);
-                        *yk = (*yk + t0 * *a0k) + t1 * *a1k;
-                    }
+                    egemv_n_axpy2(span, y + i_lo,
+                                  &A_(i_lo, j), &A_(i_lo, j + 1),
+                                  alpha * x[j], alpha * x[j + 1]);
                 }
-                for (; j < N; ++j) {
-                    const T t = alpha * x[j];
-                    const T *aj = &A_(0, j);
-                    for (int i = i_lo; i < i_hi; ++i) y[i] += t * aj[i];
+                if (j < N) {
+                    egemv_n_axpy1(span, y + i_lo, &A_(i_lo, j),
+                                  alpha * x[j]);
                 }
 #ifdef _OPENMP
             }
