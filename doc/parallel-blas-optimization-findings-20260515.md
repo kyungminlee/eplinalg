@@ -839,21 +839,35 @@ Tried the same trick on `erotm`. **Both** the byte-offset walk and a
 pointer-compare walk made it *slower* (0.93× → 0.87×, then 0.82× at
 N=65536).
 
-Cause: `erotm`'s inner body is a 3-way dispatch on `flag` inside a
-`static inline step()` helper. With `for (int i ...) step(..., &x[i],
-&y[i])` gcc hoists the flag check out of the loop, specializes the
-body per case, and reuses one register-allocation across the
-specialized loops. With the pointer-walk or byte-offset form, the
-inliner re-runs the dispatch per iter (or emits more spills around
-it), losing the benefit. Reverted to the original counter form.
+Confirmed root cause by counting `fstpt` instructions and asm bytes
+in the compiled `.o`:
+
+| variant                | fstpt count | asm lines |
+|------------------------|------------:|----------:|
+| `for (int i...)`       | 18          | 372       |
+| `for (size_t k...)` byte-offset | 6   | 113       |
+
+The counter form triggers gcc's **loop unswitching** pass: the
+`if (flag<0) / else if (==0) / else` chain inside the inlined `step()`
+helper is hoisted *outside* the loop, producing 3 specialized inner
+loops (one per flag case) with zero branches in the hot loop. The
+byte-offset form doesn't trigger unswitching — one inner loop with
+the 3-way if/else evaluated every iteration. ~2 extra branch insns
+per iter, plus mispredict cost when the predictor is cold.
+
+Reverted to the original counter form.
 
 ### Rule
 
-7. **Helper functions with internal branches block the codegen tricks
-   from Addenda 7 & 8.** The byte-offset shared-index walk works when
-   the loop body is straight-line floating-point arithmetic. When the
-   body calls a `static inline` helper that itself branches, the
-   helper's specialization machinery interacts with whatever loop
-   shape gcc sees, and a different shape can defeat the
-   specialization. Check assembly **and** benchmarks before
-   committing; don't trust either alone.
+7. **gcc loop-unswitching is loop-shape-dependent.** The byte-offset
+   shared-index walk wins on straight-line FP bodies but defeats
+   unswitching when the body has loop-invariant branches. Symptom:
+   compiling the file shrinks from N specialized loops to 1
+   generic-branchy loop (count `fstpt` in `objdump`, or `wc -l` the
+   disasm). When the body has a loop-invariant `if`/switch — even
+   buried in a `static inline` helper — prefer the natural
+   `for (int i...)` form and accept the 2-pointer-increment overhead;
+   the saved branches more than pay for it. Verify by counting
+   `fstpt` (or whatever store insn the body emits) in `objdump -d`
+   before benching: a 3× drop in store count between variants means
+   unswitching was lost.
