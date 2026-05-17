@@ -185,6 +185,19 @@ When chasing a perf gap, follow this order:
 
 6. **Suspect noise on `(s=N, single combo)` jumps; trust `(mean over 9 combos at s=N, stdev < 1%)` for structural effects.**
 
+7. **Verify sub-1.0× ratios in the C perf harness before chasing them as
+   kernel-codegen gaps.** The fypp-generated Fortran bench can manufacture
+   5–10% phantom gaps from binary layout alone — when the linker spreads
+   overlay's kernel ~100 KB from migrated's, iTLB churn on each call
+   eats ~5–10% throughput. The `tests/blas_parallel/perf/target_<name>/perf_*.c`
+   harness (CMake wires `-ffunction-sections -Wl,--gc-sections` per
+   executable) collapses overlay's footprint to the same few KB as
+   migrated and reports honest GF/s. Procedure: if the Fortran bench
+   reports <1.0×, (a) re-measure with the C perf harness; if still
+   <1.0×, (b) diff inner-loop disassembly against migrated. No insn-count
+   or IV-folding difference = harness overhead, not kernel codegen.
+   See Addendum 14 for the full diagnosis.
+
 ---
 
 ## Hardware-specific gotchas on this machine
