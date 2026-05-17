@@ -1079,3 +1079,113 @@ precision.
     (~20 cycles) compared to anything but pathologically short inner
     loops (M < 16). Prefer this over the `char*` byte-offset trick:
     same codegen, normal-looking C.
+
+---
+
+## Addendum 13: what actually blocks gcc's shared-index inside OMP (2026-05-16)
+
+After Addendum 12 framed the blocker as "OMP outlining loses
+`restrict` through the struct," tested every restrict variant and
+alternative aliasing assertion to see if there was a way out short of
+the noinline-helper or `char*` workarounds. **None of the obvious
+fixes worked**, and successive minimal tests kept invalidating each
+new hypothesis about the root cause.
+
+### Variants tested
+
+All against a 3-array AXPY (`y[i] = (y[i] + t0*a0[i]) + t1*a1[i]`)
+inside `#pragma omp parallel`. Each row records whether gcc emitted
+shared-index addressing (one `add`/iter, 11 insns) vs separate
+pointer increments (two `add`s/iter, 13 insns).
+
+| variant                                                | shared-index? |
+|--------------------------------------------------------|---------------|
+| `restrict` on function params, natural C loop          | ✗ (with `firstprivate`)            |
+| `__restrict__` keyword on locals                       | ✗             |
+| `restrict` on struct member (gcc extension)            | ✗             |
+| `#pragma GCC ivdep` on inner loop                      | ✗             |
+| `#pragma omp simd` on inner loop                       | depends — see below |
+| `#pragma omp parallel for simd` on outer loop          | mixed         |
+| `#pragma omp declare simd` on helper function          | ✓ — but only because gcc cloned the helper |
+| `char*` byte-offset walk on inner loop                 | ✓             |
+| `__attribute__((noinline))` helper                     | ✓             |
+
+### Successively-falsified hypotheses
+
+I went through three wrong root-cause hypotheses before landing on
+something that survives the tests:
+
+1. **"gcc can't shared-index from natural C"** — wrong. Compile the
+   exact same inner loop in a standalone function (no OMP), and gcc
+   emits shared-index without any hints.
+
+2. **"OMP outlining loses `restrict` through the captured-vars
+   struct"** — partly true (struct members really don't carry
+   `restrict`), but not the actual blocker. Tested by re-establishing
+   `restrict` on locals inside the parallel region; gcc still emitted
+   two `add`s.
+
+3. **"`firstprivate(i_lo, i_hi)` is the cause"** — also wrong. Tested
+   by removing `firstprivate` and computing the per-thread slice
+   directly from `omp_get_thread_num()` inside the region. Still two
+   `add`s.
+
+### The blocker, as far as I can isolate it
+
+The pattern that survives all tests: **gcc loses IV-folding when the
+inner loop's bounds depend on values its alias/IV analyzer can't
+trace back to function parameters or compile-time constants**. Sources
+of "opaque bounds" inside an OMP region include:
+
+- `firstprivate` scalar captures
+- Return values of `omp_get_thread_num()` / `omp_get_num_threads()`
+- Anything derived from those (e.g. `i_lo = (M*tid)/nt`)
+
+If the loop is `for (int i = 0; i < M; ++i)` where `M` is the outer
+function's parameter, gcc applies IV-fold even inside the parallel
+region. As soon as bounds come from a slice computation, it doesn't.
+
+Pre-shifting pointers (`yp = y + i_lo`) and normalizing to
+`for (i = 0; i < span; ++i)` doesn't help — `span` still traces back
+to the opaque source.
+
+### Why noinline helper works
+
+The helper has its own function scope. Its `span` parameter is just
+an `int` — no captured-source provenance, no struct-load history.
+gcc's loop optimizer treats it as it would any function parameter and
+applies IV-fold normally. The whole OMP outlining mess stays on the
+caller side of the function boundary; the inner-loop codegen lives in
+a clean scope.
+
+```c
+__attribute__((noinline))
+static void inner(int span, T *restrict y,
+                  const T *restrict a0, const T *restrict a1,
+                  T t0, T t1) {
+    for (int i = 0; i < span; ++i)
+        y[i] = (y[i] + t0 * a0[i]) + t1 * a1[i];
+}
+```
+
+### `omp simd` is interesting but unreliable
+
+A bare `#pragma omp simd` on the inner loop *does* get gcc to emit
+shared-index — as long as the loop bounds don't come from a
+firstprivate or omp-runtime call. With the realistic per-thread slice
+in scope, `omp simd` had no effect. So it works in toy examples and
+fails in real ones, which is worse than just always using the
+noinline helper.
+
+### Rule
+
+11. **Don't trust "obvious" restrict fixes inside OMP regions.** The
+    cascade of failed hypotheses above documents specifically:
+    `restrict` on locals, `__restrict__` keyword, struct-member
+    restrict, `#pragma GCC ivdep`, and `#pragma omp simd` all *look*
+    like they should propagate the alias guarantee through OMP
+    outlining. In gcc 15 with `-O3 -fopenmp`, none of them do when the
+    inner-loop bounds depend on per-thread slice computation. The
+    workarounds that survive testing are (a) `char*` byte-offset walk
+    and (b) `__attribute__((noinline))` helper with `restrict`
+    parameters. Prefer (b): normal C, same codegen, no cast trickery.
