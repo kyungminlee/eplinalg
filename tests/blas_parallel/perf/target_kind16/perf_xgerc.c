@@ -25,27 +25,30 @@ BLAS_EXTERN void xgerc_(const int *, const int *, const X16 *,
 BLAS_EXTERN void xgerc_migrated_(const int *, const int *, const X16 *,
     const X16 *, const int *, const X16 *, const int *, X16 *, const int *);
 
-static void run_one(int M, int N, int iters, int warmup) {
-    int one = 1;
+static void run_one(int M, int N, int incx, int incy, int iters, int warmup) {
     X16 alpha = X16_FROM(0.7, 0.0);
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(M - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(N - 1) * (size_t)absy;
     X16 *A  = (X16 *)perf_aligned_alloc(64, (size_t)M * (size_t)N * sizeof(X16));
     X16 *Ai = (X16 *)perf_aligned_alloc(64, (size_t)M * (size_t)N * sizeof(X16));
-    X16 *X  = (X16 *)perf_aligned_alloc(64, (size_t)M * sizeof(X16));
-    X16 *Y  = (X16 *)perf_aligned_alloc(64, (size_t)N * sizeof(X16));
+    X16 *X  = (X16 *)perf_aligned_alloc(64, lenx * sizeof(X16));
+    X16 *Y  = (X16 *)perf_aligned_alloc(64, leny * sizeof(X16));
     for (size_t i = 0; i < (size_t)M*N; ++i) { int s = 2; Ai[i] = X16_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
-    for (int i = 0; i < M; ++i)           { int s = 3; X[i] = X16_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
-    for (int i = 0; i < N; ++i)           { int s = 4; Y[i] = X16_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
+    for (size_t i = 0; i < lenx; ++i)       { int s = 3; X[i] = X16_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
+    for (size_t i = 0; i < leny; ++i)       { int s = 4; Y[i] = X16_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
     memcpy(A, Ai, (size_t)M * (size_t)N * sizeof(X16));
 
     for (int r = 0; r < warmup; ++r) {
-        xgerc_(&M, &N, &alpha, X, &one, Y, &one, A, &M);
+        xgerc_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof(X16));
-        xgerc_migrated_(&M, &N, &alpha, X, &one, Y, &one, A, &M);
+        xgerc_migrated_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof(X16));
     }
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {
-        xgerc_(&M, &N, &alpha, X, &one, Y, &one, A, &M);
+        xgerc_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof(X16));
     }
     double t1 = perf_now_s();
@@ -53,26 +56,44 @@ static void run_one(int M, int N, int iters, int warmup) {
 
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {
-        xgerc_migrated_(&M, &N, &alpha, X, &one, Y, &one, A, &M);
+        xgerc_migrated_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof(X16));
     }
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
 
     double flops = 8.0 * (double)M * (double)N;
-    perf_emit("xgerc", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("xgerc", "-", N, iters, flops, t_ov, t_mg);
+    char key[24];
+    if (incx == 1 && incy == 1) {
+        key[0] = '-'; key[1] = 0;
+    } else if (incy == 1) {
+        snprintf(key, sizeof(key), "x%d", incx);
+    } else if (incx == 1) {
+        snprintf(key, sizeof(key), "y%d", incy);
+    } else {
+        snprintf(key, sizeof(key), "x%d/y%d", incx, incy);
+    }
+    perf_emit("xgerc", key, N, iters, flops, t_ov, t_mg);
+    perf_emit_json("xgerc", key, N, iters, flops, t_ov, t_mg);
     free(A); free(Ai); free(X); free(Y);
 }
 
 static const int default_sizes[] = {128, 256, 512, 1024};
+static const int default_incxs[] = {1, 2};
 int main(void) {
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
-    for (int i = 0; i < n; ++i) run_one(sizes[i], sizes[i], iters, warmup);
+    for (int xi = 0; xi < n_incx; ++xi) {
+        int incx = incxs[xi]; if (incx == 0) continue;
+        int incy = incx;
+        for (int i = 0; i < n; ++i) run_one(sizes[i], sizes[i], incx, incy, iters, warmup);
+    }
     return 0;
 }

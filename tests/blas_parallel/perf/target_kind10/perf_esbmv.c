@@ -27,52 +27,73 @@ BLAS_EXTERN void esbmv_migrated_(const char *, const int *, const int *,
     const R10 *, const R10 *, const int *, const R10 *, const int *,
     const R10 *, R10 *, const int *, size_t);
 
-static void run_one(char uplo, int N, int K, int iters, int warmup) {
-    int one = 1;
+static void run_one(char uplo, int N, int K, int incx, int incy,
+                    int iters, int warmup) {
     R10 alpha = R10_FROM(0.7), beta = R10_FROM(0.3);
     int LDA = K + 1;
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(N - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(N - 1) * (size_t)absy;
     R10 *A  = (R10 *)perf_aligned_alloc(64, (size_t)LDA * (size_t)N * sizeof(R10));
-    R10 *X  = (R10 *)perf_aligned_alloc(64, (size_t)N * sizeof(R10));
-    R10 *Y  = (R10 *)perf_aligned_alloc(64, (size_t)N * sizeof(R10));
-    R10 *Yi = (R10 *)perf_aligned_alloc(64, (size_t)N * sizeof(R10));
+    R10 *X  = (R10 *)perf_aligned_alloc(64, lenx * sizeof(R10));
+    R10 *Y  = (R10 *)perf_aligned_alloc(64, leny * sizeof(R10));
+    R10 *Yi = (R10 *)perf_aligned_alloc(64, leny * sizeof(R10));
     for (size_t i = 0; i < (size_t)LDA*N; ++i) { int s = 2; A[i] = R10_FROM(perf_fill_double(i, s)); }
-    for (int i = 0; i < N; ++i) { int s = 3; X[i] = R10_FROM(perf_fill_double(i, s)); }
-    for (int i = 0; i < N; ++i) { int s = 4; Yi[i] = R10_FROM(perf_fill_double(i, s)); }
-    memcpy(Y, Yi, (size_t)N * sizeof(R10));
+    for (size_t i = 0; i < lenx; ++i) { int s = 3; X[i] = R10_FROM(perf_fill_double(i, s)); }
+    for (size_t i = 0; i < leny; ++i) { int s = 4; Yi[i] = R10_FROM(perf_fill_double(i, s)); }
+    memcpy(Y, Yi, leny * sizeof(R10));
     for (int r = 0; r < warmup; ++r) {
-        esbmv_(&uplo, &N, &K, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)N * sizeof(R10));
-        esbmv_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)N * sizeof(R10));
+        esbmv_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof(R10));
+        esbmv_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof(R10));
     }
-    memcpy(Y, Yi, (size_t)N * sizeof(R10));
+    memcpy(Y, Yi, leny * sizeof(R10));
     double t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) esbmv_(&uplo, &N, &K, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) esbmv_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
-    memcpy(Y, Yi, (size_t)N * sizeof(R10));
+    memcpy(Y, Yi, leny * sizeof(R10));
     t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) esbmv_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) esbmv_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = 2.0 * (double)(2*K+1) * (double)N;
-    char key[2] = {uplo, 0};
+    char key[24];
+    if (incx == 1 && incy == 1) {
+        key[0] = uplo; key[1] = 0;
+    } else if (incy == 1) {
+        snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
+    } else if (incx == 1) {
+        snprintf(key, sizeof(key), "%c/y%d", uplo, incy);
+    } else {
+        snprintf(key, sizeof(key), "%c/x%d/y%d", uplo, incx, incy);
+    }
     perf_emit("esbmv", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("esbmv", key, N, iters, flops, t_ov, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }
 
 static const int default_sizes[] = {128, 256, 512, 1024};
+static const int default_incxs[] = {1, 2};
 int main(void) {
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {
         char uplo = (u == 0) ? 'U' : 'L';
-        for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], 16, iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {
+            int incx = incxs[xi]; if (incx == 0) continue;
+            int incy = incx;
+            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], 16, incx, incy, iters, warmup);
+        }
     }
     return 0;
 }

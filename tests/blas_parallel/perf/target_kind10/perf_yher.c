@@ -25,53 +25,66 @@ BLAS_EXTERN void yher_(const char *, const int *, const R10 *,
 BLAS_EXTERN void yher_migrated_(const char *, const int *, const R10 *,
     const C10 *, const int *, C10 *, const int *, size_t);
 
-static void run_one(char uplo, int N, int iters, int warmup) {
-    int one = 1;
+static void run_one(char uplo, int N, int incx, int iters, int warmup) {
     R10 alpha = R10_FROM(0.7);
+    const int absx = incx < 0 ? -incx : incx;
+    const size_t lenx = (size_t)1 + (size_t)(N - 1) * (size_t)absx;
     C10 *A  = (C10 *)perf_aligned_alloc(64, (size_t)N * (size_t)N * sizeof(C10));
     C10 *Ai = (C10 *)perf_aligned_alloc(64, (size_t)N * (size_t)N * sizeof(C10));
-    C10 *X  = (C10 *)perf_aligned_alloc(64, (size_t)N * sizeof(C10));
+    C10 *X  = (C10 *)perf_aligned_alloc(64, lenx * sizeof(C10));
     for (size_t i = 0; i < (size_t)N*N; ++i) { int s = 2; Ai[i] = C10_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
-    for (int i = 0; i < N; ++i)            { int s = 3; X[i] = C10_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
+    for (size_t i = 0; i < lenx; ++i)      { int s = 3; X[i] = C10_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
     memcpy(A, Ai, (size_t)N * (size_t)N * sizeof(C10));
     for (int r = 0; r < warmup; ++r) {
-        yher_(&uplo, &N, &alpha, X, &one, A, &N, 1);
+        yher_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof(C10));
-        yher_migrated_(&uplo, &N, &alpha, X, &one, A, &N, 1);
+        yher_migrated_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof(C10));
     }
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {
-        yher_(&uplo, &N, &alpha, X, &one, A, &N, 1);
+        yher_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof(C10));
     }
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {
-        yher_migrated_(&uplo, &N, &alpha, X, &one, A, &N, 1);
+        yher_migrated_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof(C10));
     }
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = 4.0 * (double)N * (double)N;
-    char key[2] = {uplo, 0};
+    char key[16];
+    if (incx == 1) {
+        key[0] = uplo; key[1] = 0;
+    } else {
+        snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
+    }
     perf_emit("yher", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("yher", key, N, iters, flops, t_ov, t_mg);
     free(A); free(Ai); free(X);
 }
 
 static const int default_sizes[] = {128, 256, 512, 1024};
+static const int default_incxs[] = {1, 2};
 int main(void) {
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {
         char uplo = (u == 0) ? 'U' : 'L';
-        for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {
+            int incx = incxs[xi]; if (incx == 0) continue;
+            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], incx, iters, warmup);
+        }
     }
     return 0;
 }

@@ -31,54 +31,75 @@ BLAS_EXTERN void wgbmv_migrated_(const char *, const int *, const int *, const i
     const MFC *, const MFC *, const int *, const MFC *, const int *,
     const MFC *, MFC *, const int *, size_t);
 
-static void run_one(char trans, int M, int N, int KL, int KU, int iters, int warmup) {
-    int one = 1;
+static void run_one(char trans, int M, int N, int KL, int KU,
+                    int incx, int incy, int iters, int warmup) {
     MFC alpha = MFC_FROM(0.7, 0.0), beta = MFC_FROM(0.3, 0.0);
     int LDA = KL + KU + 1;
     MFC *A  = (MFC *)perf_aligned_alloc(64, (size_t)LDA * (size_t)N * sizeof(MFC));
-    int XL = (trans == 'N') ? N : M;
-    int YL = (trans == 'N') ? M : N;
-    MFC *X  = (MFC *)perf_aligned_alloc(64, (size_t)XL * sizeof(MFC));
-    MFC *Y  = (MFC *)perf_aligned_alloc(64, (size_t)YL * sizeof(MFC));
-    MFC *Yi = (MFC *)perf_aligned_alloc(64, (size_t)YL * sizeof(MFC));
+    const int XL = (trans == 'N') ? N : M;
+    const int YL = (trans == 'N') ? M : N;
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(XL - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(YL - 1) * (size_t)absy;
+    MFC *X  = (MFC *)perf_aligned_alloc(64, lenx * sizeof(MFC));
+    MFC *Y  = (MFC *)perf_aligned_alloc(64, leny * sizeof(MFC));
+    MFC *Yi = (MFC *)perf_aligned_alloc(64, leny * sizeof(MFC));
     for (size_t i = 0; i < (size_t)LDA*N; ++i) { int s = 2; A[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
-    for (int i = 0; i < XL; ++i) { int s = 3; X[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
-    for (int i = 0; i < YL; ++i) { int s = 4; Yi[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
-    memcpy(Y, Yi, (size_t)YL * sizeof(MFC));
+    for (size_t i = 0; i < lenx; ++i) { int s = 3; X[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
+    for (size_t i = 0; i < leny; ++i) { int s = 4; Yi[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
+    memcpy(Y, Yi, leny * sizeof(MFC));
     for (int r = 0; r < warmup; ++r) {
-        wgbmv_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)YL * sizeof(MFC));
-        wgbmv_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)YL * sizeof(MFC));
+        wgbmv_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof(MFC));
+        wgbmv_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof(MFC));
     }
-    memcpy(Y, Yi, (size_t)YL * sizeof(MFC));
+    memcpy(Y, Yi, leny * sizeof(MFC));
     double t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) wgbmv_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) wgbmv_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
-    memcpy(Y, Yi, (size_t)YL * sizeof(MFC));
+    memcpy(Y, Yi, leny * sizeof(MFC));
     t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) wgbmv_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) wgbmv_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = 8.0 * (double)(KL+KU+1) * (double)N;
-    char key[2] = {trans, 0};
+    char key[24];
+    if (incx == 1 && incy == 1) {
+        key[0] = trans; key[1] = 0;
+    } else if (incy == 1) {
+        snprintf(key, sizeof(key), "%c/x%d", trans, incx);
+    } else if (incx == 1) {
+        snprintf(key, sizeof(key), "%c/y%d", trans, incy);
+    } else {
+        snprintf(key, sizeof(key), "%c/x%d/y%d", trans, incx, incy);
+    }
     perf_emit("wgbmv", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("wgbmv", key, N, iters, flops, t_ov, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }
 
 static const int default_sizes[] = {128, 256, 512, 1024};
+static const int default_incxs[] = {1, 2};
 int main(void) {
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = { 'N','T','C' };
     for (size_t t = 0; t < sizeof(transes); ++t)
-        for (int i = 0; i < n; ++i)
-            run_one(transes[t], sizes[i], sizes[i], 16, 16, iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {
+            int incx = incxs[xi]; if (incx == 0) continue;
+            int incy = incx;
+            for (int i = 0; i < n; ++i)
+                run_one(transes[t], sizes[i], sizes[i], 16, 16, incx, incy, iters, warmup);
+        }
     return 0;
 }

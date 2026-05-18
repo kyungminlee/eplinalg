@@ -31,57 +31,81 @@ BLAS_EXTERN void wgemv_migrated_(const char *, const int *, const int *, const M
     const MFC *, const int *, const MFC *, const int *,
     const MFC *, MFC *, const int *, size_t);
 
-static void run_one(char trans, int M, int N, int iters, int warmup) {
-    int one = 1;
+static void run_one(char trans, int M, int N, int incx, int incy,
+                    int iters, int warmup) {
     MFC alpha = MFC_FROM(0.7, 0.0), beta = MFC_FROM(0.3, 0.0);
+    const int XL = (trans == 'N') ? N : M;
+    const int YL = (trans == 'N') ? M : N;
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(XL - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(YL - 1) * (size_t)absy;
     MFC *A  = (MFC *)perf_aligned_alloc(64, (size_t)M * (size_t)N * sizeof(MFC));
-    MFC *X  = (MFC *)perf_aligned_alloc(64, (size_t)N * sizeof(MFC));
-    MFC *Y  = (MFC *)perf_aligned_alloc(64, (size_t)M * sizeof(MFC));
-    MFC *Yi = (MFC *)perf_aligned_alloc(64, (size_t)M * sizeof(MFC));
+    MFC *X  = (MFC *)perf_aligned_alloc(64, lenx * sizeof(MFC));
+    MFC *Y  = (MFC *)perf_aligned_alloc(64, leny * sizeof(MFC));
+    MFC *Yi = (MFC *)perf_aligned_alloc(64, leny * sizeof(MFC));
     for (size_t i = 0; i < (size_t)M*N; ++i) { int s = 2; A[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
-    for (int i = 0; i < N; ++i)           { int s = 3; X[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
-    for (int i = 0; i < M; ++i)           { int s = 4; Yi[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
+    for (size_t i = 0; i < lenx; ++i)       { int s = 3; X[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
+    for (size_t i = 0; i < leny; ++i)       { int s = 4; Yi[i] = MFC_FROM(perf_fill_double(i, s), perf_fill_double(i, s + 131)); }
 
-    memcpy(Y, Yi, (size_t)M * sizeof(MFC));
+    memcpy(Y, Yi, leny * sizeof(MFC));
     for (int r = 0; r < warmup; ++r) {
-        wgemv_(&trans, &M, &N, &alpha, A, &M, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)M * sizeof(MFC));
-        wgemv_migrated_(&trans, &M, &N, &alpha, A, &M, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)M * sizeof(MFC));
+        wgemv_(&trans, &M, &N, &alpha, A, &M, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof(MFC));
+        wgemv_migrated_(&trans, &M, &N, &alpha, A, &M, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof(MFC));
     }
 
-    memcpy(Y, Yi, (size_t)M * sizeof(MFC));
+    memcpy(Y, Yi, leny * sizeof(MFC));
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
-        wgemv_(&trans, &M, &N, &alpha, A, &M, X, &one, &beta, Y, &one, 1);
+        wgemv_(&trans, &M, &N, &alpha, A, &M, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
 
-    memcpy(Y, Yi, (size_t)M * sizeof(MFC));
+    memcpy(Y, Yi, leny * sizeof(MFC));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
-        wgemv_migrated_(&trans, &M, &N, &alpha, A, &M, X, &one, &beta, Y, &one, 1);
+        wgemv_migrated_(&trans, &M, &N, &alpha, A, &M, X, &incx, &beta, Y, &incy, 1);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
 
     double flops = 8.0 * (double)M * (double)N;
-    char key[2] = {trans, 0};
+    char key[24];
+    if (incx == 1 && incy == 1) {
+        key[0] = trans; key[1] = 0;
+    } else if (incy == 1) {
+        snprintf(key, sizeof(key), "%c/x%d", trans, incx);
+    } else if (incx == 1) {
+        snprintf(key, sizeof(key), "%c/y%d", trans, incy);
+    } else {
+        snprintf(key, sizeof(key), "%c/x%d/y%d", trans, incx, incy);
+    }
     perf_emit("wgemv", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("wgemv", key, N, iters, flops, t_ov, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }
 
 static const int default_sizes[] = {128, 256, 512, 1024, 2048};
+static const int default_incxs[] = {1, 2};
 int main(void) {
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = { 'N','T','C' };
-    for (size_t t = 0; t < sizeof(transes); ++t)
-        for (int i = 0; i < n; ++i)
-            run_one(transes[t], sizes[i], sizes[i], iters, warmup);
+    for (size_t t = 0; t < sizeof(transes); ++t) {
+        for (int xi = 0; xi < n_incx; ++xi) {
+            int incx = incxs[xi]; if (incx == 0) continue;
+            int incy = incx;
+            for (int i = 0; i < n; ++i)
+                run_one(transes[t], sizes[i], sizes[i], incx, incy, iters, warmup);
+        }
+    }
     return 0;
 }
