@@ -41,7 +41,7 @@ done
 - **D — dead declarations.** Variables / PARAMETER constants /
   EXTERNAL names declared on one half but never referenced. Each
   contributes ~1-3 lines to the per-pair diff. Catalogued in
-  `doc/DEAD_DECLS.md`. **No action** — would require 22 one-line
+  `doc/UPSTREAM_NITS-LAPACK.md`. **No action** — would require 22 one-line
   patches with zero functional effect.
 - **N — algorithmic tuning constants.** Numeric constants
   deliberately tuned per precision. The MRRR family (`larre`,
@@ -126,6 +126,6 @@ comparer normalization.
   mumps classification (162 → 14 → 10)
 - `doc/UPSTREAM_BUGS.md` — bug catalogue with patches and Netlib
   upstream-report guidance
-- `doc/DEAD_DECLS.md` — D-class dead declarations across all
+- `doc/UPSTREAM_NITS-LAPACK.md` — D-class dead declarations across all
   libraries
 - `doc/CONVERGENCE.md` — overall convergence framework

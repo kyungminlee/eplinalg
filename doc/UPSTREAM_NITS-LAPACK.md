@@ -1,18 +1,18 @@
-# Dead declarations in vendored LAPACK 3.12.1
+# LAPACK 3.12.1 upstream nits (dead declarations)
 
-*Catalogued 2026-05-11 during the residual-divergence audit (see
-`doc/lapack-residual-divergence-categorization.md`).*
+*Cosmetic-only sibling of [`UPSTREAM_BUGS-LAPACK.md`](UPSTREAM_BUGS-LAPACK.md):
+same 2026-05-11 audit (see
+`doc/lapack-residual-divergence-categorization.md`), same vendored
+tree, but **no numerical, correctness, or interface impact** —
+none of these are patched in-tree.*
 
 Every entry below is a declaration in an upstream LAPACK source file
 that is never referenced in the routine's body. The migration's
 diverge comparator surfaces them because the co-family sibling
 correctly omits the dead declaration — making the two halves diverge
-on declarations alone.
-
-Each entry is **cosmetic only**: no numerical, correctness, or
-interface impact. Listed for upstream cleanup and as documentation
-of the convergence-report noise floor. Not patched in-tree (would
-be 22 separate one-line patches with zero functional effect).
+on declarations alone. Listed as documentation of the
+convergence-report noise floor; patching would be ~23 one-line
+patches with zero functional effect.
 
 ## D-class entries
 
