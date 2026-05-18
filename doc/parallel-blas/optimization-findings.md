@@ -1980,4 +1980,145 @@ scheduling, which gcc with `-fcx-fortran-rules` doesn't quite match.
     the conj path single-accumulator. Verify per-branch, don't
     assume the unroll transfers across `T`/`C` boundaries.
 
+## Addendum 20: gfortran J-unrolls strided fallbacks too (2026-05-18)
+
+### Symptom
+
+A fresh `scripts/run_perf_sweep.sh` against current builds (the
+committed `reports/perf_sweep.{tsv,md}` was generated against a
+pre-Addendum-18 build and showed stale numbers) surfaced a systematic
+N-path regression in the matrix-vector routines:
+
+```
+egemv N/x*     0.64x  across N=128..2048    (incx != 1, incy == 1)
+egemv N/y*     0.62x  across N=128..2048    (incx == 1, incy != 1)
+egemv N/x*/y*  0.51-0.65x                   (both strided)
+ygemv N/x*     0.67x                        (same pattern, complex)
+ygemv N/y*     0.83x
+etrmv UNN      0.58x at N=1024              (triangle case)
+```
+
+40 perf cells in `egemv` alone, all sub-0.7×. Not bench variance —
+the routines were systematically slow at every size.
+
+### Root cause
+
+Reading `egemv.c` against `egemv.f` (the Netlib reference, migrated
+at `KIND=10`): the Fortran reference branches the N-path into THREE
+paths:
+
+```fortran
+IF (INCY.EQ.1) THEN
+    DO 60 J = 1,N
+        TEMP = ALPHA*X(JX)
+        DO 50 I = 1,M
+            Y(I) = Y(I) + TEMP*A(I,J)        ! unit-stride y inner
+50      CONTINUE
+        JX = JX + INCX
+60  CONTINUE
+ELSE
+    DO 80 J = 1,N
+        TEMP = ALPHA*X(JX)
+        IY = KY
+        DO 70 I = 1,M
+            Y(IY) = Y(IY) + TEMP*A(I,J)      ! strided y inner
+            IY = IY + INCY
+70      CONTINUE
+        JX = JX + INCX
+80  CONTINUE
+END IF
+```
+
+Three branches: incx==incy==1, INCY==1 only, INCY!=1. My C code
+collapsed branches 2 and 3 into a single "general stride" fallback
+that used `iy += incy` unconditionally — preventing gcc from
+recognizing the unit-stride y access pattern and J-unrolling.
+
+But that's not the whole story. Even the strided-y branch (3) is fast
+in Fortran. Inspecting the gfortran asm, the strided-y inner loop is
+also J-unrolled by 2:
+
+```
+0x380: fldt 0x10(%rax)              ; load A(i,j+1)
+0x387: add $0x10, %rax              ; advance A pointer by one long double
+0x38b: fmul                         ; * temp1
+0x38d: fldt -0x10(%rdx)             ; load y[iy]
+0x390: faddp                        ; y[iy] + temp0*A(i,j) (accumulated earlier)
+0x392: fldt 0x10(%rcx,%r10,1)       ; load A(i,j+1) for second column
+0x397: fmul                         ; * temp2
+0x399: faddp                        ; + temp1*A(i,j+1)
+0x39b: fstpt -0x10(%rdx)            ; write y[iy] back
+0x39e: add %r11, %rdx               ; advance y pointer by incy*sizeof(long double)
+0x3a1: cmp %rdi, %rax
+0x3a4: jne 0x380
+```
+
+11 instructions, 4 fmuls, processes ONE strided y[iy] update per
+iter but reads from TWO columns of A. Each y[iy] load+store services
+both column contributions, halving y memory traffic.
+
+### Fix
+
+Two changes per affected routine:
+
+1. **Branch B**: when `incy == 1 && incx != 1`, route through the
+   unit-y fast path with a strided x[jx] read. Same J-unroll-by-2
+   shared-index walk as the (incx==incy==1) case.
+
+2. **Strided-y J-unroll**: when `incy != 1`, manually replicate
+   gfortran's auto-J-unroll-by-2 — process two columns of A per
+   y[iy] write, halving y traffic on the strided path.
+
+Applied to: egemv (commits 9a21723d, d6534703), ygemv (cfb01400),
+etrmv UNN (9bcf52bb, same pattern but on the x[i] AXPY-style write).
+
+### Result
+
+```
+egemv N/x*      0.64x  ->  0.95-1.05x   (all sizes >= 256)
+egemv N/y*      0.62x  ->  0.95-1.05x
+egemv N/x*/y*   0.55x  ->  0.95-1.05x
+ygemv N/x*      0.67x  ->  0.85-0.95x
+ygemv N/y*      0.83x  ->  1.00x
+etrmv UNN @1024 0.58x  ->  1.00-1.60x   (often beats migrated)
+```
+
+About 80 perf cells closed across four kind10 routines.
+
+### Why this kept hiding
+
+The committed `reports/perf_sweep.tsv` was generated against a
+pre-Addendum-18 build and showed even worse numbers (LTN@512 at
+0.291x). After Addendum 18 landed, no one re-ran the sweep — so the
+report stayed pinned to the pre-fix state. Today's regen against
+current builds exposed both the closed LTN cliff and these strided
+N-path gaps.
+
+Lesson: `perf_sweep.{tsv,md}` is an artifact frozen at commit time.
+Always regenerate before drawing conclusions from it. The `bench`
+suite (Fortran-driven, ctest) hides these strided cases because it
+only exercises `incx=incy=1`; you need `perf_<routine>` (C harness)
+to see them.
+
+### Rules
+
+23. **Mirror the Fortran reference's branch structure for strided
+    fallbacks, not just the algorithm.** If the reference has three
+    branches (unit-unit, unit-y, general), implement all three. The
+    middle branch is where strided-x + unit-y cells live, and they
+    only get the fast unit-y inner if you split them out.
+
+24. **J-unroll-by-2 also applies to strided-y inner loops.** Even
+    when y is written with a variable stride, fusing two column
+    updates per write halves y memory traffic. gfortran does this
+    auto; gcc with `-fcx-fortran-rules -ffp-contract=fast` does not
+    on the matrix-vector pattern. Hand-roll the unroll for any
+    routine whose inner is `y[iy] = y[iy] + temp*A(i,j); iy += incy`.
+
+25. **`perf_sweep.md` reflects a frozen build, not current state.**
+    Treat the committed sweep as historical. Before claiming a cell
+    is sub-parity, regenerate against the current build with
+    `scripts/run_perf_sweep.sh`. The bench-side ctest output is a
+    poor substitute: it only tests `incx=incy=1`.
+
 
