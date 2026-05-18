@@ -15,7 +15,7 @@ Examples:
     python scripts/blas_autotune.py /tmp/stage-q/build --target kind16 --size 512
     python scripts/blas_autotune.py /tmp/stage-m/build --target multifloats --size 256
 
-Output: <build-dir>/bench_reports/autotune_<target>_<routine>.json
+Output: <build-dir>/reports/autotune_<target>_<routine>.json
 """
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ def main() -> int:
         "grid": sorted(results, key=lambda r: -r["gflops"]),
     }
 
-    out_dir = args.build_dir / "bench_reports"
+    out_dir = args.build_dir / "reports"
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / f"autotune_{args.target}_{real_prefix}{args.routine}.json"
     out_path.write_text(json.dumps(report, indent=2) + "\n")

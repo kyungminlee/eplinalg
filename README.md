@@ -92,9 +92,9 @@ directives. C libraries in the stack (BLACS, PBLAS) are handled by
 template-based cloning with mechanical type substitution rather than
 full parsing.
 
-See [`doc/DEVELOPER.md`](doc/DEVELOPER.md) for the full developer
-guide and [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) for the
-pipeline shape.
+See [`doc/README.md`](doc/README.md) for the full documentation
+index — including the developer guide, architecture overview, and
+upstream-bug catalogues.
 
 ## CLI
 

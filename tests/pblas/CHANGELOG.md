@@ -74,9 +74,9 @@ The remaining 7 auxiliary entry points are also covered:
 - `pdtradd` / `pztradd`: `tests/pblas/level3/test_p[dz]tradd.f90`
   (UPLO-restricted element-wise add at quad).
 
-## 2026-04-30 — doc/PROCEDURES.md coverage footnote
+## 2026-04-30 — doc/output/procedures.md coverage footnote
 
-`doc/PROCEDURES.md`'s PBLAS section now carries a coverage footnote
+`doc/output/procedures.md`'s PBLAS section now carries a coverage footnote
 listing the 55 of 61 rows exercised by `tests/pblas/`. Counts updated
 from the original 48 (the auxiliary `geadd`, `tradd`, `tran`, `tranc`,
 `tranu` cases gained tests since the TODO was written).

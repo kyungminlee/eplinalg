@@ -4,7 +4,7 @@
 # with a generous 900s per-routine cap; appends to the same TSV/JSON.
 set -u
 
-OUTDIR="${OUTDIR:-bench_reports}"
+OUTDIR="${OUTDIR:-reports}"
 JSON="$OUTDIR/perf_sweep.json"
 TSV="$OUTDIR/perf_sweep.tsv"
 LOG="$OUTDIR/perf_sweep.log"

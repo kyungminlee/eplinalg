@@ -1,8 +1,8 @@
 # LAPACK 3.12.1 upstream nits (dead declarations)
 
-*Cosmetic-only sibling of [`UPSTREAM_BUGS-LAPACK.md`](UPSTREAM_BUGS-LAPACK.md):
+*Cosmetic-only sibling of [`lapack.md`](lapack.md):
 same 2026-05-11 audit (see
-`doc/archive/lapack-residual-divergence-categorization.md`), same vendored
+`../archive/lapack-residual-divergence-categorization.md`), same vendored
 tree, but **no numerical, correctness, or interface impact** —
 none of these are patched in-tree.*
 
@@ -78,7 +78,7 @@ helper call. So:
 - cgetf2 was cleaned up correctly.
 
 Categorized as a D-class dead declaration alongside the others —
-no UPSTREAM_BUGS entry needed.
+no upstream-bugs entry needed.
 
 ## Aggregate
 
@@ -109,7 +109,7 @@ referenced, which is much more work than the alleviation justifies.
 
 ## See also
 
-- `doc/UPSTREAM_BUGS.md` — real bugs (numerical, correctness, or
+- [`README.md`](README.md) — real bugs (numerical, correctness, or
   interface mismatch) found in the same audit
-- `doc/archive/lapack-residual-divergence-categorization.md` — full per-pair
+- `../archive/lapack-residual-divergence-categorization.md` — full per-pair
   classification of all 110 remaining divergent pairs

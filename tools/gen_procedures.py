@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate doc/PROCEDURES.md by walking the staged source trees.
+"""Generate doc/output/procedures.md by walking the staged source trees.
 
 Algorithm: anchor on the kind16 stage (whose prefixes — q/x/qx/iq/ix/xq —
 don't overlap any other valid prefix). For each (family, stem) found in
@@ -139,7 +139,7 @@ def merge(a: dict, b: dict) -> dict:
 
 
 def main():
-    out_path = ROOT / "doc/PROCEDURES.md"
+    out_path = ROOT / "doc/output/procedures.md"
     # Some libraries have multiple leading-letter conventions we want to
     # cover: ScaLAPACK has both `p<prec>...` distributed routines and
     # `b<prec>...` back-transformation helpers (bdlaapp, bdlaexc, …).

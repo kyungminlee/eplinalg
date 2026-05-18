@@ -15,7 +15,7 @@ Not observed in our test matrix because our companion MPV/NQV
 redefinition constrains the consuming GEMV to the meaningful L
 local rows, but the OOB read in PBxTRNV is unsound on its own
 and aborts on NPROW=3 upstream. Documented in
-`doc/UPSTREAM_BUGS.md`.
+`doc/upstream-bugs/README.md`.
 
 ## 2026-05-05 — pzunmrz SIDE='L' resolved (complex path)
 
@@ -48,7 +48,7 @@ operand really is conjugated).
 TRANS in {N, C} (4/4 PASS on kind16, residuals ~1e-33 on 1, 2,
 and 4 ranks). `test_pztzrzf` continues to pass (uses `PZLATRZ` →
 `PZLARZ` SIDE='R', branch unchanged). Documented in
-`doc/UPSTREAM_BUGS.md`. Not covered by any existing upstream
+`doc/upstream-bugs/README.md`. Not covered by any existing upstream
 `fix-*` branch in `../scalapack-bugfix/scalapack`.
 
 ## 2026-05-05 — pdormrz SIDE='L' resolved (real path); pzunmrz SIDE='L' narrowed
@@ -78,7 +78,7 @@ conjugate variant:
 
 Wired via `recipes/scalapack/source_overrides/p[dz]larz.f`,
 `pzlarzc.f`, and `prefer_source: PDLARZ, PZLARZ, PZLARZC` pins.
-Documented in `doc/UPSTREAM_BUGS.md`.
+Documented in `doc/upstream-bugs/README.md`.
 
 **Test impact.** `test_pdormrz` now exercises SIDE in {L, R} ×
 TRANS in {N, T} (4/4 PASS on kind16 / 2×2 grid; previously SIDE='R'
@@ -146,7 +146,7 @@ place of the caller's IWORK; `iwork_t(1)` (= LIWMIN) is copied back to
 
 New driver `tests/scalapack/eigenvalue/test_pdtrsen.f90` exercises the
 fix over sizes [32, 64, 96]; all PASS without the previous `free()`
-abort. Documented in `doc/UPSTREAM_BUGS.md`.
+abort. Documented in `doc/upstream-bugs/README.md`.
 
 ## 2026-05-01 — pdposvx / pzposvx LWMIN bugs
 
@@ -164,7 +164,7 @@ Two upstream LWMIN bugs in `pdposvx.f` / `pzposvx.f`. Both fixed via
 
 Tests: `tests/scalapack/linear_solve/test_pdposvx.f90` /
 `test_pzposvx.f90` both 3/3 PASS at ~33-digit accuracy on kind16 /
-2×2 grid. Documented in `doc/UPSTREAM_BUGS.md`.
+2×2 grid. Documented in `doc/upstream-bugs/README.md`.
 
 ## 2026-05-01 — pdgecon / pdpocon condition-number estimators
 
@@ -287,10 +287,10 @@ The 13 ScaLAPACK tests that originally failed under impi were resolved
 by 4 distinct fixes (commits `cfcf023`, `67c57d2`, `e469670`):
 
 * **norms (pdlanhs/pzlanhs)** — upstream IAROW double-advance bug;
-  patched in source_overrides. See `doc/UPSTREAM_BUGS.md`
+  patched in source_overrides. See `doc/upstream-bugs/README.md`
   "p?lanhs.f IAROW double-advance".
 * **equiv (pzgeequ)** — upstream wrong-axis reduction bug; patched in
-  source_overrides. See `doc/UPSTREAM_BUGS.md`
+  source_overrides. See `doc/upstream-bugs/README.md`
   "p?geequ.f column-scale reduction wrong axis". (pdgeequ was passing
   only by coincidence; the same fix applies.)
 * **QR-fac (pdggrqf/pzggrqf)** — wrapper TAUB used the row axis where

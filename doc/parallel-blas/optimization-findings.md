@@ -4,7 +4,7 @@ Date: 2026-05-15
 Branch: `parallel-blas`
 Hardware: Intel i3-1315U (Raptor Lake-U, Alder Lake-derived; 2P+4E cores, P-core L1d=48 KB, L2=1.25 MB, L3=10 MB shared)
 
-This document records what was tried, what worked, and what didn't, while tuning the GEMM overlays. It complements `parallel-blas-design.md` (the design doc). Read this when you're about to "obviously" optimize a kernel — many of the obvious moves have already been tried and rejected on bench.
+This document records what was tried, what worked, and what didn't, while tuning the GEMM overlays. It complements [`design.md`](design.md) (the design doc). Read this when you're about to "obviously" optimize a kernel — many of the obvious moves have already been tried and rejected on bench.
 
 The unifying theme: **structural choices that paid off for one (precision, complex-ness) pair often regressed another**. Don't assume.
 
@@ -1279,10 +1279,10 @@ so a single crash (or kind16 L3 hitting the 5-min cap) doesn't kill
 the rest. Aggregator at `scripts/aggregate_perf_sweep.py` emits the
 per-routine summary; `scripts/compare_perf_vs_fortran.py` cross-
 references against the prior Fortran bench numbers under
-`bench_reports/{full-omp1,l2,l3-other,gemm-only}`.
+`reports/{full-omp1,l2,l3-other,gemm-only}`.
 
-Aggregate results in `bench_reports/perf_sweep.{tsv,json,md}`;
-divergence vs Fortran bench in `bench_reports/perf_vs_fortran.md`.
+Aggregate results in `reports/perf_sweep.{tsv,json,md}`;
+divergence vs Fortran bench in `reports/perf_vs_fortran.md`.
 
 ### What the comparison shows: Addendum 14 generalizes
 

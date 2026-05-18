@@ -222,7 +222,7 @@ extra_renames:
   PILAENVX: PILAENVX_EP
 
 # Patches applied to staged sources before migration (one per upstream
-# bug). See doc/UPSTREAM_BUGS-ScaLAPACK.md for the bug catalogue
+# bug). See doc/upstream-bugs/scalapack.md for the bug catalogue
 # (prose section titles; the S##/X##/P##/I##/W## tags below are an
 # older internal index that no longer cross-references the doc) and
 # doc/archive/refactor-20260509.md for the patch convention.
@@ -321,7 +321,7 @@ patches:
 # Convergence whitelist (Phase D, doc/archive/refactor-20260509.md).
 # Most are upstream MINRGP/larre2/larrf2 tuning splits and larzc/larzb/
 # stebz/lanhs algorithmic asymmetries. See doc/archive/convergence-20260507.md
-# §scalapack and doc/UPSTREAM_BUGS-ScaLAPACK.md.
+# §scalapack and doc/upstream-bugs/scalapack.md.
 expected_divergences:
   # Bugs that remain asymmetric (genuine upstream design split):
   - BDLAEXC          # bdlaexc/bslaexc: 1.0E1 vs TEN parameter constant

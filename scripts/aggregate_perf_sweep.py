@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate bench_reports/perf_sweep.tsv into a Markdown summary.
+"""Aggregate reports/perf_sweep.tsv into a Markdown summary.
 
 Per-routine: median ratio over all (key, size) cells, plus min/max.
 Highlights cells with ratio < 0.95× (overlay slower) or > 1.10× (overlay
@@ -7,8 +7,8 @@ faster) — useful for spotting where the C harness's honest measurement
 differs from prior Fortran-bench reports.
 
 Usage:
-    scripts/aggregate_perf_sweep.py [--tsv bench_reports/perf_sweep.tsv]
-        [--out bench_reports/perf_sweep.md]
+    scripts/aggregate_perf_sweep.py [--tsv reports/perf_sweep.tsv]
+        [--out reports/perf_sweep.md]
 """
 from __future__ import annotations
 import argparse
@@ -20,8 +20,8 @@ from pathlib import Path
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--tsv', default='bench_reports/perf_sweep.tsv')
-    ap.add_argument('--out', default='bench_reports/perf_sweep.md')
+    ap.add_argument('--tsv', default='reports/perf_sweep.tsv')
+    ap.add_argument('--out', default='reports/perf_sweep.md')
     args = ap.parse_args()
 
     tsv = Path(args.tsv)

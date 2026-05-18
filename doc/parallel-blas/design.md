@@ -176,7 +176,7 @@ thread count is within 10 ulp of every other (not bit-exact).
 - Warm-up + N timed iterations; report median GFLOP/s, min, max.
 - Block sizes `MC, KC, NC` taken from env (`EBLAS_MC`, etc.) so a
   Python launcher can grid-search.
-- JSON output under `bench_reports/`, schema mirroring
+- JSON output under `reports/`, schema mirroring
   `precision_reports/`.
 - A `scripts/bench_report.py` aggregator that plots GFLOP/s vs N and
   speedup vs threads, and compares to the serial migrated baseline

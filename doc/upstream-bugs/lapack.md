@@ -1,12 +1,12 @@
 # Upstream bugs: LAPACK 3.12.1
 
-*Last catalogued: 2026-05-11. See `UPSTREAM_BUGS.md` for the cross-library
+*Last catalogued: 2026-05-11. See [`README.md`](README.md) for the cross-library
 index, audit methodology, bug summary table, and how fixes are carried.*
 
 This file collects LAPACK 3.12.1 bugs in the vendored
 `external/lapack-3.12.1/` source. ScaLAPACK and MUMPS bugs are
-catalogued in `UPSTREAM_BUGS-ScaLAPACK.md` and
-`UPSTREAM_BUGS-MUMPS.md` respectively. Bugs that span both LAPACK and
+catalogued in [`scalapack.md`](scalapack.md) and
+[`mumps.md`](mumps.md) respectively. Bugs that span both LAPACK and
 ScaLAPACK (e.g. the XERBLA-string sweep) live in the index file.
 
 ## 2026-05-11 LAPACK residual-divergence audit
@@ -133,7 +133,7 @@ See `doc/archive/lapack-residual-divergence-categorization.md` for the full
 ## 2026-05-12 B? deep-dive (LAPACK portion)
 
 The B? items remaining in the `2026-05-11` audit were re-examined; the
-LAPACK-side findings are below. See `UPSTREAM_BUGS-ScaLAPACK.md` for
+LAPACK-side findings are below. See [`scalapack.md`](scalapack.md) for
 the ScaLAPACK portion (`pslaqr3` / `pdlaqr3` LWK8 divergence).
 
 ### Promoted to B: `cgedmdq.f90` — three workspace-query bugs

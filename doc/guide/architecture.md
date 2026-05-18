@@ -122,7 +122,7 @@ target-mode-specific knobs.
 | `pblas.yaml` | blas, blacs | Parallel BLAS C library. Includes PBLAS PTOOLS sources via `extra_c_dirs`. |
 | `pbblas.yaml` | blas, blacs | Parallel-banded BLAS Fortran helpers. |
 | `ptzblas.yaml` | blas | Parallel transpose-on-demand BLAS Fortran helpers. Pulls `ZZDOTC`/`ZZDOTU` from `_scalapack_tools_src/` via `extra_symbol_dirs`. |
-| `scalapack.yaml` | lapack, blacs, pblas | ScaLAPACK Fortran. Patches for `pdlanhs`/`pzlanhs` (NPROW=1 norm bug, see `doc/UPSTREAM_BUGS-ScaLAPACK.md`). Four `extra_renames` (`PJLAENV`/`PILAENVX` and `PDLAIECTB`/`PDLAIECTL`). |
+| `scalapack.yaml` | lapack, blacs, pblas | ScaLAPACK Fortran. Patches for `pdlanhs`/`pzlanhs` (NPROW=1 norm bug, see `doc/upstream-bugs/scalapack.md`). Four `extra_renames` (`PJLAENV`/`PILAENVX` and `PDLAIECTB`/`PDLAIECTL`). |
 | `scalapack_c.yaml` | lapack, blacs, pblas, scalapack | ScaLAPACK C-side wrappers. Mirrors `scalapack`'s `PDLAIECTB`/`PDLAIECTL` renames. |
 | `mumps.yaml` | blas, lapack, scalapack | MUMPS 5.8.2 sparse direct solver. 32-entry `skip_files` (C headers, GPU code), 8-entry `copy_files` (integer-only helpers), per-line `keep_kind_lines` manifest preserving `DOUBLE PRECISION` declarations that mean "wall-clock seconds" rather than "working precision". |
 
@@ -247,7 +247,7 @@ test driver.
 ## Out of band: upstream bug tracking
 
 Upstream Netlib bugs that require in-tree workarounds are tracked
-in `doc/UPSTREAM_BUGS-{LAPACK,ScaLAPACK,MUMPS}.md`. Two mechanisms
+in `doc/upstream-bugs/{lapack,scalapack,mumps}.md`. Two mechanisms
 route around them:
 
 - `patches` (recipe field): a unified-diff `<basename>.patch` file
@@ -291,14 +291,13 @@ fortran-migrator/
 │                        # impi-headers
 ├── cmake/               # Shared CMake infrastructure
 ├── doc/                 # User and architectural documentation
-│   ├── ARCHITECTURE.md  # This file
-│   ├── USAGE.md         # CLI reference and worked examples
-│   ├── RECIPES.md       # Recipe YAML schema
-│   ├── PROCEDURES.md    # Generated routine cross-reference
-│   ├── INTRINSICS.md    # Generic-intrinsic table (manual reference)
-│   ├── UPSTREAM_BUGS*.md# Tracked upstream bugs (LAPACK / ScaLAPACK / MUMPS)
-│   ├── DEVELOPER.md     # Developer onboarding
-│   ├── NOTE.md          # Misc design notes
+│   ├── README.md            # Documentation index
+│   ├── guide/               # architecture.md (this), usage.md, recipes.md,
+│   │                        # developer.md, intrinsics.md
+│   ├── output/              # procedures.md, convergence.md, kind16-divergences.md
+│   ├── upstream-bugs/       # Tracked upstream bugs (lapack / scalapack / mumps)
+│   ├── parallel-blas/       # Branch-scoped overlay design & findings
+│   └── archive/             # Historical surveys and timestamped reports
 ├── scripts/             # Manual helpers (compile_*.sh, sweep tools)
 ├── tools/               # Build artifacts (gen_procedures.py)
 ├── pyproject.toml       # uv-managed; runtime: pyyaml, tqdm; dev: fypp, pytest

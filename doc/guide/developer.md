@@ -1,12 +1,6 @@
 # Developer Guide
 
-## Additional Documentation
-
-*   [Usage Guide](USAGE.md) — How to run the `migrator` CLI.
-*   [Migration Recipes](RECIPES.md) — How to write library recipes.
-*   [Architecture](ARCHITECTURE.md) — Technical overview and component details.
-*   [Intrinsics Reference](INTRINSICS.md) — Fortran generic intrinsics for KIND=16.
-*   [KIND=16 Divergence Notes](NOTE.md) — per-routine analysis for the kind16 target.
+See [`../README.md`](../README.md) for the full documentation index.
 
 ## Project Goal
 
@@ -152,7 +146,7 @@ extended-precision equivalents:
 | `DNINT(x)`       | `ANINT(x)` | Generic |
 | `IDNINT(x)`      | `NINT(x)` | Generic |
 
-See [INTRINSICS.md](INTRINSICS.md) for the complete catalog.
+See [intrinsics.md](intrinsics.md) for the complete catalog.
 
 ### 5. Machine-Parameter Routines
 
@@ -309,7 +303,7 @@ Manually create expected output for a small set of files (`dgemm.f` → `qgemm.f
 
 Every BLAS/LAPACK routine exists in both single- and double-precision variants.
 When both are migrated to the same target, they should produce identical output.
-This is implemented as the `converge` CLI command (see [USAGE.md](USAGE.md)).
+This is implemented as the `converge` CLI command (see [usage.md](usage.md)).
 
 **Definition — divergence.** Take the two precision variants of the same
 routine (the `s`/`c` single-precision source and the `d`/`z` double-precision

@@ -2,16 +2,16 @@
 """Compare C-harness perf sweep against prior Fortran bench numbers.
 
 Reads:
-  bench_reports/perf_sweep.tsv     — new C harness
-  bench_reports/full-omp1/*.txt    — old Fortran bench
-  bench_reports/l2/*.txt           — old L2 Fortran bench
-  bench_reports/l3-other/*.txt     — old L3 misc Fortran bench
-  bench_reports/gemm-only/*.txt    — old gemm-only Fortran bench
+  reports/perf_sweep.tsv     — new C harness
+  reports/full-omp1/*.txt    — old Fortran bench
+  reports/l2/*.txt           — old L2 Fortran bench
+  reports/l3-other/*.txt     — old L3 misc Fortran bench
+  reports/gemm-only/*.txt    — old gemm-only Fortran bench
 
 Reports cells where the two diverge by more than 5%, with focus on
 sub-1.0× cells that flip to parity (the Addendum 14 pattern).
 
-Usage: scripts/compare_perf_vs_fortran.py [--out bench_reports/perf_vs_fortran.md]
+Usage: scripts/compare_perf_vs_fortran.py [--out reports/perf_vs_fortran.md]
 """
 from __future__ import annotations
 import argparse
@@ -23,7 +23,7 @@ from collections import defaultdict
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-BENCH_DIR = REPO / 'bench_reports'
+BENCH_DIR = REPO / 'reports'
 
 TARGET_PREFIX = {'k10': 'kind10', 'k16': 'kind16', 'mf': 'multifloats'}
 
@@ -107,8 +107,8 @@ def load_c_harness_data(tsv: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--tsv', default='bench_reports/perf_sweep.tsv')
-    ap.add_argument('--out', default='bench_reports/perf_vs_fortran.md')
+    ap.add_argument('--tsv', default='reports/perf_sweep.tsv')
+    ap.add_argument('--out', default='reports/perf_vs_fortran.md')
     args = ap.parse_args()
 
     fortran = load_fortran_data()
