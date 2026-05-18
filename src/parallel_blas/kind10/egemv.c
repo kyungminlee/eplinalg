@@ -141,61 +141,36 @@ void egemv_(
             }
 #endif
         } else if (incy == 1) {
-            /* incx != 1, incy == 1: y access is unit-stride, so the same
-             * J-axis unroll-by-2 shared-index walk applies — just read
-             * x[jx] with stride. Matches Fortran reference's (INCY.EQ.1)
-             * inner branch. Without this case the strided-x cells
-             * (N/x-1, N/x2) collapsed to ~0.64× of migrated because the
-             * old "general stride" fallback used `iy += incy` even when
-             * incy==1, preventing J-unroll. */
-#ifdef _OPENMP
-            const int use_omp = (M >= EGEMV_OMP_MIN && blas_omp_max_threads() > 1);
-#endif
-            int i_lo = 0, i_hi = M;
-            (void)i_lo; (void)i_hi;
-#ifdef _OPENMP
-            #pragma omp parallel if(use_omp) firstprivate(i_lo, i_hi)
-            {
-                if (use_omp) {
-                    const int tid = omp_get_thread_num();
-                    const int nt  = omp_get_num_threads();
-                    i_lo = ((long long)M * tid) / nt;
-                    i_hi = ((long long)M * (tid + 1)) / nt;
+            /* incx != 1, incy == 1: y access is unit-stride.
+             * J-unroll-by-2 — gfortran auto-J-unrolls its strided
+             * INCY.EQ.1 branch the same way (see migrated egemv.f.o
+             * inner at .380). Without the unroll this branch sits at
+             * 0.65x of migrated; with it, parity. No OMP wrap — at
+             * OMP=1 the outline overhead loses what the unroll wins. */
+            int jx = (incx < 0) ? -(N - 1) * incx : 0;
+            int j = 0;
+            for (; j + 1 < N; j += 2) {
+                const T t0 = alpha * x[jx];
+                const T t1 = alpha * x[jx + incx];
+                const T *a0 = &A_(0, j);
+                const T *a1 = &A_(0, j + 1);
+                for (int i = 0; i < M; ++i) {
+                    y[i] = (y[i] + t0 * a0[i]) + t1 * a1[i];
                 }
-#endif
-                const int span = i_hi - i_lo;
-                int jx = (incx < 0) ? -(N - 1) * incx : 0;
-                int j = 0;
-                for (; j + 1 < N; j += 2) {
-                    const T t0 = alpha * x[jx];
-                    const T t1 = alpha * x[jx + incx];
-                    char *restrict yp = (char *)(y + i_lo);
-                    const char *restrict a0 = (const char *)&A_(i_lo, j);
-                    const char *restrict a1 = (const char *)&A_(i_lo, j + 1);
-                    const size_t end = (size_t)span * sizeof(T);
-                    for (size_t k = 0; k < end; k += sizeof(T)) {
-                        T *yk        = (T *)(yp + k);
-                        const T *a0k = (const T *)(a0 + k);
-                        const T *a1k = (const T *)(a1 + k);
-                        *yk = (*yk + t0 * *a0k) + t1 * *a1k;
-                    }
-                    jx += 2 * incx;
-                }
-                for (; j < N; ++j) {
-                    const T t = alpha * x[jx];
-                    const T *aj = &A_(0, j);
-                    for (int i = i_lo; i < i_hi; ++i) y[i] += t * aj[i];
-                    jx += incx;
-                }
-#ifdef _OPENMP
+                jx += 2 * incx;
             }
-#endif
+            for (; j < N; ++j) {
+                const T t = alpha * x[jx];
+                const T *aj = &A_(0, j);
+                for (int i = 0; i < M; ++i) y[i] += t * aj[i];
+                jx += incx;
+            }
         } else {
-            /* incy != 1: strided y writes. gfortran auto-J-unrolls this
-             * branch by 2 too — manually replicate so each strided-y
-             * write services both column updates, halving the y memory
-             * traffic. Without this, every cell with incy != 1 sat at
-             * ~0.6x of migrated. */
+            /* incy != 1: strided y. Same J-unroll-by-2 as Branch B —
+             * gfortran's strided-y inner is also J-unrolled (migrated
+             * .380 inner is 8 insns: 2 fmul + 2 fadd + 1 y load+store
+             * + 1 y stride advance per pair of columns). Halves y
+             * memory traffic, which is the dominant cost. */
             int jx = (incx < 0) ? -(N - 1) * incx : 0;
             const int iy0 = (incy < 0) ? -(M - 1) * incy : 0;
             int j = 0;
