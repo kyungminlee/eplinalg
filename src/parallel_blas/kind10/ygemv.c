@@ -116,13 +116,50 @@ void ygemv_(
                 YGEMV_N_BODY(0, M);
             }
 #undef YGEMV_N_BODY
-        } else {
+        } else if (incy == 1) {
+            /* incx != 1, incy == 1: y is unit-stride, so the same
+             * J-unroll-by-2 fast path applies, just read x[jx] with
+             * stride. Matches Fortran reference INCY==1 branch.
+             * Without this, N strided-x cells sat at 0.66-0.69x. */
             int jx = (incx < 0) ? -(N - 1) * incx : 0;
-            for (int j = 0; j < N; ++j) {
+            int j = 0;
+            for (; j + 1 < N; j += 2) {
+                const T t0 = alpha * x[jx];
+                const T t1 = alpha * x[jx + incx];
+                const T *a0 = &A_(0, j);
+                const T *a1 = &A_(0, j + 1);
+                for (int i = 0; i < M; ++i) y[i] += t0 * a0[i] + t1 * a1[i];
+                jx += 2 * incx;
+            }
+            for (; j < N; ++j) {
+                const T t = alpha * x[jx];
+                const T *aj = &A_(0, j);
+                for (int i = 0; i < M; ++i) y[i] += t * aj[i];
+                jx += incx;
+            }
+        } else {
+            /* incy != 1: strided y writes — replicate gfortran auto
+             * J-unroll-by-2 to halve y traffic on the strided path. */
+            int jx = (incx < 0) ? -(N - 1) * incx : 0;
+            const int iy0 = (incy < 0) ? -(M - 1) * incy : 0;
+            int j = 0;
+            for (; j + 1 < N; j += 2) {
+                const T t0 = alpha * x[jx];
+                const T t1 = alpha * x[jx + incx];
+                const T *a0 = &A_(0, j);
+                const T *a1 = &A_(0, j + 1);
+                int iy = iy0;
+                for (int i = 0; i < M; ++i) {
+                    y[iy] = (y[iy] + t0 * a0[i]) + t1 * a1[i];
+                    iy += incy;
+                }
+                jx += 2 * incx;
+            }
+            for (; j < N; ++j) {
                 const T xj = x[jx];
                 if (xj != ZERO) {
                     const T t = alpha * xj;
-                    int iy = (incy < 0) ? -(M - 1) * incy : 0;
+                    int iy = iy0;
                     for (int i = 0; i < M; ++i) {
                         y[iy] += t * A_(i, j);
                         iy += incy;
