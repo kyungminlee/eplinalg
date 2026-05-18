@@ -42,12 +42,14 @@ void etrmv_(
     if (incx == 1) {
         if (TR == 'N') {
             if (UPLO == 'L') {
-                /* j backward: x[i] for i>j updated by temp=x[j]; then scale x[j]. */
+                /* j backward: x[i] for i>j updated by temp=x[j]; then scale x[j].
+                 * Inner walks backward (i = N-1..j+1) to match Fortran
+                 * etrmv.f (DO 50 I = N,J+1,-1). Sub-class C / Rule 21. */
                 for (int j = N - 1; j >= 0; --j) {
                     const T temp = x[j];
                     if (temp != zero) {
                         const T *aj = &A_(0, j);
-                        for (int i = j + 1; i < N; ++i) x[i] += temp * aj[i];
+                        for (int i = N - 1; i > j; --i) x[i] += temp * aj[i];
                     }
                     if (nounit) x[j] *= A_(j, j);
                 }
@@ -110,10 +112,12 @@ void etrmv_(
         int kx = (incx < 0) ? -(N - 1) * incx : 0;
         if (TR == 'N') {
             if (UPLO == 'L') {
+                /* Inner walks backward to match Fortran etrmv.f
+                 * (DO 70 I = N,J+1,-1). Sub-class C / Rule 21. */
                 for (int j = N - 1; j >= 0; --j) {
                     const T temp = x[kx + j * incx];
                     if (temp != zero) {
-                        for (int i = j + 1; i < N; ++i) x[kx + i * incx] += temp * A_(i, j);
+                        for (int i = N - 1; i > j; --i) x[kx + i * incx] += temp * A_(i, j);
                     }
                     if (nounit) x[kx + j * incx] *= A_(j, j);
                 }
