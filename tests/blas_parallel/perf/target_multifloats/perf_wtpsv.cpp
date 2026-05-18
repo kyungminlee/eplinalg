@@ -93,10 +93,12 @@ int main(void) {
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = { 'N','T','C' };
-    for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t) {
+    const char diags[]   = { 'N', 'U' };
+    for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t)
+    for (size_t d = 0; d < sizeof(diags); ++d) {
         char uplo = (u == 0) ? 'U' : 'L';
         char trans = transes[t];
-        char diag = 'N';
+        char diag = diags[d];
         for (int xi = 0; xi < n_incx; ++xi) {
             int incx = incxs[xi]; if (incx == 0) continue;
             for (int i = 0; i < n; ++i) run_one(uplo, trans, diag, sizes[i], incx, iters, warmup);

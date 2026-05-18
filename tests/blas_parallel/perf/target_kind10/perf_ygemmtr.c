@@ -80,7 +80,10 @@ int main(void) {
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
     perf_print_header();
     const char uplos[] = {'U', 'L'};
-    const char *pairs[] = { "NN", "TN", "NT" };
+    /* Sample full (ta, tb) grid: N/T for real, N/T/C for complex.
+     * Trans choice flips the inner walk over A and B; covering all
+     * combinations stresses every code path the kernel may take. */
+    const char *pairs[] = { "NN", "NT", "NC", "TN", "TT", "TC", "CN", "CT", "CC" };
     for (size_t u = 0; u < 2; ++u)
         for (size_t p = 0; p < sizeof(pairs)/sizeof(pairs[0]); ++p)
             for (int i = 0; i < n; ++i)

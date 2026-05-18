@@ -77,13 +77,16 @@ int main(void) {
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
     perf_print_header();
-    /* Sample a small set of (side, uplo, trans, diag) — not full 16. */
+    /* Sample over (side, uplo, trans, diag) — diag=N/U so the unit-diag
+     * branch of trmm/trsm is exercised; full grid omits no categorical. */
     const char sides[] = {'L', 'R'};
     const char uplos[] = {'U', 'L'};
     const char transes[] = { 'N', 'T' };
+    const char diags[]   = { 'N', 'U' };
     for (size_t s = 0; s < 2; ++s) for (size_t u = 0; u < 2; ++u)
       for (size_t t = 0; t < sizeof(transes); ++t)
-        for (int i = 0; i < n; ++i)
-            run_one(sides[s], uplos[u], transes[t], 'N', sizes[i], sizes[i], iters, warmup);
+        for (size_t d = 0; d < sizeof(diags); ++d)
+          for (int i = 0; i < n; ++i)
+              run_one(sides[s], uplos[u], transes[t], diags[d], sizes[i], sizes[i], iters, warmup);
     return 0;
 }
