@@ -73,8 +73,8 @@ static void run_one(char trans, int M, int N, int iters, int warmup) {
 
 static const int default_sizes[] = {128, 256, 512, 1024, 2048};
 int main(void) {
-    int iters  = perf_env_int("BLAS_PERF_ITERS",  20);
-    int warmup = perf_env_int("BLAS_PERF_WARMUP", 3);
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
