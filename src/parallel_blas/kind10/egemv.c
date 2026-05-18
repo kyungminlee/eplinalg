@@ -191,13 +191,31 @@ void egemv_(
             }
 #endif
         } else {
-            /* incy != 1: strided y writes — naive reference shape. */
+            /* incy != 1: strided y writes. gfortran auto-J-unrolls this
+             * branch by 2 too — manually replicate so each strided-y
+             * write services both column updates, halving the y memory
+             * traffic. Without this, every cell with incy != 1 sat at
+             * ~0.6x of migrated. */
             int jx = (incx < 0) ? -(N - 1) * incx : 0;
-            for (int j = 0; j < N; ++j) {
+            const int iy0 = (incy < 0) ? -(M - 1) * incy : 0;
+            int j = 0;
+            for (; j + 1 < N; j += 2) {
+                const T t0 = alpha * x[jx];
+                const T t1 = alpha * x[jx + incx];
+                const T *a0 = &A_(0, j);
+                const T *a1 = &A_(0, j + 1);
+                int iy = iy0;
+                for (int i = 0; i < M; ++i) {
+                    y[iy] = (y[iy] + t0 * a0[i]) + t1 * a1[i];
+                    iy += incy;
+                }
+                jx += 2 * incx;
+            }
+            for (; j < N; ++j) {
                 const T xj = x[jx];
                 if (xj != zero) {
                     const T t = alpha * xj;
-                    int iy = (incy < 0) ? -(M - 1) * incy : 0;
+                    int iy = iy0;
                     for (int i = 0; i < M; ++i) {
                         y[iy] += t * A_(i, j);
                         iy += incy;
