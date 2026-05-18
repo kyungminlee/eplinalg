@@ -1225,10 +1225,12 @@ int main(void) {{
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = {{ {','.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
-    for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t) {{
+    const char diags[]   = {{ 'N', 'U' }};
+    for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t)
+    for (size_t d = 0; d < sizeof(diags); ++d) {{
         char uplo = (u == 0) ? 'U' : 'L';
         char trans = transes[t];
-        char diag = 'N';
+        char diag = diags[d];
         for (int xi = 0; xi < n_incx; ++xi) {{
             int incx = incxs[xi];
             if (incx == 0) continue;
@@ -1316,10 +1318,12 @@ int main(void) {{
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = {{ {','.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
-    for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t) {{
+    const char diags[]   = {{ 'N', 'U' }};
+    for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t)
+    for (size_t d = 0; d < sizeof(diags); ++d) {{
         char uplo = (u == 0) ? 'U' : 'L';
         char trans = transes[t];
-        char diag = 'N';
+        char diag = diags[d];
         for (int xi = 0; xi < n_incx; ++xi) {{
             int incx = incxs[xi]; if (incx == 0) continue;
             for (int i = 0; i < n; ++i) run_one(uplo, trans, diag, sizes[i], incx, iters, warmup);
@@ -1579,10 +1583,12 @@ int main(void) {{
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = {{ {','.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
-    for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t) {{
+    const char diags[]   = {{ 'N', 'U' }};
+    for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t)
+    for (size_t d = 0; d < sizeof(diags); ++d) {{
         char uplo = (u == 0) ? 'U' : 'L';
         char trans = transes[t];
-        char diag = 'N';
+        char diag = diags[d];
         for (int xi = 0; xi < n_incx; ++xi) {{
             int incx = incxs[xi]; if (incx == 0) continue;
             for (int i = 0; i < n; ++i) run_one(uplo, trans, diag, sizes[i], 16, incx, iters, warmup);
@@ -1799,14 +1805,17 @@ int main(void) {{
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
     perf_print_header();
-    /* Sample a small set of (side, uplo, trans, diag) — not full 16. */
+    /* Sample over (side, uplo, trans, diag) — diag=N/U so the unit-diag
+     * branch of trmm/trsm is exercised; full grid omits no categorical. */
     const char sides[] = {{'L', 'R'}};
     const char uplos[] = {{'U', 'L'}};
     const char transes[] = {{ {', '.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
+    const char diags[]   = {{ 'N', 'U' }};
     for (size_t s = 0; s < 2; ++s) for (size_t u = 0; u < 2; ++u)
       for (size_t t = 0; t < sizeof(transes); ++t)
-        for (int i = 0; i < n; ++i)
-            run_one(sides[s], uplos[u], transes[t], 'N', sizes[i], sizes[i], iters, warmup);
+        for (size_t d = 0; d < sizeof(diags); ++d)
+          for (int i = 0; i < n; ++i)
+              run_one(sides[s], uplos[u], transes[t], diags[d], sizes[i], sizes[i], iters, warmup);
     return 0;
 }}
 '''
@@ -1880,7 +1889,10 @@ int main(void) {{
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
     perf_print_header();
     const char uplos[] = {{'U', 'L'}};
-    const char *pairs[] = {{ "NN", "TN", "NT" }};
+    /* Sample full (ta, tb) grid: N/T for real, N/T/C for complex.
+     * Trans choice flips the inner walk over A and B; covering all
+     * combinations stresses every code path the kernel may take. */
+    const char *pairs[] = {{ {', '.join('"' + a + b + '"' for a in (['N','T','C'] if is_c else ['N','T']) for b in (['N','T','C'] if is_c else ['N','T']))} }};
     for (size_t u = 0; u < 2; ++u)
         for (size_t p = 0; p < sizeof(pairs)/sizeof(pairs[0]); ++p)
             for (int i = 0; i < n; ++i)
