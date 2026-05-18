@@ -124,9 +124,12 @@ void etrsv_(
             }
         } else {
             if (UPLO == 'L') {
+                /* Inner walks backward to match Fortran reference; same
+                 * cache-direction reasoning as the incx=1 LT path above
+                 * (Addendum 18 / Rule 21). */
                 for (int i = N - 1; i >= 0; --i) {
                     T t = x[kx + i * incx];
-                    for (int k = i + 1; k < N; ++k) t -= A_(k, i) * x[kx + k * incx];
+                    for (int k = N - 1; k > i; --k) t -= A_(k, i) * x[kx + k * incx];
                     if (nounit) t /= A_(i, i);
                     x[kx + i * incx] = t;
                 }
