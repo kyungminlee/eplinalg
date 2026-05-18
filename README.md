@@ -81,6 +81,21 @@ gfortran demo.f90 -o demo \
     -lmpi -lmpicxx -lmpifort -lquadmath -lstdc++ -lpthread
 ```
 
+## How it works
+
+The migrator parses each source file with a compiler-based front-end
+(Flang or GFortran) to extract structural facts — symbol kinds, call
+graph, EXTERNAL/INTRINSIC tables — then applies regex-based rewrites
+guided by those facts. The hybrid keeps the transform syntactically
+aware while preserving formatting, comments, and preprocessor
+directives. C libraries in the stack (BLACS, PBLAS) are handled by
+template-based cloning with mechanical type substitution rather than
+full parsing.
+
+See [`doc/DEVELOPER.md`](doc/DEVELOPER.md) for the full developer
+guide and [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md) for the
+pipeline shape.
+
 ## CLI
 
 ```
