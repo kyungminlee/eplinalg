@@ -23,7 +23,7 @@ program fuzz_${routine}$
         end subroutine ${routine}$_migrated
     end interface
 
-    integer :: seed, ncases, ic, n, lda, fails
+    integer :: seed, ncases, ic, n, lda, fails, incx, lenx
     character :: uplo
     real(rk) :: alpha, dummy_beta, err, tol
     real(rk), allocatable :: A0(:), A_ov(:), A_mig(:), X(:)
@@ -40,12 +40,14 @@ program fuzz_${routine}$
         call random_number(u); if (u < 0.5_8) then; uplo = 'L'; else; uplo = 'U'; end if
         call rand_alpha_beta(alpha, dummy_beta)
         lda = n + rand_pad(); if (lda < 1) lda = 1
-        allocate(A0(lda * n), A_ov(lda * n), A_mig(lda * n), X(n))
+        incx = rand_incx()
+        lenx = 1 + (n - 1) * abs(incx)
+        allocate(A0(lda * n), A_ov(lda * n), A_mig(lda * n), X(lenx))
         call fill_matrix_real(A0, n, n, lda)
-        call fill_matrix_real(X, n, 1, n)
+        call fill_matrix_real(X, lenx, 1, lenx)
         A_ov = A0; A_mig = A0
-        call ${routine}$(uplo, n, alpha, X, 1, A_ov, lda)
-        call ${routine}$_migrated(uplo, n, alpha, X, 1, A_mig, lda)
+        call ${routine}$(uplo, n, alpha, X, incx, A_ov, lda)
+        call ${routine}$_migrated(uplo, n, alpha, X, incx, A_mig, lda)
         block
             integer :: i, j, idx
             real(rk) :: ref_max, diff_max, a_abs, d_abs, tiny_val
@@ -65,7 +67,7 @@ program fuzz_${routine}$
         call err_stats_record(err)
         if (err > tol .or. err /= err) then
             fails = fails + 1
-            print '(a,i0,a,a1,a,i6)', 'FAIL ', ic, ' U=', uplo, ' n=', n
+            print '(a,i0,a,a1,a,i6,a,i3)', 'FAIL ', ic, ' U=', uplo, ' n=', n, ' incx=', incx
         end if
         deallocate(A0, A_ov, A_mig, X)
     end do

@@ -21,7 +21,7 @@ program fuzz_${routine}$
         end subroutine ${routine}$_migrated
     end interface
 
-    integer :: seed, ncases, ic, n, np, fails, j, didx
+    integer :: seed, ncases, ic, n, np, fails, j, didx, incx, lenx
     character :: uplo, trans, diag
     real(rk) :: err, tol, dshift
     real(rk), allocatable :: AP(:), X0(:), X_ov(:), X_mig(:)
@@ -39,7 +39,8 @@ program fuzz_${routine}$
         call random_number(u); if (u < 0.5_8) then; trans = 'N'; else; trans = 'T'; end if
         call random_number(u); if (u < 0.5_8) then; diag = 'N'; else; diag = 'U'; end if
         np = (n * (n + 1)) / 2
-        allocate(AP(np), X0(n), X_ov(n), X_mig(n))
+        incx = rand_incx(); lenx = 1 + (n - 1) * abs(incx)
+        allocate(AP(np), X0(lenx), X_ov(lenx), X_mig(lenx))
         call fill_matrix_real(AP, np, 1, np)
         ! Diagonal shift. 1-based indexing of AP.
         dshift = real(n + 1, rk)
@@ -55,15 +56,15 @@ program fuzz_${routine}$
                 AP(didx) = AP(didx) + dshift
             end do
         end if
-        call fill_matrix_real(X0, n, 1, n)
+        call fill_matrix_real(X0, lenx, 1, lenx)
         X_ov = X0; X_mig = X0
-        call ${routine}$(uplo, trans, diag, n, AP, X_ov, 1)
-        call ${routine}$_migrated(uplo, trans, diag, n, AP, X_mig, 1)
+        call ${routine}$(uplo, trans, diag, n, AP, X_ov, incx)
+        call ${routine}$_migrated(uplo, trans, diag, n, AP, X_mig, incx)
         block
             integer :: i
             real(rk) :: ref_max, diff_max, a_abs, d_abs, tiny_val
             ref_max = 0.0_rk; diff_max = 0.0_rk
-            do i = 1, n
+            do i = 1, lenx
                 a_abs = abs(X_mig(i)); if (a_abs > ref_max) ref_max = a_abs
                 d_abs = abs(X_ov(i) - X_mig(i)); if (d_abs > diff_max) diff_max = d_abs
             end do
@@ -73,7 +74,8 @@ program fuzz_${routine}$
         call err_stats_record(err)
         if (err > tol .or. err /= err) then
             fails = fails + 1
-            print '(a,i0,a,3a1,a,i6,a,es12.4)', 'FAIL ', ic, ' UTD=', uplo, trans, diag, ' n=', n, ' err=', err
+            print '(a,i0,a,3a1,a,i6,a,i3,a,es12.4)', &
+                'FAIL ', ic, ' UTD=', uplo, trans, diag, ' n=', n, ' incx=', incx, ' err=', err
         end if
         deallocate(AP, X0, X_ov, X_mig)
     end do

@@ -23,7 +23,7 @@ program fuzz_${routine}$
         end subroutine ${routine}$_migrated
     end interface
 
-    integer :: seed, ncases, ic, n, lda, fails
+    integer :: seed, ncases, ic, n, lda, fails, incx, incy, lenx, leny
     character :: uplo
     complex(rk) :: alpha, dummy_beta
     real(rk) :: err, tol
@@ -41,9 +41,12 @@ program fuzz_${routine}$
         call random_number(u); if (u < 0.5_8) then; uplo = 'L'; else; uplo = 'U'; end if
         call rand_alpha_beta_complex(alpha, dummy_beta)
         lda = n + rand_pad(); if (lda < 1) lda = 1
-        allocate(A0(lda * n), A_ov(lda * n), A_mig(lda * n), X(n), Y(n))
+        incx = rand_incx(); incy = rand_incx()
+        lenx = 1 + (n - 1) * abs(incx)
+        leny = 1 + (n - 1) * abs(incy)
+        allocate(A0(lda * n), A_ov(lda * n), A_mig(lda * n), X(lenx), Y(leny))
         call fill_matrix_complex(A0, n, n, lda)
-        call fill_matrix_complex(X, n, 1, n); call fill_matrix_complex(Y, n, 1, n)
+        call fill_matrix_complex(X, lenx, 1, lenx); call fill_matrix_complex(Y, leny, 1, leny)
         block
             integer :: i, idx
             do i = 1, n
@@ -52,8 +55,8 @@ program fuzz_${routine}$
             end do
         end block
         A_ov = A0; A_mig = A0
-        call ${routine}$(uplo, n, alpha, X, 1, Y, 1, A_ov, lda)
-        call ${routine}$_migrated(uplo, n, alpha, X, 1, Y, 1, A_mig, lda)
+        call ${routine}$(uplo, n, alpha, X, incx, Y, incy, A_ov, lda)
+        call ${routine}$_migrated(uplo, n, alpha, X, incx, Y, incy, A_mig, lda)
         block
             integer :: i, j, idx
             real(rk) :: ref_max, diff_max, a_abs, d_abs, tiny_val
@@ -75,7 +78,8 @@ program fuzz_${routine}$
         call err_stats_record(err)
         if (err > tol .or. err /= err) then
             fails = fails + 1
-            print '(a,i0,a,a1,a,i6)', 'FAIL ', ic, ' U=', uplo, ' n=', n
+            print '(a,i0,a,a1,a,i6,a,i3,a,i3)', &
+                'FAIL ', ic, ' U=', uplo, ' n=', n, ' incx=', incx, ' incy=', incy
         end if
         deallocate(A0, A_ov, A_mig, X, Y)
     end do
