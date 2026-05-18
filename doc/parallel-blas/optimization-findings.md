@@ -1873,4 +1873,111 @@ otherwise-parity row matters more than three routines stuck at 0.95×.
     Full per-site survey and measurement table: see
     `doc/archive/loop-direction-survey-20260518.md`.
 
+## Addendum 19: ytrsv U-T K-unroll asymmetry — conj path resists the trick (2026-05-18)
+
+### Symptom
+
+The full sweep flagged `ytrsv U-T-{N,U}` at N=256/512 as sub-parity
+(0.82–0.90× of migrated). Direction was already aligned with the
+Fortran reference (outer forward + inner forward — Addendum 18's
+backward-inner fix does not apply: it's specifically for *descending*
+outer loops). So the gap was a different bottleneck.
+
+### Cause: single complex-fmul dep chain on the U-T accumulator
+
+The U-T inner loop is `t -= ai[k] * x[k]` over `k = 0..i-1` with a
+single complex accumulator `t`. Each iteration's `*` and `-=` are
+gated on the prior iter's `t`. With `_Complex long double` on x86-64
+(`-fcx-fortran-rules`), gcc expands the multiply to four scalar
+fmuls on the x87 stack; the ~10-cycle fmul latency serializes the
+chain at roughly 12 cycles/element vs migrated's ~11.
+
+Same shape as Addendum 11's ygemm rank-1 fix — two-way K-unroll
+splits the chain:
+
+```c
+for (; k + 1 < i; k += 2) {
+    t0 -= ai[k]     * x[k];
+    t1 -= ai[k + 1] * x[k + 1];
+}
+```
+
+This recovered U-T from 0.82–0.90× to **~0.93×** consistently across
+N=128/256/512.
+
+### Asymmetry: same unroll on U-C **regresses** the routine
+
+Surprising result. The conj variant has identical structure modulo a
+`cconj()` (an fchs on the imag part):
+
+```c
+t -= cconj(ai[k]) * x[k];   /* U-C, single accumulator */
+```
+
+Applying the same K-unroll-by-2 here regresses U-C from a clean
+~1.00× to **~0.91×** at all sizes. Verified across five runs each,
+not variance.
+
+Mechanism (inferred from disassembly): the extra `fchs` per multiply
+displaces the x87 stack-slot scheduling. With one accumulator gcc
+keeps `t` near the top across iterations; with two accumulators plus
+two `fchs`-injected sequences it has to fxch more, and the resulting
+schedule is worse than the un-unrolled baseline.
+
+Combined attempts (scalar real/imag decomposition, scalar + K-unroll
+with four accumulators tr0/ti0/tr1/ti1) all measured worse than
+plain K-unroll on U-T and worse than un-unrolled on U-C.
+
+### Fix
+
+Apply K-unroll **only** to the non-conj branch:
+
+```c
+if (conj_a) {
+    for (int i = 0; i < N; ++i) {
+        T t = x[i];
+        const T *ai = &A_(0, i);
+        for (int k = 0; k < i; ++k) t -= cconj(ai[k]) * x[k];
+        ...
+    }
+} else {
+    for (int i = 0; i < N; ++i) {
+        T t0 = x[i], t1 = ZERO;
+        const T *ai = &A_(0, i);
+        int k = 0;
+        for (; k + 1 < i; k += 2) {
+            t0 -= ai[k]     * x[k];
+            t1 -= ai[k + 1] * x[k + 1];
+        }
+        if (k < i) t0 -= ai[k] * x[k];
+        T t = t0 + t1;
+        ...
+    }
+}
+```
+
+### Result
+
+| ytrsv stat            | before | after |
+|-----------------------|-------:|------:|
+| min speedup           |  0.82× | 0.88× |
+| median                |  1.00× | 1.00× |
+| geomean               |  0.98× | 1.00× |
+| sub-0.95× rows (of 36)|      6 |     5 |
+
+Residual 7% on U-T vs migrated appears irreducible — gfortran builds
+with strictly fewer flags (`-O3` only, no `-march=native`, no
+`-ffp-contract=fast`) and is still faster, so it's not a flag gap.
+The difference is gfortran's complex-multiply x87 instruction
+scheduling, which gcc with `-fcx-fortran-rules` doesn't quite match.
+
+### Rule
+
+22. **K-unroll-by-2 helps single-accumulator dep chains for plain
+    complex fmul on x87, but the conjugate variant resists the
+    same transformation.** Apply K-unroll asymmetrically when the
+    branch carries an inline conjugate — gate on `conj_a` and keep
+    the conj path single-accumulator. Verify per-branch, don't
+    assume the unroll transfers across `T`/`C` boundaries.
+
 

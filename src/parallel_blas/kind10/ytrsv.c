@@ -76,17 +76,39 @@ void ytrsv_(
                     x[i] = t;
                 }
             } else {
-                for (int i = 0; i < N; ++i) {
-                    T t = x[i];
-                    const T *ai = &A_(0, i);
-                    if (conj_a) {
+                /* U-T/U-C: outer forward, inner forward — direction matches
+                 * the Fortran reference. The non-conj path (U-T) carried a
+                 * single-accumulator x87 fmul dep chain that landed at
+                 * 0.82–0.90× of migrated at N=256/512; two-way K-unroll
+                 * splits it into two parallel chains (t0,t1) and recovers
+                 * to ~0.93×.
+                 *
+                 * The conj path (U-C) does NOT benefit from the same
+                 * unroll — the extra fchs from `cconj()` evidently
+                 * disrupts gcc's scheduling and U-C regresses from ~1.00×
+                 * to ~0.91× when unrolled. Keep it single-accumulator. */
+                if (conj_a) {
+                    for (int i = 0; i < N; ++i) {
+                        T t = x[i];
+                        const T *ai = &A_(0, i);
                         for (int k = 0; k < i; ++k) t -= cconj(ai[k]) * x[k];
                         if (nounit) t /= cconj(ai[i]);
-                    } else {
-                        for (int k = 0; k < i; ++k) t -= ai[k] * x[k];
-                        if (nounit) t /= ai[i];
+                        x[i] = t;
                     }
-                    x[i] = t;
+                } else {
+                    for (int i = 0; i < N; ++i) {
+                        T t0 = x[i], t1 = ZERO;
+                        const T *ai = &A_(0, i);
+                        int k = 0;
+                        for (; k + 1 < i; k += 2) {
+                            t0 -= ai[k]     * x[k];
+                            t1 -= ai[k + 1] * x[k + 1];
+                        }
+                        if (k < i) t0 -= ai[k] * x[k];
+                        T t = t0 + t1;
+                        if (nounit) t /= ai[i];
+                        x[i] = t;
+                    }
                 }
             }
         }
