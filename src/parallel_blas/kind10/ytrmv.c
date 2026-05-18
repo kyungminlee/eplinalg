@@ -38,11 +38,13 @@ void ytrmv_(
     if (incx == 1) {
         if (TR == 'N') {
             if (UPLO == 'L') {
+                /* Inner walks backward to match Fortran ytrmv.f
+                 * (DO 50 I = N,J+1,-1). Sub-class C / Rule 21. */
                 for (int j = N - 1; j >= 0; --j) {
                     const T temp = x[j];
                     if (temp != ZERO) {
                         const T *aj = &A_(0, j);
-                        for (int i = j + 1; i < N; ++i) x[i] += temp * aj[i];
+                        for (int i = N - 1; i > j; --i) x[i] += temp * aj[i];
                     }
                     if (nounit) x[j] *= A_(j, j);
                 }
@@ -90,10 +92,12 @@ void ytrmv_(
         int kx = (incx < 0) ? -(N - 1) * incx : 0;
         if (TR == 'N') {
             if (UPLO == 'L') {
+                /* Inner walks backward to match Fortran ytrmv.f
+                 * (DO 70 I = N,J+1,-1). Sub-class C / Rule 21. */
                 for (int j = N - 1; j >= 0; --j) {
                     const T temp = x[kx + j * incx];
                     if (temp != ZERO) {
-                        for (int i = j + 1; i < N; ++i) x[kx + i * incx] += temp * A_(i, j);
+                        for (int i = N - 1; i > j; --i) x[kx + i * incx] += temp * A_(i, j);
                     }
                     if (nounit) x[kx + j * incx] *= A_(j, j);
                 }
