@@ -115,9 +115,12 @@ void ytrsv_(
         } else {
             const int conj_a = (TR == 'C');
             if (UPLO == 'L') {
+                /* Inner walks backward to match Fortran reference; same
+                 * cache-direction reasoning as the incx=1 LT/LC path
+                 * (Addendum 18 / Rule 21). */
                 for (int i = N - 1; i >= 0; --i) {
                     T t = x[kx + i * incx];
-                    for (int k = i + 1; k < N; ++k) {
+                    for (int k = N - 1; k > i; --k) {
                         const T aki = conj_a ? cconj(A_(k, i)) : A_(k, i);
                         t -= aki * x[kx + k * incx];
                     }
