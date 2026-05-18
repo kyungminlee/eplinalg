@@ -5,7 +5,7 @@
  * Same blocked scaffold as etrmm with conjugate-transpose 'C' handled
  * as a distinct case from 'T'. Calls ygemm for the trailing-matrix
  * update inside the blocked path (egemm-class arithmetic gain at
- * kind10 — see doc/parallel-blas-20260513.md).
+ * kind10 — see doc/parallel-blas-design.md).
  */
 
 #include <stddef.h>

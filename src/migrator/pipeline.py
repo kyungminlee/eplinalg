@@ -52,7 +52,7 @@ def _filter_expected_divergences(report: list[dict],
                                   config: RecipeConfig) -> list[dict]:
     """Drop entries whose canonical stem is whitelisted as expected.
 
-    Two whitelist forms (Phase D, ``doc/refactor-20260509.md``):
+    Two whitelist forms (Phase D, ``doc/archive/refactor-20260509.md``):
     - ``defer_all_divergences: true`` — drop every entry.
     - ``expected_divergences: [STEM, ...]`` — drop entries whose
       canonical stem (case-insensitive, no extension) matches.

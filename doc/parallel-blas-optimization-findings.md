@@ -4,7 +4,7 @@ Date: 2026-05-15
 Branch: `parallel-blas`
 Hardware: Intel i3-1315U (Raptor Lake-U, Alder Lake-derived; 2P+4E cores, P-core L1d=48 KB, L2=1.25 MB, L3=10 MB shared)
 
-This document records what was tried, what worked, and what didn't, while tuning the GEMM overlays. It complements `parallel-blas-20260513.md` (the design doc). Read this when you're about to "obviously" optimize a kernel — many of the obvious moves have already been tried and rejected on bench.
+This document records what was tried, what worked, and what didn't, while tuning the GEMM overlays. It complements `parallel-blas-design.md` (the design doc). Read this when you're about to "obviously" optimize a kernel — many of the obvious moves have already been tried and rejected on bench.
 
 The unifying theme: **structural choices that paid off for one (precision, complex-ness) pair often regressed another**. Don't assume.
 
@@ -1857,5 +1857,20 @@ otherwise-parity row matters more than three routines stuck at 0.95×.
     exactly the size you ship the routine to handle. Match the
     Fortran reference's loop direction unless you have a specific
     reason to deviate.
+
+    **Refinement (2026-05-18, ex loop-direction survey):** Rule 21
+    applies to **compute-light targets where memory bandwidth catches
+    up to compute (kind10/x87)**. For compute-bound targets
+    (kind16/libquadmath, multifloats DD) the cache-direction cliff
+    does not materialize — FP work dominates and x stays hot
+    regardless — and Intel's hardware streaming prefetcher detects
+    ascending strides more aggressively. There, ascending inner
+    wins; keep forward regardless of the reference. Measured: kind10
+    `etrsv LTN` 0.43→0.96×, `ytrsv LTN/LCN` 0.29→1.00× with
+    backward inner; but `qtrsv LTN/x2` 1.106→1.002× regression at
+    N=512 and similar for `xtrsv`, `mtrsv`. kind10 `*trsv`/`*trmv`
+    converted; kind16 + multifloats deliberately kept forward.
+    Full per-site survey and measurement table: see
+    `doc/archive/loop-direction-survey-20260518.md`.
 
 

@@ -122,7 +122,7 @@ in `recipes/mumps.yaml` continues to be the correct stance for MUMPS.
 
 ## See also
 
-- `doc/convergence-20260507.md` §mumps — original 162/200 figure and
+- `doc/archive/convergence-20260507.md` §mumps — original 162/200 figure and
   why upstream maintains S/D as hand-edited copies.
 - `doc/lapack-residual-divergence-categorization.md` — same audit
   applied to LAPACK's 122-pair residual.

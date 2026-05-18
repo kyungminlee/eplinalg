@@ -7,7 +7,7 @@
 # (produced by the objcopy rename in step 0b). This proves the
 # Fortran-ABI C boundary end-to-end before any real kernel work.
 #
-# Linking model: see doc/parallel-blas-20260513.md §1. When
+# Linking model: see doc/parallel-blas-design.md §1. When
 # PARALLEL_BLAS=ON, the public `${LIB_PREFIX}blas` target is rewired
 # into an INTERFACE composite that links `_parallel` before `_serial`
 # so overlay symbols win. This file builds the `_parallel` half only.

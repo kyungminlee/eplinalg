@@ -137,5 +137,5 @@ overrides:
 # (clamov vs zlamov → xlamov) traces to a migrator-internal C-pass
 # gap: re-migration of the C-half emits ``# define TYPE complex``
 # while the canonical has ``QCOMPLEX``. Migrator-side fix tracked
-# separately. See doc/convergence-20260507.md §scalapack_c.
+# separately. See doc/archive/convergence-20260507.md §scalapack_c.
 defer_all_divergences: true
