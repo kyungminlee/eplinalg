@@ -22,7 +22,7 @@ program fuzz_${routine}$
     end interface
 
     integer :: seed, ncases, ic, i
-    integer :: n, lda
+    integer :: n, lda, incx, lenx
     integer :: fails
     character :: uplo, trans, diag
     complex(rk) :: aii
@@ -51,27 +51,31 @@ program fuzz_${routine}$
         if (u < 0.5_8) then; diag = 'N'; else; diag = 'U'; end if
         lda = n + rand_pad()
         if (lda < 1) lda = 1
+        incx = rand_incx()
+        lenx = 1 + (n - 1) * abs(incx)
 
-        allocate(A(lda * n), X0(n), X_ov(n), X_mig(n))
+        allocate(A(lda * n), X0(lenx), X_ov(lenx), X_mig(lenx))
 
         call fill_matrix_complex(A,  n, n, lda)
         do i = 1, n
             aii = A((i - 1) * lda + i)
             A((i - 1) * lda + i) = aii + cmplx(real(n + 1, rk), 0.0_rk, rk)
         end do
-        call fill_matrix_complex(X0, n, 1, n)
+        call fill_matrix_complex(X0, lenx, 1, lenx)
         X_ov  = X0
         X_mig = X0
 
-        call ${routine}$(uplo, trans, diag, n, A, lda, X_ov,  1)
-        call ${routine}$_migrated(uplo, trans, diag, n, A, lda, X_mig, 1)
+        call ${routine}$(uplo, trans, diag, n, A, lda, X_ov,  incx)
+        call ${routine}$_migrated(uplo, trans, diag, n, A, lda, X_mig, incx)
 
         block
             integer :: i
             real(rk) :: ref_max, diff_max, a_abs, d_abs, tiny_val
             complex(rk) :: dz
             ref_max = 0.0_rk; diff_max = 0.0_rk
-            do i = 1, n
+            ! Non-strided positions retain X0 in both arrays so they
+            ! compare equal; only the strided positions are modified.
+            do i = 1, lenx
                 a_abs = abs(X_mig(i))
                 if (a_abs > ref_max) ref_max = a_abs
                 dz = X_ov(i) - X_mig(i)
@@ -88,9 +92,10 @@ program fuzz_${routine}$
 
         if (err > tol .or. err /= err) then
             fails = fails + 1
-            print '(a,i0,a,3a1,a,i6,a,i6,a,es12.4,a,es12.4)', &
+            print '(a,i0,a,3a1,a,i6,a,i6,a,i3,a,es12.4,a,es12.4)', &
                 'FAIL case ', ic, '  UTD=', uplo, trans, diag, &
-                '  n=', n, '  lda=', lda, '  err=', err, '  tol=', tol
+                '  n=', n, '  lda=', lda, '  incx=', incx, &
+                '  err=', err, '  tol=', tol
         end if
 
         deallocate(A, X0, X_ov, X_mig)
