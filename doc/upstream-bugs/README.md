@@ -10,10 +10,10 @@ the in-tree workaround.
 
 Per-library catalogues:
 
-- [`UPSTREAM_BUGS-LAPACK.md`](UPSTREAM_BUGS-LAPACK.md) — LAPACK 3.12.1
-- [`UPSTREAM_BUGS-ScaLAPACK.md`](UPSTREAM_BUGS-ScaLAPACK.md) — ScaLAPACK 2.2.3 (and PBLAS)
-- [`UPSTREAM_BUGS-MUMPS.md`](UPSTREAM_BUGS-MUMPS.md) — MUMPS 5.8.2
-- [`UPSTREAM_NITS-LAPACK.md`](UPSTREAM_NITS-LAPACK.md) — LAPACK 3.12.1 cosmetic dead declarations (catalogued, not patched)
+- [`lapack.md`](lapack.md) — LAPACK 3.12.1
+- [`scalapack.md`](scalapack.md) — ScaLAPACK 2.2.3 (and PBLAS)
+- [`mumps.md`](mumps.md) — MUMPS 5.8.2
+- [`lapack-nits.md`](lapack-nits.md) — LAPACK 3.12.1 cosmetic dead declarations (catalogued, not patched)
 
 The shared sections below — audit methodology, the consolidated bug
 summary table, the "how fixes are carried" notes, and the

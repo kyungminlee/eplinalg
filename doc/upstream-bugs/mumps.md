@@ -1,12 +1,12 @@
 # Upstream bugs: MUMPS 5.8.2
 
-*Last catalogued: 2026-05-11. See `UPSTREAM_BUGS.md` for the cross-library
+*Last catalogued: 2026-05-11. See [`README.md`](README.md) for the cross-library
 index, audit methodology, bug summary table, and how fixes are carried.*
 
 This file collects MUMPS 5.8.2 bugs in the vendored
 `external/MUMPS_5.8.2/` source. LAPACK and ScaLAPACK bugs are
-catalogued in `UPSTREAM_BUGS-LAPACK.md` and
-`UPSTREAM_BUGS-ScaLAPACK.md` respectively.
+catalogued in [`lapack.md`](lapack.md) and
+[`scalapack.md`](scalapack.md) respectively.
 
 ## MUMPS 5.8.2: bad-input cases SIGSEGV instead of returning `INFOG(1) < 0`
 

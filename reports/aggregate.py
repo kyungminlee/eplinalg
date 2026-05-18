@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Aggregate full-omp1 bench outputs into a single markdown report.
 
-Reads bench_reports/full-omp1/{prec}-bench_{routine}.txt files and emits
+Reads reports/full-omp1/{prec}-bench_{routine}.txt files and emits
 a per-routine table with all (transpose × size) measurements.
 """
 import re

@@ -182,7 +182,7 @@ class RecipeConfig:
     # tuning split between S and D, etc.) or because a patch covers only
     # one half by design. Pairs whose canonical stem appears here are
     # filtered out of the convergence report and do NOT cause CI to fail.
-    # See doc/UPSTREAM_BUGS.md for individual entries.
+    # See doc/upstream-bugs/ for individual entries.
     expected_divergences: set[str] = field(default_factory=set)
     # Coarse-grained whitelist: when True, every divergence in this
     # library is filtered out. Used for libraries where convergence is

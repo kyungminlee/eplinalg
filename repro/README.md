@@ -2,7 +2,7 @@
 
 Reproduces and documents the latent inconsistency between `sgelss.f`
 and `dgelss.f` in their path-2a workspace estimates, catalogued as
-**L10** in `doc/UPSTREAM_BUGS.md`.
+**L10** in `doc/upstream-bugs/README.md`.
 
 ## The bug
 

@@ -1,12 +1,12 @@
 # Upstream bugs: ScaLAPACK 2.2.3
 
-*Last catalogued: 2026-05-11. See `UPSTREAM_BUGS.md` for the cross-library
+*Last catalogued: 2026-05-11. See [`README.md`](README.md) for the cross-library
 index, audit methodology, bug summary table, and how fixes are carried.*
 
 This file collects ScaLAPACK 2.2.3 bugs in the vendored
 `external/scalapack-2.2.3/` source (including PBLAS under
 `PBLAS/SRC/`). LAPACK and MUMPS bugs are catalogued in
-`UPSTREAM_BUGS-LAPACK.md` and `UPSTREAM_BUGS-MUMPS.md` respectively.
+[`lapack.md`](lapack.md) and [`mumps.md`](mumps.md) respectively.
 Bugs that span both LAPACK and ScaLAPACK (e.g. the XERBLA-string
 sweep) live in the index file.
 
@@ -291,7 +291,7 @@ mechanical (copy from D-half) and the D-half is the reference.
 ## 2026-05-12 B? deep-dive (ScaLAPACK portion)
 
 The B? items remaining in the `2026-05-11` audit were re-examined; the
-ScaLAPACK-side finding is below. See `UPSTREAM_BUGS-LAPACK.md` for the
+ScaLAPACK-side finding is below. See [`lapack.md`](lapack.md) for the
 LAPACK portion (`cgedmdq`, `cgedmd` / `zgedmd` divergences).
 
 ### Stays B?: `pslaqr3` vs `pdlaqr3` — LWK8 workspace formula divergence

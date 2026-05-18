@@ -7,7 +7,7 @@
 # The `PARALLEL_BLAS` option (default ON) only controls whether the
 # public CMake target `${LIB_PREFIX}blas` is rewired into an INTERFACE
 # composite that links `_parallel` before `_serial` — see
-# doc/parallel-blas-design.md §1. With `PARALLEL_BLAS=OFF`, the
+# doc/parallel-blas/design.md §1. With `PARALLEL_BLAS=OFF`, the
 # overlay archive still builds (and the consistency / fuzz / bench
 # tests still run against it directly) but downstream consumers
 # (${LIB_PREFIX}lapack etc.) link the serial migrated archive only.

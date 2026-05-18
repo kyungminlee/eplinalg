@@ -66,9 +66,9 @@ function(add_bench_test shim_path)
         blas_parallel_fuzz_common
         ${LIB_PREFIX}blas
         ${LIB_PREFIX}blas_migrated)
-    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/bench_reports)
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/reports)
     add_test(NAME blas_parallel_${_name} COMMAND ${_name}
-             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bench_reports)
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/reports)
     set_tests_properties(blas_parallel_${_name} PROPERTIES LABELS "bench")
 endfunction()
 

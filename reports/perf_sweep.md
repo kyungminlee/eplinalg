@@ -1,6 +1,6 @@
 # Parallel BLAS overlay — C perf harness sweep (OMP=1)
 
-Source: `bench_reports/perf_sweep.tsv` (2647 cells, 195 routines)
+Source: `reports/perf_sweep.tsv` (2647 cells, 195 routines)
 
 Methodology:
 - Kernel-isolated C harness with `-ffunction-sections -Wl,--gc-sections`

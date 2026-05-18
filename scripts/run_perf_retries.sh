@@ -2,11 +2,11 @@
 # Re-run timed-out perf executables with smaller sizes/iters and a longer
 # per-routine cap. Appends results to the same TSV/JSON as the main sweep.
 #
-# Reads the [fail] lines from bench_reports/perf_sweep.log and looks up the
+# Reads the [fail] lines from reports/perf_sweep.log and looks up the
 # matching executable in /tmp/stage-{e,q,m}/build/tests/blas_parallel/.
 set -u
 
-OUTDIR="${OUTDIR:-bench_reports}"
+OUTDIR="${OUTDIR:-reports}"
 JSON="$OUTDIR/perf_sweep.json"
 TSV="$OUTDIR/perf_sweep.tsv"
 LOG="$OUTDIR/perf_sweep.log"

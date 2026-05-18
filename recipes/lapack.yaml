@@ -54,7 +54,7 @@ prefix:
   style: direct
 
 # Patches applied to staged sources before migration. Unified diffs
-# vs upstream Netlib LAPACK 3.12.1. See doc/UPSTREAM_BUGS-LAPACK.md
+# vs upstream Netlib LAPACK 3.12.1. See doc/upstream-bugs/lapack.md
 # for the bug catalogue (prose section titles) and
 # doc/archive/refactor-20260509.md for the patch-file convention.
 patches:

@@ -12,7 +12,7 @@
 # so the rest of the sweep continues.
 set -u
 
-OUTDIR="${OUTDIR:-bench_reports}"
+OUTDIR="${OUTDIR:-reports}"
 TIMEOUT="${TIMEOUT:-300}"
 mkdir -p "$OUTDIR"
 JSON="$OUTDIR/perf_sweep.json"

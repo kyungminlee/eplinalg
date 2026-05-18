@@ -428,7 +428,7 @@ the migrator will leave the call unchanged — fix is to add the entry
 (one line) and re-run staging. Test with
 `tests/lapack/TODO.md`-tracked phases or the convergence report.
 
-This file (`INTRINSICS.md`) is a Fortran-language reference; the
+This file (`intrinsics.md`) is a Fortran-language reference; the
 engine table (`intrinsics.py`) is the migration ruleset. Both are
 maintained by hand and may drift if either is edited without
 checking the other — when in doubt, the engine table is authoritative

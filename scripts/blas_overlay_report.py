@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate doc/blas-overlay.md — table of every BLAS overlay routine
+"""Generate reports/overlay-coverage.md — table of every BLAS overlay routine
 across the three extended-precision targets, with algorithm summary,
 error digits (best-effort from test_* binaries), GFLOP/s at OMP=1, and
 speedup vs the migrated reference at OMP=1 and OMP=4.
@@ -9,7 +9,7 @@ Usage:
         [--stage-root /tmp/fm-bench]
         [--size 256] [--iters 3]
         [--targets kind10,kind16,multifloats]
-        [--out doc/blas-overlay.md]
+        [--out reports/overlay-coverage.md]
         [--skip-build]
         [--skip-bench]
 
@@ -266,7 +266,7 @@ def main():
     ap.add_argument("--size", type=int, default=256)
     ap.add_argument("--iters", type=int, default=3)
     ap.add_argument("--targets", default=",".join(TARGETS))
-    ap.add_argument("--out", default="doc/blas-overlay.md")
+    ap.add_argument("--out", default="reports/overlay-coverage.md")
     ap.add_argument("--skip-build", action="store_true")
     ap.add_argument("--skip-bench", action="store_true")
     ap.add_argument("--skip-fuzz", action="store_true")

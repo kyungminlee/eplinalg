@@ -155,7 +155,7 @@ default canonical), pin the corresponding stem(s) in `prefer_source`
 so the patched body wins convergence against the unpatched C/S
 sibling — the canonical-rank picker doesn't recognize ScaLAPACK's
 `pd*`/`pz*` two-letter prefix shape and would otherwise sort
-`pclanhs.f` ahead of `pzlanhs.f`. See `doc/UPSTREAM_BUGS-*.md` for
+`pclanhs.f` ahead of `pzlanhs.f`. See `doc/upstream-bugs/` for
 the canonical examples.
 
 #### `extra_renames` (dict, optional)
