@@ -54,8 +54,27 @@ void etrmv_(
                     if (nounit) x[j] *= A_(j, j);
                 }
             } else {
-                /* UPLO='U', j forward: x[i] for i<j updated by temp; then scale. */
-                for (int j = 0; j < N; ++j) {
+                /* UPLO='U', j forward: x[i] for i<j updated by t=x[j]; then
+                 * scale x[j] by diag if nounit. J-unroll-by-2: at iter j and
+                 * j+1 both x[j] and x[j+1] are pristine (iter j's inner only
+                 * touches i<j); combine so each x[i] load+store services
+                 * two column contributions. Halves x memory traffic on the
+                 * AXPY-like inner. Without this, UNN at N=1024 sat at
+                 * 0.58x of migrated. */
+                int j = 0;
+                for (; j + 1 < N; j += 2) {
+                    const T t0 = x[j];
+                    const T t1 = x[j + 1];
+                    const T *a0 = &A_(0, j);
+                    const T *a1 = &A_(0, j + 1);
+                    for (int i = 0; i < j; ++i)
+                        x[i] = (x[i] + t0 * a0[i]) + t1 * a1[i];
+                    /* At i=j: x[j] += t1*A(j,j+1), with prior diag scale. */
+                    T xj = nounit ? t0 * A_(j, j) : t0;
+                    x[j] = xj + t1 * a1[j];
+                    if (nounit) x[j + 1] = t1 * A_(j + 1, j + 1);
+                }
+                for (; j < N; ++j) {
                     const T temp = x[j];
                     if (temp != zero) {
                         const T *aj = &A_(0, j);
