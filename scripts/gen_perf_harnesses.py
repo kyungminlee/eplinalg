@@ -404,7 +404,6 @@ def emit_gemv(name: str, ti: TypeInfo, is_c: bool) -> str:
     p3 = ti.cmplx_lit_p3 if is_c else ti.real_lit_p3
     fill = ti.cmplx_fill if is_c else ti.real_fill
     flops = '8.0 * (double)M * (double)N' if is_c else '2.0 * (double)M * (double)N'
-    transes = "{'N', 'T', 'C'}" if is_c else "{'N', 'T'}"
     return f'''
 BLAS_EXTERN void {name}_(const char *, const int *, const int *, const {T} *,
     const {T} *, const int *, const {T} *, const int *,
@@ -413,58 +412,82 @@ BLAS_EXTERN void {name}_migrated_(const char *, const int *, const int *, const 
     const {T} *, const int *, const {T} *, const int *,
     const {T} *, {T} *, const int *, size_t);
 
-static void run_one(char trans, int M, int N, int iters, int warmup) {{
-    int one = 1;
+static void run_one(char trans, int M, int N, int incx, int incy,
+                    int iters, int warmup) {{
     {T} alpha = {p7}, beta = {p3};
+    const int XL = (trans == 'N') ? N : M;
+    const int YL = (trans == 'N') ? M : N;
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(XL - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(YL - 1) * (size_t)absy;
     {T} *A  = ({T} *)perf_aligned_alloc(64, (size_t)M * (size_t)N * sizeof({T}));
-    {T} *X  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
-    {T} *Y  = ({T} *)perf_aligned_alloc(64, (size_t)M * sizeof({T}));
-    {T} *Yi = ({T} *)perf_aligned_alloc(64, (size_t)M * sizeof({T}));
+    {T} *X  = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
+    {T} *Y  = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
+    {T} *Yi = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
     for (size_t i = 0; i < (size_t)M*N; ++i) {{ int s = 2; A[i] = {fill}; }}
-    for (int i = 0; i < N; ++i)           {{ int s = 3; X[i] = {fill}; }}
-    for (int i = 0; i < M; ++i)           {{ int s = 4; Yi[i] = {fill}; }}
+    for (size_t i = 0; i < lenx; ++i)       {{ int s = 3; X[i] = {fill}; }}
+    for (size_t i = 0; i < leny; ++i)       {{ int s = 4; Yi[i] = {fill}; }}
 
-    memcpy(Y, Yi, (size_t)M * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&trans, &M, &N, &alpha, A, &M, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)M * sizeof({T}));
-        {name}_migrated_(&trans, &M, &N, &alpha, A, &M, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)M * sizeof({T}));
+        {name}_(&trans, &M, &N, &alpha, A, &M, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
+        {name}_migrated_(&trans, &M, &N, &alpha, A, &M, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
     }}
 
-    memcpy(Y, Yi, (size_t)M * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
-        {name}_(&trans, &M, &N, &alpha, A, &M, X, &one, &beta, Y, &one, 1);
+        {name}_(&trans, &M, &N, &alpha, A, &M, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
 
-    memcpy(Y, Yi, (size_t)M * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
-        {name}_migrated_(&trans, &M, &N, &alpha, A, &M, X, &one, &beta, Y, &one, 1);
+        {name}_migrated_(&trans, &M, &N, &alpha, A, &M, X, &incx, &beta, Y, &incy, 1);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
 
     double flops = {flops};
-    char key[2] = {{trans, 0}};
+    char key[24];
+    if (incx == 1 && incy == 1) {{
+        key[0] = trans; key[1] = 0;
+    }} else if (incy == 1) {{
+        snprintf(key, sizeof(key), "%c/x%d", trans, incx);
+    }} else if (incx == 1) {{
+        snprintf(key, sizeof(key), "%c/y%d", trans, incy);
+    }} else {{
+        snprintf(key, sizeof(key), "%c/x%d/y%d", trans, incx, incy);
+    }}
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024, 2048}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = {{ {','.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
-    for (size_t t = 0; t < sizeof(transes); ++t)
-        for (int i = 0; i < n; ++i)
-            run_one(transes[t], sizes[i], sizes[i], iters, warmup);
+    for (size_t t = 0; t < sizeof(transes); ++t) {{
+        for (int xi = 0; xi < n_incx; ++xi) {{
+            int incx = incxs[xi]; if (incx == 0) continue;
+            int incy = incx;
+            for (int i = 0; i < n; ++i)
+                run_one(transes[t], sizes[i], sizes[i], incx, incy, iters, warmup);
+        }}
+    }}
     return 0;
 }}
 '''
@@ -482,27 +505,30 @@ BLAS_EXTERN void {name}_(const int *, const int *, const {T} *,
 BLAS_EXTERN void {name}_migrated_(const int *, const int *, const {T} *,
     const {T} *, const int *, const {T} *, const int *, {T} *, const int *);
 
-static void run_one(int M, int N, int iters, int warmup) {{
-    int one = 1;
+static void run_one(int M, int N, int incx, int incy, int iters, int warmup) {{
     {T} alpha = {p7};
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(M - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(N - 1) * (size_t)absy;
     {T} *A  = ({T} *)perf_aligned_alloc(64, (size_t)M * (size_t)N * sizeof({T}));
     {T} *Ai = ({T} *)perf_aligned_alloc(64, (size_t)M * (size_t)N * sizeof({T}));
-    {T} *X  = ({T} *)perf_aligned_alloc(64, (size_t)M * sizeof({T}));
-    {T} *Y  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
+    {T} *X  = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
+    {T} *Y  = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
     for (size_t i = 0; i < (size_t)M*N; ++i) {{ int s = 2; Ai[i] = {fill}; }}
-    for (int i = 0; i < M; ++i)           {{ int s = 3; X[i] = {fill}; }}
-    for (int i = 0; i < N; ++i)           {{ int s = 4; Y[i] = {fill}; }}
+    for (size_t i = 0; i < lenx; ++i)       {{ int s = 3; X[i] = {fill}; }}
+    for (size_t i = 0; i < leny; ++i)       {{ int s = 4; Y[i] = {fill}; }}
     memcpy(A, Ai, (size_t)M * (size_t)N * sizeof({T}));
 
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&M, &N, &alpha, X, &one, Y, &one, A, &M);
+        {name}_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof({T}));
-        {name}_migrated_(&M, &N, &alpha, X, &one, Y, &one, A, &M);
+        {name}_migrated_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof({T}));
     }}
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_(&M, &N, &alpha, X, &one, Y, &one, A, &M);
+        {name}_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof({T}));
     }}
     double t1 = perf_now_s();
@@ -510,27 +536,45 @@ static void run_one(int M, int N, int iters, int warmup) {{
 
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_migrated_(&M, &N, &alpha, X, &one, Y, &one, A, &M);
+        {name}_migrated_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof({T}));
     }}
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
 
     double flops = {flops};
-    perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
+    char key[24];
+    if (incx == 1 && incy == 1) {{
+        key[0] = '-'; key[1] = 0;
+    }} else if (incy == 1) {{
+        snprintf(key, sizeof(key), "x%d", incx);
+    }} else if (incx == 1) {{
+        snprintf(key, sizeof(key), "y%d", incy);
+    }} else {{
+        snprintf(key, sizeof(key), "x%d/y%d", incx, incy);
+    }}
+    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(A); free(Ai); free(X); free(Y);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
-    for (int i = 0; i < n; ++i) run_one(sizes[i], sizes[i], iters, warmup);
+    for (int xi = 0; xi < n_incx; ++xi) {{
+        int incx = incxs[xi]; if (incx == 0) continue;
+        int incy = incx;
+        for (int i = 0; i < n; ++i) run_one(sizes[i], sizes[i], incx, incy, iters, warmup);
+    }}
     return 0;
 }}
 '''
@@ -790,51 +834,71 @@ BLAS_EXTERN void {name}_(const char *, const int *, const {T} *, const {T} *, co
 BLAS_EXTERN void {name}_migrated_(const char *, const int *, const {T} *, const {T} *, const int *,
     const {T} *, const int *, const {T} *, {T} *, const int *, size_t);
 
-static void run_one(char uplo, int N, int iters, int warmup) {{
-    int one = 1;
+static void run_one(char uplo, int N, int incx, int incy, int iters, int warmup) {{
     {T} alpha = {p7}, beta = {p3};
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(N - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(N - 1) * (size_t)absy;
     {T} *A  = ({T} *)perf_aligned_alloc(64, (size_t)N * (size_t)N * sizeof({T}));
-    {T} *X  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
-    {T} *Y  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
-    {T} *Yi = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
+    {T} *X  = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
+    {T} *Y  = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
+    {T} *Yi = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
     for (size_t i = 0; i < (size_t)N*N; ++i) {{ int s = 2; A[i] = {fill}; }}
-    for (int i = 0; i < N; ++i)            {{ int s = 3; X[i] = {fill}; }}
-    for (int i = 0; i < N; ++i)            {{ int s = 4; Yi[i] = {fill}; }}
-    memcpy(Y, Yi, (size_t)N * sizeof({T}));
+    for (size_t i = 0; i < lenx; ++i)      {{ int s = 3; X[i] = {fill}; }}
+    for (size_t i = 0; i < leny; ++i)      {{ int s = 4; Yi[i] = {fill}; }}
+    memcpy(Y, Yi, leny * sizeof({T}));
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&uplo, &N, &alpha, A, &N, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)N * sizeof({T}));
-        {name}_migrated_(&uplo, &N, &alpha, A, &N, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)N * sizeof({T}));
+        {name}_(&uplo, &N, &alpha, A, &N, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
+        {name}_migrated_(&uplo, &N, &alpha, A, &N, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
     }}
-    memcpy(Y, Yi, (size_t)N * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     double t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) {name}_(&uplo, &N, &alpha, A, &N, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) {name}_(&uplo, &N, &alpha, A, &N, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
-    memcpy(Y, Yi, (size_t)N * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) {name}_migrated_(&uplo, &N, &alpha, A, &N, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) {name}_migrated_(&uplo, &N, &alpha, A, &N, X, &incx, &beta, Y, &incy, 1);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    char key[2] = {{uplo, 0}};
+    char key[24];
+    if (incx == 1 && incy == 1) {{
+        key[0] = uplo; key[1] = 0;
+    }} else if (incy == 1) {{
+        snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
+    }} else if (incx == 1) {{
+        snprintf(key, sizeof(key), "%c/y%d", uplo, incy);
+    }} else {{
+        snprintf(key, sizeof(key), "%c/x%d/y%d", uplo, incx, incy);
+    }}
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {{
         char uplo = (u == 0) ? 'U' : 'L';
-        for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {{
+            int incx = incxs[xi]; if (incx == 0) continue;
+            int incy = incx;
+            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], incx, incy, iters, warmup);
+        }}
     }}
     return 0;
 }}
@@ -855,53 +919,66 @@ BLAS_EXTERN void {name}_(const char *, const int *, const {Talpha} *,
 BLAS_EXTERN void {name}_migrated_(const char *, const int *, const {Talpha} *,
     const {T} *, const int *, {T} *, const int *, size_t);
 
-static void run_one(char uplo, int N, int iters, int warmup) {{
-    int one = 1;
+static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
     {Talpha} alpha = {p7};
+    const int absx = incx < 0 ? -incx : incx;
+    const size_t lenx = (size_t)1 + (size_t)(N - 1) * (size_t)absx;
     {T} *A  = ({T} *)perf_aligned_alloc(64, (size_t)N * (size_t)N * sizeof({T}));
     {T} *Ai = ({T} *)perf_aligned_alloc(64, (size_t)N * (size_t)N * sizeof({T}));
-    {T} *X  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
+    {T} *X  = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
     for (size_t i = 0; i < (size_t)N*N; ++i) {{ int s = 2; Ai[i] = {fill}; }}
-    for (int i = 0; i < N; ++i)            {{ int s = 3; X[i] = {fill}; }}
+    for (size_t i = 0; i < lenx; ++i)      {{ int s = 3; X[i] = {fill}; }}
     memcpy(A, Ai, (size_t)N * (size_t)N * sizeof({T}));
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&uplo, &N, &alpha, X, &one, A, &N, 1);
+        {name}_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof({T}));
-        {name}_migrated_(&uplo, &N, &alpha, X, &one, A, &N, 1);
+        {name}_migrated_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof({T}));
     }}
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_(&uplo, &N, &alpha, X, &one, A, &N, 1);
+        {name}_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof({T}));
     }}
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_migrated_(&uplo, &N, &alpha, X, &one, A, &N, 1);
+        {name}_migrated_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof({T}));
     }}
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    char key[2] = {{uplo, 0}};
+    char key[16];
+    if (incx == 1) {{
+        key[0] = uplo; key[1] = 0;
+    }} else {{
+        snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
+    }}
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(A); free(Ai); free(X);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {{
         char uplo = (u == 0) ? 'U' : 'L';
-        for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {{
+            int incx = incxs[xi]; if (incx == 0) continue;
+            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], incx, iters, warmup);
+        }}
     }}
     return 0;
 }}
@@ -921,54 +998,67 @@ BLAS_EXTERN void {name}_(const char *, const int *, const {Talpha} *,
 BLAS_EXTERN void {name}_migrated_(const char *, const int *, const {Talpha} *,
     const {T} *, const int *, {T} *, size_t);
 
-static void run_one(char uplo, int N, int iters, int warmup) {{
-    int one = 1;
+static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
     {Talpha} alpha = {p7};
+    const int absx = incx < 0 ? -incx : incx;
+    const size_t lenx = (size_t)1 + (size_t)(N - 1) * (size_t)absx;
     size_t AP_LEN = (size_t)N * (size_t)(N + 1) / 2;
     {T} *AP  = ({T} *)perf_aligned_alloc(64, AP_LEN * sizeof({T}));
     {T} *APi = ({T} *)perf_aligned_alloc(64, AP_LEN * sizeof({T}));
-    {T} *X   = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
+    {T} *X   = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
     for (size_t i = 0; i < AP_LEN; ++i) {{ int s = 2; APi[i] = {fill}; }}
-    for (int i = 0; i < N; ++i)         {{ int s = 3; X[i]   = {fill}; }}
+    for (size_t i = 0; i < lenx; ++i)   {{ int s = 3; X[i]   = {fill}; }}
     memcpy(AP, APi, AP_LEN * sizeof({T}));
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&uplo, &N, &alpha, X, &one, AP, 1);
+        {name}_(&uplo, &N, &alpha, X, &incx, AP, 1);
         memcpy(AP, APi, AP_LEN * sizeof({T}));
-        {name}_migrated_(&uplo, &N, &alpha, X, &one, AP, 1);
+        {name}_migrated_(&uplo, &N, &alpha, X, &incx, AP, 1);
         memcpy(AP, APi, AP_LEN * sizeof({T}));
     }}
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_(&uplo, &N, &alpha, X, &one, AP, 1);
+        {name}_(&uplo, &N, &alpha, X, &incx, AP, 1);
         memcpy(AP, APi, AP_LEN * sizeof({T}));
     }}
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_migrated_(&uplo, &N, &alpha, X, &one, AP, 1);
+        {name}_migrated_(&uplo, &N, &alpha, X, &incx, AP, 1);
         memcpy(AP, APi, AP_LEN * sizeof({T}));
     }}
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    char key[2] = {{uplo, 0}};
+    char key[16];
+    if (incx == 1) {{
+        key[0] = uplo; key[1] = 0;
+    }} else {{
+        snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
+    }}
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(AP); free(APi); free(X);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {{
         char uplo = (u == 0) ? 'U' : 'L';
-        for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {{
+            int incx = incxs[xi]; if (incx == 0) continue;
+            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], incx, iters, warmup);
+        }}
     }}
     return 0;
 }}
@@ -988,52 +1078,72 @@ BLAS_EXTERN void {name}_(const char *, const int *, const {T} *, const {T} *,
 BLAS_EXTERN void {name}_migrated_(const char *, const int *, const {T} *, const {T} *,
     const {T} *, const int *, const {T} *, {T} *, const int *, size_t);
 
-static void run_one(char uplo, int N, int iters, int warmup) {{
-    int one = 1;
+static void run_one(char uplo, int N, int incx, int incy, int iters, int warmup) {{
     {T} alpha = {p7}, beta = {p3};
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(N - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(N - 1) * (size_t)absy;
     size_t AP_LEN = (size_t)N * (size_t)(N + 1) / 2;
     {T} *AP = ({T} *)perf_aligned_alloc(64, AP_LEN * sizeof({T}));
-    {T} *X  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
-    {T} *Y  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
-    {T} *Yi = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
+    {T} *X  = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
+    {T} *Y  = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
+    {T} *Yi = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
     for (size_t i = 0; i < AP_LEN; ++i) {{ int s = 2; AP[i] = {fill}; }}
-    for (int i = 0; i < N; ++i)         {{ int s = 3; X[i]  = {fill}; }}
-    for (int i = 0; i < N; ++i)         {{ int s = 4; Yi[i] = {fill}; }}
-    memcpy(Y, Yi, (size_t)N * sizeof({T}));
+    for (size_t i = 0; i < lenx; ++i)   {{ int s = 3; X[i]  = {fill}; }}
+    for (size_t i = 0; i < leny; ++i)   {{ int s = 4; Yi[i] = {fill}; }}
+    memcpy(Y, Yi, leny * sizeof({T}));
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&uplo, &N, &alpha, AP, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)N * sizeof({T}));
-        {name}_migrated_(&uplo, &N, &alpha, AP, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)N * sizeof({T}));
+        {name}_(&uplo, &N, &alpha, AP, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
+        {name}_migrated_(&uplo, &N, &alpha, AP, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
     }}
-    memcpy(Y, Yi, (size_t)N * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     double t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) {name}_(&uplo, &N, &alpha, AP, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) {name}_(&uplo, &N, &alpha, AP, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
-    memcpy(Y, Yi, (size_t)N * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) {name}_migrated_(&uplo, &N, &alpha, AP, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) {name}_migrated_(&uplo, &N, &alpha, AP, X, &incx, &beta, Y, &incy, 1);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    char key[2] = {{uplo, 0}};
+    char key[24];
+    if (incx == 1 && incy == 1) {{
+        key[0] = uplo; key[1] = 0;
+    }} else if (incy == 1) {{
+        snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
+    }} else if (incx == 1) {{
+        snprintf(key, sizeof(key), "%c/y%d", uplo, incy);
+    }} else {{
+        snprintf(key, sizeof(key), "%c/x%d/y%d", uplo, incx, incy);
+    }}
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(AP); free(X); free(Y); free(Yi);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {{
         char uplo = (u == 0) ? 'U' : 'L';
-        for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {{
+            int incx = incxs[xi]; if (incx == 0) continue;
+            int incy = incx;
+            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], incx, incy, iters, warmup);
+        }}
     }}
     return 0;
 }}
@@ -1142,12 +1252,14 @@ BLAS_EXTERN void {name}_(const char *, const char *, const char *, const int *,
 BLAS_EXTERN void {name}_migrated_(const char *, const char *, const char *, const int *,
     const {T} *, {T} *, const int *, size_t, size_t, size_t);
 
-static void run_one(char uplo, char trans, char diag, int N, int iters, int warmup) {{
-    int one = 1;
+static void run_one(char uplo, char trans, char diag, int N, int incx,
+                    int iters, int warmup) {{
+    const int absx = incx < 0 ? -incx : incx;
+    const size_t lenx = (size_t)1 + (size_t)(N - 1) * (size_t)absx;
     size_t AP_LEN = (size_t)N * (size_t)(N + 1) / 2;
     {T} *AP = ({T} *)perf_aligned_alloc(64, AP_LEN * sizeof({T}));
-    {T} *X  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
-    {T} *Xi = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
+    {T} *X  = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
+    {T} *Xi = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
     for (size_t i = 0; i < AP_LEN; ++i) {{ int s = 2; AP[i] = {fill}; }}
     /* Force diagonal to ~N for stability of tpsv */
     if (uplo == 'U') {{
@@ -1157,49 +1269,61 @@ static void run_one(char uplo, char trans, char diag, int N, int iters, int warm
         size_t off = 0;
         for (int j = 0; j < N; ++j) {{ AP[off] = {from_d}((double)(N + 4)); off += (size_t)(N - j); }}
     }}
-    for (int i = 0; i < N; ++i) {{ int s = 3; Xi[i] = {fill}; }}
-    memcpy(X, Xi, (size_t)N * sizeof({T}));
+    for (size_t i = 0; i < lenx; ++i) {{ int s = 3; Xi[i] = {fill}; }}
+    memcpy(X, Xi, lenx * sizeof({T}));
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&uplo, &trans, &diag, &N, AP, X, &one, 1, 1, 1);
-        memcpy(X, Xi, (size_t)N * sizeof({T}));
-        {name}_migrated_(&uplo, &trans, &diag, &N, AP, X, &one, 1, 1, 1);
-        memcpy(X, Xi, (size_t)N * sizeof({T}));
+        {name}_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
+        memcpy(X, Xi, lenx * sizeof({T}));
+        {name}_migrated_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
+        memcpy(X, Xi, lenx * sizeof({T}));
     }}
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_(&uplo, &trans, &diag, &N, AP, X, &one, 1, 1, 1);
-        memcpy(X, Xi, (size_t)N * sizeof({T}));
+        {name}_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
+        memcpy(X, Xi, lenx * sizeof({T}));
     }}
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_migrated_(&uplo, &trans, &diag, &N, AP, X, &one, 1, 1, 1);
-        memcpy(X, Xi, (size_t)N * sizeof({T}));
+        {name}_migrated_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
+        memcpy(X, Xi, lenx * sizeof({T}));
     }}
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    char key[4] = {{uplo, trans, diag, 0}};
+    char key[16];
+    if (incx == 1) {{
+        key[0] = uplo; key[1] = trans; key[2] = diag; key[3] = 0;
+    }} else {{
+        snprintf(key, sizeof(key), "%c%c%c/x%d", uplo, trans, diag, incx);
+    }}
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(AP); free(X); free(Xi);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = {{ {','.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
     for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t) {{
         char uplo = (u == 0) ? 'U' : 'L';
         char trans = transes[t];
         char diag = 'N';
-        for (int i = 0; i < n; ++i) run_one(uplo, trans, diag, sizes[i], iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {{
+            int incx = incxs[xi]; if (incx == 0) continue;
+            for (int i = 0; i < n; ++i) run_one(uplo, trans, diag, sizes[i], incx, iters, warmup);
+        }}
     }}
     return 0;
 }}
@@ -1221,55 +1345,76 @@ BLAS_EXTERN void {name}_migrated_(const char *, const int *, const int *, const 
     const {T} *, const {T} *, const int *, const {T} *, const int *,
     const {T} *, {T} *, const int *, size_t);
 
-static void run_one(char trans, int M, int N, int KL, int KU, int iters, int warmup) {{
-    int one = 1;
+static void run_one(char trans, int M, int N, int KL, int KU,
+                    int incx, int incy, int iters, int warmup) {{
     {T} alpha = {p7}, beta = {p3};
     int LDA = KL + KU + 1;
     {T} *A  = ({T} *)perf_aligned_alloc(64, (size_t)LDA * (size_t)N * sizeof({T}));
-    int XL = (trans == 'N') ? N : M;
-    int YL = (trans == 'N') ? M : N;
-    {T} *X  = ({T} *)perf_aligned_alloc(64, (size_t)XL * sizeof({T}));
-    {T} *Y  = ({T} *)perf_aligned_alloc(64, (size_t)YL * sizeof({T}));
-    {T} *Yi = ({T} *)perf_aligned_alloc(64, (size_t)YL * sizeof({T}));
+    const int XL = (trans == 'N') ? N : M;
+    const int YL = (trans == 'N') ? M : N;
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(XL - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(YL - 1) * (size_t)absy;
+    {T} *X  = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
+    {T} *Y  = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
+    {T} *Yi = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
     for (size_t i = 0; i < (size_t)LDA*N; ++i) {{ int s = 2; A[i] = {fill}; }}
-    for (int i = 0; i < XL; ++i) {{ int s = 3; X[i] = {fill}; }}
-    for (int i = 0; i < YL; ++i) {{ int s = 4; Yi[i] = {fill}; }}
-    memcpy(Y, Yi, (size_t)YL * sizeof({T}));
+    for (size_t i = 0; i < lenx; ++i) {{ int s = 3; X[i] = {fill}; }}
+    for (size_t i = 0; i < leny; ++i) {{ int s = 4; Yi[i] = {fill}; }}
+    memcpy(Y, Yi, leny * sizeof({T}));
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)YL * sizeof({T}));
-        {name}_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)YL * sizeof({T}));
+        {name}_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
+        {name}_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
     }}
-    memcpy(Y, Yi, (size_t)YL * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     double t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) {name}_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) {name}_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
-    memcpy(Y, Yi, (size_t)YL * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) {name}_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) {name}_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    char key[2] = {{trans, 0}};
+    char key[24];
+    if (incx == 1 && incy == 1) {{
+        key[0] = trans; key[1] = 0;
+    }} else if (incy == 1) {{
+        snprintf(key, sizeof(key), "%c/x%d", trans, incx);
+    }} else if (incx == 1) {{
+        snprintf(key, sizeof(key), "%c/y%d", trans, incy);
+    }} else {{
+        snprintf(key, sizeof(key), "%c/x%d/y%d", trans, incx, incy);
+    }}
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = {{ {','.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
     for (size_t t = 0; t < sizeof(transes); ++t)
-        for (int i = 0; i < n; ++i)
-            run_one(transes[t], sizes[i], sizes[i], 16, 16, iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {{
+            int incx = incxs[xi]; if (incx == 0) continue;
+            int incy = incx;
+            for (int i = 0; i < n; ++i)
+                run_one(transes[t], sizes[i], sizes[i], 16, 16, incx, incy, iters, warmup);
+        }}
     return 0;
 }}
 '''
@@ -1290,52 +1435,73 @@ BLAS_EXTERN void {name}_migrated_(const char *, const int *, const int *,
     const {T} *, const {T} *, const int *, const {T} *, const int *,
     const {T} *, {T} *, const int *, size_t);
 
-static void run_one(char uplo, int N, int K, int iters, int warmup) {{
-    int one = 1;
+static void run_one(char uplo, int N, int K, int incx, int incy,
+                    int iters, int warmup) {{
     {T} alpha = {p7}, beta = {p3};
     int LDA = K + 1;
+    const int absx = incx < 0 ? -incx : incx;
+    const int absy = incy < 0 ? -incy : incy;
+    const size_t lenx = (size_t)1 + (size_t)(N - 1) * (size_t)absx;
+    const size_t leny = (size_t)1 + (size_t)(N - 1) * (size_t)absy;
     {T} *A  = ({T} *)perf_aligned_alloc(64, (size_t)LDA * (size_t)N * sizeof({T}));
-    {T} *X  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
-    {T} *Y  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
-    {T} *Yi = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
+    {T} *X  = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
+    {T} *Y  = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
+    {T} *Yi = ({T} *)perf_aligned_alloc(64, leny * sizeof({T}));
     for (size_t i = 0; i < (size_t)LDA*N; ++i) {{ int s = 2; A[i] = {fill}; }}
-    for (int i = 0; i < N; ++i) {{ int s = 3; X[i] = {fill}; }}
-    for (int i = 0; i < N; ++i) {{ int s = 4; Yi[i] = {fill}; }}
-    memcpy(Y, Yi, (size_t)N * sizeof({T}));
+    for (size_t i = 0; i < lenx; ++i) {{ int s = 3; X[i] = {fill}; }}
+    for (size_t i = 0; i < leny; ++i) {{ int s = 4; Yi[i] = {fill}; }}
+    memcpy(Y, Yi, leny * sizeof({T}));
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&uplo, &N, &K, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)N * sizeof({T}));
-        {name}_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
-        memcpy(Y, Yi, (size_t)N * sizeof({T}));
+        {name}_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
+        {name}_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
+        memcpy(Y, Yi, leny * sizeof({T}));
     }}
-    memcpy(Y, Yi, (size_t)N * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     double t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) {name}_(&uplo, &N, &K, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) {name}_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
-    memcpy(Y, Yi, (size_t)N * sizeof({T}));
+    memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
-    for (int it = 0; it < iters; ++it) {name}_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &one, &beta, Y, &one, 1);
+    for (int it = 0; it < iters; ++it) {name}_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    char key[2] = {{uplo, 0}};
+    char key[24];
+    if (incx == 1 && incy == 1) {{
+        key[0] = uplo; key[1] = 0;
+    }} else if (incy == 1) {{
+        snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
+    }} else if (incx == 1) {{
+        snprintf(key, sizeof(key), "%c/y%d", uplo, incy);
+    }} else {{
+        snprintf(key, sizeof(key), "%c/x%d/y%d", uplo, incx, incy);
+    }}
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {{
         char uplo = (u == 0) ? 'U' : 'L';
-        for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], 16, iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {{
+            int incx = incxs[xi]; if (incx == 0) continue;
+            int incy = incx;
+            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], 16, incx, incy, iters, warmup);
+        }}
     }}
     return 0;
 }}
@@ -1354,59 +1520,73 @@ BLAS_EXTERN void {name}_(const char *, const char *, const char *, const int *, 
 BLAS_EXTERN void {name}_migrated_(const char *, const char *, const char *, const int *, const int *,
     const {T} *, const int *, {T} *, const int *, size_t, size_t, size_t);
 
-static void run_one(char uplo, char trans, char diag, int N, int K, int iters, int warmup) {{
-    int one = 1;
+static void run_one(char uplo, char trans, char diag, int N, int K, int incx,
+                    int iters, int warmup) {{
     int LDA = K + 1;
+    const int absx = incx < 0 ? -incx : incx;
+    const size_t lenx = (size_t)1 + (size_t)(N - 1) * (size_t)absx;
     {T} *A  = ({T} *)perf_aligned_alloc(64, (size_t)LDA * (size_t)N * sizeof({T}));
-    {T} *X  = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
-    {T} *Xi = ({T} *)perf_aligned_alloc(64, (size_t)N * sizeof({T}));
+    {T} *X  = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
+    {T} *Xi = ({T} *)perf_aligned_alloc(64, lenx * sizeof({T}));
     for (size_t i = 0; i < (size_t)LDA*N; ++i) {{ int s = 2; A[i] = {fill}; }}
     /* diagonal at known row of band — large to stabilize tbsv */
     int diag_row = (uplo == 'U') ? K : 0;
     for (int j = 0; j < N; ++j) A[(size_t)j * LDA + diag_row] = {from_d}((double)(K + 4));
-    for (int i = 0; i < N; ++i) {{ int s = 3; Xi[i] = {fill}; }}
-    memcpy(X, Xi, (size_t)N * sizeof({T}));
+    for (size_t i = 0; i < lenx; ++i) {{ int s = 3; Xi[i] = {fill}; }}
+    memcpy(X, Xi, lenx * sizeof({T}));
     for (int r = 0; r < warmup; ++r) {{
-        {name}_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &one, 1, 1, 1);
-        memcpy(X, Xi, (size_t)N * sizeof({T}));
-        {name}_migrated_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &one, 1, 1, 1);
-        memcpy(X, Xi, (size_t)N * sizeof({T}));
+        {name}_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
+        memcpy(X, Xi, lenx * sizeof({T}));
+        {name}_migrated_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
+        memcpy(X, Xi, lenx * sizeof({T}));
     }}
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &one, 1, 1, 1);
-        memcpy(X, Xi, (size_t)N * sizeof({T}));
+        {name}_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
+        memcpy(X, Xi, lenx * sizeof({T}));
     }}
     double t1 = perf_now_s();
     double t_ov = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
-        {name}_migrated_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &one, 1, 1, 1);
-        memcpy(X, Xi, (size_t)N * sizeof({T}));
+        {name}_migrated_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
+        memcpy(X, Xi, lenx * sizeof({T}));
     }}
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    char key[4] = {{uplo, trans, diag, 0}};
+    char key[16];
+    if (incx == 1) {{
+        key[0] = uplo; key[1] = trans; key[2] = diag; key[3] = 0;
+    }} else {{
+        snprintf(key, sizeof(key), "%c%c%c/x%d", uplo, trans, diag, incx);
+    }}
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
     free(A); free(X); free(Xi);
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
+static const int default_incxs[] = {{1, 2}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    int incxs[8];
+    int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
+        (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
     perf_print_header();
     const char transes[] = {{ {','.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
     for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < sizeof(transes); ++t) {{
         char uplo = (u == 0) ? 'U' : 'L';
         char trans = transes[t];
         char diag = 'N';
-        for (int i = 0; i < n; ++i) run_one(uplo, trans, diag, sizes[i], 16, iters, warmup);
+        for (int xi = 0; xi < n_incx; ++xi) {{
+            int incx = incxs[xi]; if (incx == 0) continue;
+            for (int i = 0; i < n; ++i) run_one(uplo, trans, diag, sizes[i], 16, incx, iters, warmup);
+        }}
     }}
     return 0;
 }}
