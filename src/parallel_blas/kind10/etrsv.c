@@ -68,11 +68,22 @@ void etrsv_(
         } else {  /* TRANS = 'T': solve Aᵀ x = b. */
             if (UPLO == 'L') {
                 /* Lower-stored A; Aᵀ is upper. Iterate i backward.
-                 * x[i] = (b[i] - sum_{k>i} A(k,i) x[k]) / A(i,i). */
+                 * x[i] = (b[i] - sum_{k>i} A(k,i) x[k]) / A(i,i).
+                 *
+                 * Inner walk is *backward* (k = N-1 .. i+1) to mirror the
+                 * Fortran reference. With the outer loop also descending,
+                 * x[i+1..N-1] is read in the same direction as the previous
+                 * outer iter wrote x[i+1], so the bottom of x stays hot in
+                 * L1. Forward inner under descending outer ends each iter
+                 * at x[N-1] — the next outer's first read x[i] sits at the
+                 * opposite end, so under cache pressure x gets evicted and
+                 * has to be re-streamed every iter. At N=1024 the forward
+                 * variant collapses to ~0.43× of migrated; backward closes
+                 * the gap (Addendum 18). */
                 for (int i = N - 1; i >= 0; --i) {
                     T t = x[i];
                     const T *ai = &A_(0, i);
-                    for (int k = i + 1; k < N; ++k) t -= ai[k] * x[k];
+                    for (int k = N - 1; k > i; --k) t -= ai[k] * x[k];
                     if (nounit) t /= ai[i];
                     x[i] = t;
                 }

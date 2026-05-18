@@ -1732,3 +1732,148 @@ C-source rewrites could close.
     is universally good" that's actually wrong in the regime
     where it would supposedly matter.
 
+## Addendum 18: etrsv LTN — inner walk must mirror outer descent (2026-05-18)
+
+### Symptom
+
+After the full sweep declared zero sub-parity, a follow-up re-run of
+`perf_etrsv` (iters=50) surfaced a cliff that the original sweep grid
+clipped: `kind10 etrsv LTN` at N=1024 ran at 0.43× of migrated, and
+at N=2048 still 0.72×. Every other key (UNN/UTN/LNN at all sizes,
+LTN at 512 and below) was at parity.
+
+```
+etrsv  LTN   512   50    2.0487    1.6187   1.266×   (overlay wins)
+etrsv  LTN  1024   50    0.0266    0.0617   0.431×   ←  cliff
+etrsv  LTN  2048   50    0.0161    0.0224   0.719×
+```
+
+The shape is unmistakable: in-cache (N=512) overlay wins comfortably;
+out-of-cache (N≥1024) overlay collapses to roughly half of migrated.
+Pure throughput drops for both (~30× from N=512 to N=1024 — the
+expected L2→memory cliff for a 16 MB triangular matrix at 16-byte
+elements), but overlay drops harder than migrated.
+
+### Cause: inner-loop direction vs outer descent
+
+The LTN branch solves `Aᵀx = b` with `A` stored lower. The reference
+algorithm iterates the outer `j` *backward* (`j = N..1`), accumulating
+`temp -= A(i,j)*x(i)` over the column-`j` slice `i = j+1..N`.
+
+Migrated Fortran walks the inner `I` loop *backward* as well:
+```fortran
+DO 140 J = N,1,-1
+    TEMP = X(J)
+    DO 130 I = N,J + 1,-1            ! ← backward
+        TEMP = TEMP - A(I,J)*X(I)
+130 CONTINUE
+    ...
+140 CONTINUE
+```
+
+Overlay (pre-fix) walked the inner forward, because the natural C
+idiom for a contiguous range is `for (k = i+1; k < N; ++k)`:
+```c
+for (int i = N - 1; i >= 0; --i) {
+    T t = x[i];
+    const T *ai = &A_(0, i);
+    for (int k = i + 1; k < N; ++k) t -= ai[k] * x[k];   /* forward */
+    ...
+}
+```
+
+Functionally equivalent. Performance-wise, not equivalent under cache
+pressure. At N=1024 each column of A is 16 KB (long double × 1024)
+and the full matrix is 16 MB — well past L2 (1 MB) and the
+last-level cache (12 MB on this part). x is 16 KB, fits in L1.
+
+**Forward inner under descending outer**: at outer iter `i`, the
+last memory address touched is `x[N-1]`. The very next outer iter
+`i-1` opens with reading `x[i-1]` — at the *opposite end* of the
+range. Under L2/L3 pressure from streaming column A, x is no longer
+guaranteed to live in L1 (the column reads also push x out as victim
+lines), and prefetcher state from the forward stream of x is no
+help at the new start address. x effectively gets re-fetched every
+outer iter.
+
+**Backward inner under descending outer**: at outer iter `i`, the
+last x address touched is `x[i+1]`. The next outer iter `i-1` opens
+with reading `x[i-1]` — adjacent to the previous end. The backward
+prefetch stream from the previous iter has already touched (or
+prefetched) the next-needed addresses. x stays hot.
+
+The fix is a one-line change to the inner loop:
+```c
+/* before */ for (int k = i + 1; k < N; ++k) t -= ai[k] * x[k];
+/* after  */ for (int k = N - 1; k > i;  --k) t -= ai[k] * x[k];
+```
+
+Result (same harness, same iters):
+
+```
+                 before          after
+etrsv  LTN  512  2.0487 vs 1.62  1.7202 vs 1.89   1.266× → 0.910×
+etrsv  LTN 1024  0.0266 vs 0.062 0.0605 vs 0.063  0.431× → 0.962×
+etrsv  LTN 2048  0.0161 vs 0.022 0.0227 vs 0.023  0.719× → 1.003×
+```
+
+Net trade: lose a small in-cache edge at N=512 (1.27× → 0.91×;
+backward inner is slightly worse for the prefetcher when working
+set fits in L1), gain everything at N≥1024 where the bug actually
+hurts. Out-of-cache wins universally for a routine that exists to
+be called on large matrices.
+
+The other three keys (UNN/UTN/LNN) were already at parity at large N
+because their outer/inner directions happen to align with their access
+pattern naturally:
+- UNN: outer backward + inner forward over `x[0..i-1]` — last addr
+  touched is `x[i-1]`, next outer iter opens with `x[i-2]`. Forward
+  walk is the right alignment here.
+- UTN, LNN: outer forward + inner forward — last addr touched at
+  the high end, next iter opens slightly past it. Natural prefetch.
+
+Only LTN had the directional mismatch.
+
+### Same bug in ytrsv
+
+`ytrsv` (kind10 complex) has the same LTN/LCN shape and was hiding two
+even worse cells in the original sweep:
+
+```
+                 before          after
+ytrsv  LTN  512  0.291×          0.996×
+ytrsv  LTN 1024  0.736×          0.992×
+ytrsv  LCN  512  0.313×          1.001×
+ytrsv  LCN 1024  0.724×          1.006×
+```
+
+Same one-line fix in both the `conj_a` and non-`conj_a` branches.
+Sister routines `xtrsv`/`qtrsv`/`mtrsv`/`wtrsv` are compute-bound
+(libquadmath or multifloats software ops dominate), so the cache
+direction can't matter there — verified at parity in the sweep.
+
+### Why the sweep missed it
+
+The original sweep grid for L2 trsv routines stopped at N=1024 (which
+caught the cliff but the 0.43× row sat among ~200 other rows and the
+sub-parity-rollup script's threshold treated it as borderline). The
+50-iter re-run with N=2048 added makes the regression unambiguous —
+it's not a noise outlier, it scales with N.
+
+Lesson: re-aggregate sub-parity not just by *cell count* but by
+*maximum gap per routine*. A single 0.43× cell hidden in a routine's
+otherwise-parity row matters more than three routines stuck at 0.95×.
+
+### Rule
+
+21. **Inner-loop direction is part of the algorithm, not the
+    style.** When the outer loop descends, walk the inner loop
+    in the matching direction even when the C idiom prefers
+    ascending. For triangular accumulators the directional choice
+    decides whether x stays hot in L1 across outer iters, and
+    it only matters once the matrix work spills L2 — i.e. at
+    exactly the size you ship the routine to handle. Match the
+    Fortran reference's loop direction unless you have a specific
+    reason to deviate.
+
+

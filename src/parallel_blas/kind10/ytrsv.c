@@ -59,14 +59,18 @@ void ytrsv_(
         } else {
             const int conj_a = (TR == 'C');
             if (UPLO == 'L') {
+                /* Inner walk backward to match the outer's descent — under
+                 * memory pressure the forward variant collapses to ~0.3×
+                 * because x falls out of L1 between outer iters. See
+                 * etrsv LTN / Addendum 18. */
                 for (int i = N - 1; i >= 0; --i) {
                     T t = x[i];
                     const T *ai = &A_(0, i);
                     if (conj_a) {
-                        for (int k = i + 1; k < N; ++k) t -= cconj(ai[k]) * x[k];
+                        for (int k = N - 1; k > i; --k) t -= cconj(ai[k]) * x[k];
                         if (nounit) t /= cconj(ai[i]);
                     } else {
-                        for (int k = i + 1; k < N; ++k) t -= ai[k] * x[k];
+                        for (int k = N - 1; k > i; --k) t -= ai[k] * x[k];
                         if (nounit) t /= ai[i];
                     }
                     x[i] = t;
