@@ -22,7 +22,7 @@ program fuzz_mspr
             type(real64x2), intent(inout) :: ap(*)
         end subroutine mspr_migrated
     end interface
-    integer :: seed, ncases, ic, n, plen, fails
+    integer :: seed, ncases, ic, n, plen, incx, lenx_alloc, fails
     character :: uplo
     type(real64x2) :: alpha, dummy_beta, err, tol
     type(real64x2), allocatable :: AP0(:), AP_ov(:), AP_mig(:), X(:)
@@ -36,11 +36,14 @@ program fuzz_mspr
         call random_number(u); if (u < 0.5_8) then; uplo = 'L'; else; uplo = 'U'; end if
         call rand_alpha_beta(alpha, dummy_beta)
         plen = n * (n + 1) / 2
-        allocate(AP0(plen), AP_ov(plen), AP_mig(plen), X(n))
-        call fill_matrix_real(AP0, plen, 1, plen); call fill_matrix_real(X, n, 1, n)
+        incx = rand_incx()
+        lenx_alloc = 1 + (n - 1) * abs(incx)
+        allocate(AP0(plen), AP_ov(plen), AP_mig(plen), X(lenx_alloc))
+        call fill_matrix_real(AP0, plen, 1, plen)
+        call fill_matrix_real(X, lenx_alloc, 1, lenx_alloc)
         AP_ov = AP0; AP_mig = AP0
-        call mspr(uplo, n, alpha, X, 1, AP_ov)
-        call mspr_migrated(uplo, n, alpha, X, 1, AP_mig)
+        call mspr(uplo, n, alpha, X, incx, AP_ov)
+        call mspr_migrated(uplo, n, alpha, X, incx, AP_mig)
         block
             integer :: i
             type(real64x2) :: ref_max, diff_max, a_abs, d_abs, tiny_val
@@ -56,7 +59,7 @@ program fuzz_mspr
         call err_stats_record(err%limbs(1))
         if (err > tol) then
             fails = fails + 1
-            print '(a,i0,a,a1,a,i6)', 'FAIL ', ic, ' U=', uplo, ' n=', n
+            print '(a,i0,a,a1,a,i6,a,i3)', 'FAIL ', ic, ' U=', uplo, ' n=', n, ' incx=', incx
         end if
         deallocate(AP0, AP_ov, AP_mig, X)
     end do

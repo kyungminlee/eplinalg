@@ -1,4 +1,4 @@
-! fuzz_wtrmv — multifloats complex DD triangular solve consistency.
+! fuzz_wtrmv — multifloats complex DD triangular matrix-vector consistency.
 
 program fuzz_wtrmv
     use multifloats
@@ -20,7 +20,7 @@ program fuzz_wtrmv
             type(cmplx64x2), intent(inout) :: x(*)
         end subroutine wtrmv_migrated
     end interface
-    integer :: seed, ncases, ic, i, n, lda, fails
+    integer :: seed, ncases, ic, i, n, lda, incx, lenx_alloc, fails
     character :: uplo, trans, diag
     type(cmplx64x2) :: aii
     type(real64x2)  :: err, tol
@@ -40,20 +40,22 @@ program fuzz_wtrmv
         end if
         call random_number(u); if (u < 0.5_8) then; diag = 'N'; else; diag = 'U'; end if
         lda = n + rand_pad(); if (lda < 1) lda = 1
-        allocate(A(lda * n), X0(n), X_ov(n), X_mig(n))
+        incx = rand_incx()
+        lenx_alloc = 1 + (n - 1) * abs(incx)
+        allocate(A(lda * n), X0(lenx_alloc), X_ov(lenx_alloc), X_mig(lenx_alloc))
         call fill_matrix_complex(A, n, n, lda)
         do i = 1, n
             aii = A((i - 1) * lda + i)
             A((i - 1) * lda + i) = aii + cmplx64x2(real64x2(real(n + 1, 8)), real64x2(0.0_8))
         end do
-        call fill_matrix_complex(X0, n, 1, n); X_ov = X0; X_mig = X0
-        call wtrmv(uplo, trans, diag, n, A, lda, X_ov, 1)
-        call wtrmv_migrated(uplo, trans, diag, n, A, lda, X_mig, 1)
+        call fill_matrix_complex(X0, lenx_alloc, 1, lenx_alloc); X_ov = X0; X_mig = X0
+        call wtrmv(uplo, trans, diag, n, A, lda, X_ov, incx)
+        call wtrmv_migrated(uplo, trans, diag, n, A, lda, X_mig, incx)
         block
             integer :: i
             type(real64x2) :: ref_max, diff_max, a_abs, d_abs, tiny_val
             ref_max = real64x2(0.0_8); diff_max = real64x2(0.0_8)
-            do i = 1, n
+            do i = 1, lenx_alloc
                 a_abs = abs(X_mig(i)); if (a_abs > ref_max) ref_max = a_abs
                 d_abs = abs(X_ov(i) - X_mig(i)); if (d_abs > diff_max) diff_max = d_abs
             end do
@@ -64,7 +66,7 @@ program fuzz_wtrmv
         call err_stats_record(err%limbs(1))
         if (err > tol) then
             fails = fails + 1
-            print '(a,i0,a,3a1,a,i6)', 'FAIL ', ic, ' UTD=', uplo, trans, diag, ' n=', n
+            print '(a,i0,a,3a1,a,i6,a,i3)', 'FAIL ', ic, ' UTD=', uplo, trans, diag, ' n=', n, ' incx=', incx
         end if
         deallocate(A, X0, X_ov, X_mig)
     end do

@@ -22,7 +22,7 @@ program fuzz_mgbmv
             type(real64x2), intent(inout) :: y(*)
         end subroutine mgbmv_migrated
     end interface
-    integer :: seed, ncases, ic, m, n, kl, ku, lda, lenx, leny, fails
+    integer :: seed, ncases, ic, m, n, kl, ku, lda, lenx, leny, incx, incy, lenx_alloc, leny_alloc, fails
     character :: trans
     type(real64x2) :: alpha, beta, err, tol
     type(real64x2), allocatable :: A(:), X(:), Y0(:), Y_ov(:), Y_mig(:)
@@ -41,18 +41,21 @@ program fuzz_mgbmv
         else;                   lenx = m; leny = n
         end if
         lda = (kl + ku + 1) + rand_pad()
-        allocate(A(lda * n), X(lenx), Y0(leny), Y_ov(leny), Y_mig(leny))
+        incx = rand_incx(); incy = rand_incx()
+        lenx_alloc = 1 + (lenx - 1) * abs(incx)
+        leny_alloc = 1 + (leny - 1) * abs(incy)
+        allocate(A(lda * n), X(lenx_alloc), Y0(leny_alloc), Y_ov(leny_alloc), Y_mig(leny_alloc))
         call fill_matrix_real(A, kl + ku + 1, n, lda)
-        call fill_matrix_real(X, lenx, 1, lenx)
-        call fill_matrix_real(Y0, leny, 1, leny)
+        call fill_matrix_real(X, lenx_alloc, 1, lenx_alloc)
+        call fill_matrix_real(Y0, leny_alloc, 1, leny_alloc)
         Y_ov = Y0; Y_mig = Y0
-        call mgbmv(trans, m, n, kl, ku, alpha, A, lda, X, 1, beta, Y_ov, 1)
-        call mgbmv_migrated(trans, m, n, kl, ku, alpha, A, lda, X, 1, beta, Y_mig, 1)
+        call mgbmv(trans, m, n, kl, ku, alpha, A, lda, X, incx, beta, Y_ov, incy)
+        call mgbmv_migrated(trans, m, n, kl, ku, alpha, A, lda, X, incx, beta, Y_mig, incy)
         block
             integer :: i
             type(real64x2) :: ref_max, diff_max, a_abs, d_abs, tiny_val
             ref_max = real64x2(0.0_8); diff_max = real64x2(0.0_8)
-            do i = 1, leny
+            do i = 1, leny_alloc
                 a_abs = abs(Y_mig(i)); if (a_abs > ref_max) ref_max = a_abs
                 d_abs = abs(Y_ov(i) - Y_mig(i)); if (d_abs > diff_max) diff_max = d_abs
             end do
@@ -63,7 +66,7 @@ program fuzz_mgbmv
         call err_stats_record(err%limbs(1))
         if (err > tol) then
             fails = fails + 1
-            print '(a,i0,a,a1,a,2i6,a,2i4)', 'FAIL ', ic, ' T=', trans, ' mn=', m, n, ' klu=', kl, ku
+            print '(a,i0,a,a1,a,2i6,a,2i4,a,i3,a,i3)', 'FAIL ', ic, ' T=', trans, ' mn=', m, n, ' klu=', kl, ku, ' incx=', incx, ' incy=', incy
         end if
         deallocate(A, X, Y0, Y_ov, Y_mig)
     end do
