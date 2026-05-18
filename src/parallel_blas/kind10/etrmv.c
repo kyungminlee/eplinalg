@@ -81,19 +81,26 @@ void etrmv_(
                     x[j] = temp + s;
                 }
             } else {
-                /* UPLO='U', j backward: dot over i<j into x[j]. */
+                /* UPLO='U', j backward: dot over i<j into x[j].
+                 * Inner walks backward (i = j-1..0) to match the
+                 * Fortran reference (DO 90 I = J-1,1,-1). 2-chain
+                 * unroll preserved: descend in pairs. Sub-class D /
+                 * Rule 21 — even though the current forward-2-chain
+                 * already beats migrated at measured N because of
+                 * x87 latency hiding, the backward walk keeps the
+                 * direction consistent with the Fortran reference. */
                 for (int j = N - 1; j >= 0; --j) {
                     T temp = x[j];
                     if (nounit) temp *= A_(j, j);
                     const T *aj = &A_(0, j);
                     T s0 = zero, s1 = zero;
-                    int i = 0;
-                    for (; i + 1 < j; i += 2) {
+                    int i = j - 1;
+                    for (; i - 1 >= 0; i -= 2) {
                         s0 += aj[i]     * x[i];
-                        s1 += aj[i + 1] * x[i + 1];
+                        s1 += aj[i - 1] * x[i - 1];
                     }
                     T s = s0 + s1;
-                    for (; i < j; ++i) s += aj[i] * x[i];
+                    for (; i >= 0; --i) s += aj[i] * x[i];
                     x[j] = temp + s;
                 }
             }
@@ -128,10 +135,12 @@ void etrmv_(
                     x[kx + j * incx] = temp;
                 }
             } else {
+                /* Inner walks backward to match Fortran reference
+                 * (DO 110 I = J-1,1,-1). Sub-class D / Rule 21. */
                 for (int j = N - 1; j >= 0; --j) {
                     T temp = x[kx + j * incx];
                     if (nounit) temp *= A_(j, j);
-                    for (int i = 0; i < j; ++i) temp += A_(i, j) * x[kx + i * incx];
+                    for (int i = j - 1; i >= 0; --i) temp += A_(i, j) * x[kx + i * incx];
                     x[kx + j * incx] = temp;
                 }
             }
