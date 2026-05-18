@@ -5,11 +5,15 @@
 # Usage:
 #   scripts/run_perf_sweep.sh
 #
+# Env knobs:
+#   TIMEOUT  per-routine wall-clock cap in seconds (default 300)
+#
 # Survives single-routine crashes (heap corruption, assertion failures, etc.)
 # so the rest of the sweep continues.
 set -u
 
 OUTDIR="${OUTDIR:-bench_reports}"
+TIMEOUT="${TIMEOUT:-300}"
 mkdir -p "$OUTDIR"
 JSON="$OUTDIR/perf_sweep.json"
 TSV="$OUTDIR/perf_sweep.tsv"
@@ -34,12 +38,12 @@ for target in e q m; do
         [[ -x "$exe" ]] || continue
         name=$(basename "$exe")
         echo "[run] $tname/$name" >&2
-        # Run with a hard timeout (5 min) per routine and pipe to awk.
+        # Run with a per-routine wall-clock cap (TIMEOUT env, default 300s).
         # Use a temp file to decouple the subprocess from the pipe so a
         # crash in the perf executable doesn't kill the parent shell.
         TMP=$(mktemp)
         if BLAS_PERF_JSON="$JSON" OMP_NUM_THREADS=1 \
-              timeout 300 taskset -c 0 "$exe" > "$TMP" 2>>"$LOG"; then
+              timeout "$TIMEOUT" taskset -c 0 "$exe" > "$TMP" 2>>"$LOG"; then
             : ok
         else
             echo "[fail] $tname/$name exit=$?" >> "$LOG"
