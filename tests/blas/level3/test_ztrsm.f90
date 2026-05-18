@@ -7,15 +7,14 @@ program test_ztrsm
     use ref_quad_blas, only: ztrsm
     implicit none
 
-    integer, parameter :: ms(*) = [4, 32, 80, 48]
-    integer, parameter :: ns(*) = [5, 40, 60, 32]
-    ! Cycle (SIDE, UPLO, TRANS, DIAG) so each shape hits an independent
-    ! path. TRANS='C' (conjugate-transpose) is its own complex-only
-    ! code path that never ran before.
-    character(len=1), parameter :: sides(*)   = ['L', 'R', 'L', 'L']
-    character(len=1), parameter :: uplos(*)   = ['U', 'U', 'L', 'U']
-    character(len=1), parameter :: transes(*) = ['N', 'N', 'N', 'C']
-    character(len=1), parameter :: diags(*)   = ['N', 'N', 'N', 'U']
+    ! Sweep SIDE × UPLO × TRANS × DIAG = 24 combos. 'C' (conjugate-
+    ! transpose) is its own complex-only code path.
+    integer, parameter :: ms(*) = [4, 32, 80, 48, 4, 32, 80, 48, 4, 32, 80, 48, 4, 32, 80, 48, 4, 32, 80, 48, 4, 32, 80, 48]
+    integer, parameter :: ns(*) = [5, 40, 60, 32, 5, 40, 60, 32, 5, 40, 60, 32, 5, 40, 60, 32, 5, 40, 60, 32, 5, 40, 60, 32]
+    character(len=1), parameter :: sides(*)   = ['L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R']
+    character(len=1), parameter :: uplos(*)   = ['U', 'U', 'U', 'U', 'U', 'U', 'L', 'L', 'L', 'L', 'L', 'L', 'U', 'U', 'U', 'U', 'U', 'U', 'L', 'L', 'L', 'L', 'L', 'L']
+    character(len=1), parameter :: transes(*) = ['N', 'N', 'T', 'T', 'C', 'C', 'N', 'N', 'T', 'T', 'C', 'C', 'N', 'N', 'T', 'T', 'C', 'C', 'N', 'N', 'T', 'T', 'C', 'C']
+    character(len=1), parameter :: diags(*)   = ['N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U']
     integer :: i, m, n, na, j, lda
     complex(ep), allocatable :: A(:,:), B0(:,:), B_ref(:,:), B_got(:,:)
     complex(ep) :: alpha

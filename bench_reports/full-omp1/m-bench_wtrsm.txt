@@ -1,0 +1,6 @@
+       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+           64          0.4441             0.1979       2.24x
+          128          3.0646             0.2049      14.95x
+          256          3.3623             0.2076      16.20x
+          512          3.6886             0.2115      17.44x
+wrote bench_wtrsm.json

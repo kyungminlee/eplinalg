@@ -1405,6 +1405,16 @@ set(STAGED_LIBRARIES {staged_list})
             shutil.rmtree(tests_dst)
         shutil.copytree(tests_src, tests_dst)
 
+    # Copy parallel_blas/ overlay sources (opt-in via PARALLEL_BLAS=ON
+    # at CMake time). The unified CMakeLists picks it up via
+    # add_subdirectory(parallel_blas) when the directory is present.
+    parallel_blas_src = proj_root / 'src' / 'parallel_blas'
+    if parallel_blas_src.is_dir():
+        parallel_blas_dst = staging_dir / 'parallel_blas'
+        if parallel_blas_dst.exists():
+            shutil.rmtree(parallel_blas_dst)
+        shutil.copytree(parallel_blas_src, parallel_blas_dst)
+
     # Copy vendored Netlib BLAS source for the differential precision
     # tests' refblas_quad reference library (compiled with gfortran's
     # -freal-8-real-16 to promote KIND=8 entities to KIND=16 in-place).

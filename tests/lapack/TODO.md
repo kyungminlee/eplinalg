@@ -22,7 +22,7 @@ work.
 
 ## kind4 / kind8 baseline missing the orbdb3 override — RESOLVED 2026-05-09
 
-Closed by the pipeline refactor (`doc/refactor-20260509.md`,
+Closed by the pipeline refactor (`doc/archive/refactor-20260509.md`,
 Phase E). `migrator stage --target kind{4,8}` now stages baseline
 sources from `build/staged-sources/<lib>/` (which carries the
 patched bodies) instead of `external/<vendor>/.../SRC/`. The L01

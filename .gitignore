@@ -10,6 +10,12 @@ __pycache__/
 
 # External source tarballs
 external/*.tar.gz
+external/*.tar.xz
+external/*.dsc
+external/openblas-*/
+
+# Bench JSON artifacts (run output, not source)
+/bench_*.json
 
 # Work directories (migration output)
 work/

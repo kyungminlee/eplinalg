@@ -7,11 +7,12 @@ program test_dgemmtr
     use ref_quad_blas, only: dgemmtr
     implicit none
 
-    integer, parameter :: cases(*)              = [16, 64, 32]
-    integer, parameter :: ks(*)                 = [10, 32, 24]
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U']
-    character(len=1), parameter :: transas(*)  = ['N', 'T', 'N']
-    character(len=1), parameter :: transbs(*)  = ['N', 'N', 'T']
+    ! Sweep UPLO × TRANSA × TRANSB = 8 combos.
+    integer, parameter :: cases(*)             = [16, 64, 32, 48, 16, 64, 32, 48]
+    integer, parameter :: ks(*)                = [10, 32, 24, 20, 10, 32, 24, 20]
+    character(len=1), parameter :: uplos(*)    = ['U', 'U', 'U', 'U', 'L', 'L', 'L', 'L']
+    character(len=1), parameter :: transas(*)  = ['N', 'N', 'T', 'T', 'N', 'N', 'T', 'T']
+    character(len=1), parameter :: transbs(*)  = ['N', 'T', 'N', 'T', 'N', 'T', 'N', 'T']
     integer :: i, n, k, lda, ldb
     real(ep), allocatable :: A(:,:), B(:,:), C0(:,:), C_ref(:,:), C_got(:,:)
     real(ep) :: alpha, beta, err, tol

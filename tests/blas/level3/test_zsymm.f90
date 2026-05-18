@@ -7,9 +7,10 @@ program test_zsymm
     use ref_quad_blas, only: zsymm
     implicit none
 
-    integer, parameter :: cases(*)              = [16, 64, 32]
-    character(len=1), parameter :: sides(*)    = ['L', 'R', 'L']
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U']
+    integer, parameter :: cases(*)              = [16, 64, 32, 48]
+    ! Sweep SIDE × UPLO = 4 combos.
+    character(len=1), parameter :: sides(*)    = ['L', 'L', 'R', 'R']
+    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U', 'L']
     integer :: i, m, n, an
     complex(ep), allocatable :: A(:,:), B(:,:), C0(:,:), C_ref(:,:), C_got(:,:)
     complex(ep) :: alpha, beta

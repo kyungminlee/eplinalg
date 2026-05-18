@@ -1,0 +1,6 @@
+       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+           64          0.4563             0.2049       2.23x
+          128          0.7540             0.2101       3.59x
+          256          1.3524             0.2113       6.40x
+          512          2.0193             0.2142       9.43x
+wrote bench_wsyrk.json

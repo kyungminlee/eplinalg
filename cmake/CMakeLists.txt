@@ -28,6 +28,26 @@ endif()
 
 project(${TARGET_NAME}_libraries Fortran C CXX)
 
+# Parallel-BLAS overlay master switch. Declared early so the BLAS
+# section (which runs before add_subdirectory(parallel_blas)) can
+# branch on it. The overlay archive itself is ALWAYS built when the
+# parallel_blas/ subtree is present in staging; this option only
+# governs whether the public ${LIB_PREFIX}blas target is rewired as
+# an INTERFACE composite linking the overlay before the serial
+# migrated archive. See doc/parallel-blas-20260513.md §1.
+option(PARALLEL_BLAS
+    "Wire parallel BLAS overlay into the public \${LIB_PREFIX}blas target" ON)
+
+# Build the parallel-BLAS overlay subtree EARLY so its `${LIB_PREFIX}blas_parallel`
+# static target exists by the time the BLAS section below tries to
+# wire the public ${LIB_PREFIX}blas composite. (Originally
+# add_subdirectory(parallel_blas) sat at the end of this file; that
+# left the composite linking only `_serial` at evaluation time and
+# silently dropped the overlay from every consumer.)
+if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parallel_blas)
+    add_subdirectory(parallel_blas)
+endif()
+
 # ── Compiler-aware install infrastructure ────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
 include(FortranCompiler)
@@ -342,6 +362,14 @@ endfunction()
 
 
 function(add_migrated_fortran_library lib_name)
+    # Optional kwarg TARGET_NAME <name> overrides the default
+    # ${LIB_PREFIX}${lib_name} target name. Used by the parallel-BLAS
+    # overlay to publish the migrated archive as ${LIB_PREFIX}blas_serial
+    # so the public name ${LIB_PREFIX}blas can be redefined as an
+    # INTERFACE composite over (serial, parallel). See
+    # doc/parallel-blas-20260513.md §1.
+    cmake_parse_arguments(AMFL "" "TARGET_NAME" "" ${ARGN})
+
     set(_dir ${CMAKE_CURRENT_SOURCE_DIR}/${lib_name})
     if(NOT EXISTS "${_dir}/manifest.cmake")
         return()
@@ -359,7 +387,11 @@ function(add_migrated_fortran_library lib_name)
     endforeach()
 
     set(_common_target "${lib_name}_common")
-    set(_precision_target "${LIB_PREFIX}${lib_name}")
+    if(AMFL_TARGET_NAME)
+        set(_precision_target "${AMFL_TARGET_NAME}")
+    else()
+        set(_precision_target "${LIB_PREFIX}${lib_name}")
+    endif()
 
     if(_common)
         add_library(${_common_target} STATIC ${_common})
@@ -562,9 +594,114 @@ add_standard_fortran_library(blas
     ${CMAKE_CURRENT_SOURCE_DIR}/_refblas_src
     EXCLUDE_REGEX "/(dsdot|sdsdot)\\.f9?0?$")
 if(NOT BASELINE_BUILD)
-    add_migrated_fortran_library(blas)
-    if(TARGET ${LIB_PREFIX}blas AND TARGET blas)
-        target_link_libraries(${LIB_PREFIX}blas PUBLIC blas)
+    # Parallel-BLAS overlay (opt-in): the public CMake target
+    # ${LIB_PREFIX}blas becomes an INTERFACE composite that links
+    # _parallel before _serial, so every downstream consumer
+    # (${LIB_PREFIX}lapack, scalapack, mumps, downstream apps)
+    # transparently picks up overlay symbols at link time. See
+    # doc/parallel-blas-20260513.md §1.
+    if(PARALLEL_BLAS)
+        add_migrated_fortran_library(blas
+            TARGET_NAME ${LIB_PREFIX}blas_serial)
+        if(TARGET ${LIB_PREFIX}blas_serial AND TARGET blas)
+            target_link_libraries(${LIB_PREFIX}blas_serial PUBLIC blas)
+        endif()
+        # Composite. The _parallel target is created later by
+        # add_subdirectory(parallel_blas); link it in if/when it
+        # exists. We add both link deps unconditionally — if the
+        # overlay subdir was skipped (e.g. no kernels for this
+        # target), _parallel simply won't be a target and the link
+        # is a no-op.
+        add_library(${LIB_PREFIX}blas INTERFACE)
+        # OpenMP runtime needs to land in every executable that links
+        # the overlay. PUBLIC dep on the parallel kernel target alone
+        # doesn't propagate cleanly through the $<LINK_LIBRARY:
+        # WHOLE_ARCHIVE,...> generator expression (the gen-expr treats
+        # the wrapped target as an object set, not as a full target
+        # dep). Add it directly to the composite's INTERFACE so any
+        # consumer of ${LIB_PREFIX}blas pulls libgomp at link time.
+        if(OpenMP_C_FOUND AND TARGET ${LIB_PREFIX}blas_parallel)
+            target_link_libraries(${LIB_PREFIX}blas INTERFACE OpenMP::OpenMP_C)
+        endif()
+        if(TARGET ${LIB_PREFIX}blas_parallel)
+            # WHOLE_ARCHIVE is mandatory: a static archive's members
+            # are normally only extracted to satisfy unresolved
+            # symbols, so overlay objects (egemm.c.o etc.) would be
+            # silently dropped when `_serial` already defines the
+            # same Fortran symbols. WHOLE_ARCHIVE forces every overlay
+            # object into the link, where its definitions take
+            # precedence over the serial archive's (linker picks the
+            # first definition seen — overlay listed first below).
+            # CMake 3.24+ generator expression.
+            target_link_libraries(${LIB_PREFIX}blas INTERFACE
+                "$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_PREFIX}blas_parallel>")
+        endif()
+        target_link_libraries(${LIB_PREFIX}blas INTERFACE
+            ${LIB_PREFIX}blas_serial)
+
+        # ── Renamed migrated archive for consistency tests ───────────
+        # `lib${LIB_PREFIX}blas_migrated.a` is the _serial archive with
+        # overlay-covered routines (and their internal call sites)
+        # renamed `${prefix}<routine>_` → `${prefix}<routine>_migrated_`
+        # via objcopy --redefine-syms. Lets a single test binary link
+        # both the composite eblas (overlay's egemm_) AND the renamed
+        # archive (egemm_migrated_) and diff them at REAL(KIND=10) —
+        # the primary consistency oracle (10 ulp rel err).
+        #
+        # NOT linked into the public composite — would collide on
+        # non-renamed entry points (eaxpy_, edot_, ...). Test
+        # executables link this archive directly. Archive semantics
+        # ensure only the .o's referenced by name (i.e. *_migrated_
+        # ones) are pulled in.
+        # Routines with overlay implementations — full prefixed lower-
+        # case names (matching the C kernel filenames under
+        # src/parallel_blas/${TARGET_NAME}/). The per-target subdir
+        # publishes its list via the PARALLEL_BLAS_OVERLAY_ROUTINES
+        # CACHE INTERNAL variable; users can override on the cmake
+        # command line to limit or grow the set.
+        if(NOT DEFINED PARALLEL_BLAS_OVERLAY_ROUTINES OR
+                "${PARALLEL_BLAS_OVERLAY_ROUTINES}" STREQUAL "")
+            message(WARNING
+                "parallel_blas: PARALLEL_BLAS_OVERLAY_ROUTINES is empty for "
+                "target '${TARGET_NAME}' — the per-target CMakeLists should "
+                "set it (CACHE INTERNAL) to the list of overlay-covered "
+                "routines. Skipping the renamed migrated archive.")
+            set(_skip_migrated_archive TRUE)
+        endif()
+
+        if(NOT _skip_migrated_archive)
+            message(STATUS "parallel_blas: wiring ${LIB_PREFIX}blas_migrated archive "
+                           "(objcopy) routines=${PARALLEL_BLAS_OVERLAY_ROUTINES}")
+            set(_redef_file ${CMAKE_CURRENT_BINARY_DIR}/${LIB_PREFIX}blas_migrated.redef)
+            set(_redef_content "")
+            foreach(_r ${PARALLEL_BLAS_OVERLAY_ROUTINES})
+                string(APPEND _redef_content "${_r}_ ${_r}_migrated_\n")
+            endforeach()
+            file(GENERATE OUTPUT ${_redef_file} CONTENT "${_redef_content}")
+
+            set(_migrated_archive
+                ${CMAKE_CURRENT_BINARY_DIR}/lib${LIB_PREFIX}blas_migrated.a)
+            add_custom_command(
+                OUTPUT ${_migrated_archive}
+                COMMAND ${CMAKE_OBJCOPY} --redefine-syms=${_redef_file}
+                        $<TARGET_FILE:${LIB_PREFIX}blas_serial>
+                        ${_migrated_archive}
+                DEPENDS ${LIB_PREFIX}blas_serial ${_redef_file}
+                COMMENT "objcopy: emitting lib${LIB_PREFIX}blas_migrated.a"
+                VERBATIM)
+            add_custom_target(${LIB_PREFIX}blas_migrated_build
+                DEPENDS ${_migrated_archive})
+            add_library(${LIB_PREFIX}blas_migrated STATIC IMPORTED GLOBAL)
+            set_target_properties(${LIB_PREFIX}blas_migrated PROPERTIES
+                IMPORTED_LOCATION ${_migrated_archive})
+            add_dependencies(${LIB_PREFIX}blas_migrated
+                ${LIB_PREFIX}blas_migrated_build)
+        endif()
+    else()
+        add_migrated_fortran_library(blas)
+        if(TARGET ${LIB_PREFIX}blas AND TARGET blas)
+            target_link_libraries(${LIB_PREFIX}blas PUBLIC blas)
+        endif()
     endif()
 endif()
 
@@ -1285,6 +1422,20 @@ function(_install_library_pair lib_name)
             EXPORT ${_export})
     endif()
 
+    # Parallel-BLAS overlay: the public ${LIB_PREFIX}blas is an
+    # INTERFACE composite whose link deps (_serial, _parallel) must
+    # also be in the export set, or install(EXPORT) bails.
+    if("${lib_name}" STREQUAL "blas" AND PARALLEL_BLAS)
+        if(TARGET ${LIB_PREFIX}blas_serial)
+            fortran_install_library(${LIB_PREFIX}blas_serial
+                EXPORT ${_export} ${_install_mpi_arg})
+        endif()
+        if(TARGET ${LIB_PREFIX}blas_parallel)
+            fortran_install_library(${LIB_PREFIX}blas_parallel
+                EXPORT ${_export} ${_install_mpi_arg})
+        endif()
+    endif()
+
     # Bundle common library into the same export
     if(TARGET ${_common_target})
         fortran_install_library(${_common_target} EXPORT ${_export} ${_install_mpi_arg})
@@ -1360,6 +1511,8 @@ if(NEEDS_MULTIFLOATS)
         endif()
     endforeach()
 endif()
+
+# Parallel-BLAS overlay subtree is added early (right after project()).
 
 # ── Tests ────────────────────────────────────────────────────────────
 # Differential precision test suite. Each library has its own subdir

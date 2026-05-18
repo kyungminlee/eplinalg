@@ -7,14 +7,12 @@ program test_dsyrk
     use ref_quad_blas, only: dsyrk
     implicit none
 
-    integer, parameter :: ns(*) = [4, 32, 100]
-    integer, parameter :: ks(*) = [5, 40, 80]
-    ! Cycle UPLO and TRANS together so each shape exercises a different
-    ! (uplo, trans) combination; over the three shapes we cover all
-    ! four corners — UPLO='U' is the historical default and the lower
-    ! triangle / transposed-A paths are independent code in dsyrk.
-    character(len=1), parameter :: uplos(*)  = ['U', 'L', 'L']
-    character(len=1), parameter :: transes(*) = ['N', 'N', 'T']
+    integer, parameter :: ns(*) = [4, 32, 100, 64]
+    integer, parameter :: ks(*) = [5, 40, 80, 48]
+    ! Sweep UPLO × TRANS = 4 combos. UPLO='U'/'L' and TRANS='N'/'T' are
+    ! independent code paths in dsyrk.
+    character(len=1), parameter :: uplos(*)  = ['U', 'U', 'L', 'L']
+    character(len=1), parameter :: transes(*) = ['N', 'T', 'N', 'T']
     integer :: i, n, k, lda
     real(ep), allocatable :: A(:,:), C0(:,:), C_ref(:,:), C_got(:,:)
     real(ep) :: alpha, beta, err, tol

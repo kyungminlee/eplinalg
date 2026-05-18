@@ -56,7 +56,7 @@ prefix:
 # Patches applied to staged sources before migration. Unified diffs
 # vs upstream Netlib LAPACK 3.12.1. See doc/UPSTREAM_BUGS-LAPACK.md
 # for the bug catalogue (prose section titles) and
-# doc/refactor-20260509.md for the patch-file convention.
+# doc/archive/refactor-20260509.md for the patch-file convention.
 patches:
   #  ?orbdb3 ?ROT INCY uses LDX11 where it should be LDX21
   - dorbdb3.f.patch
@@ -277,12 +277,12 @@ extra_renames:
   ILAENV2STAGE: ILAENV2STAGE_EP
   IPARAM2STAGE: IPARAM2STAGE_EP
 
-# Convergence whitelist (Phase D, doc/refactor-20260509.md).
+# Convergence whitelist (Phase D, doc/archive/refactor-20260509.md).
 # Co-family pairs whose normalized texts disagree post-patch. Most
 # are upstream S/D drift the migrator cannot reconcile (header doc
 # paraphrasing, INTRINSIC list ordering, workspace-formula choices,
 # label numbering, dead-code asymmetry) — listed in
-# doc/convergence-20260507.md §lapack as the known cosmetic cohort.
+# doc/archive/convergence-20260507.md §lapack as the known cosmetic cohort.
 # The patches above address the bug subset; remaining drift is
 # upstream design.
 #
@@ -422,7 +422,7 @@ expected_divergences:
 
 # Patches whose sibling half upstream is genuinely correct or has a
 # different bug shape — periodically review whether a sibling patch
-# could be added. See doc/refactor-20260509.md.
+# could be added. See doc/archive/refactor-20260509.md.
 asymmetric_patches:
   # Patches whose S/C sibling is already correct upstream (bug only
   # exists on D/Z half). Audited 2026-05-11; verified by inspecting

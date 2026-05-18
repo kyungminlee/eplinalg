@@ -7,15 +7,13 @@ program test_zgemm
     use ref_quad_blas, only: zgemm
     implicit none
 
-    integer, parameter :: ms(*) = [4, 32, 80, 64]
-    integer, parameter :: ns(*) = [5, 40, 60, 48]
-    integer, parameter :: ks(*) = [6, 24, 50, 32]
-    ! Cycle (TRANSA, TRANSB) so the four shapes touch every conjugate-
-    ! aware code path: NN, CN, NT, CC. The 'C' (conjugate-transpose)
-    ! branch is the most bug-prone in complex BLAS — historically
-    ! every complex-precision migrator regression has lived there.
-    character(len=1), parameter :: ta(*) = ['N', 'C', 'N', 'C']
-    character(len=1), parameter :: tb(*) = ['N', 'N', 'T', 'C']
+    ! Sweep all 9 (TRANSA, TRANSB) combinations: every conjugate-aware
+    ! code path including the historically bug-prone 'C' branch.
+    integer, parameter :: ms(*) = [4, 32, 80, 64, 4, 32, 80, 64, 4]
+    integer, parameter :: ns(*) = [5, 40, 60, 48, 5, 40, 60, 48, 5]
+    integer, parameter :: ks(*) = [6, 24, 50, 32, 6, 24, 50, 32, 6]
+    character(len=1), parameter :: ta(*) = ['N', 'N', 'N', 'T', 'T', 'T', 'C', 'C', 'C']
+    character(len=1), parameter :: tb(*) = ['N', 'T', 'C', 'N', 'T', 'C', 'N', 'T', 'C']
     integer :: i, m, n, k, lda, ldb
     complex(ep), allocatable :: A(:,:), B(:,:), C0(:,:), C_ref(:,:), C_got(:,:)
     complex(ep) :: alpha, beta

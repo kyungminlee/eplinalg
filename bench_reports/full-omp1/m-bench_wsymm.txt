@@ -1,0 +1,6 @@
+       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+           64          0.4344             0.2032       2.14x
+          128          0.7711             0.2016       3.82x
+          256          1.2793             0.2020       6.33x
+          512          1.9719             0.2100       9.39x
+wrote bench_wsymm.json

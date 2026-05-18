@@ -7,10 +7,12 @@ program test_ztrmv
     use ref_quad_blas, only: ztrmv
     implicit none
 
-    integer, parameter :: cases(*)              = [10, 50, 200]
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U']
-    character(len=1), parameter :: transes(*)  = ['N', 'C', 'T']
-    character(len=1), parameter :: diags(*)    = ['N', 'N', 'U']
+    integer, parameter :: cases(*)             = [10, 50, 200, 10, 50, 200, 10, 50, 200, 10, 50, 200]
+    ! Sweep UPLO × TRANS × DIAG = 12 combos. The 'C' branch (conjugate-
+    ! transpose) is its own code path in ztrmv.
+    character(len=1), parameter :: uplos(*)    = ['U', 'U', 'U', 'U', 'U', 'U', 'L', 'L', 'L', 'L', 'L', 'L']
+    character(len=1), parameter :: transes(*)  = ['N', 'N', 'T', 'T', 'C', 'C', 'N', 'N', 'T', 'T', 'C', 'C']
+    character(len=1), parameter :: diags(*)    = ['N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U']
     integer :: i, n
     complex(ep), allocatable :: A(:,:), x0(:), x_ref(:), x_got(:)
     real(ep) :: err, tol

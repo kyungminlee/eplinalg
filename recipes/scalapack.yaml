@@ -225,7 +225,7 @@ extra_renames:
 # bug). See doc/UPSTREAM_BUGS-ScaLAPACK.md for the bug catalogue
 # (prose section titles; the S##/X##/P##/I##/W## tags below are an
 # older internal index that no longer cross-references the doc) and
-# doc/refactor-20260509.md for the patch convention.
+# doc/archive/refactor-20260509.md for the patch convention.
 #
 # Bug summaries:
 #   lanhs (NPROW=1 underestimate + IAROW double-advance)
@@ -302,7 +302,7 @@ patches:
   - pslascl.f.patch
   - pzlascl.f.patch
   - pclascl.f.patch
-  # 2026-05-11 audit (doc/scalapack-residual-divergence-categorization.md)
+  # 2026-05-11 audit (doc/archive/scalapack-residual-divergence-categorization.md)
   - pzungql.f.patch    # PB_TOPGET → PB_TOPSET (topology restore)
   - pzunml2.f.patch    # PB_TOPGET → PB_TOPSET (topology restore)
   - pdsyevd.f.patch    # LQUERY missing LIWORK.EQ.-1 branch
@@ -318,9 +318,9 @@ patches:
 # (WCOPY, MSCAL) don't shadow any local in the affected files.
 
 
-# Convergence whitelist (Phase D, doc/refactor-20260509.md).
+# Convergence whitelist (Phase D, doc/archive/refactor-20260509.md).
 # Most are upstream MINRGP/larre2/larrf2 tuning splits and larzc/larzb/
-# stebz/lanhs algorithmic asymmetries. See doc/convergence-20260507.md
+# stebz/lanhs algorithmic asymmetries. See doc/archive/convergence-20260507.md
 # §scalapack and doc/UPSTREAM_BUGS-ScaLAPACK.md.
 expected_divergences:
   # Bugs that remain asymmetric (genuine upstream design split):

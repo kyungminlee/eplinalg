@@ -13,7 +13,7 @@ sweep) live in the index file.
 ## 2026-05-11 ScaLAPACK residual-divergence audit
 
 Per-pair audit of the 26 ScaLAPACK divergent pairs (see
-`doc/scalapack-residual-divergence-categorization.md` for the full
+`doc/archive/scalapack-residual-divergence-categorization.md` for the full
 categorization) surfaced **four real upstream bugs**, each with its
 own detailed section below:
 

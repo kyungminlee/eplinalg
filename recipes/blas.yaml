@@ -26,7 +26,7 @@ skip_files:
 
 # Patches applied to the staged source tree (build/staged-sources/blas/)
 # before migration. Each patch is a unified diff against the upstream
-# source. See doc/refactor-20260509.md.
+# source. See doc/archive/refactor-20260509.md.
 #
 # B01: dnrm2/dznrm2 originally embed Blue's scaling constants
 # (tsml/tbig/ssml/sbig) as inline PARAMETER declarations. On the
@@ -47,8 +47,8 @@ patches:
   - B01__nrm2-rotg-lazy-init.patch
   - B01_SC__nrm2-rotg-lazy-init.patch
 
-# Convergence whitelist (Phase D, doc/refactor-20260509.md).
-# Audit in doc/convergence-20260507.md §blas:
+# Convergence whitelist (Phase D, doc/archive/refactor-20260509.md).
+# Audit in doc/archive/convergence-20260507.md §blas:
 #   DDOT: upstream STEMP/SDOT vs DDOT/DTEMP line-swap (independent
 #     zero-init assignments emitted in different order — semantically
 #     equivalent but textually divergent).

@@ -10,7 +10,7 @@ preparation last completed. If the stamp is newer than every listed patch
 file, the stage is skipped. Pass ``rebuild=True`` to force a clean re-stage.
 
 This module is the input side of the pipeline reshape described in
-``doc/refactor-20260509.md``. Phase A wires it as a no-op-by-default CLI
+``doc/archive/refactor-20260509.md``. Phase A wires it as a no-op-by-default CLI
 command; subsequent phases route migration to read from the staged tree.
 """
 

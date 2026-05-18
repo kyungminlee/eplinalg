@@ -168,5 +168,5 @@ keep_kind_manifest: mumps/keep-kind.manifest
 # at the source level upstream either. The 162/200 divergences are
 # expected; the guarantee that matters for MUMPS is differential-
 # precision parity at the test level (currently 26/26). See
-# doc/convergence-20260507.md §mumps.
+# doc/archive/convergence-20260507.md §mumps.
 defer_all_divergences: true

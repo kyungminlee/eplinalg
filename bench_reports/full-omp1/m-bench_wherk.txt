@@ -1,0 +1,6 @@
+       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+           64          0.4802             0.1973       2.43x
+          128          0.8339             0.2053       4.06x
+          256          1.3901             0.1929       7.21x
+          512          2.0720             0.2115       9.80x
+wrote bench_wherk.json
