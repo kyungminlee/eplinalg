@@ -64,6 +64,31 @@ static inline int perf_parse_sizes(const int *defaults, int n_defaults,
     return n;
 }
 
+/* Comma-separated signed-int list from an env var. Used for
+ * BLAS_PERF_INCX where negative strides are meaningful. */
+static inline int perf_parse_int_list(const char *env_name,
+                                      const int *defaults, int n_defaults,
+                                      int *out, int max)
+{
+    const char *s = getenv(env_name);
+    if (!s || !*s) {
+        int n = n_defaults < max ? n_defaults : max;
+        for (int i = 0; i < n; ++i) out[i] = defaults[i];
+        return n;
+    }
+    int n = 0;
+    const char *p = s;
+    while (*p && n < max) {
+        char *end;
+        long v = strtol(p, &end, 10);
+        if (end == p) break;
+        out[n++] = (int)v;
+        p = end;
+        while (*p == ',' || *p == ' ' || *p == '\t') ++p;
+    }
+    return n;
+}
+
 /* Deterministic fill helpers — bounded magnitudes so x87/quadmath
  * doesn't drift into denormal/overflow ranges across many compounding
  * BLAS calls. Same seed = same sequence; we reset before each timed
