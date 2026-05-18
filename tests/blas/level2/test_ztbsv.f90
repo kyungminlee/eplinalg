@@ -7,10 +7,12 @@ program test_ztbsv
     use ref_quad_blas, only: ztbsv
     implicit none
 
-    integer, parameter :: cases(*)              = [20, 100, 64, 50]
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U', 'L']
-    character(len=1), parameter :: transes(*)  = ['N', 'C', 'T', 'N']
-    integer,          parameter :: ks(*)       = [3, 5, 0, 2]
+    ! Sweep UPLO × TRANS = 6 combos. DIAG='U' is pinned (implicit-1
+    ! diagonal keeps the solve bounded regardless of off-diagonals).
+    integer, parameter :: cases(*)              = [20, 100, 64, 50, 20, 100]
+    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U', 'L', 'U', 'L']
+    character(len=1), parameter :: transes(*)  = ['N', 'N', 'T', 'T', 'C', 'C']
+    integer,          parameter :: ks(*)       = [3, 5, 0, 2, 3, 5]
     integer :: i, n, k, lda
     complex(ep), allocatable :: A(:,:), x0(:), x_ref(:), x_got(:)
     real(ep) :: err, tol

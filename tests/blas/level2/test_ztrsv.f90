@@ -7,9 +7,12 @@ program test_ztrsv
     use ref_quad_blas, only: ztrsv
     implicit none
 
-    integer, parameter :: cases(*)              = [10, 50, 200]
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U']
-    character(len=1), parameter :: transes(*)  = ['N', 'C', 'T']
+    integer, parameter :: cases(*)             = [10, 50, 200, 10, 50, 200]
+    ! Sweep UPLO × TRANS = 6 combos. DIAG='U' is pinned in the call below
+    ! (the implicit-1 diagonal keeps the solve well-conditioned regardless
+    ! of the random off-diagonals).
+    character(len=1), parameter :: uplos(*)    = ['U', 'U', 'U', 'L', 'L', 'L']
+    character(len=1), parameter :: transes(*)  = ['N', 'T', 'C', 'N', 'T', 'C']
     integer :: i, n
     complex(ep), allocatable :: A(:,:), x0(:), x_ref(:), x_got(:)
     real(ep) :: err, tol

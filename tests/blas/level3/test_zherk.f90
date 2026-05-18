@@ -7,14 +7,13 @@ program test_zherk
     use ref_quad_blas, only: zherk
     implicit none
 
-    integer, parameter :: ns(*) = [4, 32, 80]
-    integer, parameter :: ks(*) = [5, 40, 60]
-    ! Cycle (UPLO, TRANS) so the three shapes hit upper-N, lower-N,
-    ! and upper-C corners. ZHERK's 'C' is conjugate-transpose (the
-    ! only valid transpose option for Hermitian) — distinct code from
-    ! 'N' and the most likely place for a conjugation slip.
-    character(len=1), parameter :: uplos(*)   = ['U', 'L', 'U']
-    character(len=1), parameter :: transes(*) = ['N', 'N', 'C']
+    integer, parameter :: ns(*) = [4, 32, 80, 48]
+    integer, parameter :: ks(*) = [5, 40, 60, 28]
+    ! Sweep UPLO × TRANS = 4 combos. ZHERK's 'C' is conjugate-transpose
+    ! (the only valid transpose option for Hermitian) — distinct code
+    ! from 'N' and the most likely place for a conjugation slip.
+    character(len=1), parameter :: uplos(*)   = ['U', 'U', 'L', 'L']
+    character(len=1), parameter :: transes(*) = ['N', 'C', 'N', 'C']
     integer :: i, n, k, lda
     complex(ep), allocatable :: A(:,:), C0(:,:), C_ref(:,:), C_got(:,:)
     real(ep) :: alpha, beta, err, tol

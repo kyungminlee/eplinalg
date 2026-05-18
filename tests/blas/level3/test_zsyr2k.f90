@@ -7,10 +7,11 @@ program test_zsyr2k
     use ref_quad_blas, only: zsyr2k
     implicit none
 
-    integer, parameter :: cases(*)              = [16, 64, 32]
-    integer, parameter :: ks(*)                 = [10, 32, 24]
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U']
-    character(len=1), parameter :: transes(*)  = ['N', 'T', 'N']
+    integer, parameter :: cases(*)              = [16, 64, 32, 48]
+    integer, parameter :: ks(*)                 = [10, 32, 24, 20]
+    ! Sweep UPLO × TRANS = 4 combos.
+    character(len=1), parameter :: uplos(*)    = ['U', 'U', 'L', 'L']
+    character(len=1), parameter :: transes(*)  = ['N', 'T', 'N', 'T']
     integer :: i, n, k, lda
     complex(ep), allocatable :: A(:,:), B(:,:), C0(:,:), C_ref(:,:), C_got(:,:)
     complex(ep) :: alpha, beta

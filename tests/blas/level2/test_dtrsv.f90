@@ -7,14 +7,13 @@ program test_dtrsv
     use ref_quad_blas, only: dtrsv
     implicit none
 
-    integer, parameter :: cases(*) = [10, 50, 200, 64]
-    ! Cycle UPLO/TRANS/DIAG so the four shapes touch each independent
-    ! code path: upper-N-N (default forward solve), lower-N-N (forward
-    ! substitution), upper-T-N (transposed forward), upper-N-U (unit
-    ! diagonal — skips the diagonal divide).
-    character(len=1), parameter :: uplos(*)   = ['U', 'L', 'U', 'U']
-    character(len=1), parameter :: transes(*) = ['N', 'N', 'T', 'N']
-    character(len=1), parameter :: diags(*)   = ['N', 'N', 'N', 'U']
+    integer, parameter :: cases(*) = [10, 50, 200, 64, 10, 50, 200, 64]
+    ! Sweep the full UPLO × TRANS × DIAG product (8 combos). The diagonal
+    ! is beefed up below so back-/forward-substitution stays well-
+    ! conditioned for every shape; DIAG='U' ignores the stored diagonal.
+    character(len=1), parameter :: uplos(*)   = ['U', 'U', 'U', 'U', 'L', 'L', 'L', 'L']
+    character(len=1), parameter :: transes(*) = ['N', 'N', 'T', 'T', 'N', 'N', 'T', 'T']
+    character(len=1), parameter :: diags(*)   = ['N', 'U', 'N', 'U', 'N', 'U', 'N', 'U']
     integer :: i, n, j
     real(ep), allocatable :: A(:,:), x0(:), x_ref(:), x_got(:)
     real(ep) :: err, tol

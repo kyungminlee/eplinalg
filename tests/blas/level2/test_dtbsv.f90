@@ -11,7 +11,7 @@ program test_dtbsv
     ! solve well-conditioned regardless of the random off-diagonals.
     integer, parameter :: cases(*)              = [20, 100, 64, 50]
     character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U', 'L']
-    character(len=1), parameter :: transes(*)  = ['N', 'N', 'T', 'N']
+    character(len=1), parameter :: transes(*)  = ['N', 'N', 'T', 'T']
     integer,          parameter :: ks(*)       = [3, 5, 0, 2]
     integer :: i, n, k, lda
     real(ep), allocatable :: A(:,:), x0(:), x_ref(:), x_got(:)

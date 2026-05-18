@@ -7,7 +7,9 @@ program test_dgbmv
     use ref_quad_blas, only: dgbmv
     implicit none
 
-    integer, parameter :: cases(*) = [20, 100]
+    integer, parameter :: cases(*) = [20, 100, 20, 100]
+    ! Cycle TRANS so the transpose path is exercised alongside 'N'.
+    character(len=1), parameter :: transes(*) = ['N', 'N', 'T', 'T']
     integer :: i, n, kl, ku, lda
     real(ep), allocatable :: A(:,:), x(:), y0(:), y_ref(:), y_got(:)
     real(ep) :: alpha, beta, err, tol
@@ -26,11 +28,11 @@ program test_dgbmv
         allocate(y_ref(n), y_got(n))
         y_ref = y0
         y_got = y0
-        call dgbmv('N', n, n, kl, ku, alpha, A, lda, x, 1, beta, y_ref, 1)
-        call target_dgbmv('N', n, n, kl, ku, alpha, A, lda, x, 1, beta, y_got, 1)
+        call dgbmv(transes(i), n, n, kl, ku, alpha, A, lda, x, 1, beta, y_ref, 1)
+        call target_dgbmv(transes(i), n, n, kl, ku, alpha, A, lda, x, 1, beta, y_got, 1)
         err = max_rel_err_vec(y_got, y_ref)
         tol = 16.0_ep * 2.0_ep * real(lda, ep) * target_eps
-        write(label, '(a,i0)') 'n=', n
+        write(label, '(a,a,a,i0)') 'trans=', transes(i), ',n=', n
         call report_case(trim(label), err, tol)
         deallocate(y_ref, y_got)
     end do

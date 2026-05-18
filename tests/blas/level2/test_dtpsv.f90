@@ -7,9 +7,10 @@ program test_dtpsv
     use ref_quad_blas, only: dtpsv
     implicit none
 
-    integer, parameter :: cases(*)              = [10, 50, 200]
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U']
-    character(len=1), parameter :: transes(*)  = ['N', 'T', 'N']
+    ! Sweep UPLO × TRANS = 4 combos. DIAG='U' is pinned below.
+    integer, parameter :: cases(*)              = [10, 50, 200, 64]
+    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U', 'L']
+    character(len=1), parameter :: transes(*)  = ['N', 'N', 'T', 'T']
     integer :: i, n, aps
     real(ep), allocatable :: ap(:), x0(:), x_ref(:), x_got(:)
     real(ep) :: err, tol
