@@ -24,7 +24,7 @@ program fuzz_mscal
     print '(a,i0,a,i0)', 'fuzz_mscal: seed=', seed, '  cases=', ncases
     call seed_rng(seed); fails = 0
     do ic = 1, ncases
-        n = rand_int_log(1, 4096); incx = pick_inc()
+        n = rand_int_log(1, 4096); incx = rand_incx_pos()
         call rand_alpha_beta(alpha, beta_unused)
         lenx = 1 + (n - 1) * abs(incx)
         allocate(X0(lenx), X_ov(lenx), X_mig(lenx))
@@ -50,12 +50,4 @@ program fuzz_mscal
     print '(a,i0,a,i0,a,i0)', 'fuzz_mscal: ', ncases - fails, '/', ncases, ' passed; tol_fails=', fails
     call err_stats_print()
     if (fails > 0) error stop 1
-contains
-    function pick_inc() result(k)
-        integer :: k; real(8) :: u
-        call random_number(u)
-        if (u < 0.6_8) then; k = 1
-        else if (u < 0.85_8) then; k = 2
-        else; k = 3; end if
-    end function
 end program

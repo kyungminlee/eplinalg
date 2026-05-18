@@ -14,7 +14,7 @@ module fuzz_util
     public :: rand_alpha_beta, rand_alpha_beta_complex
     public :: fill_matrix_real, max_rel_err_real, check_sentinels_real
     public :: fill_matrix_complex, max_rel_err_complex, check_sentinels_complex
-    public :: rand_pad, rand_incx
+    public :: rand_pad, rand_incx, rand_incx_pos
     public :: rk, eps, sentinel_re, sentinel_im
     public :: err_stats_init, err_stats_record, err_stats_print
 
@@ -321,6 +321,22 @@ contains
             s = -2
         end if
     end function rand_incx
+
+    ! Positive-only variant for routines where BLAS spec forbids
+    ! negative stride (iamax, norm2/asum). Same distribution shape as
+    ! rand_incx() but folded onto |inc|.
+    function rand_incx_pos() result(s)
+        integer :: s
+        real(8) :: u
+        call random_number(u)
+        if (u < 0.6_8) then
+            s = 1
+        else if (u < 0.85_8) then
+            s = 2
+        else
+            s = 3
+        end if
+    end function rand_incx_pos
 
     subroutine err_stats_init(n)
         integer, intent(in) :: n

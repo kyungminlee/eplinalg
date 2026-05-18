@@ -23,7 +23,7 @@ program fuzz_${routine}$
     print '(a,i0,a,i0)', 'fuzz_${routine}$: seed=', seed, '  cases=', ncases
     call seed_rng(seed); fails = 0
     do ic = 1, ncases
-        n = rand_int_log(1, 4096); incx = pick_inc_pos()
+        n = rand_int_log(1, 4096); incx = rand_incx_pos()
         lenx = 1 + (n - 1) * abs(incx)
         allocate(X(lenx))
         call fill_matrix_complex(X, lenx, 1, lenx)
@@ -41,12 +41,4 @@ program fuzz_${routine}$
     print '(a,i0,a,i0,a,i0)', 'fuzz_${routine}$: ', ncases - fails, '/', ncases, ' passed; tol_fails=', fails
     call err_stats_print()
     if (fails > 0) error stop 1
-contains
-    function pick_inc_pos() result(k)
-        integer :: k; real(8) :: u
-        call random_number(u)
-        if (u < 0.7_8) then; k = 1
-        else if (u < 0.9_8) then; k = 2
-        else; k = 3; end if
-    end function
 end program

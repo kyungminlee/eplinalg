@@ -24,7 +24,7 @@ program fuzz_mcopy
     print '(a,i0,a,i0)', 'fuzz_mcopy: seed=', seed, '  cases=', ncases
     call seed_rng(seed); fails = 0
     do ic = 1, ncases
-        n = rand_int_log(1, 4096); incx = pick_inc(); incy = pick_inc()
+        n = rand_int_log(1, 4096); incx = rand_incx(); incy = rand_incx()
         lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
         allocate(X0(lenx), Y0(leny), X_ov(lenx), Y_ov(leny), X_mig(lenx), Y_mig(leny))
         call fill_matrix_real(X0, lenx, 1, lenx); call fill_matrix_real(Y0, leny, 1, leny)
@@ -53,13 +53,4 @@ program fuzz_mcopy
     print '(a,i0,a,i0,a,i0)', 'fuzz_mcopy: ', ncases - fails, '/', ncases, ' passed; tol_fails=', fails
     call err_stats_print()
     if (fails > 0) error stop 1
-contains
-    function pick_inc() result(k)
-        integer :: k; real(8) :: u
-        call random_number(u)
-        if (u < 0.5_8) then; k = 1
-        else if (u < 0.75_8) then; k = 2
-        else if (u < 0.9_8) then; k = -1
-        else; k = -2; end if
-    end function
 end program

@@ -29,7 +29,7 @@ program fuzz_maxpy
     call seed_rng(seed); fails = 0
     do ic = 1, ncases
         n = rand_int_log(1, 4096)
-        incx = pick_inc(); incy = pick_inc()
+        incx = rand_incx(); incy = rand_incx()
         call rand_alpha_beta(alpha, beta_unused)
         lenx = 1 + (n - 1) * abs(incx)
         leny = 1 + (n - 1) * abs(incy)
@@ -60,14 +60,4 @@ program fuzz_maxpy
     print '(a,i0,a,i0,a,i0)', 'fuzz_maxpy: ', ncases - fails, '/', ncases, ' passed; tol_fails=', fails
     call err_stats_print()
     if (fails > 0) error stop 1
-contains
-    function pick_inc() result(k)
-        integer :: k
-        real(8) :: u
-        call random_number(u)
-        if (u < 0.5_8) then; k = 1
-        else if (u < 0.75_8) then; k = 2
-        else if (u < 0.9_8) then; k = -1
-        else; k = -2; end if
-    end function pick_inc
 end program

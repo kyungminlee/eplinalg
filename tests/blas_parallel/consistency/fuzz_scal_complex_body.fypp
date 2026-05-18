@@ -25,7 +25,7 @@ program fuzz_${routine}$
     print '(a,i0,a,i0)', 'fuzz_${routine}$: seed=', seed, '  cases=', ncases
     call seed_rng(seed); fails = 0
     do ic = 1, ncases
-        n = rand_int_log(1, 4096); incx = pick_inc()
+        n = rand_int_log(1, 4096); incx = rand_incx_pos()
         call rand_alpha_beta_complex(alpha, beta_unused)
         tol = max(10.0_rk, 4.0_rk * real(n, rk)) * eps
         lenx = 1 + (n - 1) * abs(incx)
@@ -45,12 +45,4 @@ program fuzz_${routine}$
     print '(a,i0,a,i0,a,i0)', 'fuzz_${routine}$: ', ncases - fails, '/', ncases, ' passed; tol_fails=', fails
     call err_stats_print()
     if (fails > 0) error stop 1
-contains
-    function pick_inc() result(k)
-        integer :: k; real(8) :: u
-        call random_number(u)
-        if (u < 0.6_8) then; k = 1
-        else if (u < 0.85_8) then; k = 2
-        else; k = 3; end if
-    end function
 end program fuzz_${routine}$
