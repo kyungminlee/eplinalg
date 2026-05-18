@@ -1,5 +1,11 @@
 # Fuzz / perf coverage survey — 2026-05-17
 
+> **Status (2026-05-18):** all six gaps documented below have been
+> closed. The tables and gap entries below are kept for historical
+> reference; the inline `✅ DONE (<short-sha>)` annotations mark the
+> commits that landed each fix. See the "Status update — 2026-05-18"
+> section near the bottom for a fresh summary.
+
 Follow-up to `doc/fuzz-stride-coverage-audit-20260518.md`. That audit
 covered stride coverage only; this one expands the lens to all
 categorical BLAS parameters (`trans`, `side`, `uplo`, `diag`) and
@@ -10,6 +16,9 @@ silently regress (correctness or perf). The loop-direction survey's
 `ytrsv` Sub-class A bug is the canonical example.
 
 ## TL;DR
+
+> All bullets below were true at write time (2026-05-17). All have
+> since been closed — see commits referenced in the gap list.
 
 - **Stride gap from 2026-05-18 is still wide open.** Only kind10/kind16
   trsv/trmv (the shared `_body.fypp`) were fixed. 20 other L2 routine
@@ -50,15 +59,15 @@ Columns: ✅ randomized, ❌ hardcoded, — n/a.
 |---|---|---|---|---|---|---|
 | L1 | axpy, copyswap, dot, rot, rotm, scal | — | — | — | — | ✅ (±1, ±2) |
 | L1 | iamax, norm | — | — | — | — | ✅ pos only |
-| L2 | gemv (R/C) | ✅ N/T (R), N/T/C (C) | — | — | — | ❌ |
-| L2 | gbmv (R/C) | ✅ N/T (R), N/T/C (C) | — | — | — | ❌ |
-| L2 | ger, gerc, geru | — | — | — | — | ❌ |
-| L2 | symv (R), hemv | — | — | ✅ | — | ❌ |
-| L2 | sbmv, hbmv | — | — | ✅ | — | ❌ |
-| L2 | spmv, hpmv | — | — | ✅ | — | ❌ |
-| L2 | syr, her, syr2, her2, spr, hpr, spr2, hpr2 | — | — | ✅ | — | ❌ |
-| L2 | trmv, trsv (R/C) | ✅ N/T (R), N/T/C (C) | — | ✅ | ✅ | ✅ (fixed 05-18) |
-| L2 | tbmv, tbsv, tpmv, tpsv (R/C) | ✅ N/T (R), N/T/C (C) | — | ✅ | ✅ | ❌ |
+| L2 | gemv (R/C) | ✅ N/T/C (R now via `rand_trans()`) | — | — | — | ✅ (c797f466) |
+| L2 | gbmv (R/C) | ✅ N/T/C | — | — | — | ✅ (c797f466) |
+| L2 | ger, gerc, geru | — | — | — | — | ✅ (c797f466) |
+| L2 | symv (R), hemv | — | — | ✅ | — | ✅ (c797f466) |
+| L2 | sbmv, hbmv | — | — | ✅ | — | ✅ (c797f466) |
+| L2 | spmv, hpmv | — | — | ✅ | — | ✅ (c797f466) |
+| L2 | syr, her, syr2, her2, spr, hpr, spr2, hpr2 | — | — | ✅ | — | ✅ (c797f466) |
+| L2 | trmv, trsv (R/C) | ✅ N/T/C (R via `rand_trans()` 0af68f5f) | — | ✅ | ✅ | ✅ (05-18) |
+| L2 | tbmv, tbsv, tpmv, tpsv (R/C) | ✅ N/T/C (R via `rand_trans()` 0af68f5f) | — | ✅ | ✅ | ✅ (c797f466) |
 | L3 | gemm (R/C) | ✅ N/T/C (both R and C — `rand_trans()`) | — | — | — | n/a |
 | L3 | gemmtr (R/C) | ✅ ta,tb N/T/C | — | ✅ | — | n/a |
 | L3 | symm, hemm | — | ✅ | ✅ | — | n/a |
@@ -77,25 +86,25 @@ Two parallel families — `fuzz_m*` (real DD, `real64x2`) and `fuzz_w*`
 | L1 | maxpy, mcopy, mdot, mrot, mrotm, mscal, mswap | — | — | — | — | ✅ (±1, ±2) |
 | L1 | masum, mnrm2, mwasum, mwnrm2, imamax, iwamax | — | — | — | — | ✅ pos only |
 | L1 | mcabs1, mrotg, mrotmg | — | — | — | — | — |
-| L1 | waxpy, wcopy, wdotc, wdotu, wmrot, wmscal, wrotg, wscal, wswap | — | — | — | — | ❌ (use legacy `pick_inc`) |
-| L2 | mgemv | ✅ N/T | — | — | — | ❌ |
-| L2 | mgbmv | ✅ N/T | — | — | — | ❌ |
-| L2 | mger | — | — | — | — | ❌ |
-| L2 | msymv | — | — | ✅ | — | ❌ |
-| L2 | msbmv | — | — | ✅ | — | ❌ |
-| L2 | mspmv | — | — | ✅ | — | ❌ |
-| L2 | msyr, msyr2, mspr, mspr2 | — | — | ✅ | — | ❌ |
-| L2 | mtrmv, mtrsv | ✅ N/T | — | ✅ | ✅ | ❌ **(missed by 05-18 fix)** |
-| L2 | mtbmv, mtbsv, mtpmv, mtpsv | ✅ N/T | — | ✅ | ✅ | ❌ |
-| L2 | wgemv | ✅ N/T/C | — | — | — | ❌ |
-| L2 | wgbmv | ✅ N/T/C | — | — | — | ❌ |
-| L2 | wgerc, wgeru | — | — | — | — | ❌ |
-| L2 | whemv | — | — | ✅ | — | ❌ |
-| L2 | whbmv | — | — | ✅ | — | ❌ |
-| L2 | whpmv | — | — | ✅ | — | ❌ |
-| L2 | wher, wher2, whpr, whpr2 | — | — | ✅ | — | ❌ |
-| L2 | wtrmv, wtrsv | ✅ N/T/C | — | ✅ | ✅ | ❌ **(missed by 05-18 fix)** |
-| L2 | wtbmv, wtbsv, wtpmv, wtpsv | ✅ N/T/C | — | ✅ | ✅ | ❌ |
+| L1 | waxpy, wcopy, wdotc, wdotu, wmrot, wmscal, wrotg, wscal, wswap | — | — | — | — | ✅ (9be2ebba — unified to `rand_incx[_pos]()`) |
+| L2 | mgemv | ✅ N/T | — | — | — | ✅ (70dcfbd8) |
+| L2 | mgbmv | ✅ N/T | — | — | — | ✅ (70dcfbd8) |
+| L2 | mger | — | — | — | — | ✅ (70dcfbd8) |
+| L2 | msymv | — | — | ✅ | — | ✅ (70dcfbd8) |
+| L2 | msbmv | — | — | ✅ | — | ✅ (70dcfbd8) |
+| L2 | mspmv | — | — | ✅ | — | ✅ (70dcfbd8) |
+| L2 | msyr, msyr2, mspr, mspr2 | — | — | ✅ | — | ✅ (70dcfbd8) |
+| L2 | mtrmv, mtrsv | ✅ N/T | — | ✅ | ✅ | ✅ (70dcfbd8) |
+| L2 | mtbmv, mtbsv, mtpmv, mtpsv | ✅ N/T | — | ✅ | ✅ | ✅ (70dcfbd8) |
+| L2 | wgemv | ✅ N/T/C | — | — | — | ✅ (70dcfbd8) |
+| L2 | wgbmv | ✅ N/T/C | — | — | — | ✅ (70dcfbd8) |
+| L2 | wgerc, wgeru | — | — | — | — | ✅ (70dcfbd8) |
+| L2 | whemv | — | — | ✅ | — | ✅ (70dcfbd8) |
+| L2 | whbmv | — | — | ✅ | — | ✅ (70dcfbd8) |
+| L2 | whpmv | — | — | ✅ | — | ✅ (70dcfbd8) |
+| L2 | wher, wher2, whpr, whpr2 | — | — | ✅ | — | ✅ (70dcfbd8) |
+| L2 | wtrmv, wtrsv | ✅ N/T/C | — | ✅ | ✅ | ✅ (70dcfbd8) |
+| L2 | wtbmv, wtbsv, wtpmv, wtpsv | ✅ N/T/C | — | ✅ | ✅ | ✅ (70dcfbd8) |
 | L3 | mgemm | ✅ ta,tb (via `rand_trans()` → N/T/C) | — | — | — | n/a |
 | L3 | mgemmtr | ✅ ta,tb | — | ✅ | — | n/a |
 | L3 | msymm | — | ✅ | ✅ | — | n/a |
@@ -116,60 +125,57 @@ trsm diag).
 
 | Emitter | Routines | trans | side | uplo | diag | strides |
 |---|---|---|---|---|---|---|
-| emit_gemv | gemv | ✅ | — | — | — | ❌ |
-| emit_ger | ger, gerc, geru | — | — | — | — | ❌ |
-| emit_gbmv | gbmv | ✅ | — | — | — | ❌ |
-| emit_symv_hemv | symv, hemv | — | — | ✅ | — | ❌ |
-| emit_sbmv_hbmv | sbmv, hbmv | — | — | ✅ | — | ❌ |
-| emit_spmv_hpmv | spmv, hpmv | — | — | ✅ | — | ❌ |
-| emit_syr_her | syr, her | — | — | ✅ | — | ❌ |
-| emit_spr_hpr | spr, hpr | — | — | ✅ | — | ❌ |
-| emit_trmv_trsv | trmv, trsv | ✅ | — | ✅ | ❌ **N only** | ✅ `BLAS_PERF_INCX` |
-| emit_tpmv_tpsv | tpmv, tpsv | ✅ | — | ✅ | ❌ **N only** | ❌ |
-| emit_tbmv_tbsv | tbmv, tbsv | ✅ | — | ✅ | ❌ **N only** | ❌ |
+| emit_gemv | gemv | ✅ | — | — | — | ✅ INCX×INCY cross product, neg in default (ad193439) |
+| emit_ger | ger, gerc, geru | — | — | — | — | ✅ INCX×INCY (ad193439) |
+| emit_gbmv | gbmv | ✅ | — | — | — | ✅ INCX×INCY (ad193439) |
+| emit_symv_hemv | symv, hemv | — | — | ✅ | — | ✅ INCX×INCY (ad193439) |
+| emit_sbmv_hbmv | sbmv, hbmv | — | — | ✅ | — | ✅ INCX×INCY (ad193439) |
+| emit_spmv_hpmv | spmv, hpmv | — | — | ✅ | — | ✅ INCX×INCY (ad193439) |
+| emit_syr_her | syr, her | — | — | ✅ | — | ✅ INCX incl. neg (ad193439) |
+| emit_spr_hpr | spr, hpr | — | — | ✅ | — | ✅ INCX incl. neg (ad193439) |
+| emit_trmv_trsv | trmv, trsv | ✅ | — | ✅ | ✅ N/U (249e1a01) | ✅ INCX incl. neg |
+| emit_tpmv_tpsv | tpmv, tpsv | ✅ | — | ✅ | ✅ N/U (249e1a01) | ✅ INCX incl. neg |
+| emit_tbmv_tbsv | tbmv, tbsv | ✅ | — | ✅ | ✅ N/U (249e1a01) | ✅ INCX incl. neg |
 | emit_gemm | gemm | ✅ R: {NN,TN,NT,TT}; C: 6 of 9 (skips CT/TC/CC) | — | — | — | n/a |
 | emit_symm_hemm | symm, hemm | — | ✅ | ✅ | — | n/a |
 | emit_syrk_herk | syrk, herk | ✅ | — | ✅ | — | n/a |
-| emit_trmm_trsm | trmm, trsm | ✅ N/T/C | ✅ | ✅ | ❌ **N only** | n/a |
-| emit_gemmtr | gemmtr | ⚠ 3 of 9 (ta,tb) pairs (NN, TN, NT) | — | ✅ | — | n/a |
+| emit_trmm_trsm | trmm, trsm | ✅ N/T/C | ✅ | ✅ | ✅ N/U (249e1a01) | n/a |
+| emit_gemmtr | gemmtr | ✅ full grid: 4 (R) / 9 (C) (ta,tb) (249e1a01) | — | ✅ | — | n/a |
+
+Note: `emit_gemm` complex still samples 6 of 9 trans pairs (skips
+CT/TC/CC). That subgap was not in the original 6 gaps and remains
+open — see "Status update — 2026-05-18" below.
 
 ## Gaps, ranked by risk
 
-1. **L2 stride coverage (still open from 2026-05-18 audit).** 20 L2
-   routine families × ~28 shared-body fypp variants still pass
-   `incx=incy=1`. **Plus ~33 multifloats L2 fuzz files**: 16 in `m*`
-   (mgemv, mgbmv, mger, msymv, msbmv, mspmv, msyr/2, mspr/2,
-   mtrmv/mtrsv, mtbmv/mtbsv, mtpmv/mtpsv) and 17 in `w*` (wgemv,
-   wgbmv, wgerc, wgeru, whemv, whbmv, whpmv, wher/her2, whpr/hpr2,
-   wtrmv/wtrsv, wtbmv/wtbsv, wtpmv/wtpsv) — the 05-18 fix never
-   touched these because they don't share the body include. Per the
-   loop-direction survey, the cost of leaving this open is undetected
-   correctness *or* perf cliffs in the strided fallback.
-2. **DIAG='U' never benched.** trmv/trsv/tbmv/tbsv/tpmv/tpsv/trmm/trsm
-   all hardcode `char diag = 'N'` in the emitted harness. Unit-diag
-   takes a different inner-loop shape; a regression there would be
-   invisible.
-3. **GEMMTR perf samples 3 of 9 (ta,tb) pairs.** TT, CN, NC, CT, TC,
-   CC unbenched. Per the loop-direction survey this matters because
-   the (ta,tb) combination controls whether the inner walk is along
-   rows or columns of A and B.
-4. **GER family.** No categorical params (n/a) but also no stride
-   randomization in fuzz or perf — gerc/geru complex-conjugate paths
-   are exercised only at incx=incy=1.
-5. **Real L2 triangular fuzz never exercises `trans='C'`.** trmv/trsv/
-   tbmv/tbsv/tpmv/tpsv real bodies inline 50/50 N/T. For real types
-   'C' is mathematically identical to 'T', but kernels often branch on
-   the literal character; an `'C'` branch left to rot would surface
-   only at link time against a real-typed caller. Cheap fix: replace
-   the inline if/else with `rand_trans()`.
-6. **Stride helper fragmentation.** `rand_incx` (added 05-18 in
-   `common/fuzz_util_body.fypp`), per-fypp `rand_inc` (axpy R/C),
-   `pick_inc` (~14 files), and `pick_inc_pos` (iamax/norm — for
-   routines where negative stride is invalid per BLAS spec) coexist
-   with subtly different distributions. Audit recommended unifying to
-   `rand_incx`; not done. Also worth promoting `rand_uplo()`,
-   `rand_side()`, `rand_diag()` to `common/` (all fypp files inline
-   their own 50/50 — or 30/70 in the trmm/trsm diag case).
+1. ✅ **CLOSED (c797f466 + 70dcfbd8).** L2 stride coverage —
+   28 shared-body fypps (c797f466) and the 33 standalone multifloats
+   L2 fypps (16 `m*` + 17 `w*`, 70dcfbd8) all now randomize
+   `incx`/`incy` via `rand_incx()` with allocation
+   `1 + (n-1)*abs(inc)`.
+2. ✅ **CLOSED (249e1a01).** DIAG='U' now benched: a
+   `diags[] = {'N', 'U'}` loop landed in `emit_trmv_trsv`,
+   `emit_tpmv_tpsv`, `emit_tbmv_tbsv`, and `emit_trmm_trsm`. Key
+   format already encoded diag so existing parsers consumed the new
+   variants unchanged.
+3. ✅ **CLOSED (249e1a01).** `emit_gemmtr` now samples the full
+   `(ta, tb)` grid — 4 pairs for real (N/T × N/T), 9 for complex
+   (N/T/C × N/T/C). The earlier 3-pair sample masked a 0.03x
+   `egemmtr UNN` sub-parity which is now visible.
+4. ✅ **CLOSED (c797f466 fuzz + ad193439 perf).** GER family
+   randomizes both strides in fuzz, and `emit_ger` now sweeps
+   `BLAS_PERF_INCX × BLAS_PERF_INCY` (default including negatives).
+5. ✅ **CLOSED (0af68f5f).** Real L2 triangular fuzz now uses
+   `rand_trans()` — `'C'` literal branch exercised. trmv/trsv/tbmv/
+   tbsv/tpmv/tpsv real bodies all swapped.
+6. ✅ **CLOSED (9be2ebba).** All call sites of legacy `pick_inc` /
+   `rand_inc` / `pick_inc_pos` redirected to `rand_incx()` (or
+   `rand_incx_pos()` for routines where BLAS spec forbids negative
+   stride — iamax, norm, scal). Local helper definitions removed; the
+   canonical helpers live in `common/fuzz_util_body.fypp` and
+   `common/target_multifloats/fuzz_util.fypp`.
+   `rand_uplo`/`rand_side`/`rand_diag` were not promoted — still
+   inlined per fypp.
 
 ## Recommended sweep
 
@@ -211,6 +217,47 @@ Estimated scope: ~28 shared-body fypps (done 2026-05-18 follow-up
 session) + ~33 multifloats fypps (16 m* + 17 w*) + ~10 perf emitters
 + ~150 perf C regen. Single sweep; the survey tables collapse on
 completion.
+
+## Status update — 2026-05-18
+
+All six gaps above were closed in a single follow-up session. Commits
+on `parallel-blas`:
+
+- `0af68f5f` — 6 real L2 triangular fuzz bodies → `rand_trans()`
+- `70dcfbd8` — 33 multifloats L2 fuzz drivers (16 `m*` + 17 `w*`) →
+  randomize `incx`/`incy`; `rand_incx()` added to multifloats
+  `fuzz_util`
+- `9be2ebba` — 31 fypp files unified to `rand_incx[_pos]()`; legacy
+  `pick_inc`/`rand_inc`/`pick_inc_pos` removed; scal routes through
+  `rand_incx_pos()` per BLAS spec
+- `249e1a01` — `gen_perf_harnesses.py`: DIAG={N,U} loop on 4
+  triangular emitters; `emit_gemmtr` full (ta,tb) grid
+- `ad193439` — `gen_perf_harnesses.py`: independent `BLAS_PERF_INCY`
+  env var (defaults to mirror INCX); default stride set bumped to
+  `{1, 2, -1}` so negative-stride code paths are benched by default
+  too
+- Plus regen commits (c7e2d0e4, 38b3c921, a82f0370) for the 195
+  perf C/C++ files.
+
+Smoke verification on the new defaults exposed two latent
+sub-parities that the old narrow sweep masked:
+
+- `egemmtr UNN` ≈ 0.031x (overlay ~32× slower than migrated)
+- `etrsv LNN /x2` ≈ 0.054x (overlay ~19× slower than migrated at
+  L/N/N with stride=2)
+
+Both are follow-up work, not addressed in this sweep.
+
+### Gaps that remain (out of scope for the 2026-05-17 survey)
+
+- **`emit_gemm` complex still samples 6 of 9 trans pairs** (skips
+  CT/TC/CC). Same shape of gap as GEMMTR was, but at row 130 of the
+  perf table — not flagged in the original 6 ranked gaps.
+- **`rand_uplo`/`rand_side`/`rand_diag` helpers** not promoted to
+  `common/`. Every fypp still inlines its own 50/50 (or 30/70 for
+  trmm/trsm `diag`). Cosmetic; functionally equivalent.
+- The follow-up sub-parities above (egemmtr UNN, etrsv LNN /x2) are
+  signals, not gaps in the harness itself.
 
 ## What this survey does *not* cover
 
