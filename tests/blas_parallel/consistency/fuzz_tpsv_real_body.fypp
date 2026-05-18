@@ -36,7 +36,7 @@ program fuzz_${routine}$
         n = rand_int_log(1, 128)
         tol = max(10.0_rk, 100.0_rk * real(n, rk)) * eps
         call random_number(u); if (u < 0.5_8) then; uplo = 'L'; else; uplo = 'U'; end if
-        call random_number(u); if (u < 0.5_8) then; trans = 'N'; else; trans = 'T'; end if
+        trans = rand_trans()
         call random_number(u); if (u < 0.5_8) then; diag = 'N'; else; diag = 'U'; end if
         np = (n * (n + 1)) / 2
         incx = rand_incx(); lenx = 1 + (n - 1) * abs(incx)
