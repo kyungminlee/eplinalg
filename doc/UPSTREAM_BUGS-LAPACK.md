@@ -56,7 +56,7 @@ Not yet filed.
 ### Comparer-side fixes landed alongside
 
 `_canonicalize_for_compare` extended with 5 additional W-class
-normalizations (per `doc/lapack-residual-divergence-categorization.md`):
+normalizations (per `doc/archive/lapack-residual-divergence-categorization.md`):
 `ELSE IF` ↔ `ELSEIF`, `GO TO` ↔ `GOTO`, `DOUBLE PRECISION` ↔ `REAL`,
 `COMPLEX*16` ↔ `COMPLEX`, `''` / `' '` / `'  '` CHARACTER-literal
 collapse, XERBLA trailing-space strip, `::` whitespace strip,
@@ -126,7 +126,7 @@ family (newer LAPACK, known asymmetric maintenance):**
 Net of the deep-dive: zero new migrator patches; one upstream-only
 report candidate (ssytri2 ILAENV typo).
 
-See `doc/lapack-residual-divergence-categorization.md` for the full
+See `doc/archive/lapack-residual-divergence-categorization.md` for the full
 110-pair classification and the deep-dive table.
 
 

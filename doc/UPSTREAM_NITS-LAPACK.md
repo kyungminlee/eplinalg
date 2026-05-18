@@ -2,7 +2,7 @@
 
 *Cosmetic-only sibling of [`UPSTREAM_BUGS-LAPACK.md`](UPSTREAM_BUGS-LAPACK.md):
 same 2026-05-11 audit (see
-`doc/lapack-residual-divergence-categorization.md`), same vendored
+`doc/archive/lapack-residual-divergence-categorization.md`), same vendored
 tree, but **no numerical, correctness, or interface impact** —
 none of these are patched in-tree.*
 
@@ -111,5 +111,5 @@ referenced, which is much more work than the alleviation justifies.
 
 - `doc/UPSTREAM_BUGS.md` — real bugs (numerical, correctness, or
   interface mismatch) found in the same audit
-- `doc/lapack-residual-divergence-categorization.md` — full per-pair
+- `doc/archive/lapack-residual-divergence-categorization.md` — full per-pair
   classification of all 110 remaining divergent pairs

@@ -302,7 +302,7 @@ patches:
   - pslascl.f.patch
   - pzlascl.f.patch
   - pclascl.f.patch
-  # 2026-05-11 audit (doc/scalapack-residual-divergence-categorization.md)
+  # 2026-05-11 audit (doc/archive/scalapack-residual-divergence-categorization.md)
   - pzungql.f.patch    # PB_TOPGET → PB_TOPSET (topology restore)
   - pzunml2.f.patch    # PB_TOPGET → PB_TOPSET (topology restore)
   - pdsyevd.f.patch    # LQUERY missing LIWORK.EQ.-1 branch
