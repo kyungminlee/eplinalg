@@ -69,7 +69,7 @@ contains
             read(buf, *, iostat=ios) n
             if (ios == 0 .and. n > 0) return
         end if
-        n = 200
+        n = 80
     end function read_cases
 
     subroutine seed_rng(s)

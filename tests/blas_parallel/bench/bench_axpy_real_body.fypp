@@ -66,7 +66,7 @@ contains
         character(len=32) :: tok
         call get_environment_variable('BLAS_BENCH_SIZES', buf, status=ios)
         if (ios /= 0 .or. len_trim(buf) == 0) then
-            arr = [256, 4096, 65536]; return
+            arr = [256, 4096]; return
         end if
         n = 1
         do i = 1, len_trim(buf)

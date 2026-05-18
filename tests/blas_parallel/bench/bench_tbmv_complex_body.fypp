@@ -62,7 +62,7 @@ contains
         integer :: ios, i, j, n, val
         character(len=32) :: tok
         call get_environment_variable('BLAS_BENCH_SIZES', buf, status=ios)
-        if (ios /= 0 .or. len_trim(buf) == 0) then; arr = [128, 256, 512, 1024]; return; end if
+        if (ios /= 0 .or. len_trim(buf) == 0) then; arr = [128, 256, 512]; return; end if
         n = 1
         do i = 1, len_trim(buf); if (buf(i:i) == ',') n = n + 1; end do
         allocate(arr(n)); j = 1; tok = ''; n = 0
