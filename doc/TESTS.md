@@ -85,7 +85,7 @@ Both `fuzz` and `perf` exercise non-unit strides:
 | Perf default | `{1, 2, -1}` | mirrors `BLAS_PERF_INCX` (cross product) | `{N, U}` | N/T (or N/T/C for complex) |
 
 `BLAS_PERF_INCX` and `BLAS_PERF_INCY` can each be overridden by env to
-e.g. `"1,2,-1,-2"`. See `doc/fuzz-perf-coverage-survey-20260517.md`
+e.g. `"1,2,-1,-2"`. See `doc/archive/fuzz-perf-coverage-survey-20260517.md`
 for the full categorical audit.
 
 ## Scheme B: migrated vs Netlib reference @ KIND=16 (differential precision)
@@ -151,9 +151,9 @@ Plus infrastructure:
 
 - `tests/README.md` — Scheme B (differential precision) testing model in detail
 - `tests/blas_parallel/CMakeLists.txt` — how Scheme A drivers are built from fypp templates
-- `doc/fuzz-perf-coverage-survey-20260517.md` — categorical (trans/uplo/diag/stride) coverage audit; documents the 2026-05-18 closure of the six original gaps
-- `doc/fuzz-stride-coverage-audit-20260518.md` — predecessor stride-only audit
-- `doc/loop-direction-survey-20260518.md` — why categorical coverage matters (`ytrsv` Sub-class A bug)
-- `doc/parallel-blas-optimization-findings-20260515.md` — overlay perf findings; references the perf/ harness keys
+- `doc/archive/fuzz-perf-coverage-survey-20260517.md` — categorical (trans/uplo/diag/stride) coverage audit; documents the 2026-05-18 closure of the six original gaps
+- `doc/archive/fuzz-stride-coverage-audit-20260518.md` — predecessor stride-only audit
+- `doc/archive/loop-direction-survey-20260518.md` — why categorical coverage matters (`ytrsv` Sub-class A bug)
+- `doc/parallel-blas-optimization-findings.md` — overlay perf findings; references the perf/ harness keys
 - `scripts/gen_perf_harnesses.py` — source of truth for everything under `tests/blas_parallel/perf/`
 - `scripts/precision_report.py` — aggregates per-test JSON reports across domains
