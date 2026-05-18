@@ -2121,4 +2121,85 @@ to see them.
     `scripts/run_perf_sweep.sh`. The bench-side ctest output is a
     poor substitute: it only tests `incx=incy=1`.
 
+## Addendum 21: etrsv TRANS='T' — same single-acc dep chain as ytrsv U-T (2026-05-18)
+
+### Symptom
+
+After Addendum 18 closed the LTN cliff, the residual etrsv sub-parity
+clustered on TRANS='T' (UT and LT) cells with strided x:
+
+```
+etrsv UTU/x-1 @512    0.93x
+etrsv UTU @256        0.95x
+etrsv LTU/x-1 @256    0.95x
+etrsv UTN/x-1 @256    0.96x
+```
+
+All TR='T' branches; TR='N' AXPY-style updates were already at parity.
+
+### Cause: identical to ytrsv U-T (Addendum 19), applied to real
+
+etrsv's TRANS='T' inner is a dot-product accumulator:
+
+```c
+T t = x[i];
+for (int k = 0; k < i; ++k) t -= ai[k] * x[k];
+if (nounit) t /= ai[i];
+x[i] = t;
+```
+
+Single accumulator `t` makes each iter wait on the prior iter's fsub.
+At x87 fmul latency ~7 cyc + fsub ~3 cyc this serializes at ~10
+cyc/element. etrmv already had the split-acc K-unroll on its T paths;
+etrsv didn't.
+
+### Fix
+
+Same pattern as etrmv T and ytrsv U-T:
+
+```c
+for (int i = 0; i < N; ++i) {
+    T t0 = x[i], t1 = zero;
+    int k = 0;
+    for (; k + 1 < i; k += 2) {
+        t0 -= ai[k]     * x[k];
+        t1 -= ai[k + 1] * x[k + 1];
+    }
+    if (k < i) t0 -= ai[k] * x[k];
+    T t = t0 + t1;
+    if (nounit) t /= ai[i];
+    x[i] = t;
+}
+```
+
+Mirror form (backward k) applied to the LT branch where the cache-
+direction fix from Addendum 18 already runs `k = N-1 .. i+1`. Both
+unit-stride and general-stride fallbacks updated.
+
+### Why no `!conj_a` gate (cf. Rule 22)
+
+etrsv is real-only — no conjugate path that could regress under the
+K-unroll's added register pressure. The unconditional K-unroll is safe.
+
+### Result (5-run avg, BLAS_PERF_ITERS=40)
+
+| Cell             | Before | After  | Δratio |
+|------------------|--------|--------|--------|
+| UTU/x-1 @512     | 0.930x | 0.989x | +0.059 |
+| UTU @256         | 0.949x | 0.998x | +0.049 |
+| LTU/x-1 @256     | 0.951x | 0.993x | +0.042 |
+| UTU/x-1 @128     | 0.956x | 0.977x | +0.021 |
+
+Overlay throughput up 3–6% on TR='T' cells; small-N (≤128) cells move
+within ±3% (noise floor). The big-win cells are at N≥256 where the
+inner-loop count is large enough for the split-acc trampoline overhead
+to amortize.
+
+### Lesson
+
+When a routine has both a "y += A·x" AXPY path AND a "y[j] = Σ A·x"
+dot-product path, the dot path almost always needs K-unroll-by-2 (x87
+fmul latency vs. single accumulator). Check etrmv T, etrsv T, and the
+symv/hemm dot phases together — they share the same shape.
+
 

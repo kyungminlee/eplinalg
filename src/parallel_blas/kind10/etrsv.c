@@ -79,21 +79,40 @@ void etrsv_(
                  * opposite end, so under cache pressure x gets evicted and
                  * has to be re-streamed every iter. At N=1024 the forward
                  * variant collapses to ~0.43× of migrated; backward closes
-                 * the gap (Addendum 18). */
+                 * the gap (Addendum 18).
+                 *
+                 * K-unroll-by-2 with split accumulators (t0, t1) breaks the
+                 * single-acc fmul→fadd dep chain (same x87-latency fix as
+                 * etrmv TRANS='T' and ytrsv U-T; Addendum 19 / Rule 22). */
                 for (int i = N - 1; i >= 0; --i) {
-                    T t = x[i];
+                    T t0 = x[i], t1 = zero;
                     const T *ai = &A_(0, i);
-                    for (int k = N - 1; k > i; --k) t -= ai[k] * x[k];
+                    int k = N - 1;
+                    for (; k - 1 > i; k -= 2) {
+                        t0 -= ai[k]     * x[k];
+                        t1 -= ai[k - 1] * x[k - 1];
+                    }
+                    for (; k > i; --k) t0 -= ai[k] * x[k];
+                    T t = t0 + t1;
                     if (nounit) t /= ai[i];
                     x[i] = t;
                 }
             } else {
                 /* UPLO='U': iterate i forward.
-                 * x[i] = (b[i] - sum_{k<i} A(k,i) x[k]) / A(i,i). */
+                 * x[i] = (b[i] - sum_{k<i} A(k,i) x[k]) / A(i,i).
+                 *
+                 * K-unroll-by-2 with split accumulators — see LT branch
+                 * note above. */
                 for (int i = 0; i < N; ++i) {
-                    T t = x[i];
+                    T t0 = x[i], t1 = zero;
                     const T *ai = &A_(0, i);
-                    for (int k = 0; k < i; ++k) t -= ai[k] * x[k];
+                    int k = 0;
+                    for (; k + 1 < i; k += 2) {
+                        t0 -= ai[k]     * x[k];
+                        t1 -= ai[k + 1] * x[k + 1];
+                    }
+                    if (k < i) t0 -= ai[k] * x[k];
+                    T t = t0 + t1;
                     if (nounit) t /= ai[i];
                     x[i] = t;
                 }
@@ -126,17 +145,31 @@ void etrsv_(
             if (UPLO == 'L') {
                 /* Inner walks backward to match Fortran reference; same
                  * cache-direction reasoning as the incx=1 LT path above
-                 * (Addendum 18 / Rule 21). */
+                 * (Addendum 18 / Rule 21). K-unroll-by-2 with split
+                 * accumulators (Addendum 19 / Rule 22). */
                 for (int i = N - 1; i >= 0; --i) {
-                    T t = x[kx + i * incx];
-                    for (int k = N - 1; k > i; --k) t -= A_(k, i) * x[kx + k * incx];
+                    T t0 = x[kx + i * incx], t1 = zero;
+                    int k = N - 1;
+                    for (; k - 1 > i; k -= 2) {
+                        t0 -= A_(k, i)     * x[kx + k * incx];
+                        t1 -= A_(k - 1, i) * x[kx + (k - 1) * incx];
+                    }
+                    for (; k > i; --k) t0 -= A_(k, i) * x[kx + k * incx];
+                    T t = t0 + t1;
                     if (nounit) t /= A_(i, i);
                     x[kx + i * incx] = t;
                 }
             } else {
+                /* K-unroll-by-2 with split accumulators. */
                 for (int i = 0; i < N; ++i) {
-                    T t = x[kx + i * incx];
-                    for (int k = 0; k < i; ++k) t -= A_(k, i) * x[kx + k * incx];
+                    T t0 = x[kx + i * incx], t1 = zero;
+                    int k = 0;
+                    for (; k + 1 < i; k += 2) {
+                        t0 -= A_(k,     i) * x[kx + k       * incx];
+                        t1 -= A_(k + 1, i) * x[kx + (k + 1) * incx];
+                    }
+                    if (k < i) t0 -= A_(k, i) * x[kx + k * incx];
+                    T t = t0 + t1;
                     if (nounit) t /= A_(i, i);
                     x[kx + i * incx] = t;
                 }
