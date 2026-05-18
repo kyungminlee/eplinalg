@@ -468,24 +468,27 @@ static void run_one(char trans, int M, int N, int incx, int incy,
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024, 2048}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
-    int incxs[8];
+    int incxs[8], incys[8];
     int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
+    int n_incy = perf_parse_int_list("BLAS_PERF_INCY", incxs, n_incx, incys, 8);
     perf_print_header();
     const char transes[] = {{ {','.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
     for (size_t t = 0; t < sizeof(transes); ++t) {{
         for (int xi = 0; xi < n_incx; ++xi) {{
             int incx = incxs[xi]; if (incx == 0) continue;
-            int incy = incx;
-            for (int i = 0; i < n; ++i)
-                run_one(transes[t], sizes[i], sizes[i], incx, incy, iters, warmup);
+            for (int yi = 0; yi < n_incy; ++yi) {{
+                int incy = incys[yi]; if (incy == 0) continue;
+                for (int i = 0; i < n; ++i)
+                    run_one(transes[t], sizes[i], sizes[i], incx, incy, iters, warmup);
+            }}
         }}
     }}
     return 0;
@@ -559,21 +562,24 @@ static void run_one(int M, int N, int incx, int incy, int iters, int warmup) {{
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
-    int incxs[8];
+    int incxs[8], incys[8];
     int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
+    int n_incy = perf_parse_int_list("BLAS_PERF_INCY", incxs, n_incx, incys, 8);
     perf_print_header();
     for (int xi = 0; xi < n_incx; ++xi) {{
         int incx = incxs[xi]; if (incx == 0) continue;
-        int incy = incx;
-        for (int i = 0; i < n; ++i) run_one(sizes[i], sizes[i], incx, incy, iters, warmup);
+        for (int yi = 0; yi < n_incy; ++yi) {{
+            int incy = incys[yi]; if (incy == 0) continue;
+            for (int i = 0; i < n; ++i) run_one(sizes[i], sizes[i], incx, incy, iters, warmup);
+        }}
     }}
     return 0;
 }}
@@ -881,23 +887,26 @@ static void run_one(char uplo, int N, int incx, int incy, int iters, int warmup)
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
-    int incxs[8];
+    int incxs[8], incys[8];
     int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
+    int n_incy = perf_parse_int_list("BLAS_PERF_INCY", incxs, n_incx, incys, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {{
         char uplo = (u == 0) ? 'U' : 'L';
         for (int xi = 0; xi < n_incx; ++xi) {{
             int incx = incxs[xi]; if (incx == 0) continue;
-            int incy = incx;
-            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], incx, incy, iters, warmup);
+            for (int yi = 0; yi < n_incy; ++yi) {{
+                int incy = incys[yi]; if (incy == 0) continue;
+                for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], incx, incy, iters, warmup);
+            }}
         }}
     }}
     return 0;
@@ -962,7 +971,7 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
@@ -1042,7 +1051,7 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
@@ -1126,23 +1135,26 @@ static void run_one(char uplo, int N, int incx, int incy, int iters, int warmup)
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
-    int incxs[8];
+    int incxs[8], incys[8];
     int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
+    int n_incy = perf_parse_int_list("BLAS_PERF_INCY", incxs, n_incx, incys, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {{
         char uplo = (u == 0) ? 'U' : 'L';
         for (int xi = 0; xi < n_incx; ++xi) {{
             int incx = incxs[xi]; if (incx == 0) continue;
-            int incy = incx;
-            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], incx, incy, iters, warmup);
+            for (int yi = 0; yi < n_incy; ++yi) {{
+                int incy = incys[yi]; if (incy == 0) continue;
+                for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], incx, incy, iters, warmup);
+            }}
         }}
     }}
     return 0;
@@ -1213,7 +1225,7 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
@@ -1306,7 +1318,7 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
@@ -1400,24 +1412,27 @@ static void run_one(char trans, int M, int N, int KL, int KU,
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
-    int incxs[8];
+    int incxs[8], incys[8];
     int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
+    int n_incy = perf_parse_int_list("BLAS_PERF_INCY", incxs, n_incx, incys, 8);
     perf_print_header();
     const char transes[] = {{ {','.join("'" + c + "'" for c in (['N','T','C'] if is_c else ['N','T']))} }};
     for (size_t t = 0; t < sizeof(transes); ++t)
         for (int xi = 0; xi < n_incx; ++xi) {{
             int incx = incxs[xi]; if (incx == 0) continue;
-            int incy = incx;
-            for (int i = 0; i < n; ++i)
-                run_one(transes[t], sizes[i], sizes[i], 16, 16, incx, incy, iters, warmup);
+            for (int yi = 0; yi < n_incy; ++yi) {{
+                int incy = incys[yi]; if (incy == 0) continue;
+                for (int i = 0; i < n; ++i)
+                    run_one(transes[t], sizes[i], sizes[i], 16, 16, incx, incy, iters, warmup);
+            }}
         }}
     return 0;
 }}
@@ -1488,23 +1503,26 @@ static void run_one(char uplo, int N, int K, int incx, int incy,
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
     int sizes[32];
     int n = perf_parse_sizes(default_sizes,
         (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
-    int incxs[8];
+    int incxs[8], incys[8];
     int n_incx = perf_parse_int_list("BLAS_PERF_INCX", default_incxs,
         (int)(sizeof(default_incxs)/sizeof(default_incxs[0])), incxs, 8);
+    int n_incy = perf_parse_int_list("BLAS_PERF_INCY", incxs, n_incx, incys, 8);
     perf_print_header();
     for (size_t u = 0; u < 2; ++u) {{
         char uplo = (u == 0) ? 'U' : 'L';
         for (int xi = 0; xi < n_incx; ++xi) {{
             int incx = incxs[xi]; if (incx == 0) continue;
-            int incy = incx;
-            for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], 16, incx, incy, iters, warmup);
+            for (int yi = 0; yi < n_incy; ++yi) {{
+                int incy = incys[yi]; if (incy == 0) continue;
+                for (int i = 0; i < n; ++i) run_one(uplo, sizes[i], 16, incx, incy, iters, warmup);
+            }}
         }}
     }}
     return 0;
@@ -1571,7 +1589,7 @@ static void run_one(char uplo, char trans, char diag, int N, int K, int incx,
 }}
 
 static const int default_sizes[] = {{128, 256, 512, 1024}};
-static const int default_incxs[] = {{1, 2}};
+static const int default_incxs[] = {{1, 2, -1}};
 int main(void) {{
     int iters  = perf_env_int("BLAS_PERF_ITERS",  200);
     int warmup = perf_env_int("BLAS_PERF_WARMUP", 20);
