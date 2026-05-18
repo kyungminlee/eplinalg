@@ -69,11 +69,15 @@ Columns: ✅ randomized, ❌ hardcoded, — n/a.
 
 ### Multifloats per-target (separate code, not body-include)
 
+Two parallel families — `fuzz_m*` (real DD, `real64x2`) and `fuzz_w*`
+(complex DD, `cmplx64x2`). Both are standalone programs.
+
 | Layer | Routine family | trans | side | uplo | diag | strides |
 |---|---|---|---|---|---|---|
 | L1 | maxpy, mcopy, mdot, mrot, mrotm, mscal, mswap | — | — | — | — | ✅ (±1, ±2) |
 | L1 | masum, mnrm2, mwasum, mwnrm2, imamax, iwamax | — | — | — | — | ✅ pos only |
 | L1 | mcabs1, mrotg, mrotmg | — | — | — | — | — |
+| L1 | waxpy, wcopy, wdotc, wdotu, wmrot, wmscal, wrotg, wscal, wswap | — | — | — | — | ❌ (use legacy `pick_inc`) |
 | L2 | mgemv | ✅ N/T | — | — | — | ❌ |
 | L2 | mgbmv | ✅ N/T | — | — | — | ❌ |
 | L2 | mger | — | — | — | — | ❌ |
@@ -83,11 +87,21 @@ Columns: ✅ randomized, ❌ hardcoded, — n/a.
 | L2 | msyr, msyr2, mspr, mspr2 | — | — | ✅ | — | ❌ |
 | L2 | mtrmv, mtrsv | ✅ N/T | — | ✅ | ✅ | ❌ **(missed by 05-18 fix)** |
 | L2 | mtbmv, mtbsv, mtpmv, mtpsv | ✅ N/T | — | ✅ | ✅ | ❌ |
+| L2 | wgemv | ✅ N/T/C | — | — | — | ❌ |
+| L2 | wgbmv | ✅ N/T/C | — | — | — | ❌ |
+| L2 | wgerc, wgeru | — | — | — | — | ❌ |
+| L2 | whemv | — | — | ✅ | — | ❌ |
+| L2 | whbmv | — | — | ✅ | — | ❌ |
+| L2 | whpmv | — | — | ✅ | — | ❌ |
+| L2 | wher, wher2, whpr, whpr2 | — | — | ✅ | — | ❌ |
+| L2 | wtrmv, wtrsv | ✅ N/T/C | — | ✅ | ✅ | ❌ **(missed by 05-18 fix)** |
+| L2 | wtbmv, wtbsv, wtpmv, wtpsv | ✅ N/T/C | — | ✅ | ✅ | ❌ |
 | L3 | mgemm | ✅ ta,tb (via `rand_trans()` → N/T/C) | — | — | — | n/a |
 | L3 | mgemmtr | ✅ ta,tb | — | ✅ | — | n/a |
 | L3 | msymm | — | ✅ | ✅ | — | n/a |
 | L3 | msyrk, msyr2k | ✅ N/T | — | ✅ | — | n/a |
 | L3 | mtrmm, mtrsm | ✅ N/T/C (`rand_trans()`) | ✅ | ✅ | ✅ (30/70) | n/a |
+| L3 | wgemm, wgemmtr, wsymm, whemm, wsyrk, wsyr2k, wherk, wher2k, wtrmm, wtrsm | ✅ (mirrors `m*`) | (per routine) | ✅ | (trmm/trsm only) | n/a |
 
 Common helpers in `common/fuzz_util_body.fypp`: `rand_trans()` →
 N/T/C ~1/3 each; `rand_trans_complex()` is just an alias; `rand_incx()`
@@ -123,12 +137,14 @@ trsm diag).
 
 1. **L2 stride coverage (still open from 2026-05-18 audit).** 20 L2
    routine families × ~28 shared-body fypp variants still pass
-   `incx=incy=1`. **Plus all 11 multifloats L2 fuzz files** (mgemv,
-   mgbmv, mger, msymv, msbmv, mspmv, msyr/2, mspr/2, mtrmv/mtrsv,
-   mtbmv/mtbsv, mtpmv/mtpsv) — the 05-18 fix never touched these
-   because they don't share the body include. Per the loop-direction
-   survey, the cost of leaving this open is undetected correctness
-   *or* perf cliffs in the strided fallback.
+   `incx=incy=1`. **Plus ~33 multifloats L2 fuzz files**: 16 in `m*`
+   (mgemv, mgbmv, mger, msymv, msbmv, mspmv, msyr/2, mspr/2,
+   mtrmv/mtrsv, mtbmv/mtbsv, mtpmv/mtpsv) and 17 in `w*` (wgemv,
+   wgbmv, wgerc, wgeru, whemv, whbmv, whpmv, wher/her2, whpr/hpr2,
+   wtrmv/wtrsv, wtbmv/wtbsv, wtpmv/wtpsv) — the 05-18 fix never
+   touched these because they don't share the body include. Per the
+   loop-direction survey, the cost of leaving this open is undetected
+   correctness *or* perf cliffs in the strided fallback.
 2. **DIAG='U' never benched.** trmv/trsv/tbmv/tbsv/tpmv/tpsv/trmm/trsm
    all hardcode `char diag = 'N'` in the emitted harness. Unit-diag
    takes a different inner-loop shape; a regression there would be
@@ -161,11 +177,12 @@ Mirror the trsv/trmv playbook from 2026-05-18 in one bulk pass so
 the audit/survey tables collapse to all-✅:
 
 1. **Plumb `rand_incx()` / `rand_incy()` into all remaining L2 fuzz
-   bodies AND the standalone multifloats L2 fuzz files.** Allocate
-   buffers as `1 + (n-1)*abs(inc)`; thread strides through both
-   kernel calls; add stride values to FAIL prints. Per the 05-18
-   workflow, sanity-test each by injecting a bug into one `incx ≠ 1`
-   path and confirming non-zero failures, then revert.
+   bodies AND the standalone multifloats L2 fuzz files (both `m*`
+   real-DD and `w*` complex-DD).** Allocate buffers as
+   `1 + (n-1)*abs(inc)`; thread strides through both kernel calls;
+   add stride values to FAIL prints. Per the 05-18 workflow,
+   sanity-test each by injecting a bug into one `incx ≠ 1` path and
+   confirming non-zero failures, then revert.
 2. **Extend the 10 affected `emit_*` functions** in
    `gen_perf_harnesses.py` to loop `BLAS_PERF_INCX` (and
    `BLAS_PERF_INCY` where applicable). Emit `/xK` key suffixes for
@@ -190,9 +207,10 @@ the audit/survey tables collapse to all-✅:
    `doc/parallel-blas-optimization-findings-20260515.md`, mirroring
    the loop-direction survey's Addendum + Rule format.
 
-Estimated scope: ~28 shared-body fypps + ~11 multifloats fypps + ~10
-perf emitters + ~150 perf C regen. Single sweep; the survey tables
-collapse on completion.
+Estimated scope: ~28 shared-body fypps (done 2026-05-18 follow-up
+session) + ~33 multifloats fypps (16 m* + 17 w*) + ~10 perf emitters
++ ~150 perf C regen. Single sweep; the survey tables collapse on
+completion.
 
 ## What this survey does *not* cover
 
