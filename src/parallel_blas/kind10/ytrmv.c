@@ -71,14 +71,16 @@ void ytrmv_(
                     x[j] = temp;
                 }
             } else {
+                /* Inner walks backward to match Fortran ytrmv.f
+                 * (DO 90 I = J-1,1,-1). Sub-class D / Rule 21. */
                 for (int j = N - 1; j >= 0; --j) {
                     T temp = x[j];
                     if (nounit) temp *= (conj_a ? cconj(A_(j, j)) : A_(j, j));
                     const T *aj = &A_(0, j);
                     if (conj_a) {
-                        for (int i = 0; i < j; ++i) temp += cconj(aj[i]) * x[i];
+                        for (int i = j - 1; i >= 0; --i) temp += cconj(aj[i]) * x[i];
                     } else {
-                        for (int i = 0; i < j; ++i) temp += aj[i] * x[i];
+                        for (int i = j - 1; i >= 0; --i) temp += aj[i] * x[i];
                     }
                     x[j] = temp;
                 }
@@ -117,10 +119,12 @@ void ytrmv_(
                     x[kx + j * incx] = temp;
                 }
             } else {
+                /* Inner walks backward to match Fortran ytrmv.f
+                 * (DO 110 I = J-1,1,-1). Sub-class D / Rule 21. */
                 for (int j = N - 1; j >= 0; --j) {
                     T temp = x[kx + j * incx];
                     if (nounit) temp *= (conj_a ? cconj(A_(j, j)) : A_(j, j));
-                    for (int i = 0; i < j; ++i) {
+                    for (int i = j - 1; i >= 0; --i) {
                         const T aij = conj_a ? cconj(A_(i, j)) : A_(i, j);
                         temp += aij * x[kx + i * incx];
                     }
