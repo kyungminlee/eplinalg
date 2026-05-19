@@ -59,9 +59,18 @@ void etpsv_(
             if (UPLO == 'U') {
                 int kk = 0;
                 for (int j = 0; j < N; ++j) {
-                    T tmp = x[j];
+                    /* Single-acc x87 dot — split into two parallel chains
+                     * (Rule 22 / Addendum 21). */
+                    T t0 = x[j], t1 = zero;
                     int k = kk;
-                    for (int i = 0; i < j; ++i) { tmp -= ap[k] * x[i]; ++k; }
+                    int i = 0;
+                    for (; i + 1 < j; i += 2) {
+                        t0 -= ap[k]     * x[i];
+                        t1 -= ap[k + 1] * x[i + 1];
+                        k += 2;
+                    }
+                    if (i < j) { t0 -= ap[k] * x[i]; }
+                    T tmp = t0 + t1;
                     if (nounit) tmp /= ap[kk + j];
                     x[j] = tmp;
                     kk += j + 1;
