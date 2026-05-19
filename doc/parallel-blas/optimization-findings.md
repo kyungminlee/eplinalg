@@ -2398,4 +2398,80 @@ version without re-benching at the actual band-width.
     a false-positive of this kind — at parity with a small outlier
     tail at incx≠1.
 
+## Addendum 25: small-N benches are bimodal — need ≥20000 iters (2026-05-19)
+
+### Symptom
+
+A 5-trial sweep at BLAS_PERF_ITERS=2000 flagged **etbmv** with ~16
+cells at median 0.70–0.95. Looking at the raw per-trial overlay GFlops:
+
+```
+etbmv UTN 128 (5 trials):
+  overlay GFs:  0.86  1.21  1.18  1.25  0.87   ← bimodal!
+  migrated GFs: 1.24  1.24  0.86  0.86  1.25   ← bimodal!
+  ratio:        0.69  0.97  1.37  1.44  0.69
+```
+
+Both overlay and migrated show a **bimodal** GFlops distribution —
+~0.86 (slow) or ~1.25 (fast) — and the ratio depends on whether they
+happened to hit the same mode. The median ratio of 0.70 is not a code
+artifact; it's a statistical artifact of bimodal noise.
+
+### Root cause
+
+At BLAS_PERF_ITERS=2000 with N=128, total wall-clock per call is
+~10-20 ms. The "fast" mode is presumably hot-cache execution; the
+"slow" mode is one-or-more cold accesses (TLB miss, page walk, or
+cache line refetch) early in the iter loop that takes a fixed cost
+amortized over only 2000 iters. At higher iter counts the fixed cost
+amortizes away.
+
+### Verification
+
+Same etbmv UTN 128 at BLAS_PERF_ITERS=20000:
+
+```
+ratios across 5 trials: 0.912  0.962  0.978  0.992  0.924
+                        → median 0.962, at parity
+```
+
+The bimodality vanishes; cell is at parity.
+
+esymv L/x-1 128 at BLAS_PERF_ITERS=20000:
+
+```
+ratios across 5 trials: 0.893  0.904  0.905  0.922  0.931
+                        → median 0.905, real structural floor
+```
+
+esymv is *genuinely* sub-parity (the Addendum 22 floor) at high iters.
+
+### Implication
+
+The whole exercise of 3-trial and 5-trial sweeps at 200-2000 iters
+captured a mix of true structural sub-parity and bimodal-noise
+artifacts. Reliable classification requires BLAS_PERF_ITERS=20000+
+for small-N cells. Two cells fell out of the noise correctly:
+- **etbsv UNN stride-1**: 0.84 at low iters, **0.96-0.99 at 20000** —
+  the fix (forward inner walk) is real.
+- **etpsv UTN stride-1**: 0.84 at low iters, **1.05 at 20000** —
+  K-unroll-by-2 fix is real.
+
+### Rules
+
+31. **For sub-parity classification at small N (≤256), use
+    BLAS_PERF_ITERS ≥ 20000.** Lower iter counts conflate true
+    structural gaps with bimodal cache-warmup noise — both modes
+    can have ~30% throughput delta, and ratios depend on whether
+    overlay and migrated happen to coincide. The default
+    BLAS_PERF_ITERS=200 from perf_sweep.sh is unsuitable for
+    declaring structural sub-parity; even 2000 is borderline.
+
+32. **A cell's "real" sub-parity needs *tight* trial spread** (max-
+    min < 0.05 across 5+ trials) *and* low median (<0.95). A wide
+    spread (e.g., 0.65–1.45) means the ratio is dominated by
+    independent bimodal noise in overlay and migrated, not by any
+    real code-level gap. Wide-spread cells should be rebenched at
+    higher iters, not "fixed."
+
 
