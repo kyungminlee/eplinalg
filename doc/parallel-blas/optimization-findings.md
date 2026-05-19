@@ -2387,4 +2387,15 @@ version without re-benching at the actual band-width.
     combined inners; this rule covers the short-inner case for pure
     dots.
 
+30. **3-trial median sweeps misclassify "at-parity with noise tail"
+    cells as sub-parity.** A cell whose true distribution is ~0.97×
+    typical with occasional 0.83× outliers (rare cache event, page
+    walk, throttle) will show median 0.918 in a 3-trial sweep when
+    2 of 3 happen to hit the outlier mode. 8-trial reruns recover
+    the true median ~0.97. Before declaring a cell structurally
+    sub-parity from a 3-trial sweep, rebench at ≥5 trials; only then
+    classify as structural. The etbmv UNN strided "0.92 cluster" was
+    a false-positive of this kind — at parity with a small outlier
+    tail at incx≠1.
+
 
