@@ -2283,3 +2283,54 @@ Tag the cluster and move on.
     savings and the extra accumulators spill x87 stack. Try on dot-
     only paths first; revert immediately if the strided cell ratios
     move <0.
+
+## Addendum 23: complex K-unroll-by-4 spills x87 stack — keep at 2 (2026-05-19)
+
+### Context
+
+The 3-trial median sweep at OMP=1 left **ytrsv UTN/UTU @ N=256/512**
+at 0.92-0.93× — a real structural gap, tight across 5 reruns, despite
+already having K-unroll-by-2 on the non-conj branch (Addendum 19).
+Tried K-unroll-by-4 to add two more parallel chains:
+
+```c
+for (; k + 3 < i; k += 4) {
+    t0 -= ai[k]     * x[k];
+    t1 -= ai[k + 1] * x[k + 1];
+    t2 -= ai[k + 2] * x[k + 2];
+    t3 -= ai[k + 3] * x[k + 3];
+}
+```
+
+### Result
+
+**Regressed** UTN/UTU @ N=256 from 0.93× → 0.75× (10 trials). Reverted.
+
+### Why
+
+`_Complex long double` is two `long double`s. Each accumulator occupies
+two x87 register-stack slots. 4 accumulators × 2 = 8 slots — exactly
+the entire x87 stack. With no slots left for `ai[k]` and `x[k]` operand
+loads, gcc spills every load to memory and re-loads twice (once for
+the real-part fmul, once for the imag). The 4-way split increases
+parallel chains but the spill overhead more than wipes it out.
+
+Real-valued long-double would have headroom (4 acc × 1 = 4 slots,
+4 free for operands) — so the rule below is complex-specific.
+
+### Lesson
+
+Complex long-double is at the limit at K=2. The remaining 7% gap on
+ytrsv U-T is inherent to x87 stack width plus dependent-chain latency
+and is not closeable from C source. Document and stop.
+
+### Rules
+
+28. **For `_Complex long double` dot accumulators, max K-unroll is 2.**
+    Each cmplx slot is 2 x87 stack registers; 4 accumulators = 8 slots
+    = full stack with no room to load operands. Same code on real-long-
+    double would have headroom. Don't try K-unroll-by-4 on complex
+    paths even when "more parallelism would help": the spill cost is
+    larger than the latency win.
+
+
