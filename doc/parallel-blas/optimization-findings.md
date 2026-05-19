@@ -2387,6 +2387,68 @@ version without re-benching at the actual band-width.
     combined inners; this rule covers the short-inner case for pure
     dots.
 
+### Addendum 24 follow-up: confirmed inner asm matches migrated, gap is structural (2026-05-19)
+
+After Rule 30 / Addendum 25 (the 5+ trial, 20000-iter discipline),
+ygbmv T 128 stays at median 0.94-0.96 — *tight* across 8 trials.
+The cell is real, not bench-noise.
+
+**Side-by-side inner-loop disassembly:**
+
+migrated (gfortran, `ygbmv_+0xc00`, 19 insns):
+```
+fldt (%rax) / add $20 / fldt -0x10(%rax)   ; A.re, A.im
+fldt -0x20(%rdx) / fldt -0x10(%rdx)         ; x.re, x.im
+add %rsi,%rdx
+fld %st(1) / fmul %st(4),%st                 ; dup A.im, * x.im
+fld %st(1) / fmul %st(4),%st                 ; dup x.re, * A.re
+fsubrp %st,%st(1) / faddp %st,%st(6)         ; cmul.re into TEMP.re
+fxch %st(1)
+fmulp %st,%st(2) / fmulp %st,%st(2)
+faddp %st,%st(1) / faddp %st,%st(1)          ; cmul.im into TEMP.im
+cmp %rax,%rdi / jne
+```
+
+overlay (gcc, `ygbmv_._omp_fn.0+0x100`, 18 insns — one fewer):
+```
+fldt (%rcx) / add $20 / add $20 / fldt -0x10(%rcx)
+fldt -0x20(%rax) / fldt -0x10(%rax)
+fld %st(3) / fmul %st(2),%st
+fld %st(3) / fmul %st(2),%st
+fsubrp %st,%st(1) / faddp %st,%st(5)
+fmulp %st,%st(3) / fmulp %st,%st(1)          ; direct fmulp; no fxch
+faddp %st,%st(1) / faddp %st,%st(2)
+cmp %rax,%rdx / jne
+```
+
+Same algorithmic shape, same critical-path fpu chain (fmul → fsubrp →
+faddp into spilled TEMP), overlay actually has one fewer instruction.
+
+**Attempted fixes that didn't help:**
+
+1. **K-unroll-by-2 (same column, split acc)** — regressed (Rule 29:
+   banded inner too short to amortize bookkeeping).
+2. **OMP outlining bypass** — moved the `use_omp` branch from `#pragma
+   omp parallel for if(use_omp)` (always outlines, Addendum 16) into a
+   C-level `if (use_omp) { ...pragma... } else { ...inline... }`.
+   Confirmed GOMP_parallel call is gone from the use_omp=0 path. Bench
+   unchanged (0.95 → 0.93, within noise). So outlining wasn't the
+   bottleneck.
+3. **2-j outer unroll (process columns j and j+1 together, sharing x
+   reads, two independent acc s0/s1)** — regressed to 0.93 because of
+   x87 stack spill: 2 acc × 2 slots + 2 x slots + 2 × 2 A slots = 10
+   slots needed vs 8 available. Same Rule 28 problem as K=4 on
+   complex.
+
+**Conclusion:** the 0.94-0.96 floor is *not* in the inner loop, which
+overlay wins; it's in the outer-loop dep chain (alpha * s reduction)
+and/or gcc's worse register-allocation choices on the outer setup
+(28 outer insns vs gfortran's 20). These are not fixable from C source
+without breaking other paths or going SSE/AVX (which can't be done for
+kind10 long-double in System V ABI).
+
+Tag and stop. The cell stays at 0.94.
+
 30. **3-trial median sweeps misclassify "at-parity with noise tail"
     cells as sub-parity.** A cell whose true distribution is ~0.97×
     typical with occasional 0.83× outliers (rare cache event, page
