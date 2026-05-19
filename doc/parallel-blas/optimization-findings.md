@@ -2203,3 +2203,83 @@ fmul latency vs. single accumulator). Check etrmv T, etrsv T, and the
 symv/hemm dot phases together — they share the same shape.
 
 
+
+
+## Addendum 22: s*mv strided fallback — a ~10% gap I can't close (2026-05-19)
+
+### Symptom
+
+After Addendum 21's etrsv T fix, the residual kind10 sub-parity is
+dominated by the *symmetric* MV triad in the strided (incx≠1 or
+incy≠1) fallbacks:
+
+```
+esymv strided:  47 cells at 0.88-0.92x
+esbmv strided:  47 cells at 0.88-0.91x
+espmv strided:  46 cells at 0.87-0.93x   (140 total)
+```
+
+Unit-stride paths for the same routines are at parity (0.99-1.01×).
+Migrated runs at ~1.85 GFs strided, overlay at ~1.65 GFs.
+
+### What didn't work
+
+Three structurally-plausible fixes were tried and reverted:
+
+1. **Cumulative `ix/iy` pointer-walk** (mirroring Fortran `IX = KX;
+   ix += incx` instead of `kx + i*incx` recomputation). No effect —
+   gcc already folds the multiply into a cumulative add via SCEV.
+
+2. **Factor `A(k,i)` into a local** so it loads once per iter:
+   ```c
+   const T aki = ai[k];
+   y[ky + k*incy] += temp1 * aki;
+   temp2 += aki * x[kx + k*incx];
+   ```
+   gcc emits `fld %st(0)` at the inner — *exactly the same insn
+   sequence as migrated's gfortran-compiled inner* (15 insns: fldt A,
+   fld dup, fmul, fldt y, faddp, fstpt y, advance y, fldt x, advance
+   x, fmulp, faddp, cmp, jne). Verified via objdump. **Ratio
+   unchanged.**
+
+3. **K-unroll-by-2 with split dot accumulators** (`t0/t1 + t0+t1`).
+   *Regressed* the ratio from 0.90 → 0.86: the doubled per-iter
+   bookkeeping (extra `k+1` index calc, larger inner with 5+ x87
+   stack slots) costs more than the latency savings.
+
+### Hypothesis: gcc's outer-loop overhead
+
+With identical inner asm, the gap must be in the *outer*. gfortran's
+migrated emits ~10 insns of setup per outer iter (lea/sub/add to
+compute A column base + i_lo bound). gcc emits ~15-20 insns, including
+extra `mov` to stack slots for register-pressure relief. At N=256
+inner-iter counts of ~128, the outer setup is ~5-10% of total cycles
+— which roughly matches the observed gap.
+
+This isn't fixable from C source: gcc's register allocator and CSE
+choices for this pattern are locked. Vector intrinsics could win
+back the gap but would break the kind10 long-double path.
+
+### Lesson
+
+For dot+AXPY combined inners with strided y, the 0.90× strided floor
+is real and structurally hard. Don't spend more time on it without
+a measurement budget for vector intrinsics / asm-level rewrites.
+Tag the cluster and move on.
+
+### Rules
+
+26. **Confirm `fld %st(0)` is present before claiming an inner-loop
+    fix.** When migrated has it and overlay doesn't (the gcc 2-fldt
+    redundant-load pattern), `const T x_local = expr;` will usually
+    make gcc emit the dup. When *both* already have `fld %st(0)` and
+    the inner-loop insn count matches, the gap is in the outer — and
+    likely uncloseable from C.
+
+27. **K-unroll-by-2 is not universal.** It helps when the inner has a
+    single-acc dot product chain on x87 (10+ cyc/element latency).
+    It *hurts* when the inner already has two parallel chains (e.g.
+    AXPY + dot combined): the doubled bookkeeping eats the latency
+    savings and the extra accumulators spill x87 stack. Try on dot-
+    only paths first; revert immediately if the strided cell ratios
+    move <0.
