@@ -2333,4 +2333,58 @@ and is not closeable from C source. Document and stop.
     paths even when "more parallelism would help": the spill cost is
     larger than the latency win.
 
+## Addendum 24: K-unroll-by-2 regresses banded inners — short loops don't amortize (2026-05-19)
+
+### Context
+
+3-trial median sweep showed **ygbmv T 8 cells at 0.94-0.95** (TRANS='T',
+non-conj). Same single-acc complex fmul dep-chain pattern as the
+ytrsv U-T case from Addendum 19, so K-unroll-by-2 was expected to lift
+ratios. Applied to both the stride-1 and strided fallback non-conj
+branches.
+
+### Result
+
+**Regressed all T cells.** Sample re-bench:
+
+```
+ygbmv T 128       0.947 → 0.91   (regressed)
+ygbmv T/x2 128    0.99  → 0.83   (regressed badly)
+ygbmv T/y2 128    1.00  → 0.83   (regressed badly)
+```
+
+Reverted immediately.
+
+### Why
+
+Band MV inner-loop length is `min(KL+KU+1, M)` — for the perf bench's
+defaults, that's roughly `M/8 + 1` (so ~17 at N=128, ~33 at N=256).
+The bookkeeping for K-unroll-by-2 (extra index, second accumulator
+init, tail handling, final `s = s0 + s1` reduction) is roughly fixed
+~6 insns per outer iter; the latency-hiding benefit per inner iter
+scales with inner length. With inner=17, the bookkeeping outweighs the
+latency win and the unroll loses.
+
+ytrsv U-T's inner is `i-1` long, growing from 0 to N-1 — average ~N/2,
+so inner=64–256. That's enough for the K-unroll-by-2 win to pay off.
+
+### Lesson
+
+Inner-length matters as much as dep-chain structure. K-unroll-by-2 on
+single-acc complex chains only wins when inner ≥ ~32 iters. For banded
+ops (gbmv, sbmv, tbmv) the inner is bounded by K+1 — usually too short.
+Don't transplant a fix from a full triangular/symmetric MV to a banded
+version without re-benching at the actual band-width.
+
+### Rules
+
+29. **Bandwidth-bounded inners (gbmv, sbmv, tbmv) are typically too
+    short for K-unroll wins.** The bench default band-width is M/8 ≈
+    32-64 elements; subtract the bookkeeping insns and the unroll
+    breaks even or loses. Test on the actual band width before
+    committing. For dot+AXPY combined inners on banded ops, K-unroll
+    is essentially never the right tool — Rule 27 already covers
+    combined inners; this rule covers the short-inner case for pure
+    dots.
+
 
