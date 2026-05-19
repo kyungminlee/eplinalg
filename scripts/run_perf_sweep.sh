@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run every blas_parallel perf_* executable in /tmp/stage-{e,q,m}/build/tests/blas_parallel/
+# Run every blas_parallel perf_* executable in /tmp/fortran-migrator/stage-{e,q,m}/build/tests/blas_parallel/
 # at OMP=1, pinned to P-core 0, and append the structured output to a TSV.
 #
 # Usage:
@@ -26,9 +26,9 @@ echo -e "target\troutine\tkey\tsize\titers\toverlay_GFs\tmigrated_GFs\tratio" >>
 
 for target in e q m; do
     case "$target" in
-        e) tname=kind10; tdir=/tmp/stage-e/build/tests/blas_parallel ;;
-        q) tname=kind16; tdir=/tmp/stage-q/build/tests/blas_parallel ;;
-        m) tname=multifloats; tdir=/tmp/stage-m/build/tests/blas_parallel ;;
+        e) tname=kind10; tdir=/tmp/fortran-migrator/stage-e/build/tests/blas_parallel ;;
+        q) tname=kind16; tdir=/tmp/fortran-migrator/stage-q/build/tests/blas_parallel ;;
+        m) tname=multifloats; tdir=/tmp/fortran-migrator/stage-m/build/tests/blas_parallel ;;
     esac
     if [[ ! -d "$tdir" ]]; then
         echo "[skip] $tname: no build dir at $tdir" >&2 | tee -a "$LOG"

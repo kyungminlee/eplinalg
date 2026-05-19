@@ -22,9 +22,9 @@ for entry in "${ROUTINES[@]}"; do
     tname="${entry%%:*}"
     rname="${entry##*:}"
     case "$tname" in
-        kind10) tdir=/tmp/stage-e/build/tests/blas_parallel ;;
-        kind16) tdir=/tmp/stage-q/build/tests/blas_parallel ;;
-        multifloats) tdir=/tmp/stage-m/build/tests/blas_parallel ;;
+        kind10) tdir=/tmp/fortran-migrator/stage-e/build/tests/blas_parallel ;;
+        kind16) tdir=/tmp/fortran-migrator/stage-q/build/tests/blas_parallel ;;
+        multifloats) tdir=/tmp/fortran-migrator/stage-m/build/tests/blas_parallel ;;
     esac
     exe="$tdir/perf_$rname"
     [[ -x "$exe" ]] || { echo "[skip] $tname/$rname (no exe)" >&2; continue; }
