@@ -1,11 +1,44 @@
 /*
  * xtrsv — kind16 complex triangular solve.
+ *
+ * Three public entries:
+ *
+ *   xtrsv_         — top-level dispatch. Routes stride-1 calls above
+ *                    the 2·NB threshold into xtrsv_blocked_ (which
+ *                    opens its own parallel region), otherwise falls
+ *                    through to the unblocked Netlib serial body.
+ *                    Skips the blocked-path dispatch when already
+ *                    inside an OpenMP parallel region.
+ *
+ *   xtrsv_serial_  — pure serial unblocked Netlib body. No OpenMP
+ *                    pragma anywhere on this call path. Safe to call
+ *                    from inside another function's parallel region.
+ *
+ *   xtrsv_blocked_ — LAPACK-blocked algorithm wrapped in a SINGLE
+ *                    `#pragma omp parallel` region. Threads cooperate
+ *                    manually: thread 0 does each diagonal sub-solve
+ *                    via xtrsv_serial_, then all threads partition
+ *                    the trailing xgemv across the long axis (M for
+ *                    TR='N', N for TR='T'/'C') and call xgemv_serial_
+ *                    on their slice. Two barriers per diagonal step
+ *                    (after sub-solve, after trailing update).
+ *
+ * The refactor replaces the previous shape — N/nb separate xgemv
+ * fork-joins — with one fork-join total plus 2·N/nb barriers. Same
+ * order of synchronization cost but threads stay pinned across the
+ * walk, improving cache locality. Aligns with the "no OMP-using
+ * function called from inside an OMP region" rule by routing all
+ * inner work through the *_serial_ entries.
  */
 
 #include <stddef.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <quadmath.h>
+#ifdef _OPENMP
+#include <omp.h>
+#include "../common/blas_omp.h"
+#endif
 
 typedef __complex128 T;
 
@@ -17,13 +50,16 @@ static inline char up(const char *p) {
 
 #define XTRSV_BLOCKED_NB_DEFAULT 64
 
-static int xtrsv_blocked_nb(void);
+static int xtrsv_blocked_nb(void) {
+    static int cached = 0;
+    if (cached == 0) {
+        const char *s = getenv("XTRSV_NB");
+        int v = (s && *s) ? atoi(s) : 0;
+        cached = (v > 0) ? v : XTRSV_BLOCKED_NB_DEFAULT;
+    }
+    return cached;
+}
 
-/* Forward declaration — body below. The dispatch in xtrsv_ routes
- * large stride-1 calls into the blocked path; the blocked path
- * recursively calls xtrsv_ for each NB-sized diagonal block, but
- * those sub-calls have N < 2·NB so they fall through to the serial
- * body and there is no infinite recursion. */
 void xtrsv_blocked_(
     const char *uplo, const char *trans, const char *diag,
     const int *n_,
@@ -31,7 +67,45 @@ void xtrsv_blocked_(
     T *restrict x, const int *incx_,
     size_t uplo_len, size_t trans_len, size_t diag_len);
 
+void xtrsv_serial_(
+    const char *uplo, const char *trans, const char *diag,
+    const int *n_,
+    const T *restrict a, const int *lda_,
+    T *restrict x, const int *incx_,
+    size_t uplo_len, size_t trans_len, size_t diag_len);
+
 void xtrsv_(
+    const char *uplo, const char *trans, const char *diag,
+    const int *n_,
+    const T *restrict a, const int *lda_,
+    T *restrict x, const int *incx_,
+    size_t uplo_len, size_t trans_len, size_t diag_len)
+{
+    const int N = *n_;
+    const int incx = *incx_;
+
+    if (N == 0) return;
+
+    /* Block-parallel dispatch: stride-1 calls above the blocking
+     * threshold route through the LAPACK-blocked path. Skip if already
+     * inside an OMP region (caller is managing parallelism). */
+#ifdef _OPENMP
+    const int in_par = omp_in_parallel();
+#else
+    const int in_par = 0;
+#endif
+    if (incx == 1 && N >= 2 * xtrsv_blocked_nb() && !in_par) {
+        xtrsv_blocked_(uplo, trans, diag, n_, a, lda_, x, incx_,
+                       uplo_len, trans_len, diag_len);
+        return;
+    }
+
+    xtrsv_serial_(uplo, trans, diag, n_, a, lda_, x, incx_,
+                  uplo_len, trans_len, diag_len);
+}
+
+/* Pure-serial unblocked Netlib body. No OpenMP. */
+void xtrsv_serial_(
     const char *uplo, const char *trans, const char *diag,
     const int *n_,
     const T *restrict a, const int *lda_,
@@ -47,18 +121,6 @@ void xtrsv_(
     const int nounit = (DIAG != 'U');
 
     if (N == 0) return;
-
-    /* Block-parallel dispatch: stride-1 calls above the blocking
-     * threshold route through the LAPACK-blocked path, which uses
-     * parallel xgemv_ for trailing updates. At OMP=4 this delivers
-     * ~3.3-3.7× of the unblocked algorithm at N=1024 across all
-     * uplo/trans/diag combos (kind16 bench 2026-05-20). At OMP=1
-     * overhead is within noise (±5% vs unblocked). */
-    if (incx == 1 && N >= 2 * xtrsv_blocked_nb()) {
-        xtrsv_blocked_(uplo, trans, diag, n_, a, lda_, x, incx_,
-                       uplo_len, trans_len, diag_len);
-        return;
-    }
 
     const T zero = 0.0Q + 0.0Qi;
 
@@ -162,25 +224,25 @@ void xtrsv_(
     }
 }
 
-/* ── Block-parallel variant ─────────────────────────────────────────
+/* ── Block-parallel variant: single parallel region ─────────────────
  *
- * LAPACK-blocked algorithm: walk the diagonal in NB-wide blocks; for
- * each block, call the unblocked xtrsv_ on the small diagonal block,
- * then issue a parallel xgemv to apply that block's contribution to
- * the rest of x.
+ * One `#pragma omp parallel` wraps the entire diagonal walk. Threads
+ * cooperate manually inside the region:
  *
- * At kind16 every scalar op is a libquadmath call (~100 ns), so the
- * unblocked reference is compute-bound and parallelism in the
- * trailing xgemv is what scales. Fork-join cost (~5 µs) is amortized
- * by the per-block trailing-update work (jb · mt quadmath multiplies,
- * each ~100 ns). The diagonal sub-solve stays sequential but is
- * bounded by NB² ops so the critical path is O(N·NB).
+ *   - Thread 0 calls xtrsv_serial_ on each diagonal sub-block.
+ *   - All threads partition the trailing xgemv across its long axis
+ *     and call xgemv_serial_ on their slice.
+ *   - Two `#pragma omp barrier`s per step (after sub-solve, after
+ *     trailing update).
  *
- * Falls back to xtrsv_ for incx≠1 (parallelism not worth the
- * scattered-index xgemv) or N below 2·NB (overhead exceeds gain).
+ * Compared to the previous per-step xgemv_ fork-joins, this issues
+ * one fork-join total + 2·N/nb barriers. Threads stay pinned across
+ * the walk so the partial x vector each thread accesses can stay in
+ * its cache, and there's no nested OMP because the inner calls all
+ * route through the *_serial_ entries.
  */
 
-extern void xgemv_(
+extern void xgemv_serial_(
     const char *trans,
     const int *m, const int *n,
     const T *alpha,
@@ -189,16 +251,6 @@ extern void xgemv_(
     const T *beta,
     T *y, const int *incy,
     size_t trans_len);
-
-static int xtrsv_blocked_nb(void) {
-    static int cached = 0;
-    if (cached == 0) {
-        const char *s = getenv("XTRSV_NB");
-        int v = (s && *s) ? atoi(s) : 0;
-        cached = (v > 0) ? v : XTRSV_BLOCKED_NB_DEFAULT;
-    }
-    return cached;
-}
 
 void xtrsv_blocked_(
     const char *uplo, const char *trans, const char *diag,
@@ -215,8 +267,8 @@ void xtrsv_blocked_(
 
     if (N == 0) return;
     if (incx != 1 || N < 2 * nb) {
-        xtrsv_(uplo, trans, diag, n_, a, lda_, x, incx_,
-               uplo_len, trans_len, diag_len);
+        xtrsv_serial_(uplo, trans, diag, n_, a, lda_, x, incx_,
+                      uplo_len, trans_len, diag_len);
         return;
     }
 
@@ -226,65 +278,155 @@ void xtrsv_blocked_(
     const char TT[1] = {(TR == 'C') ? 'C' : 'T'};
     const int one_i = 1;
 
-    if (TR == 'N') {
-        if (UPLO == 'L') {
+#ifdef _OPENMP
+    const int use_omp = (blas_omp_max_threads() > 1 && !omp_in_parallel());
+#else
+    const int use_omp = 0;
+#endif
+
+#ifdef _OPENMP
+    #pragma omp parallel if(use_omp)
+#endif
+    {
+        int tid = 0, nt = 1;
+#ifdef _OPENMP
+        if (use_omp) { tid = omp_get_thread_num(); nt = omp_get_num_threads(); }
+#endif
+
+        if (TR == 'N' && UPLO == 'L') {
             /* Forward: solve A11 x1 = b1, then x2 -= A21 x1, repeat. */
             for (int j = 0; j < N; j += nb) {
                 int jb = (N - j < nb) ? (N - j) : nb;
-                xtrsv_(uplo, trans, diag, &jb, &A_(j, j), lda_,
-                       &x[j], &one_i, uplo_len, trans_len, diag_len);
+                if (tid == 0) {
+                    xtrsv_serial_(uplo, trans, diag, &jb, &A_(j, j), lda_,
+                                  &x[j], &one_i, uplo_len, trans_len, diag_len);
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
                 int mt = N - j - jb;
                 if (mt > 0) {
                     int j2 = j + jb;
-                    xgemv_(NN, &mt, &jb, &neg_one, &A_(j2, j), lda_,
-                           &x[j], &one_i, &one_v, &x[j2], &one_i, 1);
+                    long long lo = (long long)mt * tid / nt;
+                    long long hi = (long long)mt * (tid + 1) / nt;
+                    int m_slice = (int)(hi - lo);
+                    if (m_slice > 0) {
+                        const int i_off = j2 + (int)lo;
+                        xgemv_serial_(NN, &m_slice, &jb, &neg_one,
+                                      &A_(i_off, j), lda_,
+                                      &x[j], &one_i, &one_v,
+                                      &x[i_off], &one_i, 1);
+                    }
                 }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
             }
-        } else {
+        } else if (TR == 'N' && UPLO == 'U') {
             /* Backward: solve A22 x2 = b2, then x1 -= A12 x2, repeat. */
             int j = ((N - 1) / nb) * nb;
             while (j >= 0) {
                 int jb = (N - j < nb) ? (N - j) : nb;
-                xtrsv_(uplo, trans, diag, &jb, &A_(j, j), lda_,
-                       &x[j], &one_i, uplo_len, trans_len, diag_len);
-                if (j > 0) {
-                    xgemv_(NN, &j, &jb, &neg_one, &A_(0, j), lda_,
-                           &x[j], &one_i, &one_v, &x[0], &one_i, 1);
+                if (tid == 0) {
+                    xtrsv_serial_(uplo, trans, diag, &jb, &A_(j, j), lda_,
+                                  &x[j], &one_i, uplo_len, trans_len, diag_len);
                 }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
+                if (j > 0) {
+                    long long lo = (long long)j * tid / nt;
+                    long long hi = (long long)j * (tid + 1) / nt;
+                    int m_slice = (int)(hi - lo);
+                    if (m_slice > 0) {
+                        const int i_off = (int)lo;
+                        xgemv_serial_(NN, &m_slice, &jb, &neg_one,
+                                      &A_(i_off, j), lda_,
+                                      &x[j], &one_i, &one_v,
+                                      &x[i_off], &one_i, 1);
+                    }
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
                 j -= nb;
             }
-        }
-    } else {
-        /* TR='T' or 'C': op(A) x = b. For UPLO='L' we descend from the
-         * last diagonal block (because op(A) is upper); for UPLO='U'
-         * we ascend. Trailing update is xgemv with op = T/C on a
-         * rectangular slice of A. */
-        if (UPLO == 'L') {
+        } else if ((TR == 'T' || TR == 'C') && UPLO == 'L') {
+            /* L,L,T/C: iterate diagonal from bottom up.
+             *  x[0:j] -= op(A[j:j+jb, 0:j]) * x[j:j+jb].
+             *  xgemv(op, M=jb, N=j) on submatrix &A_(j, 0).
+             *  Parallel axis is the output (N=j); partition that. */
             int j = ((N - 1) / nb) * nb;
             while (j >= 0) {
                 int jb = (N - j < nb) ? (N - j) : nb;
-                xtrsv_(uplo, trans, diag, &jb, &A_(j, j), lda_,
-                       &x[j], &one_i, uplo_len, trans_len, diag_len);
-                if (j > 0) {
-                    /* x[0:j] -= op(A[j:j+jb, 0:j]) * x[j:j+jb].
-                     * xgemv(op, M=jb, N=j) on submatrix &A_(j, 0). */
-                    xgemv_(TT, &jb, &j, &neg_one, &A_(j, 0), lda_,
-                           &x[j], &one_i, &one_v, &x[0], &one_i, 1);
+                if (tid == 0) {
+                    xtrsv_serial_(uplo, trans, diag, &jb, &A_(j, j), lda_,
+                                  &x[j], &one_i, uplo_len, trans_len, diag_len);
                 }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
+                if (j > 0) {
+                    long long lo = (long long)j * tid / nt;
+                    long long hi = (long long)j * (tid + 1) / nt;
+                    int n_slice = (int)(hi - lo);
+                    if (n_slice > 0) {
+                        const int n_off = (int)lo;
+                        xgemv_serial_(TT, &jb, &n_slice, &neg_one,
+                                      &A_(j, n_off), lda_,
+                                      &x[j], &one_i, &one_v,
+                                      &x[n_off], &one_i, 1);
+                    }
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
                 j -= nb;
             }
         } else {
+            /* L,U,T/C: iterate top-down. */
             for (int j = 0; j < N; j += nb) {
                 int jb = (N - j < nb) ? (N - j) : nb;
-                xtrsv_(uplo, trans, diag, &jb, &A_(j, j), lda_,
-                       &x[j], &one_i, uplo_len, trans_len, diag_len);
+                if (tid == 0) {
+                    xtrsv_serial_(uplo, trans, diag, &jb, &A_(j, j), lda_,
+                                  &x[j], &one_i, uplo_len, trans_len, diag_len);
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
                 int mt = N - j - jb;
                 if (mt > 0) {
                     int j2 = j + jb;
-                    /* x[j2:N] -= op(A[j:j+jb, j2:N]) * x[j:j+jb] */
-                    xgemv_(TT, &jb, &mt, &neg_one, &A_(j, j2), lda_,
-                           &x[j], &one_i, &one_v, &x[j2], &one_i, 1);
+                    long long lo = (long long)mt * tid / nt;
+                    long long hi = (long long)mt * (tid + 1) / nt;
+                    int n_slice = (int)(hi - lo);
+                    if (n_slice > 0) {
+                        const int n_off = j2 + (int)lo;
+                        xgemv_serial_(TT, &jb, &n_slice, &neg_one,
+                                      &A_(j, n_off), lda_,
+                                      &x[j], &one_i, &one_v,
+                                      &x[n_off], &one_i, 1);
+                    }
                 }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
             }
         }
     }
