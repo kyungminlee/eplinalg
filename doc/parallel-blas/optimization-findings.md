@@ -3016,3 +3016,81 @@ two big buckets:
     reverted" experiments apply — don't redo them.
     (c) Only after both filters miss is the cell worth a fresh
     asm-level investigation.
+
+## Addendum 31: applying Rule 43 — etrmv LNN J-unroll-by-2 (2026-05-20)
+
+### The cluster Rule 43 surfaced
+
+After committing Addendum 30, re-read the sub-parity catalog with the
+new "filter-before-investigate" lens. `kind10 etrmv` had 9 sub-parity
+cells across 100+ cells, with this concentration:
+
+```
+etrmv LNN N=128:   0.905x
+etrmv LNN N=1024:  0.935x
+etrmv LNN/x2 N=1024: 0.911x
+etrmv LNU N=128:   0.949x       (3-cell unit-stride cluster)
+```
+
+- **Rule 43(a)**: 3-4 cells per UPLO×TRANS combo is not single-cell
+  noise — multiple sizes and stride variants all show the same gap.
+- **Rule 43(b)**: doesn't match Addendum 22 (not a combined AXPY+DOT
+  strided fallback — this is a plain AXPY inner) or 24 (full-row inner
+  bounded by M, not by K+1).
+
+So per the rule itself: investigate.
+
+### What was missing
+
+`etrmv` had a J-unroll-by-2 on UNN that the in-source comment described:
+"Without this, UNN at N=1024 sat at 0.58x of migrated." The sibling LNN
+path — same algorithmic structure, just j walking backward instead of
+forward — had been left as the simple single-column reference loop:
+
+```c
+for (int j = N - 1; j >= 0; --j) {
+    const T temp = x[j];
+    if (temp != zero) {
+        const T *aj = &A_(0, j);
+        for (int i = N - 1; i > j; --i) x[i] += temp * aj[i];
+    }
+    if (nounit) x[j] *= A_(j, j);
+}
+```
+
+The pairing logic was less obvious because j descends, but iteratively
+the same property holds: at any pair (j, j-1), both x[j] and x[j-1]
+are pristine on entry to iter j (iter j's inner only touches i>j).
+So saved into t0/t1, the trailing-rows inner can service both column
+contributions in one pass, with boundary handling at i=j and i=j-1.
+
+### Result
+
+```
+etrmv LNN N=128:  0.905 → 1.813x  (+100% over migrated)
+etrmv LNN N=256:  0.992 → 1.606x
+etrmv LNN N=512:  ~1.0  → 1.605x
+etrmv LNN N=1024: 0.935 → 1.481x
+etrmv LNU N=128:  ~1.0  → 1.625x
+etrmv LNU N=1024: ~1.0  → 1.552x
+```
+
+Fuzz 80/80 pass (max err 3.8e-19, within tolerance).
+
+### Rule 43 worked
+
+The category that survived Addendum 30's bucketing — multi-cell cluster
+that didn't match either intractability addendum — was genuinely a
+missing-sibling-fix case, fixed with the same recipe already applied
+to the upper-triangular path. The rule is doing its job: it flagged
+exactly the one cluster that hadn't been investigated and skipped the
+~250 cells already accounted for.
+
+### Follow-up
+
+Surveyed siblings: `ytrmv` (kind10 complex) LNN/UNN run at parity
+without J-unroll — gfortran handles `_Complex long double` AXPY
+inners differently and the C reference already matches. `qtrmv`/
+`xtrmv` (kind16) are libquadmath-bound — per-op cost dominates and
+J-unroll doesn't help at that rate. So the etrmv fix is kind10-real-
+specific and complete.
