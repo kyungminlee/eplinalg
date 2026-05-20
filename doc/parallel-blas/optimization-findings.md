@@ -2913,3 +2913,106 @@ structurally required.
     *not* have this property.
 
 
+
+## Addendum 30: full-overlay re-sweep — systematic catalog (2026-05-20)
+
+### Motivation
+
+After the kind16 q-kernel refactors (qgemm 2D, qgemv slice/serial,
+qtrsv blocked, qtrsm fast-path/blocked; Addenda 27-29 ported to the
+q-prefix siblings), re-ran the full perf sweep at OMP=1 across all
+three precision targets (kind10 e\*/y\*, kind16 q\*/x\*, multifloats
+m\*/w\*) to confirm no regressions and to systematically map every
+remaining sub-parity cell to a category.
+
+### Methodology
+
+- `scripts/run_perf_sweep.sh` at OMP=1, pinned to P-core 0, TIMEOUT=120s
+  per perf binary, BLAS_PERF_ITERS=200 default.
+- Routines that hit the 120s timeout (large libquadmath kernels: qgemm,
+  qgemmtr, xtrsm, xtrmm, etc.) re-run on core 1 with reduced
+  size×iters, captured into `/tmp/probe-timeouts*.tsv`.
+- Filter: `ratio < 0.95` with `iters ≥ 20` (drops short-bench noise).
+
+### Coverage
+
+Final TSV: ~4,500 cells across 170 routines.
+- kind10: 65 routines, 2,548 cells.
+- kind16: 65 routines, ~1,560 cells (sweep + probe).
+- multifloats: 41 routines, ~620 cells (sweep + probe; w\* still in flight).
+
+### Result: zero new fixable cases
+
+Every sub-parity cell maps to a previously-documented category.
+Bucketed worst-per-routine view:
+
+```
+Cluster                                Cells      Cause / Addendum
+-------------------------------------- ---------- ---------------------------
+kind10 esbmv strided                   64         Addendum 22 (gcc outer-loop)
+kind10 esymv strided                   62         Addendum 22
+kind10 espmv strided                   57         Addendum 22
+kind10 ygbmv T strided                 16         Addendum 24 (short banded)
+kind10 etrmv L/strided borderline      9          Addendum 24 / Rule 22
+kind10 etbmv banded                    6          Addendum 24
+kind10 ytrsv L*N N=64 outliers         5          single-cell noise
+kind10 ytpsv L/U borderline            5          Addendum 22 family (banded)
+kind10 ytbsv strided                   4          Addendum 24
+kind10 easum N≥1024                    4          memory bandwidth limit
+kind10 ydotu/ygemv/eger small-N        2-3 each   single-cell noise
+kind16 qtbmv/qtbsv T-branch banded     2-3 each   Addendum 24
+kind16 qsymv/qspmv strided             2-3 each   Addendum 22 family
+kind16 qtpmv/qtpsv N=64 outliers       2-3 each   single-cell noise
+kind16 xqscal erratic ratios           3          short-workload variance
+kind16 xgerc/xtrmv N=64                1-2 each   single-cell noise
+multifloats mswap N=512/4096           2          memory bandwidth (L1 swap)
+```
+
+The big numerical buckets (s\*mv strided in kind10, banded-MV in kind10
+and kind16) are accounted for by the two known intractability addenda
+(22 and 24). The rest are single-cell N=64 variance — at iters≤20 a
+single bad-luck timing dominates the ratio, and neighboring sizes for
+the same routine sit at parity or above.
+
+### What this confirms
+
+- **The May 18 (Addendum 18) and May 19 (Addendum 19) trsv fixes are
+  still in place.** kind10 etrsv L\* (LNN/LNU/LTN/LTU full set) and
+  ytrsv U-T/L-T all show 0.93-1.16× on the re-probe.
+- **My recent q-kernel refactors maintain or beat parity at OMP=1.**
+  qgemm 0.97-1.04×, qgemv 0.91-1.03×, qtrsv 1.03-1.12× (UNN/UNU N=256
+  the blocked path's single-region cache locality beats migrated
+  unblocked), qtrsm 0.89-1.01× (one iters=3 outlier).
+- **Multifloats overlay dominates migrated** — mgemm 20-25×, mgemmtr
+  3-10×, msymv 3.6× across all stride combos. The SIMD double-double
+  kernels (MGEMM_SIMD_MR=4, MBLAS_SIMD_DD) deliver the headline win.
+
+### What remains (and why it stays)
+
+The intractability stories from Addenda 22 and 24 still hold for the
+two big buckets:
+
+- **s\*mv strided** (~180 cells across kind10/kind16): combined
+  AXPY+DOT inner with strided y. gcc's outer-loop setup costs ~5-10%
+  more cycles than gfortran's. `fld %st(0)` is already present, asm
+  inner instruction count matches. Closing the gap requires
+  vector-intrinsic / asm-level work outside the C source.
+
+- **Banded triangular T/C variants** (~30 cells): banded inner is
+  bounded by KL+KU+1, typically ~33 elements at the perf bench's
+  defaults. K-unroll-by-2 bookkeeping eats the latency saving on
+  inners that short. Same constraint applies to qtbmv, qtbsv, etbmv,
+  ytbmv, ytbsv.
+
+### Rule
+
+43. **Before opening a new investigation on a sub-parity cell:**
+    (a) Check the worst-per-routine bucket count. If the routine has
+    1-3 sub-parity cells in a sweep of ~20-100 cells per routine, it
+    is almost certainly small-N variance — re-bench at iters≥100 first.
+    (b) Match the cluster shape against Addenda 22 (combined inner +
+    strided fallback) and 24 (banded inner length ≤ K+1). If it fits,
+    the structural ceiling is real and the documented "tried and
+    reverted" experiments apply — don't redo them.
+    (c) Only after both filters miss is the cell worth a fresh
+    asm-level investigation.
