@@ -2536,4 +2536,79 @@ for small-N cells. Two cells fell out of the noise correctly:
     real code-level gap. Wide-spread cells should be rebenched at
     higher iters, not "fixed."
 
+## Addendum 26: inner-OMP on ytrsv loses everywhere except UNN/N=512 (2026-05-20)
+
+### Experiment
+
+Built a Netlib-direct ytrsv variant (`ytrsv_netlib.c`) with
+`#pragma omp parallel for` on the inner AXPY (TRANS='N') and on a
+manual `re/im` reduction for the DOT branch (TRANS='T'/'C'). Built
+two staged trees (current vs netlib), fuzzed netlib at OMP=1 and
+OMP=4 against migrated (80 cases each, max err ~7e-19), then
+benched all 80 cells (uplo × trans × diag × stride × N=64/128/256
++ N=512 for unit-stride) at high iter counts (20k–50k for small N,
+8k for N=256, 2k for N=512), 3 trials, median across trials.
+
+### Result
+
+For unit-stride cells (where the OMP pragma fires):
+
+```
+key      N     cur-1   cur-4   net-1   net-4    mig
+UTN     64     2.791   2.775   0.372   0.194    2.953
+UTN    256     2.892   2.888   1.098   0.725    3.091
+UNN    256     1.959   1.963   0.945   0.763    1.960
+UNN    512     0.550   0.565   0.488   0.940 ←  0.555
+LCN    128     2.659   2.682   0.648   0.378    2.676
+```
+
+Almost every unit-stride cell regresses 3-7× vs current at OMP=1
+(even before OMP fork cost) — the manual `re/im` split-reduction
+forces extra adds per iter and defeats the existing complex-fmul
+K-unroll-by-2. OMP=4 is generally *worse* than OMP=1: fork-per-
+outer-step cost (~10µs × N outer iters) dwarfs the inner FLOP work.
+
+**One bright spot: UNN at N=512.** netlib-omp4 = 0.940 GFs vs
+cur-1 = 0.550 vs migrated = 0.555. 1.7× speedup, beats migrated.
+N=512 is large enough that the inner AXPY (~256 iters average) is
+long enough to amortize the fork cost across 4 threads.
+
+Strided cells (`x2`, `x-1`) are unchanged because the Netlib variant
+keeps the strided fallback serial with no OMP pragma.
+
+### Why this is the wrong tool
+
+Triangular solve is sequential in the outer loop — each x[i]
+depends on x[0..i-1]. The only naive parallelism handle is the
+inner AXPY/DOT, but at the iteration count typical for sub-parity
+cells (N=64-256), the inner length is 32-128 iters and the OMP
+fork cost (5-10 µs per fork, ~3 forks per μs of FP work at small
+N) overwhelms the win.
+
+Real parallel TRSV needs a **block-recursive** structure: split A
+into 2×2 blocks, recurse on the two diagonal blocks (smaller
+TRSVs), and use a parallel GEMV for the off-diagonal trailing
+update. The GEMV is where the OMP region pays off, because:
+- One fork-join per recursion level (~log₂ N forks total) instead
+  of N forks
+- GEMV is fully parallel in M
+- The recursive base case can use the existing single-thread kernel
+
+This is ~200-300 LoC and a day of tuning. Not done in this
+experiment.
+
+### Rules
+
+33. **Don't `#pragma omp parallel for` inside the outer of a
+    sequential algorithm.** Fork-join cost is per-fork (5-10 µs);
+    iterating N forks at small inner-length destroys any FLOP win.
+    The pattern wins only when (a) outer is also parallelizable,
+    or (b) the OMP region wraps the *entire* call (one fork) and
+    threads pull work themselves.
+
+34. **TRSV/TRMV cannot be naively row-parallelized.** Block-
+    recursive is the only structural path: smaller TRSVs on the
+    diagonal blocks + parallel GEMV for the trailing update.
+    Inner-loop OMP is a dead end (Addendum 26).
+
 
