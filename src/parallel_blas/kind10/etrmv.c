@@ -44,8 +44,34 @@ void etrmv_(
             if (UPLO == 'L') {
                 /* j backward: x[i] for i>j updated by temp=x[j]; then scale x[j].
                  * Inner walks backward (i = N-1..j+1) to match Fortran
-                 * etrmv.f (DO 50 I = N,J+1,-1). Sub-class C / Rule 21. */
-                for (int j = N - 1; j >= 0; --j) {
+                 * etrmv.f (DO 50 I = N,J+1,-1). Sub-class C / Rule 21.
+                 *
+                 * J-unroll-by-2 (symmetric to the UNN path below): at iter
+                 * j and j-1 both x[j] and x[j-1] are pristine on entry
+                 * (iter j's inner only touches i>j). Save originals, fuse
+                 * both column contributions into one i-pass over the
+                 * trailing rows, then handle boundaries i=j and i=j-1
+                 * separately. Halves x memory traffic on the AXPY inner.
+                 * Previously LNN sat at 0.90-0.94x of migrated; unrolling
+                 * closes the gap. */
+                int j = N - 1;
+                for (; j - 1 >= 0; j -= 2) {
+                    const T t0 = x[j];
+                    const T t1 = x[j - 1];
+                    const T *a0 = &A_(0, j);
+                    const T *a1 = &A_(0, j - 1);
+                    /* Inner i=N-1..j+1 — backward (Rule 21).
+                     * Both columns contribute to each x[i]. */
+                    for (int i = N - 1; i > j; --i)
+                        x[i] = (x[i] + t0 * a0[i]) + t1 * a1[i];
+                    /* Boundary i=j: scale x[j] (was t0), then add t1*A(j,j-1). */
+                    T xj = nounit ? t0 * A_(j, j) : t0;
+                    x[j] = xj + t1 * a1[j];
+                    /* Boundary i=j-1: scale x[j-1] (was t1). */
+                    if (nounit) x[j - 1] = t1 * A_(j - 1, j - 1);
+                }
+                /* Odd-N tail. */
+                for (; j >= 0; --j) {
                     const T temp = x[j];
                     if (temp != zero) {
                         const T *aj = &A_(0, j);
