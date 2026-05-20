@@ -2611,4 +2611,305 @@ experiment.
     diagonal blocks + parallel GEMV for the trailing update.
     Inner-loop OMP is a dead end (Addendum 26).
 
+## Addendum 27: kind16 xgemm 2D tile parallelism (2026-05-20)
+
+### Context
+
+xgemm's original OpenMP parallelism was a single `#pragma omp parallel
+for` over its N dimension, gated at N ≥ 32. Used as a top-level call
+that was usually fine, but the xtrsm_blocked trailing update has
+shape `(mt, nrhs, jb)` — at small nrhs, only the N=nrhs axis (often
+1-3 columns) carried parallelism, idling threads even though mt was
+in the hundreds.
+
+### Experiment
+
+Refactor xgemm into a 2D collapse(2) over (M-tile, N-tile). Tile side
+is adaptive: pick the largest power-of-two side s in [16, 128] such
+that `s² ≤ M·N / (4·nthreads)` — targets ~4 tiles per thread for
+load balance. `XGEMM_MB` / `XGEMM_NB` env knobs pin specific sides.
+
+K stays serial inside each tile. Each (i, j) output element belongs
+to exactly one tile under collapse(2), so the per-tile beta scaling
+is race-free and bitwise-identical to the column-wise scheme.
+
+### Result
+
+xtrsm_blocked at M=1024, OMP=4, before vs after (cur_4/cur_1):
+
+| nrhs | before | after |
+|------|--------|-------|
+| 1    | 0.99×  | 2.97× |
+| 4    | 1.00×  | 2.51× |
+| 8    | 1.03×  | 3.09× |
+| 32   | 3.94×  | 3.91× |
+
+Before, the trailing xgemm only parallelized when N=nrhs ≥ 32 → the
+xtrsm_blocked path was stuck at serial-equivalent throughput for
+nrhs < 32 (the "nrhs=32 cliff"). After 2D, parallelism scales at
+any (M, N) ≥ 2 tiles.
+
+Direct xgemm at OMP=4 (`mig/overlay` ratio, single-thread migrated):
+
+| size | before | after |
+|------|--------|-------|
+| 64   | 1.0×   | 1.2-2.9× |
+| 128  | 1.0×   | 1.5-2.3× |
+| 256  | 3.0-3.8× | 3.0-3.8× |
+
+No regression at size where the old N-only parallel was already
+saturating; new wins at small-and-moderate sizes that were below the
+old N ≥ 32 gate.
+
+### Rules
+
+35. **Parallelize the output, not one axis.** For GEMM-class kernels
+    where the output is 2D (M × N), use `collapse(2)` over both axes
+    rather than parallelizing one. The "good axis" is whichever is
+    largest at runtime — and that's not knowable at compile time. 1D
+    parallelism is fine for kernels with a structurally 1D output
+    (gemv: y is a vector).
+
+36. **Adaptive tile-side beats fixed.** `side ≈ sqrt(area /
+    (4·nthreads))` clamped to a reasonable range gives ~4 tiles per
+    thread regardless of (M, N, nthreads). Fixed tile sizes either
+    under-saturate small problems or over-fragment large ones for
+    the deployment thread count.
+
+## Addendum 28: kind16 xtrsm — xtrsv-loop fast path + Amdahl-capped dispatch (2026-05-20)
+
+### Context
+
+At small nrhs, column-parallel xtrsm idles threads: with N=nrhs
+columns and nt threads, scaling is `nrhs / ceil(nrhs/nt)`. For
+nrhs=2 at nt=4, that's 2× speedup with 2 threads idle; for nrhs=3,
+3× with 1 idle. xtrsm_blocked + 2D xgemm (Addendum 27) helps but
+has overhead that wipes the win at very small nrhs.
+
+The alternative for SIDE='L': xtrsm with nrhs columns is literally
+nrhs independent xtrsv solves (mod the alpha pre-scale). Each xtrsv
+can use *all* threads via xtrsv_blocked (parallel xgemv on the
+trailing slice). For small nrhs, nrhs sequential xtrsv-blocked calls
+beats column-parallel because each call fills the thread pool.
+
+### Fast-path-vs-col-parallel crossover
+
+Times in units of single-thread xtrsv time T, scaling factor s:
+
+```
+fast path = nrhs × T / s
+col-par   = ceil(nrhs / nt) × T   (sawtooth in nrhs)
+```
+
+Crossover at `nrhs ≈ s`. Above that, col-par's "rounds" advantage
+beats fast path's sequential xtrsv cost.
+
+`s` is xtrsv_blocked's effective scaling, which is **Amdahl-limited
+by the serial sub-solve fraction `nb / M`**:
+
+- Total work ≈ M²/2 muladds.
+- Per-block sub-solve = nb²/2 muladds → total sub-solve = M·nb/2.
+- Serial fraction = nb / M → ceiling = M / nb.
+
+| M    | nb=64 | serial frac | ceiling |
+|------|-------|-------------|---------|
+| 256  | 64    | 25%         | 4×      |
+| 512  | 64    | 12.5%       | 8×      |
+| 1024 | 64    | 6.25%       | 16×     |
+| 2048 | 64    | 3.1%        | 32×     |
+
+Effective scaling = `min(nthreads, M / nb)`. So the fast-path cap is
+`min(nthreads-1, M/nb)`.
+
+### Experiment
+
+Add `xtrsm_xtrsv_loop_max(M)` that computes `min(env_override,
+nthreads-1, M/nb_hint)`. The xtrsm_ entry routes SIDE='L', stride-1,
+M ≥ 128, nrhs ≤ that cap into the fast path: pre-scale by alpha,
+then loop xtrsv_ over columns.
+
+Also lowered `XTRSM_OMP_MIN` (column-parallel gate) from 32 to 2 so
+the col-parallel path picks up for nrhs ≥ 4 at any reasonable M.
+
+### Result
+
+Measured at M=1024, OMP=4, iters=25 (cur_4/cur_1):
+
+| nrhs | path        | scaling |
+|------|-------------|---------|
+| 1    | fast        | 3.08×   |
+| 2    | fast        | 3.19×   |
+| 3    | fast        | 3.24×   |
+| 4    | col-par     | 3.87×   |
+| 5    | col-par     | 2.49×   (sawtooth) |
+| 6    | col-par     | 2.96×   |
+| 7    | col-par     | 2.72×   |
+| 8    | col-par     | 3.87×   |
+| 16   | col-par     | 3.85×   |
+| 32   | col-par     | 3.85×   |
+
+At nt=4, cap is min(3, M/64) = 3 — same value as the original fixed
+default but adapts at higher nt. At hypothetical nt=64, M=1024 the
+cap becomes 15 (= Amdahl ceiling - 1), preventing fast-path
+over-extension into col-parallel's regime.
+
+### Suboptimal sawtooth
+
+nrhs ∈ {5, 6, 7} at nt=4 hit col-parallel's sawtooth (2.5-3.4×).
+Fast path at those would give 3.1-3.3× — sometimes a small win, but
+needs a per-nrhs dispatch (compare both paths' predicted time)
+rather than a threshold. Deferred — the worst-case loss is bounded
+and the dispatch complexity isn't worth a few percent at moderate
+nrhs.
+
+### Rules
+
+37. **Derive dispatch thresholds from algorithmic Amdahl ceilings,
+    not constants.** A "fixed threshold of 3" is correct only at the
+    deployment's specific (nthreads, problem-size) combination.
+    Compute it: scaling = min(nthreads, work_total / work_serial).
+    The crossover for fan-out vs work-sharing dispatch sits at
+    `nrhs ≈ scaling`.
+
+38. **Column-parallel's effective scaling is `nrhs / ceil(nrhs/nt)`,
+    not `min(nrhs, nt)`.** The ceiling-divide creates a sawtooth:
+    at nrhs = nt, nt+1, 2·nt, … scaling is high; in between it's
+    `nrhs / 2` at best. Fan-out (loop-of-parallel-xtrsv) can beat
+    column-parallel in the sawtooth dips even when nrhs > nt.
+
+## Addendum 29: single-parallel-region for blocked xtrs* + blas_omp cache anti-pattern (2026-05-20)
+
+### The cache anti-pattern
+
+`blas_omp_max_threads()` originally lived as a `static inline` body
+in `common/blas_omp.h`:
+
+```c
+static inline int blas_omp_max_threads(void) {
+    static int cached = 0;
+    if (cached == 0) cached = omp_get_max_threads();
+    return cached;
+}
+```
+
+**Two bugs.**
+
+1. **Per-TU caches.** `static inline` gives each translation unit
+   its own `cached` variable. First call from xgemv.o locks
+   xgemv.o's cache to whatever `omp_get_max_threads()` returned at
+   that moment; xgemm.o caches independently. If they diverge, kernels
+   silently disagree on whether to parallelize.
+
+2. **Cache locked to first call.** Even centralized, the cache is
+   set on the first `omp_get_max_threads()` reading and never
+   re-checked. A test pattern that does:
+
+   ```
+   omp_set_num_threads(1); call_overlay();  // cache → 1
+   omp_set_num_threads(4); call_overlay();  // still 1, no parallelism
+   ```
+
+   silently runs serial in the second call. Real production code
+   typically sets `OMP_NUM_THREADS` once at startup, but perf
+   harnesses (and any user code that switches thread counts) break.
+
+Centralizing the cache to a single `blas_omp.c` fixed #1 but not #2.
+Removed the cache entirely — `omp_get_max_threads()` is an ICV
+lookup, well below the per-call BLAS overhead at any precision we
+care about.
+
+### Single-parallel-region pattern
+
+The previous xtrsv_blocked / xtrsm_blocked shape:
+
+```
+for each diagonal block:           # serial outer
+    sub_solve(small block)         # serial
+    xgemv_(...) or xgemm_(...)     # opens its OWN omp parallel region
+```
+
+Per call: N/nb separate fork-joins. Each fork-join is ~5-10 µs on
+libgomp; at N=1024, nb=64 that's 16 × 5-10 µs = 80-160 µs of pure
+sync overhead. Also violates the "no OMP-using callee from inside
+an OMP region" rule if the blocked variant is itself wrapped.
+
+The refactor opens ONE `#pragma omp parallel` region around the
+whole diagonal walk:
+
+```
+#pragma omp parallel
+{
+    tid, nt = ...
+    for each diagonal block:           # serial walk INSIDE the region
+        if tid==0: sub_solve()         # serial, others wait
+        #pragma omp barrier
+        partition_trailing(tid, nt)    # call *_serial_ on this slice
+        #pragma omp barrier
+}
+```
+
+Replaces N/nb fork-joins with **one fork-join + 2·N/nb barriers**.
+Same order of sync cost but threads stay pinned across iterations —
+better cache behavior on many-core nodes. Required `xgemm_serial_`
+/ `xgemv_serial_` / `xtrsv_serial_` entries (same numerics, no OMP
+pragmas) for the inner calls — the parallel entries (`xgemm_`,
+`xgemv_`, `xtrsv_`) keep their own regions for direct top-level
+use, and also pick up `omp_in_parallel()` guards so a stray call
+from inside another region degrades to serial work-sharing rather
+than nesting.
+
+### Column-partition is naturally race-free for xtrsm_blocked
+
+For xtrsm_blocked, partitioning by columns of B (each thread gets
+[j_lo, j_hi)) is **race-free with zero barriers**:
+
+- Pre-scale: thread T writes B[:, j_lo:j_hi]. Disjoint columns.
+- Sub-solve at block ic: thread T reads/writes B[ic:ic+ib, j_lo:j_hi].
+  Only its own columns.
+- Trailing xgemm: thread T reads B[ic:ic+ib, j_lo:j_hi] (just wrote
+  in sub-solve, same thread), writes B[i0:M, j_lo:j_hi].
+
+No cross-thread sharing of B. A is read-only. So one fork-join per
+xtrsm_blocked call, zero inner barriers. Each thread effectively
+runs an independent xtrsm_blocked on its column slice.
+
+This degenerates to column-parallel xtrsm at the algorithmic level —
+the "blocked" structure adds nothing beyond what column-parallel
+already does in compute-bound regimes (libquadmath ops dwarf any
+cache effect). Useful primarily for nrhs ≥ nthreads where the
+sub-solve overhead is amortized.
+
+xtrsv_blocked is *not* race-free under any partition: the diagonal
+walk has a tight cross-block dependency (block k's sub-solve reads
+block k-1's trailing-update output). The two barriers per step are
+structurally required.
+
+### Rules
+
+39. **Don't cache `omp_get_max_threads()`.** The ICV read is cheap
+    relative to any BLAS call. A cache pins the value at first
+    read — fine in production where OMP_NUM_THREADS is static, fatal
+    in tests that alternate `omp_set_num_threads` and a silent
+    perf bug if anything else also changes ICVs mid-run.
+
+40. **One parallel region per call, not per inner loop.** When a
+    serial outer drives a parallel inner, replace N/nb separate
+    `#pragma omp parallel` regions with one region wrapping the
+    whole walk + manual partition + barriers. Same sync cost order
+    but threads stay pinned (cache locality) and there's no nested
+    OMP. Requires `*_serial_` entries on the inner callees.
+
+41. **No OMP-using function called from inside an OMP region.**
+    Either expose a `_serial_` variant of the callee, or guard the
+    callee with `omp_in_parallel()` and ensure its single-thread
+    fallback is correct. Nested parallelism is fragile across
+    libgomp / iomp / runtime configs; "outer parallel × inner
+    parallel" is not a portable design.
+
+42. **Column-partition is naturally race-free for SIDE='L'
+    blocked-TRSM.** Each thread owns disjoint columns of B; sub-solve
+    and trailing both touch only its slice. No inner barriers needed.
+    SIDE='R' (or any algorithm with a cross-column dependency) does
+    *not* have this property.
+
 
