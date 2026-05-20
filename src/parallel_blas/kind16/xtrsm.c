@@ -36,10 +36,14 @@
  * xtrsv_ routes into its block-parallel variant, and nrhs small enough
  * that column-parallel xtrsm can't fill the thread pool, we decompose
  * xtrsm into nrhs serial xtrsv calls and let each call's internal
- * parallel xgemv carry the speedup. Crossover with column-parallel
- * xtrsm sits around nrhs ≈ nthreads. */
-#define XTRSM_XTRSV_LOOP_MAX_DEFAULT 3
+ * parallel xgemv carry the speedup. Crossover sits at nrhs ≈ the
+ * xtrsv_blocked scaling factor — see xtrsm_xtrsv_loop_max() below. */
 #define XTRSM_XTRSV_LOOP_M_MIN       128
+
+/* xtrsv_blocked default nb (sub-block diagonal). Kept in sync with
+ * XTRSV_BLOCKED_NB_DEFAULT in xtrsv.c — used here only to estimate
+ * xtrsv_blocked's Amdahl ceiling = M/nb for the dispatch heuristic. */
+#define XTRSM_XTRSV_LOOP_NB_HINT     64
 
 typedef __complex128 T;
 
@@ -50,18 +54,37 @@ extern void xtrsv_(
     T *x, const int *incx,
     size_t uplo_len, size_t trans_len, size_t diag_len);
 
-static int xtrsm_xtrsv_loop_max(void) {
-    static int cached_set = 0;
-    static int cached_val = XTRSM_XTRSV_LOOP_MAX_DEFAULT;
-    if (!__atomic_load_n(&cached_set, __ATOMIC_RELAXED)) {
+/* Maximum nrhs at which the xtrsv-loop fast path beats column-parallel
+ * xtrsm. Derived from xtrsv_blocked's effective scaling factor:
+ *
+ *   scaling = min(nthreads, M / nb)
+ *
+ * xtrsv_blocked's serial sub-solve is nb / M of the total work, giving
+ * an Amdahl ceiling of M/nb. At nthreads below that ceiling, scaling
+ * is limited by thread count; above it, by the serial sub-solve. The
+ * crossover where fast path stops winning vs col-parallel is at
+ * nrhs = scaling — hence MAX = scaling - 1 (last nrhs where fast path
+ * is still preferred).
+ *
+ * XTRSM_XTRSV_LOOP_MAX env overrides the heuristic. */
+static int xtrsm_xtrsv_loop_max(int M) {
+    static int env_set = 0;
+    static int env_val = -1;
+    if (!__atomic_load_n(&env_set, __ATOMIC_RELAXED)) {
         const char *s = getenv("XTRSM_XTRSV_LOOP_MAX");
         if (s && *s) {
             int v = atoi(s);
-            if (v >= 0) cached_val = v;
+            if (v >= 0) env_val = v;
         }
-        __atomic_store_n(&cached_set, 1, __ATOMIC_RELAXED);
+        __atomic_store_n(&env_set, 1, __ATOMIC_RELAXED);
     }
-    return cached_val;
+    if (env_val >= 0) return env_val;
+
+    const int max_nt     = blas_omp_max_threads() - 1;
+    const int max_amdahl = M / XTRSM_XTRSV_LOOP_NB_HINT;
+    int v = (max_nt < max_amdahl) ? max_nt : max_amdahl;
+    if (v < 1) v = 1;
+    return v;
 }
 
 static inline char up(const char *p) {
@@ -350,7 +373,7 @@ void xtrsm_(
 #else
         const int xv_in_par = 0;
 #endif
-        const int xv_max = xtrsm_xtrsv_loop_max();
+        const int xv_max = xtrsm_xtrsv_loop_max(M);
         if (SIDE == 'L' && N >= 1 && N <= xv_max && M >= XTRSM_XTRSV_LOOP_M_MIN
             && !xv_in_par) {
             if (alpha != ONE) {
