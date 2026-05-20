@@ -1,17 +1,17 @@
 /* blas_omp.h — shared OpenMP runtime helpers for the parallel BLAS overlay.
  *
- * Caches `omp_get_max_threads()` at the first overlay call so we don't pay
- * a libgomp ICV lookup on every dispatch. The cache lives in blas_omp.c
- * as a SINGLE static — earlier this was a `static inline` body in the
- * header, which gave each translation unit its own copy. With per-TU
- * caches, the kernel whose first call arrived at OMP_NUM_THREADS=1 (e.g.
- * xgemv during a perf bench's cur_1 phase) would lock itself to 1 even
- * after the caller switched to omp_set_num_threads(N>1) for the next
- * timing, silently disabling parallelism in that kernel.
+ * Returns omp_get_max_threads() directly (no caching) so callers always
+ * observe the current `nthreads-var` ICV, including changes from
+ * omp_set_num_threads() between calls.
  *
- * BLAS callers virtually never change OMP_NUM_THREADS mid-run in
- * production, and the migrated reference path doesn't honour mid-run
- * changes either, so a one-shot cache is correct for real use.
+ * A previous version cached the first call's result to avoid a libgomp
+ * ICV lookup on every dispatch. That cache locked itself to the first
+ * caller's omp_set_num_threads() value — fine in production where
+ * OMP_NUM_THREADS is set once at startup, but it silently disabled
+ * parallelism in perf benches that alternate omp_set_num_threads(1)
+ * and omp_set_num_threads(N). At libquadmath rate the ICV-lookup cost
+ * is well below the per-call BLAS overhead, so the cache wasn't pulling
+ * its weight anyway.
  */
 #ifndef PARALLEL_BLAS_BLAS_OMP_H
 #define PARALLEL_BLAS_BLAS_OMP_H
@@ -22,7 +22,10 @@ extern "C" {
 
 #ifdef _OPENMP
 #include <omp.h>
-extern int blas_omp_max_threads(void);
+static inline int blas_omp_max_threads(void) {
+    int v = omp_get_max_threads();
+    return (v < 1) ? 1 : v;
+}
 #else
 static inline int blas_omp_max_threads(void) { return 1; }
 #endif
