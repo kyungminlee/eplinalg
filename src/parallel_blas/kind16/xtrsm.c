@@ -224,7 +224,8 @@ static inline void xtrsm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define XTRSM_OMP_WRAP_L(name, core)                                        \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (N >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1) {              \
+        if (N >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1                 \
+                              && !omp_in_parallel()) {                       \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -237,7 +238,8 @@ static inline void xtrsm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define XTRSM_OMP_WRAP_L_TC(name, core, cflag)                              \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (N >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1) {              \
+        if (N >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1                 \
+                              && !omp_in_parallel()) {                       \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -250,7 +252,8 @@ static inline void xtrsm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define XTRSM_OMP_WRAP_R(name, core)                                        \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (M >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1) {              \
+        if (M >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1                 \
+                              && !omp_in_parallel()) {                       \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -263,7 +266,8 @@ static inline void xtrsm_ruTC_core(int i_start, int i_end, int N, T alpha,
 #define XTRSM_OMP_WRAP_R_TC(name, core, cflag)                              \
     static void name(int M, int N, T alpha,                                 \
                      const T *a, int lda, T *b, int ldb, int nounit) {      \
-        if (M >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1) {              \
+        if (M >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1                 \
+                              && !omp_in_parallel()) {                       \
             _Pragma("omp parallel") {                                       \
                 int tid = omp_get_thread_num();                             \
                 int nt  = omp_get_num_threads();                            \
@@ -341,8 +345,14 @@ void xtrsm_(
      * The M-threshold mirrors xtrsv_'s own block-parallel gate so we
      * only enter when each per-column call will actually parallelize. */
     {
+#ifdef _OPENMP
+        const int xv_in_par = omp_in_parallel();
+#else
+        const int xv_in_par = 0;
+#endif
         const int xv_max = xtrsm_xtrsv_loop_max();
-        if (SIDE == 'L' && N >= 1 && N <= xv_max && M >= XTRSM_XTRSV_LOOP_M_MIN) {
+        if (SIDE == 'L' && N >= 1 && N <= xv_max && M >= XTRSM_XTRSV_LOOP_M_MIN
+            && !xv_in_par) {
             if (alpha != ONE) {
                 for (int j = 0; j < N; ++j)
                     for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
@@ -401,7 +411,7 @@ void xtrsm_(
  * with the right transpose, and SIDE='R' is rarely the bottleneck.
  */
 
-extern void xgemm_(
+extern void xgemm_serial_(
     const char *transa, const char *transb,
     const int *m, const int *n, const int *k,
     const T *alpha,
@@ -423,19 +433,26 @@ static int xtrsm_blocked_nb(void) {
     return cached;
 }
 
-static void xtrsm_blocked_prescale(int M, int N, T alpha, T *b, int ldb)
-{
-    if (alpha == ONE) return;
-#ifdef _OPENMP
-    const int use_omp = (N >= XTRSM_OMP_MIN && blas_omp_max_threads() > 1);
-    #pragma omp parallel for if(use_omp) schedule(static)
-#endif
-    for (int j = 0; j < N; ++j) {
-        if (alpha == ZERO) for (int i = 0; i < M; ++i) B_(i, j) = ZERO;
-        else               for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
-    }
-}
-
+/* Single-parallel-region xtrsm_blocked. SIDE='L', stride-1 on B.
+ *
+ * The whole walk lives inside ONE `#pragma omp parallel` region.
+ * Threads partition the column range of B once and stay on their
+ * slice through pre-scale, every diagonal sub-solve, and every
+ * trailing xgemm. No barriers needed: each operation reads and
+ * writes only the thread's own column slice, so the work is
+ * race-free even with no inter-thread synchronization.
+ *
+ * Replaces the previous "prescale parallel-for + N/nb separate
+ * xgemm fork-joins" shape with a single fork-join. Aligns with the
+ * rule that we don't call OMP-using functions from inside an OMP
+ * region: inner work routes through xgemm_serial_ and the static
+ * xtrsm_*_core helpers (which have no OMP).
+ *
+ * SIDE='R' and small-M (M < 2·NB) fall back to xtrsm_, which has
+ * its own omp_in_parallel guard so the fallback is safe even when
+ * xtrsm_blocked_ is itself called from inside another parallel
+ * region.
+ */
 void xtrsm_blocked_(
     const char *side, const char *uplo, const char *transa, const char *diag,
     const int *m_, const int *n_,
@@ -444,6 +461,7 @@ void xtrsm_blocked_(
     T *b, const int *ldb_,
     size_t side_len, size_t uplo_len, size_t transa_len, size_t diag_len)
 {
+    (void)side_len; (void)uplo_len; (void)transa_len; (void)diag_len;
     const int M = *m_, N = *n_;
     const int lda = *lda_, ldb = *ldb_;
     const T alpha = *alpha_;
@@ -451,6 +469,8 @@ void xtrsm_blocked_(
     const char SIDE = up(side);
     const char UPLO = up(uplo);
     const char TR   = up(transa);
+    const int nounit = (up(diag) != 'U');
+    const int cflag = (TR == 'C') ? 1 : 0;
 
     if (M == 0 || N == 0) return;
 
@@ -465,87 +485,96 @@ void xtrsm_blocked_(
         return;
     }
 
-    xtrsm_blocked_prescale(M, N, alpha, b, ldb);
-
     const T neg_one = -1.0Q + 0.0Qi;
     const char NN[1] = {'N'};
     const char TT[1] = {(TR == 'C') ? 'C' : 'T'};
     const T one_v = ONE;
 
-    if (TR == 'N') {
-        if (UPLO == 'L') {
-            /* LLN: A11 X1 = B1, then B2 -= A21 X1, recurse. */
-            for (int ic = 0; ic < M; ic += nb) {
-                int ib = (M - ic < nb) ? (M - ic) : nb;
-                xtrsm_(side, uplo, transa, diag, &ib, n_, &one_v,
-                       &A_(ic, ic), lda_, &B_(ic, 0), ldb_,
-                       side_len, uplo_len, transa_len, diag_len);
-                int mt = M - ic - ib;
-                if (mt > 0) {
-                    int i0 = ic + ib;
-                    xgemm_(NN, NN, &mt, n_, &ib, &neg_one,
-                           &A_(i0, ic), lda_,
-                           &B_(ic, 0), ldb_, &one_v,
-                           &B_(i0, 0), ldb_, 1, 1);
+#ifdef _OPENMP
+    const int use_omp = (N >= 2 && blas_omp_max_threads() > 1 && !omp_in_parallel());
+#else
+    const int use_omp = 0;
+#endif
+
+#ifdef _OPENMP
+    #pragma omp parallel if(use_omp)
+#endif
+    {
+        int tid = 0, nt = 1;
+#ifdef _OPENMP
+        if (use_omp) { tid = omp_get_thread_num(); nt = omp_get_num_threads(); }
+#endif
+        const int j_lo = (int)((long long)N * tid / nt);
+        const int j_hi = (int)((long long)N * (tid + 1) / nt);
+        const int n_slice = j_hi - j_lo;
+
+        if (n_slice > 0) {
+            /* Pre-scale this thread's column slice of B by alpha. */
+            if (alpha != ONE) {
+                for (int j = j_lo; j < j_hi; ++j) {
+                    for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
                 }
             }
-        } else {
-            /* LUN: A22 X2 = B2, then B1 -= A12 X2, recurse downward. */
-            int ic = ((M - 1) / nb) * nb;
-            while (ic >= 0) {
-                int ib = (M - ic < nb) ? (M - ic) : nb;
-                xtrsm_(side, uplo, transa, diag, &ib, n_, &one_v,
-                       &A_(ic, ic), lda_, &B_(ic, 0), ldb_,
-                       side_len, uplo_len, transa_len, diag_len);
-                if (ic > 0) {
-                    xgemm_(NN, NN, &ic, n_, &ib, &neg_one,
-                           &A_(0, ic), lda_,
-                           &B_(ic, 0), ldb_, &one_v,
-                           &B_(0, 0), ldb_, 1, 1);
+
+            if (TR == 'N' && UPLO == 'L') {
+                /* LLN forward. */
+                for (int ic = 0; ic < M; ic += nb) {
+                    int ib = (M - ic < nb) ? (M - ic) : nb;
+                    xtrsm_lln_core(j_lo, j_hi, ib, ONE,
+                                   &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+                    int mt = M - ic - ib;
+                    if (mt > 0) {
+                        int i0 = ic + ib;
+                        xgemm_serial_(NN, NN, &mt, &n_slice, &ib, &neg_one,
+                                      &A_(i0, ic), lda_,
+                                      &B_(ic, j_lo), ldb_, &one_v,
+                                      &B_(i0, j_lo), ldb_, 1, 1);
+                    }
                 }
-                ic -= nb;
-            }
-        }
-    } else {
-        /* TR='T' or 'C'. */
-        if (UPLO == 'L') {
-            /* L,L,T/C: iterate diagonal from bottom up.
-             *  op(A11) X1 = B1 (small TRSM), then
-             *  B0 -= op(A_{ic,0:ic}) X1, where slice = A[ic:ic+ib, 0:ic],
-             *  i.e. xgemm(op, N, M=ib, K=ic, N=N_b). */
-            int ic = ((M - 1) / nb) * nb;
-            while (ic >= 0) {
-                int ib = (M - ic < nb) ? (M - ic) : nb;
-                xtrsm_(side, uplo, transa, diag, &ib, n_, &one_v,
-                       &A_(ic, ic), lda_, &B_(ic, 0), ldb_,
-                       side_len, uplo_len, transa_len, diag_len);
-                if (ic > 0) {
-                    /* B[0:ic, :] -= op(A[ic:ic+ib, 0:ic]) B[ic:ic+ib, :].
-                     * op(slice) is (ic × ib)^op viewed as ic × ib, so
-                     * xgemm(op, NN, M=ic, N=N, K=ib, A=&A_(ic,0)). */
-                    xgemm_(TT, NN, &ic, n_, &ib, &neg_one,
-                           &A_(ic, 0), lda_,
-                           &B_(ic, 0), ldb_, &one_v,
-                           &B_(0, 0), ldb_, 1, 1);
+            } else if (TR == 'N' && UPLO == 'U') {
+                /* LUN backward. */
+                int ic = ((M - 1) / nb) * nb;
+                while (ic >= 0) {
+                    int ib = (M - ic < nb) ? (M - ic) : nb;
+                    xtrsm_lun_core(j_lo, j_hi, ib, ONE,
+                                   &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit);
+                    if (ic > 0) {
+                        xgemm_serial_(NN, NN, &ic, &n_slice, &ib, &neg_one,
+                                      &A_(0, ic), lda_,
+                                      &B_(ic, j_lo), ldb_, &one_v,
+                                      &B_(0, j_lo), ldb_, 1, 1);
+                    }
+                    ic -= nb;
                 }
-                ic -= nb;
-            }
-        } else {
-            /* L,U,T/C: iterate top-down.
-             *  op(A11) X1 = B1, then B2 -= op(A_{0:ic+ib, ic+ib:M-slice}) X1,
-             *  Specifically B[ic+ib:M, :] -= op(A[ic:ic+ib, ic+ib:M]) X1. */
-            for (int ic = 0; ic < M; ic += nb) {
-                int ib = (M - ic < nb) ? (M - ic) : nb;
-                xtrsm_(side, uplo, transa, diag, &ib, n_, &one_v,
-                       &A_(ic, ic), lda_, &B_(ic, 0), ldb_,
-                       side_len, uplo_len, transa_len, diag_len);
-                int mt = M - ic - ib;
-                if (mt > 0) {
-                    int i0 = ic + ib;
-                    xgemm_(TT, NN, &mt, n_, &ib, &neg_one,
-                           &A_(ic, i0), lda_,
-                           &B_(ic, 0), ldb_, &one_v,
-                           &B_(i0, 0), ldb_, 1, 1);
+            } else if (UPLO == 'L') {
+                /* L,L,T/C: bottom-up walk. */
+                int ic = ((M - 1) / nb) * nb;
+                while (ic >= 0) {
+                    int ib = (M - ic < nb) ? (M - ic) : nb;
+                    xtrsm_llTC_core(j_lo, j_hi, ib, ONE,
+                                    &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit, cflag);
+                    if (ic > 0) {
+                        xgemm_serial_(TT, NN, &ic, &n_slice, &ib, &neg_one,
+                                      &A_(ic, 0), lda_,
+                                      &B_(ic, j_lo), ldb_, &one_v,
+                                      &B_(0, j_lo), ldb_, 1, 1);
+                    }
+                    ic -= nb;
+                }
+            } else {
+                /* L,U,T/C: top-down walk. */
+                for (int ic = 0; ic < M; ic += nb) {
+                    int ib = (M - ic < nb) ? (M - ic) : nb;
+                    xtrsm_luTC_core(j_lo, j_hi, ib, ONE,
+                                    &A_(ic, ic), lda, &B_(ic, 0), ldb, nounit, cflag);
+                    int mt = M - ic - ib;
+                    if (mt > 0) {
+                        int i0 = ic + ib;
+                        xgemm_serial_(TT, NN, &mt, &n_slice, &ib, &neg_one,
+                                      &A_(ic, i0), lda_,
+                                      &B_(ic, j_lo), ldb_, &one_v,
+                                      &B_(i0, j_lo), ldb_, 1, 1);
+                    }
                 }
             }
         }
