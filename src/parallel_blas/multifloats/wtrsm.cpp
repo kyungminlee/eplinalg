@@ -1249,24 +1249,56 @@ extern "C" void wtrsm_(
             }
         }
     } else {
+        /* SIDE='R': partition over rows of B. The j (column) loop walks
+         * the diagonal serially, but every row of B is processed
+         * identically — each thread takes a disjoint row slice. Round
+         * slice boundaries to multiples of 4 where possible so the SIMD
+         * 4-row chunks stay aligned; the last thread absorbs any tail. */
+#ifdef _OPENMP
+        const int use_omp = (M >= WTRSM_OMP_N_MIN && blas_omp_max_threads() > 1
+                             && !omp_in_parallel());
+#else
+        const int use_omp = 0;
+#endif
+
 #ifdef WBLAS_SIMD_DD
         wtrsm_r_op op;
         if (TR == 'N')      op = (UPLO == 'L') ? WTR_RLN : WTR_RUN;
         else if (TR == 'T') op = (UPLO == 'L') ? WTR_RLT : WTR_RUT;
         else                op = (UPLO == 'L') ? WTR_RLC : WTR_RUC;
-        wtrsm_simd_diag_R(op, M, N, alpha, a, lda, b, ldb, nounit);
-#else
-        if (TR == 'N') {
-            if (UPLO == 'L') wtrsm_rln(M, N, alpha, a, lda, b, ldb, nounit);
-            else             wtrsm_run(M, N, alpha, a, lda, b, ldb, nounit);
-        } else if (TR == 'T') {
-            if (UPLO == 'L') wtrsm_rlt(M, N, alpha, a, lda, b, ldb, nounit);
-            else             wtrsm_rut(M, N, alpha, a, lda, b, ldb, nounit);
-        } else {
-            if (UPLO == 'L') wtrsm_rlc(M, N, alpha, a, lda, b, ldb, nounit);
-            else             wtrsm_ruc(M, N, alpha, a, lda, b, ldb, nounit);
-        }
 #endif
+
+#ifdef _OPENMP
+        #pragma omp parallel if(use_omp)
+#endif
+        {
+            int tid = 0, nt = 1;
+#ifdef _OPENMP
+            if (use_omp) { tid = omp_get_thread_num(); nt = omp_get_num_threads(); }
+#endif
+            int i_lo = (int)((long long)M * tid / nt);
+            int i_hi = (int)((long long)M * (tid + 1) / nt);
+            if (tid > 0)      i_lo &= ~3;
+            if (tid < nt - 1) i_hi &= ~3;
+            const int Mslice = i_hi - i_lo;
+            if (Mslice > 0) {
+                T *b_slice = b + i_lo;
+#ifdef WBLAS_SIMD_DD
+                wtrsm_simd_diag_R(op, Mslice, N, alpha, a, lda, b_slice, ldb, nounit);
+#else
+                if (TR == 'N') {
+                    if (UPLO == 'L') wtrsm_rln_core(Mslice, N, alpha, a, lda, b_slice, ldb, nounit);
+                    else             wtrsm_run_core(Mslice, N, alpha, a, lda, b_slice, ldb, nounit);
+                } else if (TR == 'T') {
+                    if (UPLO == 'L') wtrsm_rlTC_core(Mslice, N, alpha, a, lda, b_slice, ldb, nounit, 0);
+                    else             wtrsm_ruTC_core(Mslice, N, alpha, a, lda, b_slice, ldb, nounit, 0);
+                } else {
+                    if (UPLO == 'L') wtrsm_rlTC_core(Mslice, N, alpha, a, lda, b_slice, ldb, nounit, 1);
+                    else             wtrsm_ruTC_core(Mslice, N, alpha, a, lda, b_slice, ldb, nounit, 1);
+                }
+#endif
+            }
+        }
     }
 }
 

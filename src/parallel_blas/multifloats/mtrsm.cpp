@@ -1017,20 +1017,59 @@ extern "C" void mtrsm_(
             }
         }
     } else {
+        /* SIDE='R': partition over rows of B. The j (column) loop walks
+         * the diagonal serially, but every row of B is processed
+         * identically — each thread takes a disjoint row slice and the
+         * work is race-free with no barriers.
+         *
+         * Round slice boundaries to multiples of 4 where possible so
+         * the SIMD 4-row chunks inside mtrsm_simd_diag_R stay aligned;
+         * the last thread absorbs any non-4-aligned tail. */
+#ifdef _OPENMP
+        const int use_omp = (M >= MTRSM_OMP_N_MIN && blas_omp_max_threads() > 1
+                             && !omp_in_parallel());
+#else
+        const int use_omp = 0;
+#endif
+
 #ifdef MBLAS_SIMD_DD
         trsm_r_op op;
         if (TR == 'N') op = (UPLO == 'L') ? TRSM_RLN : TRSM_RUN;
         else           op = (UPLO == 'L') ? TRSM_RLT : TRSM_RUT;
-        mtrsm_simd_diag_R(op, M, N, alpha, a, lda, b, ldb, nounit);
-#else
-        if (TR == 'N') {
-            if (UPLO == 'L') mtrsm_rln(M, N, alpha, a, lda, b, ldb, nounit);
-            else             mtrsm_run(M, N, alpha, a, lda, b, ldb, nounit);
-        } else {
-            if (UPLO == 'L') mtrsm_rlt(M, N, alpha, a, lda, b, ldb, nounit);
-            else             mtrsm_rut(M, N, alpha, a, lda, b, ldb, nounit);
-        }
 #endif
+
+#ifdef _OPENMP
+        #pragma omp parallel if(use_omp)
+#endif
+        {
+            int tid = 0, nt = 1;
+#ifdef _OPENMP
+            if (use_omp) { tid = omp_get_thread_num(); nt = omp_get_num_threads(); }
+#endif
+            int i_lo = (int)((long long)M * tid / nt);
+            int i_hi = (int)((long long)M * (tid + 1) / nt);
+            /* Round i_lo down to a multiple of 4 (except thread 0), and
+             * i_hi up to a multiple of 4 — except the last thread, which
+             * absorbs the M&3 tail. This keeps SIMD chunks aligned for
+             * interior threads. */
+            if (tid > 0)      i_lo &= ~3;
+            if (tid < nt - 1) i_hi &= ~3;
+            const int Mslice = i_hi - i_lo;
+            if (Mslice > 0) {
+                T *b_slice = b + i_lo;
+#ifdef MBLAS_SIMD_DD
+                mtrsm_simd_diag_R(op, Mslice, N, alpha, a, lda, b_slice, ldb, nounit);
+#else
+                if (TR == 'N') {
+                    if (UPLO == 'L') mtrsm_rln_core(0, N, Mslice, alpha, a, lda, b_slice, ldb, nounit);
+                    else             mtrsm_run_core(0, N, Mslice, alpha, a, lda, b_slice, ldb, nounit);
+                } else {
+                    if (UPLO == 'L') mtrsm_rlt_core(0, N, Mslice, alpha, a, lda, b_slice, ldb, nounit);
+                    else             mtrsm_rut_core(0, N, Mslice, alpha, a, lda, b_slice, ldb, nounit);
+                }
+#endif
+            }
+        }
     }
 }
 
