@@ -85,7 +85,14 @@ void etrsv_(
 #else
     const int in_par = 0;
 #endif
-    if (incx == 1 && N >= 2 * etrsv_blocked_nb() && !in_par
+    /* Threshold `N >= 3*NB` (not the usual 2*NB) — etrsv's per-op cost
+     * is so low that the OMP fork-join + per-step barriers cost more
+     * than the parallel work at N == 2*NB. At N=128 (=2*NB with NB=64)
+     * the T-branch's K-unroll serial path was ~3 µs per call; OMP=4
+     * dispatch regressed it to 0.80x. Bumping to 3*NB (192) keeps
+     * N=128 on the (faster) serial path while N=256+ still goes
+     * blocked-parallel and wins. */
+    if (incx == 1 && N >= 3 * etrsv_blocked_nb() && !in_par
         && blas_omp_max_threads() > 1) {
         etrsv_blocked_(uplo, trans, diag, n_, a, lda_, x, incx_,
                        uplo_len, trans_len, diag_len);
