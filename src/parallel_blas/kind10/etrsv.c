@@ -4,13 +4,35 @@
  *   Aᵀ x = b          (TRANS='T'/'C')
  * where A is N×N triangular (UPLO, DIAG). x overwrites b in-place.
  *
- * Inherently serial in i (each x[i] depends on earlier-solved x[k]),
- * so no OMP. Mirrors the Netlib reference with restrict and stride-1
- * column access of A where possible.
+ * Three public entries:
+ *
+ *   etrsv_         — top-level dispatch. Routes stride-1 calls above
+ *                    the 2·NB threshold into etrsv_blocked_; otherwise
+ *                    falls through to the unblocked Netlib serial body.
+ *                    Skips the blocked-path dispatch when already
+ *                    inside an OpenMP parallel region.
+ *
+ *   etrsv_serial_  — pure serial unblocked Netlib body. K-unroll-by-2
+ *                    + backward inner walks per Addenda 18/19. No
+ *                    OpenMP. Safe to call from inside a parallel
+ *                    region.
+ *
+ *   etrsv_blocked_ — LAPACK-blocked algorithm wrapped in a SINGLE
+ *                    `#pragma omp parallel` region. Threads cooperate
+ *                    manually: thread 0 does each diagonal sub-solve
+ *                    via etrsv_serial_, then all threads partition
+ *                    the trailing egemv across the long axis and call
+ *                    egemv_ on their slice (egemv's own OMP fork is
+ *                    gated off by omp_in_parallel()).
  */
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <ctype.h>
+#ifdef _OPENMP
+#include <omp.h>
+#include "../common/blas_omp.h"
+#endif
 
 typedef long double T;
 
@@ -20,7 +42,64 @@ static inline char up(const char *p) {
 
 #define A_(i, j)  a[(size_t)(j) * lda + (i)]
 
+#define ETRSV_BLOCKED_NB_DEFAULT 64
+
+static int etrsv_blocked_nb(void) {
+    static int cached = 0;
+    if (cached == 0) {
+        const char *s = getenv("ETRSV_NB");
+        int v = (s && *s) ? atoi(s) : 0;
+        cached = (v > 0) ? v : ETRSV_BLOCKED_NB_DEFAULT;
+    }
+    return cached;
+}
+
+void etrsv_blocked_(
+    const char *uplo, const char *trans, const char *diag,
+    const int *n_,
+    const T *restrict a, const int *lda_,
+    T *restrict x, const int *incx_,
+    size_t uplo_len, size_t trans_len, size_t diag_len);
+
+void etrsv_serial_(
+    const char *uplo, const char *trans, const char *diag,
+    const int *n_,
+    const T *restrict a, const int *lda_,
+    T *restrict x, const int *incx_,
+    size_t uplo_len, size_t trans_len, size_t diag_len);
+
 void etrsv_(
+    const char *uplo, const char *trans, const char *diag,
+    const int *n_,
+    const T *restrict a, const int *lda_,
+    T *restrict x, const int *incx_,
+    size_t uplo_len, size_t trans_len, size_t diag_len)
+{
+    const int N = *n_;
+    const int incx = *incx_;
+
+    if (N == 0) return;
+
+#ifdef _OPENMP
+    const int in_par = omp_in_parallel();
+#else
+    const int in_par = 0;
+#endif
+    if (incx == 1 && N >= 2 * etrsv_blocked_nb() && !in_par
+        && blas_omp_max_threads() > 1) {
+        etrsv_blocked_(uplo, trans, diag, n_, a, lda_, x, incx_,
+                       uplo_len, trans_len, diag_len);
+        return;
+    }
+
+    etrsv_serial_(uplo, trans, diag, n_, a, lda_, x, incx_,
+                  uplo_len, trans_len, diag_len);
+}
+
+/* Pure-serial unblocked Netlib body. No OpenMP. Inherits the
+ * Addendum 18 (backward inner) + Addendum 19 (K-unroll-by-2 split
+ * accumulators) tuning of the previous etrsv_. */
+void etrsv_serial_(
     const char *uplo, const char *trans, const char *diag,
     const int *n_,
     const T *restrict a, const int *lda_,
@@ -173,6 +252,204 @@ void etrsv_(
                     if (nounit) t /= A_(i, i);
                     x[kx + i * incx] = t;
                 }
+            }
+        }
+    }
+}
+
+/* ── Block-parallel variant: single parallel region ─────────────────
+ *
+ * Mirrors qtrsv_blocked_ (Addendum 29). One `#pragma omp parallel`
+ * wraps the entire diagonal walk:
+ *
+ *   - Thread 0 calls etrsv_serial_ on each diagonal sub-block.
+ *   - All threads partition the trailing egemv across its long axis
+ *     and call egemv_ on their slice. egemv's own OMP fork is gated
+ *     off by omp_in_parallel(), so the inner gemv runs serially on
+ *     each thread's slice.
+ *   - Two `#pragma omp barrier`s per step.
+ */
+
+extern void egemv_(
+    const char *trans,
+    const int *m, const int *n,
+    const T *alpha,
+    const T *a, const int *lda,
+    const T *x, const int *incx,
+    const T *beta,
+    T *y, const int *incy,
+    size_t trans_len);
+
+void etrsv_blocked_(
+    const char *uplo, const char *trans, const char *diag,
+    const int *n_,
+    const T *restrict a, const int *lda_,
+    T *restrict x, const int *incx_,
+    size_t uplo_len, size_t trans_len, size_t diag_len)
+{
+    const int N = *n_;
+    const int lda = *lda_, incx = *incx_;
+    const int nb = etrsv_blocked_nb();
+    const char UPLO = up(uplo);
+    char TR = up(trans);
+    if (TR == 'C') TR = 'T';
+
+    if (N == 0) return;
+    if (incx != 1 || N < 2 * nb) {
+        etrsv_serial_(uplo, trans, diag, n_, a, lda_, x, incx_,
+                      uplo_len, trans_len, diag_len);
+        return;
+    }
+
+    const T neg_one = -1.0L;
+    const T one_v   =  1.0L;
+    const char NN[1] = {'N'};
+    const char TT[1] = {'T'};
+    const int one_i = 1;
+
+#ifdef _OPENMP
+    const int use_omp = (blas_omp_max_threads() > 1 && !omp_in_parallel());
+#else
+    const int use_omp = 0;
+#endif
+
+#ifdef _OPENMP
+    #pragma omp parallel if(use_omp)
+#endif
+    {
+        int tid = 0, nt = 1;
+#ifdef _OPENMP
+        if (use_omp) { tid = omp_get_thread_num(); nt = omp_get_num_threads(); }
+#endif
+
+        if (TR == 'N' && UPLO == 'L') {
+            for (int j = 0; j < N; j += nb) {
+                int jb = (N - j < nb) ? (N - j) : nb;
+                if (tid == 0) {
+                    etrsv_serial_(uplo, trans, diag, &jb, &A_(j, j), lda_,
+                                  &x[j], &one_i, uplo_len, trans_len, diag_len);
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
+                int mt = N - j - jb;
+                if (mt > 0) {
+                    int j2 = j + jb;
+                    long long lo = (long long)mt * tid / nt;
+                    long long hi = (long long)mt * (tid + 1) / nt;
+                    int m_slice = (int)(hi - lo);
+                    if (m_slice > 0) {
+                        const int i_off = j2 + (int)lo;
+                        egemv_(NN, &m_slice, &jb, &neg_one,
+                               &A_(i_off, j), lda_,
+                               &x[j], &one_i, &one_v,
+                               &x[i_off], &one_i, 1);
+                    }
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
+            }
+        } else if (TR == 'N' && UPLO == 'U') {
+            int j = ((N - 1) / nb) * nb;
+            while (j >= 0) {
+                int jb = (N - j < nb) ? (N - j) : nb;
+                if (tid == 0) {
+                    etrsv_serial_(uplo, trans, diag, &jb, &A_(j, j), lda_,
+                                  &x[j], &one_i, uplo_len, trans_len, diag_len);
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
+                if (j > 0) {
+                    long long lo = (long long)j * tid / nt;
+                    long long hi = (long long)j * (tid + 1) / nt;
+                    int m_slice = (int)(hi - lo);
+                    if (m_slice > 0) {
+                        const int i_off = (int)lo;
+                        egemv_(NN, &m_slice, &jb, &neg_one,
+                               &A_(i_off, j), lda_,
+                               &x[j], &one_i, &one_v,
+                               &x[i_off], &one_i, 1);
+                    }
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
+                j -= nb;
+            }
+        } else if (TR == 'T' && UPLO == 'L') {
+            int j = ((N - 1) / nb) * nb;
+            while (j >= 0) {
+                int jb = (N - j < nb) ? (N - j) : nb;
+                if (tid == 0) {
+                    etrsv_serial_(uplo, trans, diag, &jb, &A_(j, j), lda_,
+                                  &x[j], &one_i, uplo_len, trans_len, diag_len);
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
+                if (j > 0) {
+                    long long lo = (long long)j * tid / nt;
+                    long long hi = (long long)j * (tid + 1) / nt;
+                    int n_slice = (int)(hi - lo);
+                    if (n_slice > 0) {
+                        const int n_off = (int)lo;
+                        egemv_(TT, &jb, &n_slice, &neg_one,
+                               &A_(j, n_off), lda_,
+                               &x[j], &one_i, &one_v,
+                               &x[n_off], &one_i, 1);
+                    }
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
+                j -= nb;
+            }
+        } else {
+            /* TR == 'T' && UPLO == 'U' */
+            for (int j = 0; j < N; j += nb) {
+                int jb = (N - j < nb) ? (N - j) : nb;
+                if (tid == 0) {
+                    etrsv_serial_(uplo, trans, diag, &jb, &A_(j, j), lda_,
+                                  &x[j], &one_i, uplo_len, trans_len, diag_len);
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
+                int mt = N - j - jb;
+                if (mt > 0) {
+                    int j2 = j + jb;
+                    long long lo = (long long)mt * tid / nt;
+                    long long hi = (long long)mt * (tid + 1) / nt;
+                    int n_slice = (int)(hi - lo);
+                    if (n_slice > 0) {
+                        const int n_off = j2 + (int)lo;
+                        egemv_(TT, &jb, &n_slice, &neg_one,
+                               &A_(j, n_off), lda_,
+                               &x[j], &one_i, &one_v,
+                               &x[n_off], &one_i, 1);
+                    }
+                }
+#ifdef _OPENMP
+                if (use_omp) {
+                    #pragma omp barrier
+                }
+#endif
             }
         }
     }

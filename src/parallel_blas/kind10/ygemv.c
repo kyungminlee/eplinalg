@@ -77,7 +77,8 @@ void ygemv_(
     if (TR == 'N') {
         if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
-            const int use_omp = (M >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1);
+            const int use_omp = (M >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1
+                                 && !omp_in_parallel());
 #else
             const int use_omp = 0;
 #endif
@@ -165,7 +166,8 @@ void ygemv_(
         const int conj_a = (TR == 'C');
         if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
-            const int use_omp = (N >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1);
+            const int use_omp = (N >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1
+                                 && !omp_in_parallel());
 #else
             const int use_omp = 0;
 #endif
