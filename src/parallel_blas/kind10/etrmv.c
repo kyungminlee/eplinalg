@@ -4,13 +4,21 @@
  *   x := Aᵀ · x        (TRANS='T'/'C')
  * A is N×N triangular (UPLO, DIAG). x updated in-place.
  *
- * Inherently serial over j (each j writes to x[j] or reads x[i] from
- * a region that earlier j's modified). No OMP. Netlib reference +
- * restrict + stride-1 column access.
+ * Netlib reference + restrict + stride-1 column access. OMP path
+ * uses an external output buffer so the in-place data dependency
+ * dissolves (TR='T' simple, TR='N' needs per-thread y_priv+reduce
+ * — same pattern as esymv per Addendum 36).
  */
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <ctype.h>
+#ifdef _OPENMP
+#include <omp.h>
+#include "../common/blas_omp.h"
+#endif
+
+#define ETRMV_OMP_MIN 128
 
 typedef long double T;
 
@@ -40,6 +48,113 @@ void etrmv_(
     const T zero = 0.0L;
 
     if (incx == 1) {
+#ifdef _OPENMP
+        const int nt = blas_omp_max_threads();
+        const int use_omp = (N >= ETRMV_OMP_MIN && nt > 1 && !omp_in_parallel());
+#else
+        const int use_omp = 0;
+        const int nt = 1;
+#endif
+        if (use_omp) {
+            /* TR='T' is straightforward: each j writes a single x[j]
+             * (dot product of column j and trailing x). All threads
+             * read x then write y_buf[j] — own j, no overlap. Single
+             * shared buffer, then copy back to x.
+             *
+             * TR='N' needs per-thread y_priv (esymv pattern, Add-36):
+             * each j contributes to x[i] for i > j (L) or i < j (U),
+             * so cross-thread j-ranges write overlapping i ranges. */
+            if (TR == 'T') {
+                T *y_buf = (T *)aligned_alloc(64,
+                    (((size_t)N * sizeof(T)) + 63) & ~(size_t)63);
+                if (y_buf) {
+#ifdef _OPENMP
+                    #pragma omp parallel
+                    {
+                        if (UPLO == 'L') {
+                            #pragma omp for schedule(static, 1)
+                            for (int j = 0; j < N; ++j) {
+                                T temp = nounit ? (x[j] * A_(j, j)) : x[j];
+                                const T *aj = &A_(0, j);
+                                T s0 = zero, s1 = zero;
+                                int i = j + 1;
+                                for (; i + 1 < N; i += 2) {
+                                    s0 += aj[i]     * x[i];
+                                    s1 += aj[i + 1] * x[i + 1];
+                                }
+                                T s = s0 + s1;
+                                for (; i < N; ++i) s += aj[i] * x[i];
+                                y_buf[j] = temp + s;
+                            }
+                        } else {
+                            #pragma omp for schedule(static, 1)
+                            for (int j = 0; j < N; ++j) {
+                                T temp = nounit ? (x[j] * A_(j, j)) : x[j];
+                                const T *aj = &A_(0, j);
+                                T s0 = zero, s1 = zero;
+                                int i = j - 1;
+                                for (; i - 1 >= 0; i -= 2) {
+                                    s0 += aj[i]     * x[i];
+                                    s1 += aj[i - 1] * x[i - 1];
+                                }
+                                T s = s0 + s1;
+                                for (; i >= 0; --i) s += aj[i] * x[i];
+                                y_buf[j] = temp + s;
+                            }
+                        }
+                        #pragma omp for schedule(static)
+                        for (int i = 0; i < N; ++i) x[i] = y_buf[i];
+                    }
+#endif
+                    free(y_buf);
+                    return;
+                }
+                /* aligned_alloc fail → fall through to serial. */
+            } else {
+                /* TR='N' — per-thread y_priv + reduction. */
+                T *y_priv_all = (T *)aligned_alloc(64,
+                    (((size_t)nt * N * sizeof(T)) + 63) & ~(size_t)63);
+                if (y_priv_all) {
+#ifdef _OPENMP
+                    #pragma omp parallel
+                    {
+                        const int tid = omp_get_thread_num();
+                        T *y_priv = &y_priv_all[(size_t)tid * N];
+                        for (int k = 0; k < N; ++k) y_priv[k] = zero;
+
+                        if (UPLO == 'L') {
+                            #pragma omp for schedule(static, 1)
+                            for (int j = 0; j < N; ++j) {
+                                const T xj = x[j];
+                                const T *aj = &A_(0, j);
+                                y_priv[j] += xj * (nounit ? aj[j] : (T)1.0L);
+                                for (int i = j + 1; i < N; ++i)
+                                    y_priv[i] += xj * aj[i];
+                            }
+                        } else {
+                            #pragma omp for schedule(static, 1)
+                            for (int j = 0; j < N; ++j) {
+                                const T xj = x[j];
+                                const T *aj = &A_(0, j);
+                                for (int i = 0; i < j; ++i)
+                                    y_priv[i] += xj * aj[i];
+                                y_priv[j] += xj * (nounit ? aj[j] : (T)1.0L);
+                            }
+                        }
+                        #pragma omp for schedule(static)
+                        for (int i = 0; i < N; ++i) {
+                            T s = zero;
+                            for (int t = 0; t < nt; ++t)
+                                s += y_priv_all[(size_t)t * N + i];
+                            x[i] = s;
+                        }
+                    }
+#endif
+                    free(y_priv_all);
+                    return;
+                }
+            }
+        }
         if (TR == 'N') {
             if (UPLO == 'L') {
                 /* j backward: x[i] for i>j updated by temp=x[j]; then scale x[j].
