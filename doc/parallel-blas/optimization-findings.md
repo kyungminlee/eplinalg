@@ -3428,3 +3428,62 @@ Versus migrated egemm (perf_egemm output, OMP=4):
     xgemm. Whenever `for_axis_iters < nthreads`, the `omp for`
     *cannot* parallelise — pick a different axis or use
     `collapse`.
+
+## Addendum 35: ygemv N-branch — J-unroll the OMP path (2026-05-21)
+
+### Context
+
+ygemv (kind10 complex GEMV) N-branch scaled to only 2.7-2.8× on
+OMP=4. T and C branches scaled to 3.5-3.9×. The structural
+difference: N-branch is a rank-1 update, so each y[i] is RMW'd
+once per column j. With M*N writes to y across iters, the parallel
+version saturates L3/y-traffic before reaching peak compute.
+
+egemv (real GEMV) has J-unroll-by-2 on the N-branch's OMP path
+(pre-existing — see code), and scales to 3.0-3.5×. ygemv didn't
+adopt the same trick because a previous comment claimed:
+"J-unroll-by-2 (2 cmuls per iter = 8 fmuls + 4 fadds) hits stack
+pressure and gcc spills a1 to memory, *re-loading* each fmul
+operand". That claim was measured at OMP=1, where the spill cost
+dominates the (already-cheap) y RMW.
+
+Under OMP=4 the calculus changes: y traffic is the bottleneck
+(memory-bandwidth-limited), so halving y reads/writes by reusing
+each y[i] load for two consecutive columns outweighs the spill
+overhead.
+
+### Experiment
+
+Branch on use_omp in C source:
+- OMP=1: keep the single-column inner (gfortran-style, no spill).
+- OMP>1: J-unroll-by-2 — `y[i] = (y[i] + t0*a0[i]) + t1*a1[i]`,
+  one y RMW per pair of columns.
+
+### Result
+
+ygemv N-branch OMP=4 scaling (overlay GFs, scaling vs OMP=1):
+
+| N    | before | after | abs GFs (before → after) |
+|------|--------|-------|--------------------------|
+| 128  | 2.48×  | 2.65× | 6.24 → 7.55 |
+| 256  | 2.75×  | 3.29× | 7.51 → 9.54 |
+| 512  | 2.83×  | 3.46× | 7.51 → 9.80 |
+| 1024 | 2.70×  | 3.14× | 6.73 → 8.09 |
+| 2048 | 2.66×  | 2.77× | 6.53 → 7.19 (DRAM bw) |
+
+30% absolute throughput improvement at N=512. OMP=1 path unchanged
+(within bench noise). Brings N-branch parity with the T/C-branch
+scaling profile.
+
+N=2048 stays at ~2.77× because A (128 MB) exceeds L3 (12 MB) —
+DRAM-bandwidth bound regardless of compute pattern.
+
+### Rules
+
+47. **Apply J-unroll-by-2 (or equivalent y-reuse trick) to GEMV-N
+    OMP paths even when it regresses serial — the parallel
+    bottleneck is y-traffic, not register pressure.** Standalone
+    serial cost from x87 spill is small (a few percent); halving
+    y-RMW traffic at OMP=4 is a 20-30% win. Use `if (use_omp)`
+    in C source to split serial-optimal from parallel-optimal
+    inner-loop forms.
