@@ -3914,3 +3914,72 @@ for NC-block sizing — defaults to 512, same as egemm).
     packed kernel's stack-resident accumulators, and the recursive
     gemm call mmaps fresh Ap/Bp per block. Reuse the same packers
     and macro_kernel — only the threading goes away.
+
+## Addendum 40: egemmtr — same packed-inline + tile-classify treatment (2026-05-21)
+
+egemmtr had the same legacy structure as the old esyrk: per-jc-block
+beta-scale + scalar diag_add + recursive `egemm_` call for the
+trailing rectangle. The Add-38 sweep flagged it (median 2.45×) but
+the sweep's OMP=1 cells were the *worst* outliers in the whole
+catalog: N=64 had 8 cells in the 0.60–0.73× sub-parity range, the
+worst being `UTT @ N=64` at 0.598×.
+
+### Fix
+
+`egemmtr.c` rewritten with the same packed-inline pattern as
+`esyrk_serial_inline` (Add-39a) — packed `pack_A` / `pack_B`,
+MR×NR `kernel_2x2` / `kernel_edge`, triangle-aware
+`macro_kernel_tri`. The (jc, pc, ic) loop nest walks every tile;
+each tile classifies against the UPLO triangle (skip / rect / tri).
+
+Threading uses the egemm pattern (Add-34): one `omp parallel`,
+shared Bp via `omp single` once per (jc, pc), private Ap per
+thread, `omp for schedule(static, 1)` over ic so the triangular
+load — early-ic threads see more skipped tiles for LOWER, more for
+UPPER respectively — balances by interleaving.
+
+Cooperative buffer-sharing (the SYRK trick) doesn't apply here
+because A and B are independent matrices; each thread still has
+to pack its own Ap.
+
+### Result
+
+Fuzz: 720/720 cases × {OMP=1, 4, 12} × {seed 1, 42, 1000} = 9 ·
+80 = 720 cases clean.
+
+OMP=1 — worst sub-parity cells healed:
+
+| key  | N   | before | after |
+|------|-----|--------|-------|
+| UTT  | 64  | 0.598× | 1.195× |
+| UNT  | 64  | 0.715× | 1.579× |
+| LNT  | 64  | 0.717× | 1.604× |
+| LNN  | 64  | 0.730× | 1.444× |
+| UNN  | 64  | 0.732× | 1.050× |
+| UNN  | 128 | 0.78×  | 1.633× |
+| LNN  | 128 | 0.78×  | 1.628× |
+
+All 32 OMP=1 cells now ≥ 0.95× vs migrated (LTN @ N=64 at 0.954
+is the only one below 1.0×; the diagonal kernel is essentially
+matched against migrated at this size). N=512 OMP=1 absolute
+throughput went from ~2.5 GFs to ~3.0 GFs across all (UPLO, TA,
+TB) cells.
+
+OMP=4 reaches ~8 GFs at N=512 (~2.7× scaling), better than the
+pre-Add-40 median of 2.45× but lower than egemm's ~3.5× since the
+triangular work imbalance + tile-skip can't be perfectly
+balanced under static scheduling. Acceptable — the OMP=1 win is
+the structurally important one.
+
+### Rule
+
+57. **For triangular L3 routines like SYRK, GEMMTR, the packed-
+    inline + tile-classify pattern is the canonical fix.** Walk
+    (jc, pc, ic), classify each (ic, jc) tile as skip / rect /
+    tri against the UPLO constraint, and dispatch to
+    `macro_kernel_rect` or `macro_kernel_tri` (entry-by-entry
+    UPLO check only for sub-tiles that actually straddle the
+    diagonal). Don't fall back to a scalar diag + recursive-gemm-
+    call structure — every such case eventually exhibits the
+    same N=64 sub-parity cliff and the same per-block packing
+    tax.
