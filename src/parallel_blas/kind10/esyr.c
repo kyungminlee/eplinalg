@@ -62,7 +62,10 @@ void esyr_(
         }
         if (use_omp) {
 #ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
+            /* schedule(static, 1): per-column work is linear in (N-j) (L)
+             * or j (U). Round-robin distribution balances heavy and
+             * light columns across threads — Rule 49. */
+            #pragma omp parallel for schedule(static, 1)
 #endif
             ESYR_BODY
         } else {

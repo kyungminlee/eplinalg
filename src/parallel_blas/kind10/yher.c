@@ -43,26 +43,40 @@ void yher_(
 
     if (incx == 1) {
 #ifdef _OPENMP
-        const int use_omp = (N >= YHER_OMP_MIN && blas_omp_max_threads() > 1);
-        #pragma omp parallel for if(use_omp) schedule(static)
+        const int use_omp = (N >= YHER_OMP_MIN && blas_omp_max_threads() > 1
+                             && !omp_in_parallel());
+#else
+        const int use_omp = 0;
 #endif
-        for (int j = 0; j < N; ++j) {
-            const TC xj = x[j];
-            if (xj != czero) {
-                /* t = alpha * conj(x[j]); A(i,j) += t * x[i].
-                 * For i==j the contribution is alpha*conj(x[j])*x[j] which
-                 * is real (alpha*|x[j]|^2); zero the imag explicitly. */
-                const TC t = alpha * cconj(xj);
-                TC *aj = &A_(0, j);
-                if (UPLO == 'L') {
-                    for (int i = j + 1; i < N; ++i) aj[i] += t * x[i];
-                    aj[j] = __real__ aj[j] + __real__ (t * x[j]);
-                } else {
-                    for (int i = 0; i < j; ++i) aj[i] += t * x[i];
-                    aj[j] = __real__ aj[j] + __real__ (t * x[j]);
-                }
-            }
+        /* Branch on use_omp at C source level (Add-16). schedule(static, 1)
+         * for triangular load balance (Rule 49). */
+#define YHER_BODY                                                            \
+        for (int j = 0; j < N; ++j) {                                        \
+            const TC xj = x[j];                                              \
+            if (xj != czero) {                                               \
+                /* t = alpha * conj(x[j]); A(i,j) += t * x[i].               \
+                 * Diagonal i==j contribution is alpha*|x[j]|^2 (real);      \
+                 * write real part only to keep imag zeroed. */              \
+                const TC t = alpha * cconj(xj);                              \
+                TC *aj = &A_(0, j);                                          \
+                if (UPLO == 'L') {                                           \
+                    for (int i = j + 1; i < N; ++i) aj[i] += t * x[i];       \
+                    aj[j] = __real__ aj[j] + __real__ (t * x[j]);            \
+                } else {                                                     \
+                    for (int i = 0; i < j; ++i) aj[i] += t * x[i];           \
+                    aj[j] = __real__ aj[j] + __real__ (t * x[j]);            \
+                }                                                            \
+            }                                                                \
         }
+        if (use_omp) {
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static, 1)
+#endif
+            YHER_BODY
+        } else {
+            YHER_BODY
+        }
+#undef YHER_BODY
     } else {
         int kx = (incx < 0) ? -(N - 1) * incx : 0;
         for (int j = 0; j < N; ++j) {
