@@ -84,63 +84,58 @@ void egemv_(
             /* J-axis unroll by 2: process two columns at a time so each
              * y[i] load+store services both column updates. Matches
              * gfortran's reference DGEMV codegen — halves y memory
-             * traffic on the column-AXPY path. */
+             * traffic on the column-AXPY path.
+             *
+             * Body is a macro because we branch on use_omp in C source
+             * to avoid the `#pragma omp parallel if(use_omp)` outlining
+             * tax (Addendum 16: outlining costs ~1-3 µs per call even
+             * when use_omp=false). Important when called from inside
+             * etrsv_blocked's parallel region, where omp_in_parallel
+             * forces use_omp=false and we pay the tax N/NB times. */
+#define EGEMV_N_BODY(i_lo, i_hi) do {                                       \
+                const int span = (i_hi) - (i_lo);                           \
+                int j = 0;                                                  \
+                for (; j + 1 < N; j += 2) {                                 \
+                    const T t0 = alpha * x[j];                              \
+                    const T t1 = alpha * x[j + 1];                          \
+                    char *restrict yp = (char *)(y + (i_lo));               \
+                    const char *restrict a0 = (const char *)&A_((i_lo), j); \
+                    const char *restrict a1 = (const char *)&A_((i_lo), j + 1);\
+                    const size_t end = (size_t)span * sizeof(T);            \
+                    for (size_t k = 0; k < end; k += sizeof(T)) {           \
+                        T *yk        = (T *)(yp + k);                       \
+                        const T *a0k = (const T *)(a0 + k);                 \
+                        const T *a1k = (const T *)(a1 + k);                 \
+                        *yk = (*yk + t0 * *a0k) + t1 * *a1k;                \
+                    }                                                       \
+                }                                                           \
+                for (; j < N; ++j) {                                        \
+                    const T t = alpha * x[j];                               \
+                    const T *aj = &A_(0, j);                                \
+                    for (int i = (i_lo); i < (i_hi); ++i) y[i] += t * aj[i];\
+                }                                                           \
+            } while (0)
 #ifdef _OPENMP
             const int use_omp = (M >= EGEMV_OMP_MIN && blas_omp_max_threads() > 1
                                  && !omp_in_parallel());
+#else
+            const int use_omp = 0;
 #endif
-            int i_lo = 0, i_hi = M;
-            (void)i_lo; (void)i_hi;
+            if (use_omp) {
 #ifdef _OPENMP
-            #pragma omp parallel if(use_omp) firstprivate(i_lo, i_hi)
-            {
-                if (use_omp) {
+                #pragma omp parallel
+                {
                     const int tid = omp_get_thread_num();
                     const int nt  = omp_get_num_threads();
-                    i_lo = ((long long)M * tid) / nt;
-                    i_hi = ((long long)M * (tid + 1)) / nt;
+                    const int i_lo = ((long long)M * tid) / nt;
+                    const int i_hi = ((long long)M * (tid + 1)) / nt;
+                    EGEMV_N_BODY(i_lo, i_hi);
                 }
 #endif
-                const int span = i_hi - i_lo;
-                int j = 0;
-                for (; j + 1 < N; j += 2) {
-                    const T t0 = alpha * x[j];
-                    const T t1 = alpha * x[j + 1];
-                    /* Shared-index walk: one base pointer + a byte
-                     * offset that's added once per iter, used as the
-                     * `index` operand for all three loads. Mirrors
-                     * gfortran reference DGEMV codegen (one `add` +
-                     * one `cmp` per iter; three bases share a single
-                     * index register). Parenthesization on the inner
-                     * expression matches gfortran's interleaved
-                     * fmul/fadd schedule. */
-                    /* gcc emits a shared-index pointer-walk only when
-                     * the inner loop is structured as one byte offset
-                     * `k` added to three different base pointers. With
-                     * the natural `for (i ...) yp[i] = ... a0[i]
-                     * ... a1[i]` shape, gcc keeps three independent
-                     * pointers and emits 3 `add`s per iter (13 insns).
-                     * The byte-offset form drops to 11 insns per iter
-                     * and matches gfortran reference DGEMV codegen. */
-                    char *restrict yp = (char *)(y + i_lo);
-                    const char *restrict a0 = (const char *)&A_(i_lo, j);
-                    const char *restrict a1 = (const char *)&A_(i_lo, j + 1);
-                    const size_t end = (size_t)span * sizeof(T);
-                    for (size_t k = 0; k < end; k += sizeof(T)) {
-                        T *yk        = (T *)(yp + k);
-                        const T *a0k = (const T *)(a0 + k);
-                        const T *a1k = (const T *)(a1 + k);
-                        *yk = (*yk + t0 * *a0k) + t1 * *a1k;
-                    }
-                }
-                for (; j < N; ++j) {
-                    const T t = alpha * x[j];
-                    const T *aj = &A_(0, j);
-                    for (int i = i_lo; i < i_hi; ++i) y[i] += t * aj[i];
-                }
-#ifdef _OPENMP
+            } else {
+                EGEMV_N_BODY(0, M);
             }
-#endif
+#undef EGEMV_N_BODY
         } else if (incy == 1) {
             /* incx != 1, incy == 1: y access is unit-stride.
              * J-unroll-by-2 — gfortran auto-J-unrolls its strided
@@ -202,24 +197,49 @@ void egemv_(
         }
     } else {  /* TRANS = 'T' or 'C' (real: same): y[j] += alpha · sum_i A(i,j) · x(i) */
         if (incx == 1 && incy == 1) {
+            /* C-source branch on use_omp to avoid the outlining tax
+             * (Addendum 16). Body is a macro to share between the
+             * parallel and serial paths. */
+#define EGEMV_T_BODY do {                                                   \
+                for (int j = 0; j < N; ++j) {                               \
+                    const T *aj = &A_(0, j);                                \
+                    T s0 = zero, s1 = zero;                                 \
+                    int i = 0;                                              \
+                    for (; i + 1 < M; i += 2) {                             \
+                        s0 += aj[i]     * x[i];                             \
+                        s1 += aj[i + 1] * x[i + 1];                         \
+                    }                                                       \
+                    T s = s0 + s1;                                          \
+                    for (; i < M; ++i) s += aj[i] * x[i];                   \
+                    y[j] += alpha * s;                                      \
+                }                                                           \
+            } while (0)
 #ifdef _OPENMP
             const int use_omp = (N >= EGEMV_OMP_MIN && blas_omp_max_threads() > 1
                                  && !omp_in_parallel());
-            #pragma omp parallel for if(use_omp) schedule(static)
+#else
+            const int use_omp = 0;
 #endif
-            for (int j = 0; j < N; ++j) {
-                const T *aj = &A_(0, j);
-                /* 2-chain dot product for x87 pipelining. */
-                T s0 = zero, s1 = zero;
-                int i = 0;
-                for (; i + 1 < M; i += 2) {
-                    s0 += aj[i]     * x[i];
-                    s1 += aj[i + 1] * x[i + 1];
+            if (use_omp) {
+#ifdef _OPENMP
+                #pragma omp parallel for schedule(static)
+                for (int j = 0; j < N; ++j) {
+                    const T *aj = &A_(0, j);
+                    T s0 = zero, s1 = zero;
+                    int i = 0;
+                    for (; i + 1 < M; i += 2) {
+                        s0 += aj[i]     * x[i];
+                        s1 += aj[i + 1] * x[i + 1];
+                    }
+                    T s = s0 + s1;
+                    for (; i < M; ++i) s += aj[i] * x[i];
+                    y[j] += alpha * s;
                 }
-                T s = s0 + s1;
-                for (; i < M; ++i) s += aj[i] * x[i];
-                y[j] += alpha * s;
+#endif
+            } else {
+                EGEMV_T_BODY;
             }
+#undef EGEMV_T_BODY
         } else {
             int jy = (incy < 0) ? -(N - 1) * incy : 0;
             for (int j = 0; j < N; ++j) {
