@@ -3577,3 +3577,150 @@ the reduction.
     implicit barrier at end of `omp for` is what protects the
     next pragma from racing on partially-written data. `nowait`
     only after the final consumer.
+
+## Addendum 37: etrmv / ytrmv — out-of-place buffer dissolves the in-place dependency (2026-05-21)
+
+### Context
+
+etrmv (real triangular MV) and ytrmv (complex triangular MV)
+had no OMP. Headers commented "inherently serial over j (each j
+writes to x[j] or reads x[i] from a region that earlier j's
+modified)". True only for the *in-place* algorithm: x := A·x
+updates x while iterating, so the loop order matters.
+
+Using a temporary output buffer dissolves the dependency, after
+which both transposes parallelize cleanly.
+
+### Experiment
+
+Two distinct parallel patterns depending on TRANS:
+
+- **TR='T' or 'C'**: each j produces a single output element
+  x[j] (dot product of column j with the trailing x). Different
+  j's write to different x[j] — no overlap. Single shared
+  `y_buf[N]`; each thread writes its assigned j-entries; final
+  `omp for` copies `y_buf` back to x.
+
+- **TR='N'**: rank-1 column update — each column j contributes
+  to x[i] for i > j (L) or i < j (U). Cross-thread j ranges
+  produce overlapping i write ranges. Per-thread `y_priv` +
+  reduction (esymv pattern, Add-36).
+
+`schedule(static, 1)` for triangular load balance per Rule 49.
+
+### Result
+
+etrmv OMP=4 vs OMP=1 scaling (was ~1.0× everywhere):
+
+| key  | N=128 | N=256 | N=512 | N=1024 |
+|------|-------|-------|-------|--------|
+| UNN  | 2.60× | 3.50× | 4.31× | 4.47× |
+| UTN  | 1.44× | 3.36× | 4.07× | 3.65× |
+| LNN  | 2.63× | 3.72× | 4.09× | 4.53× |
+| LTN  | 1.21× | 2.92× | 3.91× | 4.02× |
+
+ytrmv (complex):
+
+| key  | N=128 | N=256 | N=512 | N=1024 |
+|------|-------|-------|-------|--------|
+| UNN  | 3.15× | 3.46× | 3.95× | 3.86× |
+| UTN  | 2.21× | 3.74× | 3.67× | 3.44× |
+| UCN  | 2.52× | 3.62× | 3.90× | 3.56× |
+| LCU  | 2.46× | 3.16× | 3.70× | 3.61× |
+
+OMP=1 path unchanged (use_omp short-circuit).
+Fuzz clean for both (80/80 at machine precision).
+
+### Rules
+
+51. **"Inherently serial" comments deserve a fact-check.** The
+    in-place dependency on x is dissolved by allocating a
+    separate output buffer; the cost is a buffer alloc + copy
+    pass, often <5% of the parallel win. Read the comment
+    carefully — "inherently serial in-place" is a different
+    claim from "inherently serial".
+
+## Addendum 38: comprehensive OMP=1 vs OMP=4 sweep — May 2026 status (2026-05-21)
+
+### Method
+
+Bench every kind10 perf binary at OMP=1 and OMP=4 with default
+size set, unit stride, iters=50 (skip strided cells). Scaling =
+OMP4_GFs / OMP1_GFs per (routine, key, N). Per-routine median
+across all cells.
+
+### Result after Add-34/35/36/37 + L2 rank-1 hygiene
+
+Sorted by median scaling, ascending:
+
+| routine  | n  | median | min  | max  | category               |
+|----------|----|--------|------|------|------------------------|
+| ecopy    | 4  | 0.99×  | 0.98 | 1.00 | L1 memcpy, mem-bw      |
+| easum    | 4  | 1.00×  | 1.00 | 1.00 | L1                     |
+| eaxpy    | 4  | 1.00×  | 1.00 | 1.01 | L1                     |
+| edot     | 4  | 1.00×  | 1.00 | 1.00 | L1                     |
+| eswap    | 4  | 0.99×  | 0.99 | 1.06 | L1                     |
+| escal    | 4  | 1.00×  | 0.88 | 1.05 | L1                     |
+| erot     | 4  | 1.00×  | 0.96 | 1.03 | L1                     |
+| esyr     | 8  | 1.60×  | 1.22 | 1.88 | L2 sym rank-1, mem-bw  |
+| yher     | 8  | 1.64×  | 1.47 | 1.89 | L2 Herm rank-1         |
+| etrsv    | 32 | 1.68×  | 0.93 | 3.31 | L2 — Amdahl, Add-28    |
+| ygerc    | 4  | 1.96×  | 1.67 | 2.08 | L2 rank-1, mem-bw      |
+| ygeru    | 4  | 2.01×  | 1.66 | 2.38 | L2 rank-1, mem-bw      |
+| egemm    | 12 | 2.41×  | 0.97 | 3.81 | L3 — Add-34            |
+| esyrk    | 12 | 2.38×  | 1.20 | 3.91 | L3                     |
+| egemmtr  | 24 | 2.45×  | 1.15 | 3.87 | L3                     |
+| etrmv    | 32 | 2.66×  | 0.99 | 4.18 | **L2 — Add-37**        |
+| egemv    | 8  | 3.22×  | 2.16 | 3.85 | L2 — Add-34            |
+| ygemv    | 12 | 3.56×  | 3.06 | 4.03 | L2 — Add-35            |
+| esymv    | 8  | 3.64×  | 2.47 | 4.28 | **L2 — Add-36**        |
+| eger     | 4  | 3.64×  | 1.54 | 5.93 | L2 rank-1              |
+| ytrmv    | 48 | 3.59×  | 2.17 | 9.92 | **L2 — Add-37**        |
+| esymm    | 12 | 3.71×  | 1.85 | 4.00 | L3 (no change needed)  |
+| yhemv    | 8  | 3.70×  | 2.93 | 3.99 | **L2 — Add-36**        |
+| yherk    | 12 | 3.09×  | 1.94 | 3.86 | L3                     |
+| ysyrk    | 12 | 3.07×  | 2.21 | 3.94 | L3                     |
+
+### Sub-2× routines remaining (and why)
+
+- **L1 BLAS** (ecopy, eaxpy, easum, edot, escal, eswap, erot):
+  memory-bandwidth bound. OMP can't help — DRAM doesn't get
+  faster per thread. Status: accept.
+
+- **esyr / yher** (sym/Hermitian rank-1, ~1.6× median):
+  memory-bandwidth bound on the triangular A writes. Same
+  memory ceiling as the L2 GER family. Status: accept.
+
+- **etrsv** (median 1.68, max 3.31): structural Amdahl ceiling
+  M/nb on the blocked path (Add-28). At small N the blocked
+  threshold fails over to serial; at large N it scales to 2.7-
+  3.3×. Status: known structural limit, doc'd.
+
+- **ygerc / ygeru** (~2.0× median): same memory-bw story as
+  GER; rectangular A writes dominate. Status: accept.
+
+### Sub-3× routines with structural fixes possible
+
+- **esyrk / egemmtr** (median 2.38 / 2.45): outer jc-parallel
+  with serial inner egemm. At small N (jc loop count = N/nb is
+  low) parallelism is bounded. 2D `collapse(jc, gemm M-tile)`
+  would help small-N. Deferred — small-N regime is bounded
+  loss and complexity is high.
+
+- **egemm** (median 2.41, max 3.81): Add-34's M/MC tile limit
+  caps small-N. At N>=512 scales to 3.7×. Status: structural
+  limit at small N.
+
+### Big wins this session
+
+Four routines went from completely unparallelised (1.0×) to
+healthy scaling:
+
+| routine | before | after | absolute @ N=1024 OMP=4 |
+|---------|--------|-------|-------------------------|
+| esymv   | 0.98×  | 3.64× | 6.8 GFs                 |
+| yhemv   | 1.03×  | 3.70× | 9.4 GFs                 |
+| etrmv   | 1.01×  | 2.66× | 4.5 GFs                 |
+| ytrmv   | 0.99×  | 3.59× | 6.7 GFs                 |
+
+Plus egemm/ygemv N-branch improvements from Add-34/35.
