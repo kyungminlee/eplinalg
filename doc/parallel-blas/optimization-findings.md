@@ -3094,3 +3094,126 @@ inners differently and the C reference already matches. `qtrmv`/
 `xtrmv` (kind16) are libquadmath-bound — per-op cost dominates and
 J-unroll doesn't help at that rate. So the etrmv fix is kind10-real-
 specific and complete.
+
+## Addendum 32: TRSM SIDE='R' — row-partition OMP closes the only L3 OMP gap (2026-05-21)
+
+### What the OMP scaling sweep surfaced
+
+After the perf re-sweep landed (Addendum 30), I ran a separate OMP
+scaling sweep (`overlay@OMP4 / overlay@OMP1`) across the L3 routines
+that have OMP code. The L3 column-partition pattern landed in
+Addenda 27-29 covered SIDE='L' uniformly, but the sweep showed a
+flat band of "doesn't parallelize" cells concentrated in a single
+shape:
+
+```
+etrsm  RLN/RUN/RLT/RUT  M=256-512  scaling ≈ 0.99-1.04x
+ytrsm  RLN/RUN/RLTC/RUTC + conj  scaling ≈ 0.99-1.05x
+mtrsm  RLN/RUN/RLT/RUT  scaling ≈ 1.00x  (the diag SIMD core is fast
+                                          but the outer was serial)
+wtrsm  RLN/RUN/RLTC/RUTC          scaling ≈ 1.00x
+```
+
+kind16's `qtrsm`/`xtrsm` already had the wrapper — the macro was
+added during the Addendum 28-29 work but only kind16 entry points
+got it. SIDE='L' for all eight routines had been column-parallel
+since Addendum 27; SIDE='R' had been left serial because the
+algorithm's natural axis (j over columns of B) walks the diagonal
+serially and doesn't admit a column-partition.
+
+### Why SIDE='R' partitions cleanly on rows
+
+For X · op(A) = α·B the j loop is the diagonal walk and must run
+sequentially — each column of B depends on the previously-solved
+columns. **But every row of B is processed identically and
+independently.** Splitting M across threads gives disjoint row slices
+of B; the shared `a` is read-only; no barriers are needed inside the
+parallel region.
+
+In column-major storage a row slice `[i_lo, i_hi)` is simply the
+pointer-shifted submatrix starting at `b + i_lo` with leading dim
+`ldb` and `Mslice = i_hi - i_lo` rows. The cores' inner loops over
+M just operate on the shifted view.
+
+### The kind10 wrapper
+
+To re-use the existing cores I changed their leading signature from
+`(M, ...)` to `(i_start, i_end, ...)` (a row range) and added a
+single macro that does the partition once:
+
+```c
+#define ETRSM_OMP_WRAP_R(name, core)                                     \
+    static void name(int M, int N, T alpha,                              \
+                     const T *a, int lda, T *b, int ldb, int nounit) {   \
+        if (M >= ETRSM_OMP_N_MIN && blas_omp_max_threads() > 1           \
+                                && !omp_in_parallel()) {                 \
+            _Pragma("omp parallel") {                                    \
+                int tid = omp_get_thread_num();                          \
+                int nt  = omp_get_num_threads();                         \
+                int is  = (int)((long long)M * tid / nt);                \
+                int ie  = (int)((long long)M * (tid + 1) / nt);          \
+                core(is, ie, N, alpha, a, lda, b, ldb, nounit);          \
+            }                                                            \
+        } else { core(0, M, N, alpha, a, lda, b, ldb, nounit); }         \
+    }
+```
+
+`ytrsm`'s TC variants carry an extra `conj_flag` arg, so a sister
+macro `YTRSM_OMP_WRAP_R_TC(name, core, cflag)` invokes the core
+with that constant baked in.
+
+### The multifloats wrapper
+
+mtrsm/wtrsm route SIDE='R' through `mtrsm_simd_diag_R` /
+`wtrsm_simd_diag_R`, which process 4 rows of B per SIMD-DD vector
+step. Naïve row-partitioning would break alignment on interior
+threads, so the wrapper rounds slice boundaries down to multiples
+of 4 for all but the last thread:
+
+```c
+#pragma omp parallel if(use_omp)
+{
+    int tid = ..., nt = ...;
+    int i_lo = (int)((long long)M * tid / nt);
+    int i_hi = (int)((long long)M * (tid + 1) / nt);
+    if (tid > 0)      i_lo &= ~3;
+    if (tid < nt - 1) i_hi &= ~3;
+    const int Mslice = i_hi - i_lo;
+    if (Mslice > 0) {
+        T *b_slice = b + i_lo;
+        mtrsm_simd_diag_R(op, Mslice, N, alpha, a, lda, b_slice, ldb, nounit);
+    }
+}
+```
+
+The last thread absorbs the `M & 3` tail (its `i_hi` is not rounded),
+so the SIMD path stays whole on interior threads and only the trailing
+thread takes a scalar-cleanup hit — which the existing `*_simd_diag_R`
+already handled internally.
+
+### Result (overlay vs migrated, OMP=4)
+
+| Routine       | Before    | After                  |
+|---------------|-----------|------------------------|
+| etrsm R\*     | ~0.99x    | 3.56-3.87x             |
+| ytrsm R\* (12 keys)   | ~0.99x | 3.58-3.97x          |
+| mtrsm R\*     | ~1.02x    | 17-21x (overlay 3.85x internal scaling, on top of SIMD-DD's single-thread advantage) |
+| wtrsm R\* (12 keys)   | ~1.04x | 15-22x (3.62-3.95x internal scaling) |
+
+Fuzz 80/80 pass on all four routines.
+
+### `!omp_in_parallel()` is load-bearing
+
+Each wrapper gates on `M >= *_OMP_N_MIN && blas_omp_max_threads() > 1
+&& !omp_in_parallel()`. The third guard is what makes this safe to
+expose. If a caller is already inside an OMP region (rare but
+possible via `*symm`/`*syr2k` paths that fan out to a trsm), the
+wrapper falls through to the single-threaded core — no nested
+parallelism, per the project-wide rule.
+
+### Coverage now uniform
+
+After this fix the L3 OMP map is uniform: SIDE='L' uses column-
+partition, SIDE='R' uses row-partition, and every routine in
+{e,y,q,x,m,w}trsm has both. The OMP scaling sweep is now flat at
+~3.5-4.0x across L3 (Amdahl-capped at 6 P-cores).
