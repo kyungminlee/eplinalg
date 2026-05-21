@@ -3724,3 +3724,147 @@ healthy scaling:
 | ytrmv   | 0.99×  | 3.59× | 6.7 GFs                 |
 
 Plus egemm/ygemv N-branch improvements from Add-34/35.
+
+## Addendum 39: esyrk — full OpenBLAS DSYRK cooperative-kernel port (2026-05-21)
+
+### Problem
+
+esyrk's median OMP=1→OMP=4 scaling sat at 2.38× (Add-38 sweep).
+Worst cells were at small N: UN/LN @ N=128 cliffed at ~1.2× because
+the outer `#pragma omp parallel for schedule(dynamic, 1)` over fixed
+`nb=64` jc-blocks gave 2 jc iterations at N=128 — only 2 of 4 (or
+12) threads got work. Even at large N, the inner `egemm` call
+allocated ~2 MB packed-B and ~256 KB packed-A on every block,
+mmap-heavy.
+
+### What OpenBLAS does (driver/level3/level3_syrk_threaded.c)
+
+1. **Below threshold → serial.** `if (n < nthreads * SWITCH_RATIO)
+   SYRK_LOCAL(...); return;`. SWITCH_RATIO is 8–32 depending on
+   build. Below it, parallelism overhead dominates; just run
+   serial.
+
+2. **Quadratic N partition for cooperative work balance.** Width
+   sequence `w_t = sqrt(i_t² + N²/nthreads) - i_t` is the *same*
+   for LOWER and UPPER; the difference is purely how the array is
+   filled. LOWER fills forward (thread 0 gets the widest band at
+   the low end and dominates the diagonal triangle, no off-diag
+   contribution); UPPER fills backward (thread 0 gets the
+   narrowest band at the low end and contributes off-diag slabs
+   to every higher-index thread). Either way each thread's total
+   work — own diag triangle plus rectangles it produces using
+   OWN-row-panel × OTHER-col-panel — equals N²/(2·nthreads).
+
+3. **Each thread runs the GotoBLAS loop inline.** No recursive
+   gemm call. Per K-chunk: pack own A row panel (`sa`), pack own
+   A column panel sub-pieces (`buffer[bs]`), compute diagonal
+   block via triangle-aware kernel, then consume OTHER threads'
+   buffer pointers for off-diag rectangles.
+
+4. **Lock-free buffer-sharing via per-(producer, consumer, bs)
+   flags.** Each flag occupies one cache line. Producer writes
+   pointer = "buffer ready"; consumer clears = "buffer consumed".
+   Producer waits at top of next K iter for consumers to clear
+   before reusing the buffer slot. `DIVIDE_RATE=2` sub-buffers
+   enable producer/consumer pipelining.
+
+5. **Pre-allocated buffers per thread.** sa and buffer_pool
+   allocated once outside the K loop. No per-block malloc tax.
+
+### Port
+
+`src/parallel_blas/kind10/esyrk.c` rewritten — ~700 LOC. New
+pieces:
+
+- `pack_A_panel` / `pack_B_panel`: identical-pattern packers
+  reused from egemm but renamed; pack A^op (with optional
+  transpose) for row and col panels.
+- `kernel_2x2` / `kernel_edge` / `macro_kernel_rect`: same MR=NR=2
+  x87 stack-resident kernels as egemm.
+- `macro_kernel_tri`: NEW. Triangle-aware variant for the
+  diagonal block. Sub-tiles entirely below/above the diagonal
+  use `kernel_2x2` / `kernel_edge`; sub-tiles crossing the
+  diagonal fall back to entry-by-entry with UPLO check.
+- `syrk_quadratic_partition`: width sequence above; LOWER fills
+  forward, UPPER backward.
+- `inner_syrk`: the per-thread cooperative body. PHASE 1 packs
+  + diagonal; PHASE 2 work-steal own sa × LOWER threads' buffers
+  (LOWER) or HIGHER threads' (UPPER); PHASE 3 iterates remaining
+  own row chunks. Cleanup drain at end of K loop.
+- Flag plumbing: `flag_at` indexer + `cpu_relax`/`WMB`/`RMB`
+  helpers.
+- Serial fallback kept verbatim for small N (`N < nthreads ·
+  ESYRK_SWITCH_RATIO`) and OMP=1.
+
+`ESYRK_SWITCH_RATIO` default 16, `ESYRK_MC=64`, `ESYRK_KC=256`,
+`DIVIDE_RATE=2`. All env-overridable.
+
+### Result
+
+Fuzz: 80/80 cases pass at OMP=1/2/4/8/12, across 4 seeds = 960
+cases clean at machine precision (max abs err ~5e-19).
+
+Perf @ N=512, kind10 i7-8700 (6 P-cores + SMT, 12 threads):
+
+| key | OMP=1  | OMP=4   | OMP=8   | OMP=12  | OMP=1 mig |
+|-----|--------|---------|---------|---------|-----------|
+| UN  | 2.45   | 10.72   | 9.84    | 15.63   | 1.25      |
+| UT  | 2.14   | 10.81   | 10.81   | 16.44   | 2.16      |
+| LN  | 2.39   | 10.75   | 11.24   | 13.15   | 1.24      |
+| LT  | 2.20   | 10.78   | 11.35   | 13.05   | 2.13      |
+
+OMP=1→OMP=4 scaling = ~4.4× (near-linear on 4 P-cores).
+OMP=1→OMP=12 scaling = ~6.5× (SMT contention but still climbing).
+
+esyrk's median OMP=1→OMP=4 scaling went from **2.38× to 4.4×**.
+Absolute throughput at N=512 OMP=4 went from ~5.7 GFs to 10.7 GFs
+(1.9× over the previous structure). At N=512 OMP=12 we hit
+~16 GFs — ≈8× the migrated Fortran reference even at OMP=1, ≈12×
+at the cooperative paths.
+
+OMP=1 path is the serial blocked fallback (same code as before,
+within noise — UN/LN @ N=64–128 at 0.88×–1.04× of pre-Add-39).
+
+### Rules
+
+52. **Recursive gemm calls inside a parallel block create
+    serialization at the gemm packing layer.** Each thread
+    independently allocates and packs its own Bp/Ap inside each
+    block. Splitting one big GotoBLAS pass into N small ones
+    multiplies the packing cost by N AND prevents any
+    inter-thread sharing of the packed panels. If the trailing
+    update is GEMM-shaped, inline the GotoBLAS loop in each
+    thread instead — pre-allocate buffers once, and arrange
+    flag-based packed-buffer sharing so each row of A is packed
+    by exactly one thread per K-chunk.
+
+53. **For SYRK-shaped output (only one input matrix), the
+    cooperative pattern is: each thread produces both a row
+    panel and a col panel of A, then uses OWN row panel ×
+    OTHER thread's col panel for off-diagonal output cells.**
+    Direction follows UPLO: LOWER ⇒ consume LOWER-index
+    threads' buffers (their cols are at indices lower than
+    own rows); UPPER ⇒ HIGHER-index. The own-diagonal
+    contribution stays triangle-aware via a per-sub-tile
+    UPLO check.
+
+54. **Quadratic N partition `w = sqrt(i² + N²/nt) - i` is the
+    right balance for the cooperative kernel — but the
+    direction of fill is UPLO-dependent.** LOWER fills forward
+    (thread 0 = wide leading band, low-index cols, dominated
+    by diagonal); UPPER fills backward (thread 0 = narrow
+    leading band, low-index cols, dominated by off-diagonal
+    rectangles to higher-index threads). NEITHER UPLO mirrors
+    the naive per-col workload — total per-thread work always
+    includes off-diag contributions and only this asymmetric
+    fill makes them sum equally.
+
+55. **Lock-free flag protocol needs producer-side wait at the
+    START of next K iteration, not the end.** Otherwise a
+    fast consumer that already cleared the flag races against
+    the producer overwriting its buffer for the next K chunk.
+    OpenBLAS's pattern: producer waits for `working[i][bs] ==
+    0` before packing buffer[bs] anew; consumer always
+    clears flag AFTER kernel returns (with WMB). On x86 only
+    a compiler barrier is needed for the producer wait → buffer
+    write ordering.
