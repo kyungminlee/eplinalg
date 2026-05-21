@@ -77,30 +77,26 @@ void ygemv_(
     if (TR == 'N') {
         if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
-            const int use_omp = (M >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1);
+            const int use_omp = (M >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1
+                                 && !omp_in_parallel());
 #else
             const int use_omp = 0;
 #endif
             /* Branch on use_omp in C source — `if(use_omp)` pragma clause
              * still outlines the body into a `._omp_fn` function and pays
-             * GOMP_parallel + omp_get_* overhead per call (Addendum 16). */
-#define YGEMV_N_BODY(I_LO, I_HI)                                             \
-            do {                                                             \
-                int j = 0;                                                   \
-                for (; j + 1 < N; j += 2) {                                  \
-                    const T t0 = alpha * x[j];                               \
-                    const T t1 = alpha * x[j + 1];                           \
-                    const T *a0 = &A_(0, j);                                 \
-                    const T *a1 = &A_(0, j + 1);                             \
-                    for (int i = (I_LO); i < (I_HI); ++i)                    \
-                        y[i] += t0 * a0[i] + t1 * a1[i];                     \
-                }                                                            \
-                for (; j < N; ++j) {                                         \
-                    const T t = alpha * x[j];                                \
-                    const T *aj = &A_(0, j);                                 \
-                    for (int i = (I_LO); i < (I_HI); ++i) y[i] += t * aj[i]; \
-                }                                                            \
-            } while (0)
+             * GOMP_parallel + omp_get_* overhead per call (Addendum 16).
+             *
+             * OMP=1 single-column inner: complex long-double cmadd expands
+             * to ~4 fmuls + 4 fadds, consuming most of the x87 stack.
+             * J-unroll-by-2 (2 cmuls per iter) hits stack pressure and
+             * gcc spills column-pointer a1, *re-loading* it each fmul.
+             * The single-column form is what gfortran emits internally
+             * for kind10 complex and runs faster at OMP=1 (no spill).
+             *
+             * OMP path J-unrolls by 2 anyway: under parallel the
+             * bottleneck is memory bandwidth (y RMW dominates), and
+             * halving y traffic outweighs the spill (Add-34 measured
+             * scaling 2.83x → 3.4x). */
             if (use_omp) {
 #ifdef _OPENMP
                 #pragma omp parallel
@@ -109,20 +105,64 @@ void ygemv_(
                     const int nt  = omp_get_num_threads();
                     const int i_lo = ((long long)M * tid) / nt;
                     const int i_hi = ((long long)M * (tid + 1)) / nt;
-                    YGEMV_N_BODY(i_lo, i_hi);
+                    int j = 0;
+                    for (; j + 1 < N; j += 2) {
+                        const T t0 = alpha * x[j];
+                        const T t1 = alpha * x[j + 1];
+                        const T *a0 = &A_(0, j);
+                        const T *a1 = &A_(0, j + 1);
+                        for (int i = i_lo; i < i_hi; ++i) {
+                            y[i] = (y[i] + t0 * a0[i]) + t1 * a1[i];
+                        }
+                    }
+                    for (; j < N; ++j) {
+                        const T t = alpha * x[j];
+                        const T *aj = &A_(0, j);
+                        for (int i = i_lo; i < i_hi; ++i) y[i] += t * aj[i];
+                    }
                 }
 #endif
             } else {
-                YGEMV_N_BODY(0, M);
+                for (int j = 0; j < N; ++j) {
+                    const T t = alpha * x[j];
+                    const T *aj = &A_(0, j);
+                    for (int i = 0; i < M; ++i) y[i] += t * aj[i];
+                }
             }
-#undef YGEMV_N_BODY
-        } else {
+        } else if (incy == 1) {
+            /* incx != 1, incy == 1: single-column inner — same reason
+             * as fast path above. Complex cmul + J-unroll spills a1 on
+             * x87 stack; single-column matches migrated. */
             int jx = (incx < 0) ? -(N - 1) * incx : 0;
             for (int j = 0; j < N; ++j) {
+                const T t = alpha * x[jx];
+                const T *aj = &A_(0, j);
+                for (int i = 0; i < M; ++i) y[i] += t * aj[i];
+                jx += incx;
+            }
+        } else {
+            /* incy != 1: strided y writes — replicate gfortran auto
+             * J-unroll-by-2 to halve y traffic on the strided path. */
+            int jx = (incx < 0) ? -(N - 1) * incx : 0;
+            const int iy0 = (incy < 0) ? -(M - 1) * incy : 0;
+            int j = 0;
+            for (; j + 1 < N; j += 2) {
+                const T t0 = alpha * x[jx];
+                const T t1 = alpha * x[jx + incx];
+                const T *a0 = &A_(0, j);
+                const T *a1 = &A_(0, j + 1);
+                int iy = iy0;
+                for (int i = 0; i < M; ++i) {
+                    y[iy] = (y[iy] + t0 * a0[i]) + t1 * a1[i];
+                    iy += incy;
+                }
+                jx += 2 * incx;
+            }
+            for (; j < N; ++j) {
                 const T xj = x[jx];
                 if (xj != ZERO) {
                     const T t = alpha * xj;
-                    int iy = (incy < 0) ? -(M - 1) * incy : 0;
+                    int iy = iy0;
                     for (int i = 0; i < M; ++i) {
                         y[iy] += t * A_(i, j);
                         iy += incy;
@@ -139,7 +179,8 @@ void ygemv_(
         const int conj_a = (TR == 'C');
         if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
-            const int use_omp = (N >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1);
+            const int use_omp = (N >= YGEMV_OMP_MIN && blas_omp_max_threads() > 1
+                                 && !omp_in_parallel());
 #else
             const int use_omp = 0;
 #endif

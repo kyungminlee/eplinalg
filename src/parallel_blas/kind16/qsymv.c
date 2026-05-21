@@ -73,28 +73,38 @@ void qsymv_(
             }
         }
     } else {
+        /* General-stride fallback: walks ix/iy by incrementing (matches
+         * Netlib reference's IX=IX+INCX, not k*incx recomputation). */
         int kx = (incx < 0) ? -(N - 1) * incx : 0;
         int ky = (incy < 0) ? -(N - 1) * incy : 0;
         if (UPLO == 'L') {
+            int jx = kx, jy = ky;
             for (int i = 0; i < N; ++i) {
-                const T temp1 = alpha * x[kx + i * incx];
+                const T temp1 = alpha * x[jx];
                 T temp2 = zero;
-                y[ky + i * incy] += temp1 * A_(i, i);
+                y[jy] += temp1 * A_(i, i);
+                int ix = jx, iy = jy;
                 for (int k = i + 1; k < N; ++k) {
-                    y[ky + k * incy] += temp1 * A_(k, i);
-                    temp2 += A_(k, i) * x[kx + k * incx];
+                    ix += incx; iy += incy;
+                    y[iy] += temp1 * A_(k, i);
+                    temp2 += A_(k, i) * x[ix];
                 }
-                y[ky + i * incy] += alpha * temp2;
+                y[jy] += alpha * temp2;
+                jx += incx; jy += incy;
             }
         } else {
+            int jx = kx, jy = ky;
             for (int i = 0; i < N; ++i) {
-                const T temp1 = alpha * x[kx + i * incx];
+                const T temp1 = alpha * x[jx];
                 T temp2 = zero;
+                int ix = kx, iy = ky;
                 for (int k = 0; k < i; ++k) {
-                    y[ky + k * incy] += temp1 * A_(k, i);
-                    temp2 += A_(k, i) * x[kx + k * incx];
+                    y[iy] += temp1 * A_(k, i);
+                    temp2 += A_(k, i) * x[ix];
+                    ix += incx; iy += incy;
                 }
-                y[ky + i * incy] += temp1 * A_(i, i) + alpha * temp2;
+                y[jy] += temp1 * A_(i, i) + alpha * temp2;
+                jx += incx; jy += incy;
             }
         }
     }

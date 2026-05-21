@@ -11,12 +11,14 @@
  */
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
-#define ESYMV_OMP_MIN 64
+#define ESYMV_OMP_MIN 128
 
 typedef long double T;
 
@@ -64,6 +66,80 @@ void esymv_(
 
     /* The unit-stride path: stride-1 column walks of A. */
     if (incx == 1 && incy == 1) {
+#ifdef _OPENMP
+        const int nt = blas_omp_max_threads();
+        const int use_omp = (N >= ESYMV_OMP_MIN && nt > 1 && !omp_in_parallel());
+#else
+        const int use_omp = 0;
+        const int nt = 1;
+#endif
+        if (use_omp) {
+            /* Parallel two-pass with per-thread private y accumulator.
+             *
+             * The Netlib two-pass form walks A column-by-column (stride-1)
+             * and on each column j writes y[k] for k > j (L) or k < j (U),
+             * which races if multiple threads share column ranges. Fix:
+             * each thread gets a private y_priv[N], accumulates its own
+             * column contributions, then a final reduction sums all
+             * y_priv[t] into y.
+             *
+             * schedule(static, 1) interleaves columns across threads to
+             * balance the triangular work (per-column work is linear in
+             * (N - j) for L, j for U). */
+            T *y_priv_all = (T *)aligned_alloc(64,
+                (((size_t)nt * N * sizeof(T)) + 63) & ~(size_t)63);
+            if (y_priv_all) {
+#ifdef _OPENMP
+                #pragma omp parallel
+                {
+                    const int tid = omp_get_thread_num();
+                    T *y_priv = &y_priv_all[(size_t)tid * N];
+                    for (int k = 0; k < N; ++k) y_priv[k] = zero;
+
+                    if (UPLO == 'L') {
+                        #pragma omp for schedule(static, 1)
+                        for (int j = 0; j < N; ++j) {
+                            const T temp1 = alpha * x[j];
+                            T temp2 = zero;
+                            const T *aj = &A_(0, j);
+                            y_priv[j] += temp1 * aj[j];
+                            for (int k = j + 1; k < N; ++k) {
+                                y_priv[k] += temp1 * aj[k];
+                                temp2 += aj[k] * x[k];
+                            }
+                            y_priv[j] += alpha * temp2;
+                        }
+                    } else {
+                        #pragma omp for schedule(static, 1)
+                        for (int j = 0; j < N; ++j) {
+                            const T temp1 = alpha * x[j];
+                            T temp2 = zero;
+                            const T *aj = &A_(0, j);
+                            for (int k = 0; k < j; ++k) {
+                                y_priv[k] += temp1 * aj[k];
+                                temp2 += aj[k] * x[k];
+                            }
+                            y_priv[j] += temp1 * aj[j] + alpha * temp2;
+                        }
+                    }
+                    /* Implicit barrier at end of the `omp for` ensures
+                     * every thread's y_priv slice is fully written
+                     * before the reduction begins reading. */
+
+                    #pragma omp for schedule(static)
+                    for (int i = 0; i < N; ++i) {
+                        T s = zero;
+                        for (int t = 0; t < nt; ++t)
+                            s += y_priv_all[(size_t)t * N + i];
+                        y[i] += s;
+                    }
+                }
+#endif
+                free(y_priv_all);
+                return;
+            }
+            /* aligned_alloc failed — fall through to serial. */
+        }
         if (UPLO == 'L') {
             /* Iterate i forward; the inner k loop covers k = i..N-1
              * (stored lower triangle). Uses A_(k, i) (stride-1 in k). */
@@ -93,29 +169,38 @@ void esymv_(
             }
         }
     } else {
-        /* General-stride fallback: faithful to Netlib reference. */
+        /* General-stride fallback: walks ix/iy by incrementing (matches
+         * Netlib reference's IX=IX+INCX, not k*incx recomputation). */
         int kx = (incx < 0) ? -(N - 1) * incx : 0;
         int ky = (incy < 0) ? -(N - 1) * incy : 0;
         if (UPLO == 'L') {
+            int jx = kx, jy = ky;
             for (int i = 0; i < N; ++i) {
-                const T temp1 = alpha * x[kx + i * incx];
+                const T temp1 = alpha * x[jx];
                 T temp2 = zero;
-                y[ky + i * incy] += temp1 * A_(i, i);
+                y[jy] += temp1 * A_(i, i);
+                int ix = jx, iy = jy;
                 for (int k = i + 1; k < N; ++k) {
-                    y[ky + k * incy] += temp1 * A_(k, i);
-                    temp2 += A_(k, i) * x[kx + k * incx];
+                    ix += incx; iy += incy;
+                    y[iy] += temp1 * A_(k, i);
+                    temp2 += A_(k, i) * x[ix];
                 }
-                y[ky + i * incy] += alpha * temp2;
+                y[jy] += alpha * temp2;
+                jx += incx; jy += incy;
             }
         } else {
+            int jx = kx, jy = ky;
             for (int i = 0; i < N; ++i) {
-                const T temp1 = alpha * x[kx + i * incx];
+                const T temp1 = alpha * x[jx];
                 T temp2 = zero;
+                int ix = kx, iy = ky;
                 for (int k = 0; k < i; ++k) {
-                    y[ky + k * incy] += temp1 * A_(k, i);
-                    temp2 += A_(k, i) * x[kx + k * incx];
+                    y[iy] += temp1 * A_(k, i);
+                    temp2 += A_(k, i) * x[ix];
+                    ix += incx; iy += incy;
                 }
-                y[ky + i * incy] += temp1 * A_(i, i) + alpha * temp2;
+                y[jy] += temp1 * A_(i, i) + alpha * temp2;
+                jx += incx; jy += incy;
             }
         }
     }

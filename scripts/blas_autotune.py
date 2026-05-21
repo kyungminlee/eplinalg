@@ -11,9 +11,9 @@ Usage:
         [--routine gemm] [--size 1024] [--threads 4]
 
 Examples:
-    python scripts/blas_autotune.py /tmp/stage-e/build --target kind10
-    python scripts/blas_autotune.py /tmp/stage-q/build --target kind16 --size 512
-    python scripts/blas_autotune.py /tmp/stage-m/build --target multifloats --size 256
+    python scripts/blas_autotune.py /tmp/fortran-migrator/stage-e/build --target kind10
+    python scripts/blas_autotune.py /tmp/fortran-migrator/stage-q/build --target kind16 --size 512
+    python scripts/blas_autotune.py /tmp/fortran-migrator/stage-m/build --target multifloats --size 256
 
 Output: <build-dir>/reports/autotune_<target>_<routine>.json
 """
@@ -73,7 +73,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("build_dir", type=Path,
-                   help="CMake build dir (e.g. /tmp/stage-e/build)")
+                   help="CMake build dir (e.g. /tmp/fortran-migrator/stage-e/build)")
     p.add_argument("--target", required=True, choices=list(PREFIXES))
     p.add_argument("--routine", default="gemm",
                    help="routine family to tune (default: gemm)")

@@ -41,7 +41,11 @@ void etbsv_(
                         if (nounit) x[j] /= A_(K, j);
                         const T tmp = x[j];
                         const int i_lo = (j - K > 0) ? (j - K) : 0;
-                        for (int i = j - 1; i >= i_lo; --i) x[i] -= tmp * A_(L + i, j);
+                        /* Inner iterations are independent (each writes a
+                         * distinct x[i] using a constant tmp); walk forward
+                         * for the hardware prefetcher. The migrated walks
+                         * backward but hits the same ~0.84× floor. */
+                        for (int i = i_lo; i < j; ++i) x[i] -= tmp * A_(L + i, j);
                     }
                 }
             } else {

@@ -1873,4 +1873,2113 @@ otherwise-parity row matters more than three routines stuck at 0.95×.
     Full per-site survey and measurement table: see
     `doc/archive/loop-direction-survey-20260518.md`.
 
+## Addendum 19: ytrsv U-T K-unroll asymmetry — conj path resists the trick (2026-05-18)
 
+### Symptom
+
+The full sweep flagged `ytrsv U-T-{N,U}` at N=256/512 as sub-parity
+(0.82–0.90× of migrated). Direction was already aligned with the
+Fortran reference (outer forward + inner forward — Addendum 18's
+backward-inner fix does not apply: it's specifically for *descending*
+outer loops). So the gap was a different bottleneck.
+
+### Cause: single complex-fmul dep chain on the U-T accumulator
+
+The U-T inner loop is `t -= ai[k] * x[k]` over `k = 0..i-1` with a
+single complex accumulator `t`. Each iteration's `*` and `-=` are
+gated on the prior iter's `t`. With `_Complex long double` on x86-64
+(`-fcx-fortran-rules`), gcc expands the multiply to four scalar
+fmuls on the x87 stack; the ~10-cycle fmul latency serializes the
+chain at roughly 12 cycles/element vs migrated's ~11.
+
+Same shape as Addendum 11's ygemm rank-1 fix — two-way K-unroll
+splits the chain:
+
+```c
+for (; k + 1 < i; k += 2) {
+    t0 -= ai[k]     * x[k];
+    t1 -= ai[k + 1] * x[k + 1];
+}
+```
+
+This recovered U-T from 0.82–0.90× to **~0.93×** consistently across
+N=128/256/512.
+
+### Asymmetry: same unroll on U-C **regresses** the routine
+
+Surprising result. The conj variant has identical structure modulo a
+`cconj()` (an fchs on the imag part):
+
+```c
+t -= cconj(ai[k]) * x[k];   /* U-C, single accumulator */
+```
+
+Applying the same K-unroll-by-2 here regresses U-C from a clean
+~1.00× to **~0.91×** at all sizes. Verified across five runs each,
+not variance.
+
+Mechanism (inferred from disassembly): the extra `fchs` per multiply
+displaces the x87 stack-slot scheduling. With one accumulator gcc
+keeps `t` near the top across iterations; with two accumulators plus
+two `fchs`-injected sequences it has to fxch more, and the resulting
+schedule is worse than the un-unrolled baseline.
+
+Combined attempts (scalar real/imag decomposition, scalar + K-unroll
+with four accumulators tr0/ti0/tr1/ti1) all measured worse than
+plain K-unroll on U-T and worse than un-unrolled on U-C.
+
+### Fix
+
+Apply K-unroll **only** to the non-conj branch:
+
+```c
+if (conj_a) {
+    for (int i = 0; i < N; ++i) {
+        T t = x[i];
+        const T *ai = &A_(0, i);
+        for (int k = 0; k < i; ++k) t -= cconj(ai[k]) * x[k];
+        ...
+    }
+} else {
+    for (int i = 0; i < N; ++i) {
+        T t0 = x[i], t1 = ZERO;
+        const T *ai = &A_(0, i);
+        int k = 0;
+        for (; k + 1 < i; k += 2) {
+            t0 -= ai[k]     * x[k];
+            t1 -= ai[k + 1] * x[k + 1];
+        }
+        if (k < i) t0 -= ai[k] * x[k];
+        T t = t0 + t1;
+        ...
+    }
+}
+```
+
+### Result
+
+| ytrsv stat            | before | after |
+|-----------------------|-------:|------:|
+| min speedup           |  0.82× | 0.88× |
+| median                |  1.00× | 1.00× |
+| geomean               |  0.98× | 1.00× |
+| sub-0.95× rows (of 36)|      6 |     5 |
+
+Residual 7% on U-T vs migrated appears irreducible — gfortran builds
+with strictly fewer flags (`-O3` only, no `-march=native`, no
+`-ffp-contract=fast`) and is still faster, so it's not a flag gap.
+The difference is gfortran's complex-multiply x87 instruction
+scheduling, which gcc with `-fcx-fortran-rules` doesn't quite match.
+
+### Rule
+
+22. **K-unroll-by-2 helps single-accumulator dep chains for plain
+    complex fmul on x87, but the conjugate variant resists the
+    same transformation.** Apply K-unroll asymmetrically when the
+    branch carries an inline conjugate — gate on `conj_a` and keep
+    the conj path single-accumulator. Verify per-branch, don't
+    assume the unroll transfers across `T`/`C` boundaries.
+
+## Addendum 20: gfortran J-unrolls strided fallbacks too (2026-05-18)
+
+### Symptom
+
+A fresh `scripts/run_perf_sweep.sh` against current builds (the
+committed `reports/perf_sweep.{tsv,md}` was generated against a
+pre-Addendum-18 build and showed stale numbers) surfaced a systematic
+N-path regression in the matrix-vector routines:
+
+```
+egemv N/x*     0.64x  across N=128..2048    (incx != 1, incy == 1)
+egemv N/y*     0.62x  across N=128..2048    (incx == 1, incy != 1)
+egemv N/x*/y*  0.51-0.65x                   (both strided)
+ygemv N/x*     0.67x                        (same pattern, complex)
+ygemv N/y*     0.83x
+etrmv UNN      0.58x at N=1024              (triangle case)
+```
+
+40 perf cells in `egemv` alone, all sub-0.7×. Not bench variance —
+the routines were systematically slow at every size.
+
+### Root cause
+
+Reading `egemv.c` against `egemv.f` (the Netlib reference, migrated
+at `KIND=10`): the Fortran reference branches the N-path into THREE
+paths:
+
+```fortran
+IF (INCY.EQ.1) THEN
+    DO 60 J = 1,N
+        TEMP = ALPHA*X(JX)
+        DO 50 I = 1,M
+            Y(I) = Y(I) + TEMP*A(I,J)        ! unit-stride y inner
+50      CONTINUE
+        JX = JX + INCX
+60  CONTINUE
+ELSE
+    DO 80 J = 1,N
+        TEMP = ALPHA*X(JX)
+        IY = KY
+        DO 70 I = 1,M
+            Y(IY) = Y(IY) + TEMP*A(I,J)      ! strided y inner
+            IY = IY + INCY
+70      CONTINUE
+        JX = JX + INCX
+80  CONTINUE
+END IF
+```
+
+Three branches: incx==incy==1, INCY==1 only, INCY!=1. My C code
+collapsed branches 2 and 3 into a single "general stride" fallback
+that used `iy += incy` unconditionally — preventing gcc from
+recognizing the unit-stride y access pattern and J-unrolling.
+
+But that's not the whole story. Even the strided-y branch (3) is fast
+in Fortran. Inspecting the gfortran asm, the strided-y inner loop is
+also J-unrolled by 2:
+
+```
+0x380: fldt 0x10(%rax)              ; load A(i,j+1)
+0x387: add $0x10, %rax              ; advance A pointer by one long double
+0x38b: fmul                         ; * temp1
+0x38d: fldt -0x10(%rdx)             ; load y[iy]
+0x390: faddp                        ; y[iy] + temp0*A(i,j) (accumulated earlier)
+0x392: fldt 0x10(%rcx,%r10,1)       ; load A(i,j+1) for second column
+0x397: fmul                         ; * temp2
+0x399: faddp                        ; + temp1*A(i,j+1)
+0x39b: fstpt -0x10(%rdx)            ; write y[iy] back
+0x39e: add %r11, %rdx               ; advance y pointer by incy*sizeof(long double)
+0x3a1: cmp %rdi, %rax
+0x3a4: jne 0x380
+```
+
+11 instructions, 4 fmuls, processes ONE strided y[iy] update per
+iter but reads from TWO columns of A. Each y[iy] load+store services
+both column contributions, halving y memory traffic.
+
+### Fix
+
+Two changes per affected routine:
+
+1. **Branch B**: when `incy == 1 && incx != 1`, route through the
+   unit-y fast path with a strided x[jx] read. Same J-unroll-by-2
+   shared-index walk as the (incx==incy==1) case.
+
+2. **Strided-y J-unroll**: when `incy != 1`, manually replicate
+   gfortran's auto-J-unroll-by-2 — process two columns of A per
+   y[iy] write, halving y traffic on the strided path.
+
+Applied to: egemv (commits 9a21723d, d6534703), ygemv (cfb01400),
+etrmv UNN (9bcf52bb, same pattern but on the x[i] AXPY-style write).
+
+### Result
+
+```
+egemv N/x*      0.64x  ->  0.95-1.05x   (all sizes >= 256)
+egemv N/y*      0.62x  ->  0.95-1.05x
+egemv N/x*/y*   0.55x  ->  0.95-1.05x
+ygemv N/x*      0.67x  ->  0.85-0.95x
+ygemv N/y*      0.83x  ->  1.00x
+etrmv UNN @1024 0.58x  ->  1.00-1.60x   (often beats migrated)
+```
+
+About 80 perf cells closed across four kind10 routines.
+
+### Why this kept hiding
+
+The committed `reports/perf_sweep.tsv` was generated against a
+pre-Addendum-18 build and showed even worse numbers (LTN@512 at
+0.291x). After Addendum 18 landed, no one re-ran the sweep — so the
+report stayed pinned to the pre-fix state. Today's regen against
+current builds exposed both the closed LTN cliff and these strided
+N-path gaps.
+
+Lesson: `perf_sweep.{tsv,md}` is an artifact frozen at commit time.
+Always regenerate before drawing conclusions from it. The `bench`
+suite (Fortran-driven, ctest) hides these strided cases because it
+only exercises `incx=incy=1`; you need `perf_<routine>` (C harness)
+to see them.
+
+### Rules
+
+23. **Mirror the Fortran reference's branch structure for strided
+    fallbacks, not just the algorithm.** If the reference has three
+    branches (unit-unit, unit-y, general), implement all three. The
+    middle branch is where strided-x + unit-y cells live, and they
+    only get the fast unit-y inner if you split them out.
+
+24. **J-unroll-by-2 also applies to strided-y inner loops.** Even
+    when y is written with a variable stride, fusing two column
+    updates per write halves y memory traffic. gfortran does this
+    auto; gcc with `-fcx-fortran-rules -ffp-contract=fast` does not
+    on the matrix-vector pattern. Hand-roll the unroll for any
+    routine whose inner is `y[iy] = y[iy] + temp*A(i,j); iy += incy`.
+
+25. **`perf_sweep.md` reflects a frozen build, not current state.**
+    Treat the committed sweep as historical. Before claiming a cell
+    is sub-parity, regenerate against the current build with
+    `scripts/run_perf_sweep.sh`. The bench-side ctest output is a
+    poor substitute: it only tests `incx=incy=1`.
+
+## Addendum 21: etrsv TRANS='T' — same single-acc dep chain as ytrsv U-T (2026-05-18)
+
+### Symptom
+
+After Addendum 18 closed the LTN cliff, the residual etrsv sub-parity
+clustered on TRANS='T' (UT and LT) cells with strided x:
+
+```
+etrsv UTU/x-1 @512    0.93x
+etrsv UTU @256        0.95x
+etrsv LTU/x-1 @256    0.95x
+etrsv UTN/x-1 @256    0.96x
+```
+
+All TR='T' branches; TR='N' AXPY-style updates were already at parity.
+
+### Cause: identical to ytrsv U-T (Addendum 19), applied to real
+
+etrsv's TRANS='T' inner is a dot-product accumulator:
+
+```c
+T t = x[i];
+for (int k = 0; k < i; ++k) t -= ai[k] * x[k];
+if (nounit) t /= ai[i];
+x[i] = t;
+```
+
+Single accumulator `t` makes each iter wait on the prior iter's fsub.
+At x87 fmul latency ~7 cyc + fsub ~3 cyc this serializes at ~10
+cyc/element. etrmv already had the split-acc K-unroll on its T paths;
+etrsv didn't.
+
+### Fix
+
+Same pattern as etrmv T and ytrsv U-T:
+
+```c
+for (int i = 0; i < N; ++i) {
+    T t0 = x[i], t1 = zero;
+    int k = 0;
+    for (; k + 1 < i; k += 2) {
+        t0 -= ai[k]     * x[k];
+        t1 -= ai[k + 1] * x[k + 1];
+    }
+    if (k < i) t0 -= ai[k] * x[k];
+    T t = t0 + t1;
+    if (nounit) t /= ai[i];
+    x[i] = t;
+}
+```
+
+Mirror form (backward k) applied to the LT branch where the cache-
+direction fix from Addendum 18 already runs `k = N-1 .. i+1`. Both
+unit-stride and general-stride fallbacks updated.
+
+### Why no `!conj_a` gate (cf. Rule 22)
+
+etrsv is real-only — no conjugate path that could regress under the
+K-unroll's added register pressure. The unconditional K-unroll is safe.
+
+### Result (5-run avg, BLAS_PERF_ITERS=40)
+
+| Cell             | Before | After  | Δratio |
+|------------------|--------|--------|--------|
+| UTU/x-1 @512     | 0.930x | 0.989x | +0.059 |
+| UTU @256         | 0.949x | 0.998x | +0.049 |
+| LTU/x-1 @256     | 0.951x | 0.993x | +0.042 |
+| UTU/x-1 @128     | 0.956x | 0.977x | +0.021 |
+
+Overlay throughput up 3–6% on TR='T' cells; small-N (≤128) cells move
+within ±3% (noise floor). The big-win cells are at N≥256 where the
+inner-loop count is large enough for the split-acc trampoline overhead
+to amortize.
+
+### Lesson
+
+When a routine has both a "y += A·x" AXPY path AND a "y[j] = Σ A·x"
+dot-product path, the dot path almost always needs K-unroll-by-2 (x87
+fmul latency vs. single accumulator). Check etrmv T, etrsv T, and the
+symv/hemm dot phases together — they share the same shape.
+
+
+
+
+## Addendum 22: s*mv strided fallback — a ~10% gap I can't close (2026-05-19)
+
+### Symptom
+
+After Addendum 21's etrsv T fix, the residual kind10 sub-parity is
+dominated by the *symmetric* MV triad in the strided (incx≠1 or
+incy≠1) fallbacks:
+
+```
+esymv strided:  47 cells at 0.88-0.92x
+esbmv strided:  47 cells at 0.88-0.91x
+espmv strided:  46 cells at 0.87-0.93x   (140 total)
+```
+
+Unit-stride paths for the same routines are at parity (0.99-1.01×).
+Migrated runs at ~1.85 GFs strided, overlay at ~1.65 GFs.
+
+### What didn't work
+
+Three structurally-plausible fixes were tried and reverted:
+
+1. **Cumulative `ix/iy` pointer-walk** (mirroring Fortran `IX = KX;
+   ix += incx` instead of `kx + i*incx` recomputation). No effect —
+   gcc already folds the multiply into a cumulative add via SCEV.
+
+2. **Factor `A(k,i)` into a local** so it loads once per iter:
+   ```c
+   const T aki = ai[k];
+   y[ky + k*incy] += temp1 * aki;
+   temp2 += aki * x[kx + k*incx];
+   ```
+   gcc emits `fld %st(0)` at the inner — *exactly the same insn
+   sequence as migrated's gfortran-compiled inner* (15 insns: fldt A,
+   fld dup, fmul, fldt y, faddp, fstpt y, advance y, fldt x, advance
+   x, fmulp, faddp, cmp, jne). Verified via objdump. **Ratio
+   unchanged.**
+
+3. **K-unroll-by-2 with split dot accumulators** (`t0/t1 + t0+t1`).
+   *Regressed* the ratio from 0.90 → 0.86: the doubled per-iter
+   bookkeeping (extra `k+1` index calc, larger inner with 5+ x87
+   stack slots) costs more than the latency savings.
+
+### Hypothesis: gcc's outer-loop overhead
+
+With identical inner asm, the gap must be in the *outer*. gfortran's
+migrated emits ~10 insns of setup per outer iter (lea/sub/add to
+compute A column base + i_lo bound). gcc emits ~15-20 insns, including
+extra `mov` to stack slots for register-pressure relief. At N=256
+inner-iter counts of ~128, the outer setup is ~5-10% of total cycles
+— which roughly matches the observed gap.
+
+This isn't fixable from C source: gcc's register allocator and CSE
+choices for this pattern are locked. Vector intrinsics could win
+back the gap but would break the kind10 long-double path.
+
+### Lesson
+
+For dot+AXPY combined inners with strided y, the 0.90× strided floor
+is real and structurally hard. Don't spend more time on it without
+a measurement budget for vector intrinsics / asm-level rewrites.
+Tag the cluster and move on.
+
+### Rules
+
+26. **Confirm `fld %st(0)` is present before claiming an inner-loop
+    fix.** When migrated has it and overlay doesn't (the gcc 2-fldt
+    redundant-load pattern), `const T x_local = expr;` will usually
+    make gcc emit the dup. When *both* already have `fld %st(0)` and
+    the inner-loop insn count matches, the gap is in the outer — and
+    likely uncloseable from C.
+
+27. **K-unroll-by-2 is not universal.** It helps when the inner has a
+    single-acc dot product chain on x87 (10+ cyc/element latency).
+    It *hurts* when the inner already has two parallel chains (e.g.
+    AXPY + dot combined): the doubled bookkeeping eats the latency
+    savings and the extra accumulators spill x87 stack. Try on dot-
+    only paths first; revert immediately if the strided cell ratios
+    move <0.
+
+## Addendum 23: complex K-unroll-by-4 spills x87 stack — keep at 2 (2026-05-19)
+
+### Context
+
+The 3-trial median sweep at OMP=1 left **ytrsv UTN/UTU @ N=256/512**
+at 0.92-0.93× — a real structural gap, tight across 5 reruns, despite
+already having K-unroll-by-2 on the non-conj branch (Addendum 19).
+Tried K-unroll-by-4 to add two more parallel chains:
+
+```c
+for (; k + 3 < i; k += 4) {
+    t0 -= ai[k]     * x[k];
+    t1 -= ai[k + 1] * x[k + 1];
+    t2 -= ai[k + 2] * x[k + 2];
+    t3 -= ai[k + 3] * x[k + 3];
+}
+```
+
+### Result
+
+**Regressed** UTN/UTU @ N=256 from 0.93× → 0.75× (10 trials). Reverted.
+
+### Why
+
+`_Complex long double` is two `long double`s. Each accumulator occupies
+two x87 register-stack slots. 4 accumulators × 2 = 8 slots — exactly
+the entire x87 stack. With no slots left for `ai[k]` and `x[k]` operand
+loads, gcc spills every load to memory and re-loads twice (once for
+the real-part fmul, once for the imag). The 4-way split increases
+parallel chains but the spill overhead more than wipes it out.
+
+Real-valued long-double would have headroom (4 acc × 1 = 4 slots,
+4 free for operands) — so the rule below is complex-specific.
+
+### Lesson
+
+Complex long-double is at the limit at K=2. The remaining 7% gap on
+ytrsv U-T is inherent to x87 stack width plus dependent-chain latency
+and is not closeable from C source. Document and stop.
+
+### Rules
+
+28. **For `_Complex long double` dot accumulators, max K-unroll is 2.**
+    Each cmplx slot is 2 x87 stack registers; 4 accumulators = 8 slots
+    = full stack with no room to load operands. Same code on real-long-
+    double would have headroom. Don't try K-unroll-by-4 on complex
+    paths even when "more parallelism would help": the spill cost is
+    larger than the latency win.
+
+## Addendum 24: K-unroll-by-2 regresses banded inners — short loops don't amortize (2026-05-19)
+
+### Context
+
+3-trial median sweep showed **ygbmv T 8 cells at 0.94-0.95** (TRANS='T',
+non-conj). Same single-acc complex fmul dep-chain pattern as the
+ytrsv U-T case from Addendum 19, so K-unroll-by-2 was expected to lift
+ratios. Applied to both the stride-1 and strided fallback non-conj
+branches.
+
+### Result
+
+**Regressed all T cells.** Sample re-bench:
+
+```
+ygbmv T 128       0.947 → 0.91   (regressed)
+ygbmv T/x2 128    0.99  → 0.83   (regressed badly)
+ygbmv T/y2 128    1.00  → 0.83   (regressed badly)
+```
+
+Reverted immediately.
+
+### Why
+
+Band MV inner-loop length is `min(KL+KU+1, M)` — for the perf bench's
+defaults, that's roughly `M/8 + 1` (so ~17 at N=128, ~33 at N=256).
+The bookkeeping for K-unroll-by-2 (extra index, second accumulator
+init, tail handling, final `s = s0 + s1` reduction) is roughly fixed
+~6 insns per outer iter; the latency-hiding benefit per inner iter
+scales with inner length. With inner=17, the bookkeeping outweighs the
+latency win and the unroll loses.
+
+ytrsv U-T's inner is `i-1` long, growing from 0 to N-1 — average ~N/2,
+so inner=64–256. That's enough for the K-unroll-by-2 win to pay off.
+
+### Lesson
+
+Inner-length matters as much as dep-chain structure. K-unroll-by-2 on
+single-acc complex chains only wins when inner ≥ ~32 iters. For banded
+ops (gbmv, sbmv, tbmv) the inner is bounded by K+1 — usually too short.
+Don't transplant a fix from a full triangular/symmetric MV to a banded
+version without re-benching at the actual band-width.
+
+### Rules
+
+29. **Bandwidth-bounded inners (gbmv, sbmv, tbmv) are typically too
+    short for K-unroll wins.** The bench default band-width is M/8 ≈
+    32-64 elements; subtract the bookkeeping insns and the unroll
+    breaks even or loses. Test on the actual band width before
+    committing. For dot+AXPY combined inners on banded ops, K-unroll
+    is essentially never the right tool — Rule 27 already covers
+    combined inners; this rule covers the short-inner case for pure
+    dots.
+
+### Addendum 24 follow-up: confirmed inner asm matches migrated, gap is structural (2026-05-19)
+
+After Rule 30 / Addendum 25 (the 5+ trial, 20000-iter discipline),
+ygbmv T 128 stays at median 0.94-0.96 — *tight* across 8 trials.
+The cell is real, not bench-noise.
+
+**Side-by-side inner-loop disassembly:**
+
+migrated (gfortran, `ygbmv_+0xc00`, 19 insns):
+```
+fldt (%rax) / add $20 / fldt -0x10(%rax)   ; A.re, A.im
+fldt -0x20(%rdx) / fldt -0x10(%rdx)         ; x.re, x.im
+add %rsi,%rdx
+fld %st(1) / fmul %st(4),%st                 ; dup A.im, * x.im
+fld %st(1) / fmul %st(4),%st                 ; dup x.re, * A.re
+fsubrp %st,%st(1) / faddp %st,%st(6)         ; cmul.re into TEMP.re
+fxch %st(1)
+fmulp %st,%st(2) / fmulp %st,%st(2)
+faddp %st,%st(1) / faddp %st,%st(1)          ; cmul.im into TEMP.im
+cmp %rax,%rdi / jne
+```
+
+overlay (gcc, `ygbmv_._omp_fn.0+0x100`, 18 insns — one fewer):
+```
+fldt (%rcx) / add $20 / add $20 / fldt -0x10(%rcx)
+fldt -0x20(%rax) / fldt -0x10(%rax)
+fld %st(3) / fmul %st(2),%st
+fld %st(3) / fmul %st(2),%st
+fsubrp %st,%st(1) / faddp %st,%st(5)
+fmulp %st,%st(3) / fmulp %st,%st(1)          ; direct fmulp; no fxch
+faddp %st,%st(1) / faddp %st,%st(2)
+cmp %rax,%rdx / jne
+```
+
+Same algorithmic shape, same critical-path fpu chain (fmul → fsubrp →
+faddp into spilled TEMP), overlay actually has one fewer instruction.
+
+**Attempted fixes that didn't help:**
+
+1. **K-unroll-by-2 (same column, split acc)** — regressed (Rule 29:
+   banded inner too short to amortize bookkeeping).
+2. **OMP outlining bypass** — moved the `use_omp` branch from `#pragma
+   omp parallel for if(use_omp)` (always outlines, Addendum 16) into a
+   C-level `if (use_omp) { ...pragma... } else { ...inline... }`.
+   Confirmed GOMP_parallel call is gone from the use_omp=0 path. Bench
+   unchanged (0.95 → 0.93, within noise). So outlining wasn't the
+   bottleneck.
+3. **2-j outer unroll (process columns j and j+1 together, sharing x
+   reads, two independent acc s0/s1)** — regressed to 0.93 because of
+   x87 stack spill: 2 acc × 2 slots + 2 x slots + 2 × 2 A slots = 10
+   slots needed vs 8 available. Same Rule 28 problem as K=4 on
+   complex.
+
+**Conclusion:** the 0.94-0.96 floor is *not* in the inner loop, which
+overlay wins; it's in the outer-loop dep chain (alpha * s reduction)
+and/or gcc's worse register-allocation choices on the outer setup
+(28 outer insns vs gfortran's 20). These are not fixable from C source
+without breaking other paths or going SSE/AVX (which can't be done for
+kind10 long-double in System V ABI).
+
+Tag and stop. The cell stays at 0.94.
+
+30. **3-trial median sweeps misclassify "at-parity with noise tail"
+    cells as sub-parity.** A cell whose true distribution is ~0.97×
+    typical with occasional 0.83× outliers (rare cache event, page
+    walk, throttle) will show median 0.918 in a 3-trial sweep when
+    2 of 3 happen to hit the outlier mode. 8-trial reruns recover
+    the true median ~0.97. Before declaring a cell structurally
+    sub-parity from a 3-trial sweep, rebench at ≥5 trials; only then
+    classify as structural. The etbmv UNN strided "0.92 cluster" was
+    a false-positive of this kind — at parity with a small outlier
+    tail at incx≠1.
+
+## Addendum 25: small-N benches are bimodal — need ≥20000 iters (2026-05-19)
+
+### Symptom
+
+A 5-trial sweep at BLAS_PERF_ITERS=2000 flagged **etbmv** with ~16
+cells at median 0.70–0.95. Looking at the raw per-trial overlay GFlops:
+
+```
+etbmv UTN 128 (5 trials):
+  overlay GFs:  0.86  1.21  1.18  1.25  0.87   ← bimodal!
+  migrated GFs: 1.24  1.24  0.86  0.86  1.25   ← bimodal!
+  ratio:        0.69  0.97  1.37  1.44  0.69
+```
+
+Both overlay and migrated show a **bimodal** GFlops distribution —
+~0.86 (slow) or ~1.25 (fast) — and the ratio depends on whether they
+happened to hit the same mode. The median ratio of 0.70 is not a code
+artifact; it's a statistical artifact of bimodal noise.
+
+### Root cause
+
+At BLAS_PERF_ITERS=2000 with N=128, total wall-clock per call is
+~10-20 ms. The "fast" mode is presumably hot-cache execution; the
+"slow" mode is one-or-more cold accesses (TLB miss, page walk, or
+cache line refetch) early in the iter loop that takes a fixed cost
+amortized over only 2000 iters. At higher iter counts the fixed cost
+amortizes away.
+
+### Verification
+
+Same etbmv UTN 128 at BLAS_PERF_ITERS=20000:
+
+```
+ratios across 5 trials: 0.912  0.962  0.978  0.992  0.924
+                        → median 0.962, at parity
+```
+
+The bimodality vanishes; cell is at parity.
+
+esymv L/x-1 128 at BLAS_PERF_ITERS=20000:
+
+```
+ratios across 5 trials: 0.893  0.904  0.905  0.922  0.931
+                        → median 0.905, real structural floor
+```
+
+esymv is *genuinely* sub-parity (the Addendum 22 floor) at high iters.
+
+### Implication
+
+The whole exercise of 3-trial and 5-trial sweeps at 200-2000 iters
+captured a mix of true structural sub-parity and bimodal-noise
+artifacts. Reliable classification requires BLAS_PERF_ITERS=20000+
+for small-N cells. Two cells fell out of the noise correctly:
+- **etbsv UNN stride-1**: 0.84 at low iters, **0.96-0.99 at 20000** —
+  the fix (forward inner walk) is real.
+- **etpsv UTN stride-1**: 0.84 at low iters, **1.05 at 20000** —
+  K-unroll-by-2 fix is real.
+
+### Rules
+
+31. **For sub-parity classification at small N (≤256), use
+    BLAS_PERF_ITERS ≥ 20000.** Lower iter counts conflate true
+    structural gaps with bimodal cache-warmup noise — both modes
+    can have ~30% throughput delta, and ratios depend on whether
+    overlay and migrated happen to coincide. The default
+    BLAS_PERF_ITERS=200 from perf_sweep.sh is unsuitable for
+    declaring structural sub-parity; even 2000 is borderline.
+
+32. **A cell's "real" sub-parity needs *tight* trial spread** (max-
+    min < 0.05 across 5+ trials) *and* low median (<0.95). A wide
+    spread (e.g., 0.65–1.45) means the ratio is dominated by
+    independent bimodal noise in overlay and migrated, not by any
+    real code-level gap. Wide-spread cells should be rebenched at
+    higher iters, not "fixed."
+
+## Addendum 26: inner-OMP on ytrsv loses everywhere except UNN/N=512 (2026-05-20)
+
+### Experiment
+
+Built a Netlib-direct ytrsv variant (`ytrsv_netlib.c`) with
+`#pragma omp parallel for` on the inner AXPY (TRANS='N') and on a
+manual `re/im` reduction for the DOT branch (TRANS='T'/'C'). Built
+two staged trees (current vs netlib), fuzzed netlib at OMP=1 and
+OMP=4 against migrated (80 cases each, max err ~7e-19), then
+benched all 80 cells (uplo × trans × diag × stride × N=64/128/256
++ N=512 for unit-stride) at high iter counts (20k–50k for small N,
+8k for N=256, 2k for N=512), 3 trials, median across trials.
+
+### Result
+
+For unit-stride cells (where the OMP pragma fires):
+
+```
+key      N     cur-1   cur-4   net-1   net-4    mig
+UTN     64     2.791   2.775   0.372   0.194    2.953
+UTN    256     2.892   2.888   1.098   0.725    3.091
+UNN    256     1.959   1.963   0.945   0.763    1.960
+UNN    512     0.550   0.565   0.488   0.940 ←  0.555
+LCN    128     2.659   2.682   0.648   0.378    2.676
+```
+
+Almost every unit-stride cell regresses 3-7× vs current at OMP=1
+(even before OMP fork cost) — the manual `re/im` split-reduction
+forces extra adds per iter and defeats the existing complex-fmul
+K-unroll-by-2. OMP=4 is generally *worse* than OMP=1: fork-per-
+outer-step cost (~10µs × N outer iters) dwarfs the inner FLOP work.
+
+**One bright spot: UNN at N=512.** netlib-omp4 = 0.940 GFs vs
+cur-1 = 0.550 vs migrated = 0.555. 1.7× speedup, beats migrated.
+N=512 is large enough that the inner AXPY (~256 iters average) is
+long enough to amortize the fork cost across 4 threads.
+
+Strided cells (`x2`, `x-1`) are unchanged because the Netlib variant
+keeps the strided fallback serial with no OMP pragma.
+
+### Why this is the wrong tool
+
+Triangular solve is sequential in the outer loop — each x[i]
+depends on x[0..i-1]. The only naive parallelism handle is the
+inner AXPY/DOT, but at the iteration count typical for sub-parity
+cells (N=64-256), the inner length is 32-128 iters and the OMP
+fork cost (5-10 µs per fork, ~3 forks per μs of FP work at small
+N) overwhelms the win.
+
+Real parallel TRSV needs a **block-recursive** structure: split A
+into 2×2 blocks, recurse on the two diagonal blocks (smaller
+TRSVs), and use a parallel GEMV for the off-diagonal trailing
+update. The GEMV is where the OMP region pays off, because:
+- One fork-join per recursion level (~log₂ N forks total) instead
+  of N forks
+- GEMV is fully parallel in M
+- The recursive base case can use the existing single-thread kernel
+
+This is ~200-300 LoC and a day of tuning. Not done in this
+experiment.
+
+### Rules
+
+33. **Don't `#pragma omp parallel for` inside the outer of a
+    sequential algorithm.** Fork-join cost is per-fork (5-10 µs);
+    iterating N forks at small inner-length destroys any FLOP win.
+    The pattern wins only when (a) outer is also parallelizable,
+    or (b) the OMP region wraps the *entire* call (one fork) and
+    threads pull work themselves.
+
+34. **TRSV/TRMV cannot be naively row-parallelized.** Block-
+    recursive is the only structural path: smaller TRSVs on the
+    diagonal blocks + parallel GEMV for the trailing update.
+    Inner-loop OMP is a dead end (Addendum 26).
+
+## Addendum 27: kind16 xgemm 2D tile parallelism (2026-05-20)
+
+### Context
+
+xgemm's original OpenMP parallelism was a single `#pragma omp parallel
+for` over its N dimension, gated at N ≥ 32. Used as a top-level call
+that was usually fine, but the xtrsm_blocked trailing update has
+shape `(mt, nrhs, jb)` — at small nrhs, only the N=nrhs axis (often
+1-3 columns) carried parallelism, idling threads even though mt was
+in the hundreds.
+
+### Experiment
+
+Refactor xgemm into a 2D collapse(2) over (M-tile, N-tile). Tile side
+is adaptive: pick the largest power-of-two side s in [16, 128] such
+that `s² ≤ M·N / (4·nthreads)` — targets ~4 tiles per thread for
+load balance. `XGEMM_MB` / `XGEMM_NB` env knobs pin specific sides.
+
+K stays serial inside each tile. Each (i, j) output element belongs
+to exactly one tile under collapse(2), so the per-tile beta scaling
+is race-free and bitwise-identical to the column-wise scheme.
+
+### Result
+
+xtrsm_blocked at M=1024, OMP=4, before vs after (cur_4/cur_1):
+
+| nrhs | before | after |
+|------|--------|-------|
+| 1    | 0.99×  | 2.97× |
+| 4    | 1.00×  | 2.51× |
+| 8    | 1.03×  | 3.09× |
+| 32   | 3.94×  | 3.91× |
+
+Before, the trailing xgemm only parallelized when N=nrhs ≥ 32 → the
+xtrsm_blocked path was stuck at serial-equivalent throughput for
+nrhs < 32 (the "nrhs=32 cliff"). After 2D, parallelism scales at
+any (M, N) ≥ 2 tiles.
+
+Direct xgemm at OMP=4 (`mig/overlay` ratio, single-thread migrated):
+
+| size | before | after |
+|------|--------|-------|
+| 64   | 1.0×   | 1.2-2.9× |
+| 128  | 1.0×   | 1.5-2.3× |
+| 256  | 3.0-3.8× | 3.0-3.8× |
+
+No regression at size where the old N-only parallel was already
+saturating; new wins at small-and-moderate sizes that were below the
+old N ≥ 32 gate.
+
+### Rules
+
+35. **Parallelize the output, not one axis.** For GEMM-class kernels
+    where the output is 2D (M × N), use `collapse(2)` over both axes
+    rather than parallelizing one. The "good axis" is whichever is
+    largest at runtime — and that's not knowable at compile time. 1D
+    parallelism is fine for kernels with a structurally 1D output
+    (gemv: y is a vector).
+
+36. **Adaptive tile-side beats fixed.** `side ≈ sqrt(area /
+    (4·nthreads))` clamped to a reasonable range gives ~4 tiles per
+    thread regardless of (M, N, nthreads). Fixed tile sizes either
+    under-saturate small problems or over-fragment large ones for
+    the deployment thread count.
+
+## Addendum 28: kind16 xtrsm — xtrsv-loop fast path + Amdahl-capped dispatch (2026-05-20)
+
+### Context
+
+At small nrhs, column-parallel xtrsm idles threads: with N=nrhs
+columns and nt threads, scaling is `nrhs / ceil(nrhs/nt)`. For
+nrhs=2 at nt=4, that's 2× speedup with 2 threads idle; for nrhs=3,
+3× with 1 idle. xtrsm_blocked + 2D xgemm (Addendum 27) helps but
+has overhead that wipes the win at very small nrhs.
+
+The alternative for SIDE='L': xtrsm with nrhs columns is literally
+nrhs independent xtrsv solves (mod the alpha pre-scale). Each xtrsv
+can use *all* threads via xtrsv_blocked (parallel xgemv on the
+trailing slice). For small nrhs, nrhs sequential xtrsv-blocked calls
+beats column-parallel because each call fills the thread pool.
+
+### Fast-path-vs-col-parallel crossover
+
+Times in units of single-thread xtrsv time T, scaling factor s:
+
+```
+fast path = nrhs × T / s
+col-par   = ceil(nrhs / nt) × T   (sawtooth in nrhs)
+```
+
+Crossover at `nrhs ≈ s`. Above that, col-par's "rounds" advantage
+beats fast path's sequential xtrsv cost.
+
+`s` is xtrsv_blocked's effective scaling, which is **Amdahl-limited
+by the serial sub-solve fraction `nb / M`**:
+
+- Total work ≈ M²/2 muladds.
+- Per-block sub-solve = nb²/2 muladds → total sub-solve = M·nb/2.
+- Serial fraction = nb / M → ceiling = M / nb.
+
+| M    | nb=64 | serial frac | ceiling |
+|------|-------|-------------|---------|
+| 256  | 64    | 25%         | 4×      |
+| 512  | 64    | 12.5%       | 8×      |
+| 1024 | 64    | 6.25%       | 16×     |
+| 2048 | 64    | 3.1%        | 32×     |
+
+Effective scaling = `min(nthreads, M / nb)`. So the fast-path cap is
+`min(nthreads-1, M/nb)`.
+
+### Experiment
+
+Add `xtrsm_xtrsv_loop_max(M)` that computes `min(env_override,
+nthreads-1, M/nb_hint)`. The xtrsm_ entry routes SIDE='L', stride-1,
+M ≥ 128, nrhs ≤ that cap into the fast path: pre-scale by alpha,
+then loop xtrsv_ over columns.
+
+Also lowered `XTRSM_OMP_MIN` (column-parallel gate) from 32 to 2 so
+the col-parallel path picks up for nrhs ≥ 4 at any reasonable M.
+
+### Result
+
+Measured at M=1024, OMP=4, iters=25 (cur_4/cur_1):
+
+| nrhs | path        | scaling |
+|------|-------------|---------|
+| 1    | fast        | 3.08×   |
+| 2    | fast        | 3.19×   |
+| 3    | fast        | 3.24×   |
+| 4    | col-par     | 3.87×   |
+| 5    | col-par     | 2.49×   (sawtooth) |
+| 6    | col-par     | 2.96×   |
+| 7    | col-par     | 2.72×   |
+| 8    | col-par     | 3.87×   |
+| 16   | col-par     | 3.85×   |
+| 32   | col-par     | 3.85×   |
+
+At nt=4, cap is min(3, M/64) = 3 — same value as the original fixed
+default but adapts at higher nt. At hypothetical nt=64, M=1024 the
+cap becomes 15 (= Amdahl ceiling - 1), preventing fast-path
+over-extension into col-parallel's regime.
+
+### Suboptimal sawtooth
+
+nrhs ∈ {5, 6, 7} at nt=4 hit col-parallel's sawtooth (2.5-3.4×).
+Fast path at those would give 3.1-3.3× — sometimes a small win, but
+needs a per-nrhs dispatch (compare both paths' predicted time)
+rather than a threshold. Deferred — the worst-case loss is bounded
+and the dispatch complexity isn't worth a few percent at moderate
+nrhs.
+
+### Rules
+
+37. **Derive dispatch thresholds from algorithmic Amdahl ceilings,
+    not constants.** A "fixed threshold of 3" is correct only at the
+    deployment's specific (nthreads, problem-size) combination.
+    Compute it: scaling = min(nthreads, work_total / work_serial).
+    The crossover for fan-out vs work-sharing dispatch sits at
+    `nrhs ≈ scaling`.
+
+38. **Column-parallel's effective scaling is `nrhs / ceil(nrhs/nt)`,
+    not `min(nrhs, nt)`.** The ceiling-divide creates a sawtooth:
+    at nrhs = nt, nt+1, 2·nt, … scaling is high; in between it's
+    `nrhs / 2` at best. Fan-out (loop-of-parallel-xtrsv) can beat
+    column-parallel in the sawtooth dips even when nrhs > nt.
+
+## Addendum 29: single-parallel-region for blocked xtrs* + blas_omp cache anti-pattern (2026-05-20)
+
+### The cache anti-pattern
+
+`blas_omp_max_threads()` originally lived as a `static inline` body
+in `common/blas_omp.h`:
+
+```c
+static inline int blas_omp_max_threads(void) {
+    static int cached = 0;
+    if (cached == 0) cached = omp_get_max_threads();
+    return cached;
+}
+```
+
+**Two bugs.**
+
+1. **Per-TU caches.** `static inline` gives each translation unit
+   its own `cached` variable. First call from xgemv.o locks
+   xgemv.o's cache to whatever `omp_get_max_threads()` returned at
+   that moment; xgemm.o caches independently. If they diverge, kernels
+   silently disagree on whether to parallelize.
+
+2. **Cache locked to first call.** Even centralized, the cache is
+   set on the first `omp_get_max_threads()` reading and never
+   re-checked. A test pattern that does:
+
+   ```
+   omp_set_num_threads(1); call_overlay();  // cache → 1
+   omp_set_num_threads(4); call_overlay();  // still 1, no parallelism
+   ```
+
+   silently runs serial in the second call. Real production code
+   typically sets `OMP_NUM_THREADS` once at startup, but perf
+   harnesses (and any user code that switches thread counts) break.
+
+Centralizing the cache to a single `blas_omp.c` fixed #1 but not #2.
+Removed the cache entirely — `omp_get_max_threads()` is an ICV
+lookup, well below the per-call BLAS overhead at any precision we
+care about.
+
+### Single-parallel-region pattern
+
+The previous xtrsv_blocked / xtrsm_blocked shape:
+
+```
+for each diagonal block:           # serial outer
+    sub_solve(small block)         # serial
+    xgemv_(...) or xgemm_(...)     # opens its OWN omp parallel region
+```
+
+Per call: N/nb separate fork-joins. Each fork-join is ~5-10 µs on
+libgomp; at N=1024, nb=64 that's 16 × 5-10 µs = 80-160 µs of pure
+sync overhead. Also violates the "no OMP-using callee from inside
+an OMP region" rule if the blocked variant is itself wrapped.
+
+The refactor opens ONE `#pragma omp parallel` region around the
+whole diagonal walk:
+
+```
+#pragma omp parallel
+{
+    tid, nt = ...
+    for each diagonal block:           # serial walk INSIDE the region
+        if tid==0: sub_solve()         # serial, others wait
+        #pragma omp barrier
+        partition_trailing(tid, nt)    # call *_serial_ on this slice
+        #pragma omp barrier
+}
+```
+
+Replaces N/nb fork-joins with **one fork-join + 2·N/nb barriers**.
+Same order of sync cost but threads stay pinned across iterations —
+better cache behavior on many-core nodes. Required `xgemm_serial_`
+/ `xgemv_serial_` / `xtrsv_serial_` entries (same numerics, no OMP
+pragmas) for the inner calls — the parallel entries (`xgemm_`,
+`xgemv_`, `xtrsv_`) keep their own regions for direct top-level
+use, and also pick up `omp_in_parallel()` guards so a stray call
+from inside another region degrades to serial work-sharing rather
+than nesting.
+
+### Column-partition is naturally race-free for xtrsm_blocked
+
+For xtrsm_blocked, partitioning by columns of B (each thread gets
+[j_lo, j_hi)) is **race-free with zero barriers**:
+
+- Pre-scale: thread T writes B[:, j_lo:j_hi]. Disjoint columns.
+- Sub-solve at block ic: thread T reads/writes B[ic:ic+ib, j_lo:j_hi].
+  Only its own columns.
+- Trailing xgemm: thread T reads B[ic:ic+ib, j_lo:j_hi] (just wrote
+  in sub-solve, same thread), writes B[i0:M, j_lo:j_hi].
+
+No cross-thread sharing of B. A is read-only. So one fork-join per
+xtrsm_blocked call, zero inner barriers. Each thread effectively
+runs an independent xtrsm_blocked on its column slice.
+
+This degenerates to column-parallel xtrsm at the algorithmic level —
+the "blocked" structure adds nothing beyond what column-parallel
+already does in compute-bound regimes (libquadmath ops dwarf any
+cache effect). Useful primarily for nrhs ≥ nthreads where the
+sub-solve overhead is amortized.
+
+xtrsv_blocked is *not* race-free under any partition: the diagonal
+walk has a tight cross-block dependency (block k's sub-solve reads
+block k-1's trailing-update output). The two barriers per step are
+structurally required.
+
+### Rules
+
+39. **Don't cache `omp_get_max_threads()`.** The ICV read is cheap
+    relative to any BLAS call. A cache pins the value at first
+    read — fine in production where OMP_NUM_THREADS is static, fatal
+    in tests that alternate `omp_set_num_threads` and a silent
+    perf bug if anything else also changes ICVs mid-run.
+
+40. **One parallel region per call, not per inner loop.** When a
+    serial outer drives a parallel inner, replace N/nb separate
+    `#pragma omp parallel` regions with one region wrapping the
+    whole walk + manual partition + barriers. Same sync cost order
+    but threads stay pinned (cache locality) and there's no nested
+    OMP. Requires `*_serial_` entries on the inner callees.
+
+41. **No OMP-using function called from inside an OMP region.**
+    Either expose a `_serial_` variant of the callee, or guard the
+    callee with `omp_in_parallel()` and ensure its single-thread
+    fallback is correct. Nested parallelism is fragile across
+    libgomp / iomp / runtime configs; "outer parallel × inner
+    parallel" is not a portable design.
+
+42. **Column-partition is naturally race-free for SIDE='L'
+    blocked-TRSM.** Each thread owns disjoint columns of B; sub-solve
+    and trailing both touch only its slice. No inner barriers needed.
+    SIDE='R' (or any algorithm with a cross-column dependency) does
+    *not* have this property.
+
+
+
+## Addendum 30: full-overlay re-sweep — systematic catalog (2026-05-20)
+
+### Motivation
+
+After the kind16 q-kernel refactors (qgemm 2D, qgemv slice/serial,
+qtrsv blocked, qtrsm fast-path/blocked; Addenda 27-29 ported to the
+q-prefix siblings), re-ran the full perf sweep at OMP=1 across all
+three precision targets (kind10 e\*/y\*, kind16 q\*/x\*, multifloats
+m\*/w\*) to confirm no regressions and to systematically map every
+remaining sub-parity cell to a category.
+
+### Methodology
+
+- `scripts/run_perf_sweep.sh` at OMP=1, pinned to P-core 0, TIMEOUT=120s
+  per perf binary, BLAS_PERF_ITERS=200 default.
+- Routines that hit the 120s timeout (large libquadmath kernels: qgemm,
+  qgemmtr, xtrsm, xtrmm, etc.) re-run on core 1 with reduced
+  size×iters, captured into `/tmp/probe-timeouts*.tsv`.
+- Filter: `ratio < 0.95` with `iters ≥ 20` (drops short-bench noise).
+
+### Coverage
+
+Final TSV: ~4,500 cells across 170 routines.
+- kind10: 65 routines, 2,548 cells.
+- kind16: 65 routines, ~1,560 cells (sweep + probe).
+- multifloats: 41 routines, ~620 cells (sweep + probe; w\* still in flight).
+
+### Result: zero new fixable cases
+
+Every sub-parity cell maps to a previously-documented category.
+Bucketed worst-per-routine view:
+
+```
+Cluster                                Cells      Cause / Addendum
+-------------------------------------- ---------- ---------------------------
+kind10 esbmv strided                   64         Addendum 22 (gcc outer-loop)
+kind10 esymv strided                   62         Addendum 22
+kind10 espmv strided                   57         Addendum 22
+kind10 ygbmv T strided                 16         Addendum 24 (short banded)
+kind10 etrmv L/strided borderline      9          Addendum 24 / Rule 22
+kind10 etbmv banded                    6          Addendum 24
+kind10 ytrsv L*N N=64 outliers         5          single-cell noise
+kind10 ytpsv L/U borderline            5          Addendum 22 family (banded)
+kind10 ytbsv strided                   4          Addendum 24
+kind10 easum N≥1024                    4          memory bandwidth limit
+kind10 ydotu/ygemv/eger small-N        2-3 each   single-cell noise
+kind16 qtbmv/qtbsv T-branch banded     2-3 each   Addendum 24
+kind16 qsymv/qspmv strided             2-3 each   Addendum 22 family
+kind16 qtpmv/qtpsv N=64 outliers       2-3 each   single-cell noise
+kind16 xqscal erratic ratios           3          short-workload variance
+kind16 xgerc/xtrmv N=64                1-2 each   single-cell noise
+multifloats mswap N=512/4096           2          memory bandwidth (L1 swap)
+```
+
+The big numerical buckets (s\*mv strided in kind10, banded-MV in kind10
+and kind16) are accounted for by the two known intractability addenda
+(22 and 24). The rest are single-cell N=64 variance — at iters≤20 a
+single bad-luck timing dominates the ratio, and neighboring sizes for
+the same routine sit at parity or above.
+
+### What this confirms
+
+- **The May 18 (Addendum 18) and May 19 (Addendum 19) trsv fixes are
+  still in place.** kind10 etrsv L\* (LNN/LNU/LTN/LTU full set) and
+  ytrsv U-T/L-T all show 0.93-1.16× on the re-probe.
+- **My recent q-kernel refactors maintain or beat parity at OMP=1.**
+  qgemm 0.97-1.04×, qgemv 0.91-1.03×, qtrsv 1.03-1.12× (UNN/UNU N=256
+  the blocked path's single-region cache locality beats migrated
+  unblocked), qtrsm 0.89-1.01× (one iters=3 outlier).
+- **Multifloats overlay dominates migrated** — mgemm 20-25×, mgemmtr
+  3-10×, msymv 3.6× across all stride combos. The SIMD double-double
+  kernels (MGEMM_SIMD_MR=4, MBLAS_SIMD_DD) deliver the headline win.
+
+### What remains (and why it stays)
+
+The intractability stories from Addenda 22 and 24 still hold for the
+two big buckets:
+
+- **s\*mv strided** (~180 cells across kind10/kind16): combined
+  AXPY+DOT inner with strided y. gcc's outer-loop setup costs ~5-10%
+  more cycles than gfortran's. `fld %st(0)` is already present, asm
+  inner instruction count matches. Closing the gap requires
+  vector-intrinsic / asm-level work outside the C source.
+
+- **Banded triangular T/C variants** (~30 cells): banded inner is
+  bounded by KL+KU+1, typically ~33 elements at the perf bench's
+  defaults. K-unroll-by-2 bookkeeping eats the latency saving on
+  inners that short. Same constraint applies to qtbmv, qtbsv, etbmv,
+  ytbmv, ytbsv.
+
+### Rule
+
+43. **Before opening a new investigation on a sub-parity cell:**
+    (a) Check the worst-per-routine bucket count. If the routine has
+    1-3 sub-parity cells in a sweep of ~20-100 cells per routine, it
+    is almost certainly small-N variance — re-bench at iters≥100 first.
+    (b) Match the cluster shape against Addenda 22 (combined inner +
+    strided fallback) and 24 (banded inner length ≤ K+1). If it fits,
+    the structural ceiling is real and the documented "tried and
+    reverted" experiments apply — don't redo them.
+    (c) Only after both filters miss is the cell worth a fresh
+    asm-level investigation.
+
+## Addendum 31: applying Rule 43 — etrmv LNN J-unroll-by-2 (2026-05-20)
+
+### The cluster Rule 43 surfaced
+
+After committing Addendum 30, re-read the sub-parity catalog with the
+new "filter-before-investigate" lens. `kind10 etrmv` had 9 sub-parity
+cells across 100+ cells, with this concentration:
+
+```
+etrmv LNN N=128:   0.905x
+etrmv LNN N=1024:  0.935x
+etrmv LNN/x2 N=1024: 0.911x
+etrmv LNU N=128:   0.949x       (3-cell unit-stride cluster)
+```
+
+- **Rule 43(a)**: 3-4 cells per UPLO×TRANS combo is not single-cell
+  noise — multiple sizes and stride variants all show the same gap.
+- **Rule 43(b)**: doesn't match Addendum 22 (not a combined AXPY+DOT
+  strided fallback — this is a plain AXPY inner) or 24 (full-row inner
+  bounded by M, not by K+1).
+
+So per the rule itself: investigate.
+
+### What was missing
+
+`etrmv` had a J-unroll-by-2 on UNN that the in-source comment described:
+"Without this, UNN at N=1024 sat at 0.58x of migrated." The sibling LNN
+path — same algorithmic structure, just j walking backward instead of
+forward — had been left as the simple single-column reference loop:
+
+```c
+for (int j = N - 1; j >= 0; --j) {
+    const T temp = x[j];
+    if (temp != zero) {
+        const T *aj = &A_(0, j);
+        for (int i = N - 1; i > j; --i) x[i] += temp * aj[i];
+    }
+    if (nounit) x[j] *= A_(j, j);
+}
+```
+
+The pairing logic was less obvious because j descends, but iteratively
+the same property holds: at any pair (j, j-1), both x[j] and x[j-1]
+are pristine on entry to iter j (iter j's inner only touches i>j).
+So saved into t0/t1, the trailing-rows inner can service both column
+contributions in one pass, with boundary handling at i=j and i=j-1.
+
+### Result
+
+```
+etrmv LNN N=128:  0.905 → 1.813x  (+100% over migrated)
+etrmv LNN N=256:  0.992 → 1.606x
+etrmv LNN N=512:  ~1.0  → 1.605x
+etrmv LNN N=1024: 0.935 → 1.481x
+etrmv LNU N=128:  ~1.0  → 1.625x
+etrmv LNU N=1024: ~1.0  → 1.552x
+```
+
+Fuzz 80/80 pass (max err 3.8e-19, within tolerance).
+
+### Rule 43 worked
+
+The category that survived Addendum 30's bucketing — multi-cell cluster
+that didn't match either intractability addendum — was genuinely a
+missing-sibling-fix case, fixed with the same recipe already applied
+to the upper-triangular path. The rule is doing its job: it flagged
+exactly the one cluster that hadn't been investigated and skipped the
+~250 cells already accounted for.
+
+### Follow-up
+
+Surveyed siblings: `ytrmv` (kind10 complex) LNN/UNN run at parity
+without J-unroll — gfortran handles `_Complex long double` AXPY
+inners differently and the C reference already matches. `qtrmv`/
+`xtrmv` (kind16) are libquadmath-bound — per-op cost dominates and
+J-unroll doesn't help at that rate. So the etrmv fix is kind10-real-
+specific and complete.
+
+## Addendum 32: TRSM SIDE='R' — row-partition OMP closes the only L3 OMP gap (2026-05-21)
+
+### What the OMP scaling sweep surfaced
+
+After the perf re-sweep landed (Addendum 30), I ran a separate OMP
+scaling sweep (`overlay@OMP4 / overlay@OMP1`) across the L3 routines
+that have OMP code. The L3 column-partition pattern landed in
+Addenda 27-29 covered SIDE='L' uniformly, but the sweep showed a
+flat band of "doesn't parallelize" cells concentrated in a single
+shape:
+
+```
+etrsm  RLN/RUN/RLT/RUT  M=256-512  scaling ≈ 0.99-1.04x
+ytrsm  RLN/RUN/RLTC/RUTC + conj  scaling ≈ 0.99-1.05x
+mtrsm  RLN/RUN/RLT/RUT  scaling ≈ 1.00x  (the diag SIMD core is fast
+                                          but the outer was serial)
+wtrsm  RLN/RUN/RLTC/RUTC          scaling ≈ 1.00x
+```
+
+kind16's `qtrsm`/`xtrsm` already had the wrapper — the macro was
+added during the Addendum 28-29 work but only kind16 entry points
+got it. SIDE='L' for all eight routines had been column-parallel
+since Addendum 27; SIDE='R' had been left serial because the
+algorithm's natural axis (j over columns of B) walks the diagonal
+serially and doesn't admit a column-partition.
+
+### Why SIDE='R' partitions cleanly on rows
+
+For X · op(A) = α·B the j loop is the diagonal walk and must run
+sequentially — each column of B depends on the previously-solved
+columns. **But every row of B is processed identically and
+independently.** Splitting M across threads gives disjoint row slices
+of B; the shared `a` is read-only; no barriers are needed inside the
+parallel region.
+
+In column-major storage a row slice `[i_lo, i_hi)` is simply the
+pointer-shifted submatrix starting at `b + i_lo` with leading dim
+`ldb` and `Mslice = i_hi - i_lo` rows. The cores' inner loops over
+M just operate on the shifted view.
+
+### The kind10 wrapper
+
+To re-use the existing cores I changed their leading signature from
+`(M, ...)` to `(i_start, i_end, ...)` (a row range) and added a
+single macro that does the partition once:
+
+```c
+#define ETRSM_OMP_WRAP_R(name, core)                                     \
+    static void name(int M, int N, T alpha,                              \
+                     const T *a, int lda, T *b, int ldb, int nounit) {   \
+        if (M >= ETRSM_OMP_N_MIN && blas_omp_max_threads() > 1           \
+                                && !omp_in_parallel()) {                 \
+            _Pragma("omp parallel") {                                    \
+                int tid = omp_get_thread_num();                          \
+                int nt  = omp_get_num_threads();                         \
+                int is  = (int)((long long)M * tid / nt);                \
+                int ie  = (int)((long long)M * (tid + 1) / nt);          \
+                core(is, ie, N, alpha, a, lda, b, ldb, nounit);          \
+            }                                                            \
+        } else { core(0, M, N, alpha, a, lda, b, ldb, nounit); }         \
+    }
+```
+
+`ytrsm`'s TC variants carry an extra `conj_flag` arg, so a sister
+macro `YTRSM_OMP_WRAP_R_TC(name, core, cflag)` invokes the core
+with that constant baked in.
+
+### The multifloats wrapper
+
+mtrsm/wtrsm route SIDE='R' through `mtrsm_simd_diag_R` /
+`wtrsm_simd_diag_R`, which process 4 rows of B per SIMD-DD vector
+step. Naïve row-partitioning would break alignment on interior
+threads, so the wrapper rounds slice boundaries down to multiples
+of 4 for all but the last thread:
+
+```c
+#pragma omp parallel if(use_omp)
+{
+    int tid = ..., nt = ...;
+    int i_lo = (int)((long long)M * tid / nt);
+    int i_hi = (int)((long long)M * (tid + 1) / nt);
+    if (tid > 0)      i_lo &= ~3;
+    if (tid < nt - 1) i_hi &= ~3;
+    const int Mslice = i_hi - i_lo;
+    if (Mslice > 0) {
+        T *b_slice = b + i_lo;
+        mtrsm_simd_diag_R(op, Mslice, N, alpha, a, lda, b_slice, ldb, nounit);
+    }
+}
+```
+
+The last thread absorbs the `M & 3` tail (its `i_hi` is not rounded),
+so the SIMD path stays whole on interior threads and only the trailing
+thread takes a scalar-cleanup hit — which the existing `*_simd_diag_R`
+already handled internally.
+
+### Result (overlay vs migrated, OMP=4)
+
+| Routine       | Before    | After                  |
+|---------------|-----------|------------------------|
+| etrsm R\*     | ~0.99x    | 3.56-3.87x             |
+| ytrsm R\* (12 keys)   | ~0.99x | 3.58-3.97x          |
+| mtrsm R\*     | ~1.02x    | 17-21x (overlay 3.85x internal scaling, on top of SIMD-DD's single-thread advantage) |
+| wtrsm R\* (12 keys)   | ~1.04x | 15-22x (3.62-3.95x internal scaling) |
+
+Fuzz 80/80 pass on all four routines.
+
+### `!omp_in_parallel()` is load-bearing
+
+Each wrapper gates on `M >= *_OMP_N_MIN && blas_omp_max_threads() > 1
+&& !omp_in_parallel()`. The third guard is what makes this safe to
+expose. If a caller is already inside an OMP region (rare but
+possible via `*symm`/`*syr2k` paths that fan out to a trsm), the
+wrapper falls through to the single-threaded core — no nested
+parallelism, per the project-wide rule.
+
+### Coverage now uniform
+
+After this fix the L3 OMP map is uniform: SIDE='L' uses column-
+partition, SIDE='R' uses row-partition, and every routine in
+{e,y,q,x,m,w}trsm has both. The OMP scaling sweep is now flat at
+~3.5-4.0x across L3 (Amdahl-capped at 6 P-cores).
+
+## Addendum 33: Add-30 catalog re-verification — Rule 30 catches the rest (2026-05-21)
+
+### Motivation
+
+Stop-hook flagged that Addendum 30's "filter-before-investigate"
+Rule 43 had let ~250 cells be dismissed by category match instead of
+re-verified per-routine. Walked the catalog again, this time with
+Rule 30 discipline (≥5 trials, iters≥20000 at small N), to confirm
+each was actually structural and not just bench noise.
+
+### What changed when re-bench discipline was applied
+
+Bench iters mattered more than expected:
+
+```
+Routine cluster                  iters=200    iters=1000    iters≥20000 (5+ trial)
+                                 (Add-30)     (1-trial)     (median)
+─────────────────────────────────────────────────────────────────────────────────
+esbmv unit-stride L N=128        0.775        0.995         1.04
+esbmv unit-stride U N=128        0.878        1.035         1.02
+esbmv strided (all sizes)        0.91         0.86-0.95     0.89-0.93  ← structural
+espmv unit-stride L N=128        0.768        1.05          1.04
+espmv strided (all sizes)        ~0.90        0.86-0.95     0.89-0.92  ← structural
+esymv strided                    0.93         0.84-0.96     0.89-0.93  ← structural
+etbmv UNN N=128                  0.92         0.92          0.97
+etbmv LTN N=128                  0.95         0.37          0.99       ← was pure noise
+etbmv UTU N=512                  0.95         0.93          1.10
+ygbmv N N=128                    0.95         0.83-0.89     0.99       ← was noise
+ygbmv T/x-1/y-1 N=512            0.95         0.91          0.94       ← structural
+ytbsv all                        0.95         0.84-0.99     0.94-1.0
+ytpsv L/U                        0.93         0.95-1.0      1.0
+easum                            0.95         (ratio inverted; see below)
+```
+
+The pattern: **iters=200 catches one class of noise, iters=1000 catches
+a different class, only iters≥20000 with 5+ trials reveals the true
+distribution**. Cells that look structural at iters=1000 can be at
+parity at iters=20000 (etbmv LTN N=128 went from 0.37 to 0.99). Cells
+at parity at iters=1000 can be sub-parity at iters=20000 (the s\*mv
+strided ~10% gap is more visible at high iters where the inner-loop
+overhead amortizes).
+
+### A genuine fix surfaced: esymv/qsymv strided index-recompute
+
+The re-walk caught an anti-pattern in `esymv` and `qsymv` strided
+fallbacks that the iters=200 noise had been masking. Both recomputed
+`kx + k*incx` and `ky + k*incy` inside the inner loop:
+
+```c
+for (int k = i + 1; k < N; ++k) {
+    y[ky + k * incy] += temp1 * A_(k, i);   ← multiply per iter
+    temp2 += A_(k, i) * x[kx + k * incx];
+}
+```
+
+The Netlib Fortran reference (`DSYMV`) uses incrementing IX/IY:
+
+```fortran
+DO 90 I = 1,J - 1
+    Y(IY) = Y(IY) + TEMP1*A(I,J)
+    TEMP2 = TEMP2 + A(I,J)*X(IX)
+    IX = IX + INCX
+    IY = IY + INCY
+   90 CONTINUE
+```
+
+Sister routines `esbmv` and `espmv` already use the increment-based
+form. Converting esymv/qsymv to match gave a modest but consistent
+win on L-branch unit-stride (esymv L N=256 went from 0.949 → 1.00+).
+Strided cases stayed at the Addendum 22 ceiling — that gap is in the
+outer-loop setup, not in the inner.
+
+Committed as `parallel-blas: esymv/qsymv strided — increment-based ix/iy`.
+
+### easum was mis-classified as bandwidth-bound
+
+Addendum 30's table listed "kind10 easum N≥1024 — memory bandwidth
+limit (4 cells)". Re-bench at iters=2000+ shows overlay is **4-9×
+faster** than migrated (ratio = `t_mg/t_ov` so values >1 mean overlay
+wins):
+
+```
+easum N=64    ratio = 4.27
+easum N=512   ratio = 5.59
+easum N=1024  ratio = 9.88
+easum N=4096  ratio = 8.89
+```
+
+The original sweep's iters=200 caught variance-dominated cells where
+absolute timings were too short to discriminate the two
+implementations. With proper iters the overlay's `restrict`-annotated
+loop crushes the migrated build's aliased reads. **Not sub-parity;
+remove from the catalog.**
+
+### What remains genuinely sub-parity (and why it stays)
+
+After Rule 30 discipline applied per-cell, the surviving sub-parity
+cells fall into exactly two documented categories:
+
+1. **s\*mv strided fallback (Add-22 family, ~180 cells across kind10
+   esbmv/espmv/esymv and kind16 qsymv/qspmv).** ~10% gap, 5-trial
+   median 0.89-0.93. The outer-loop setup overhead (one extra mul per
+   index per outer iter) is gcc-vs-gfortran codegen ceiling for
+   strided long-double, not addressable from C. Documented in
+   Addendum 22 with asm proof.
+
+2. **ygbmv T/x-strided (Add-24 follow-up, ~14 cells).** 10-trial
+   median 0.94. The outer-loop dep chain (alpha*s reduction at the
+   end of each outer iter) bounds the throughput; the inner-loop asm
+   already wins. Tag-and-stop per the Add-24 follow-up disposition.
+
+Every other cell from the Addendum 30 catalog — 6 of 8 listed clusters,
+~70+ cells — was bench noise. After Addendum 25 / Rule 30 (≥20000
+iters at small N, ≥5 trials), they are at parity or better.
+
+### Rule
+
+44. **Rule 30 sweeps still need 5+ trials at iters≥20000 to declare
+    structural sub-parity.** The original Add-30 sweep used iters=200
+    and read 1-3 trial values, mis-classifying ~70 cells as
+    structurally sub-parity when they were variance. **Filter-by-
+    category (Rule 43) is not a substitute for re-bench-by-cell.**
+    Cluster-shape matching tells you what tradition of failure a
+    cell *might* fit; only a 5-trial high-iter rerun tells you which
+    cells are *actually* sub-parity.
+
+## Addendum 34: egemm — single-region + omp single Bp + omp for ic restores scaling (2026-05-21)
+
+### Context
+
+egemm's blocked path (NN, NT, TT — i.e. anything that isn't the
+TA='T' TB='N' fast path) was structurally serial whenever N ≤ NC.
+The pre-fix decomposition wrapped the whole call in `#pragma omp
+parallel` and then `#pragma omp for schedule(static)` over `jc`
+(the N-band). With default NC=512, any N ≤ 512 produces a single
+jc iteration, which `omp for` hands to thread 0 — every other
+thread idles. Measured OMP=4/OMP=1 scaling at N=512 was 0.98×.
+N=1024 (2 jc bands) saw 1.90×. Only the column-parallel TN fast
+path (which loops over j2 ∈ [0, N), not NC-bands) scaled cleanly.
+
+Findings note already flagged this as untested ground (line 205,
+"Egemm + ygemm at OMP>1 — current numbers are OMP=1. Threading is
+the actual point of the overlay"). xgemm hit the identical pattern
+and fixed it via `collapse(2)` in Add-27 (Rule 35).
+
+### Experiment
+
+Two refactors in sequence:
+
+1. **First pass: collapse(2) over (jj, ii) tile coordinates.**
+   Same shape as Add-27. Each thread owns Ap+Bp scratch, packs
+   both per (own tile, pc). Big OMP=4 win at large N (3.6×
+   scaling at N≥512), but OMP=1 regressed 3-6% because each
+   tile re-packs Bp instead of once per (jc, pc), and small-N
+   parallelism was still limited by tiles-per-call.
+
+2. **Second pass: single outer `omp parallel`, shared Bp, `omp
+   single` packs it once per (jc, pc), `omp for` over ic.**
+   Each thread keeps a private Ap. The two implicit barriers
+   (after `single` and after `for`) are the cheap synchronisation;
+   Bp is read-only during the `for`. Removes the redundant
+   packing and the OMP=1 regression with it.
+
+### Result
+
+Final OMP=4/OMP=1 scaling (5.5 GFs to 11 GFs absolute throughput
+at N=1024):
+
+| key | N=128 | N=256 | N=512 | N=1024 |
+|-----|-------|-------|-------|--------|
+| NN  | 1.02× | 1.30× | 3.44× | 3.60× |
+| NT  | 0.97× | 1.17× | 3.62× | 3.66× |
+| TT  | 0.93× | 1.33× | 3.31× | 3.64× |
+
+OMP=2/4/8 at N=512 NN: 1.82× → 3.44× → 3.77× (i7-8700 has 6
+P-cores, so 4-8 thread asymptote is expected). OMP=1 numbers
+within 1-2% of pre-fix — no real regression.
+
+Small-N parallelism is bounded by `M / MC` tiles. At N=128 M=128
+MC=64 → 2 ic tiles → 2-way maximum. At N=256 M=256 → 4 ic tiles →
+4-way maximum. The 1.3× actually measured at N=256 OMP=4 leaves
+~3× on the floor — likely heap-lock contention on the per-thread
+Ap alloc + Bp shared-cache contention; deferred since it's a
+small-problem regime and the large-N wins are the primary target.
+
+Versus migrated egemm (perf_egemm output, OMP=4):
+
+| key | N=512 | N=1024 |
+|-----|-------|--------|
+| NN  | 5.46× | 6.52× |
+| NT  | 5.76× | 6.82× |
+| TT  | 8.74× | 13.19× |
+
+### Rules
+
+45. **For GotoBLAS-style packed kernels with shared B-packing per
+    (jc, pc): single outer `omp parallel`, `omp single` to pack
+    Bp once, `omp for` over ic.** The implicit barriers are
+    cheaper than per-(jc, pc) fork-join, and Bp shared across
+    threads avoids the redundant per-tile packing that a naive
+    collapse(2) forces. Apply when Bp dominates per-tile setup
+    cost (true at any KC × NC large enough to matter).
+
+46. **`#pragma omp parallel` + `#pragma omp for` over the *first*
+    loop is a trap when later loops are larger and the first
+    loop is short.** The original egemm parallelised jc (1
+    iteration at N ≤ NC). Same anti-pattern as the pre-Add-27
+    xgemm. Whenever `for_axis_iters < nthreads`, the `omp for`
+    *cannot* parallelise — pick a different axis or use
+    `collapse`.
+
+## Addendum 35: ygemv N-branch — J-unroll the OMP path (2026-05-21)
+
+### Context
+
+ygemv (kind10 complex GEMV) N-branch scaled to only 2.7-2.8× on
+OMP=4. T and C branches scaled to 3.5-3.9×. The structural
+difference: N-branch is a rank-1 update, so each y[i] is RMW'd
+once per column j. With M*N writes to y across iters, the parallel
+version saturates L3/y-traffic before reaching peak compute.
+
+egemv (real GEMV) has J-unroll-by-2 on the N-branch's OMP path
+(pre-existing — see code), and scales to 3.0-3.5×. ygemv didn't
+adopt the same trick because a previous comment claimed:
+"J-unroll-by-2 (2 cmuls per iter = 8 fmuls + 4 fadds) hits stack
+pressure and gcc spills a1 to memory, *re-loading* each fmul
+operand". That claim was measured at OMP=1, where the spill cost
+dominates the (already-cheap) y RMW.
+
+Under OMP=4 the calculus changes: y traffic is the bottleneck
+(memory-bandwidth-limited), so halving y reads/writes by reusing
+each y[i] load for two consecutive columns outweighs the spill
+overhead.
+
+### Experiment
+
+Branch on use_omp in C source:
+- OMP=1: keep the single-column inner (gfortran-style, no spill).
+- OMP>1: J-unroll-by-2 — `y[i] = (y[i] + t0*a0[i]) + t1*a1[i]`,
+  one y RMW per pair of columns.
+
+### Result
+
+ygemv N-branch OMP=4 scaling (overlay GFs, scaling vs OMP=1):
+
+| N    | before | after | abs GFs (before → after) |
+|------|--------|-------|--------------------------|
+| 128  | 2.48×  | 2.65× | 6.24 → 7.55 |
+| 256  | 2.75×  | 3.29× | 7.51 → 9.54 |
+| 512  | 2.83×  | 3.46× | 7.51 → 9.80 |
+| 1024 | 2.70×  | 3.14× | 6.73 → 8.09 |
+| 2048 | 2.66×  | 2.77× | 6.53 → 7.19 (DRAM bw) |
+
+30% absolute throughput improvement at N=512. OMP=1 path unchanged
+(within bench noise). Brings N-branch parity with the T/C-branch
+scaling profile.
+
+N=2048 stays at ~2.77× because A (128 MB) exceeds L3 (12 MB) —
+DRAM-bandwidth bound regardless of compute pattern.
+
+### Rules
+
+47. **Apply J-unroll-by-2 (or equivalent y-reuse trick) to GEMV-N
+    OMP paths even when it regresses serial — the parallel
+    bottleneck is y-traffic, not register pressure.** Standalone
+    serial cost from x87 spill is small (a few percent); halving
+    y-RMW traffic at OMP=4 is a 20-30% win. Use `if (use_omp)`
+    in C source to split serial-optimal from parallel-optimal
+    inner-loop forms.
+
+## Addendum 36: esymv / yhemv — per-thread y_priv + reduction unlocks SYMV/HEMV scaling (2026-05-21)
+
+### Context
+
+esymv and yhemv had `ESYMV_OMP_MIN` / `YHEMV_OMP_MIN` macros defined
+but *zero* `#pragma omp` directives — completely serial. The
+broad OMP=1 vs OMP=4 sweep flagged both at ~1.0× scaling.
+
+Why no OMP existed: the Netlib two-pass form walks A column-by-
+column (stride-1) and writes y[k] for k > j (L) or k < j (U) on
+each j. Trying to parallelise the outer j loop races on y[k]
+writes since multiple threads' j-ranges produce overlapping k
+output ranges.
+
+### Experiment
+
+Per-thread private y buffer + reduction:
+1. Allocate `y_priv[nt][N]`.
+2. Each thread zeros its own y_priv slice.
+3. `#pragma omp for schedule(static, 1)` over j — interleaves
+   columns across threads to balance the triangular work (per-
+   column work is `(N - j)` for L, `j` for U — linear gradient).
+4. Implicit barrier at end of `omp for`.
+5. `#pragma omp for schedule(static)` reduces y_priv across
+   threads into y.
+
+Same `omp parallel` region wraps both phases; second barrier
+gates the reduction.
+
+`ESYMV_OMP_MIN` / `YHEMV_OMP_MIN` bumped to 128 (work too small
+below that to amortise the alloc + 2 barriers).
+
+### Result
+
+esymv (overlay GFs at unit stride, OMP=4/OMP=1 scaling):
+
+| key | N=128 | N=256 | N=512 | N=1024 |
+|-----|-------|-------|-------|--------|
+| U   | 2.78× | 3.57× | 3.76× | 3.71× |
+| L   | 2.46× | 3.42× | 3.67× | 3.85× |
+
+yhemv:
+
+| key | N=128 | N=256 | N=512 | N=1024 |
+|-----|-------|-------|-------|--------|
+| U   | 4.42× | 5.00× | 5.29× | 5.00× |
+| L   | 3.29× | 4.14× | 4.39× | 4.27× |
+
+yhemv U exceeds 4× on a 4-thread test — likely because the
+serial form was already mildly sub-parity and the parallel form
+also gained per-thread compute density (per-column work fits in
+L1 with no thread contention).
+
+Both fuzz tests clean (80/80, max ulp errors at machine
+precision).
+
+### Debugging note
+
+First version used `nowait` on the work-distribution `omp for`,
+intending only the parallel-region close to barrier. fuzz
+diagnosed real numerical drift (4 of 80 cases at random N
+between 158-236). The reduction `omp for` started before all
+threads had finished writing y_priv. Removed `nowait` — `omp
+for`'s implicit end-of-region barrier is exactly what gates
+the reduction.
+
+### Rules
+
+48. **SYMV / HEMV: per-thread y_priv + reduction is the
+    standard parallelisation, even though it costs `nt*N` extra
+    memory + a reduction pass.** Column-walk (stride-1) is
+    structurally required for memory access; trying to
+    parallelise the outer loop without privatisation races on
+    the cross-diagonal y writes. The reduction overhead is `N
+    * nt` adds — trivial vs `N²/2` cmadds.
+
+49. **`schedule(static, 1)` is the right load balance for
+    triangular column work.** Per-column work is linear in
+    `(N - j)` (L) or `j` (U). Round-robin chunk size 1 gives
+    each thread an interleaved set of columns covering the
+    full range, so heavy and light columns are evenly mixed.
+    `schedule(static)` (no chunk) gives thread 0 the heaviest
+    block, last thread the lightest — 2-3× imbalance.
+
+50. **Don't use `nowait` on the work-distribution `omp for`
+    when the next pragma reads cross-thread output.** The
+    implicit barrier at end of `omp for` is what protects the
+    next pragma from racing on partially-written data. `nowait`
+    only after the final consumer.
+
+## Addendum 37: etrmv / ytrmv — out-of-place buffer dissolves the in-place dependency (2026-05-21)
+
+### Context
+
+etrmv (real triangular MV) and ytrmv (complex triangular MV)
+had no OMP. Headers commented "inherently serial over j (each j
+writes to x[j] or reads x[i] from a region that earlier j's
+modified)". True only for the *in-place* algorithm: x := A·x
+updates x while iterating, so the loop order matters.
+
+Using a temporary output buffer dissolves the dependency, after
+which both transposes parallelize cleanly.
+
+### Experiment
+
+Two distinct parallel patterns depending on TRANS:
+
+- **TR='T' or 'C'**: each j produces a single output element
+  x[j] (dot product of column j with the trailing x). Different
+  j's write to different x[j] — no overlap. Single shared
+  `y_buf[N]`; each thread writes its assigned j-entries; final
+  `omp for` copies `y_buf` back to x.
+
+- **TR='N'**: rank-1 column update — each column j contributes
+  to x[i] for i > j (L) or i < j (U). Cross-thread j ranges
+  produce overlapping i write ranges. Per-thread `y_priv` +
+  reduction (esymv pattern, Add-36).
+
+`schedule(static, 1)` for triangular load balance per Rule 49.
+
+### Result
+
+etrmv OMP=4 vs OMP=1 scaling (was ~1.0× everywhere):
+
+| key  | N=128 | N=256 | N=512 | N=1024 |
+|------|-------|-------|-------|--------|
+| UNN  | 2.60× | 3.50× | 4.31× | 4.47× |
+| UTN  | 1.44× | 3.36× | 4.07× | 3.65× |
+| LNN  | 2.63× | 3.72× | 4.09× | 4.53× |
+| LTN  | 1.21× | 2.92× | 3.91× | 4.02× |
+
+ytrmv (complex):
+
+| key  | N=128 | N=256 | N=512 | N=1024 |
+|------|-------|-------|-------|--------|
+| UNN  | 3.15× | 3.46× | 3.95× | 3.86× |
+| UTN  | 2.21× | 3.74× | 3.67× | 3.44× |
+| UCN  | 2.52× | 3.62× | 3.90× | 3.56× |
+| LCU  | 2.46× | 3.16× | 3.70× | 3.61× |
+
+OMP=1 path unchanged (use_omp short-circuit).
+Fuzz clean for both (80/80 at machine precision).
+
+### Rules
+
+51. **"Inherently serial" comments deserve a fact-check.** The
+    in-place dependency on x is dissolved by allocating a
+    separate output buffer; the cost is a buffer alloc + copy
+    pass, often <5% of the parallel win. Read the comment
+    carefully — "inherently serial in-place" is a different
+    claim from "inherently serial".
+
+## Addendum 38: comprehensive OMP=1 vs OMP=4 sweep — May 2026 status (2026-05-21)
+
+### Method
+
+Bench every kind10 perf binary at OMP=1 and OMP=4 with default
+size set, unit stride, iters=50 (skip strided cells). Scaling =
+OMP4_GFs / OMP1_GFs per (routine, key, N). Per-routine median
+across all cells.
+
+### Result after Add-34/35/36/37 + L2 rank-1 hygiene
+
+Sorted by median scaling, ascending:
+
+| routine  | n  | median | min  | max  | category               |
+|----------|----|--------|------|------|------------------------|
+| ecopy    | 4  | 0.99×  | 0.98 | 1.00 | L1 memcpy, mem-bw      |
+| easum    | 4  | 1.00×  | 1.00 | 1.00 | L1                     |
+| eaxpy    | 4  | 1.00×  | 1.00 | 1.01 | L1                     |
+| edot     | 4  | 1.00×  | 1.00 | 1.00 | L1                     |
+| eswap    | 4  | 0.99×  | 0.99 | 1.06 | L1                     |
+| escal    | 4  | 1.00×  | 0.88 | 1.05 | L1                     |
+| erot     | 4  | 1.00×  | 0.96 | 1.03 | L1                     |
+| esyr     | 8  | 1.60×  | 1.22 | 1.88 | L2 sym rank-1, mem-bw  |
+| yher     | 8  | 1.64×  | 1.47 | 1.89 | L2 Herm rank-1         |
+| etrsv    | 32 | 1.68×  | 0.93 | 3.31 | L2 — Amdahl, Add-28    |
+| ygerc    | 4  | 1.96×  | 1.67 | 2.08 | L2 rank-1, mem-bw      |
+| ygeru    | 4  | 2.01×  | 1.66 | 2.38 | L2 rank-1, mem-bw      |
+| egemm    | 12 | 2.41×  | 0.97 | 3.81 | L3 — Add-34            |
+| esyrk    | 12 | 2.38×  | 1.20 | 3.91 | L3                     |
+| egemmtr  | 24 | 2.45×  | 1.15 | 3.87 | L3                     |
+| etrmv    | 32 | 2.66×  | 0.99 | 4.18 | **L2 — Add-37**        |
+| egemv    | 8  | 3.22×  | 2.16 | 3.85 | L2 — Add-34            |
+| ygemv    | 12 | 3.56×  | 3.06 | 4.03 | L2 — Add-35            |
+| esymv    | 8  | 3.64×  | 2.47 | 4.28 | **L2 — Add-36**        |
+| eger     | 4  | 3.64×  | 1.54 | 5.93 | L2 rank-1              |
+| ytrmv    | 48 | 3.59×  | 2.17 | 9.92 | **L2 — Add-37**        |
+| esymm    | 12 | 3.71×  | 1.85 | 4.00 | L3 (no change needed)  |
+| yhemv    | 8  | 3.70×  | 2.93 | 3.99 | **L2 — Add-36**        |
+| yherk    | 12 | 3.09×  | 1.94 | 3.86 | L3                     |
+| ysyrk    | 12 | 3.07×  | 2.21 | 3.94 | L3                     |
+
+### Sub-2× routines remaining (and why)
+
+- **L1 BLAS** (ecopy, eaxpy, easum, edot, escal, eswap, erot):
+  memory-bandwidth bound. OMP can't help — DRAM doesn't get
+  faster per thread. Status: accept.
+
+- **esyr / yher** (sym/Hermitian rank-1, ~1.6× median):
+  memory-bandwidth bound on the triangular A writes. Same
+  memory ceiling as the L2 GER family. Status: accept.
+
+- **etrsv** (median 1.68, max 3.31): structural Amdahl ceiling
+  M/nb on the blocked path (Add-28). At small N the blocked
+  threshold fails over to serial; at large N it scales to 2.7-
+  3.3×. Status: known structural limit, doc'd.
+
+- **ygerc / ygeru** (~2.0× median): same memory-bw story as
+  GER; rectangular A writes dominate. Status: accept.
+
+### Sub-3× routines with structural fixes possible
+
+- **esyrk / egemmtr** (median 2.38 / 2.45): outer jc-parallel
+  with serial inner egemm. At small N (jc loop count = N/nb is
+  low) parallelism is bounded. 2D `collapse(jc, gemm M-tile)`
+  would help small-N. Deferred — small-N regime is bounded
+  loss and complexity is high.
+
+- **egemm** (median 2.41, max 3.81): Add-34's M/MC tile limit
+  caps small-N. At N>=512 scales to 3.7×. Status: structural
+  limit at small N.
+
+### Big wins this session
+
+Four routines went from completely unparallelised (1.0×) to
+healthy scaling:
+
+| routine | before | after | absolute @ N=1024 OMP=4 |
+|---------|--------|-------|-------------------------|
+| esymv   | 0.98×  | 3.64× | 6.8 GFs                 |
+| yhemv   | 1.03×  | 3.70× | 9.4 GFs                 |
+| etrmv   | 1.01×  | 2.66× | 4.5 GFs                 |
+| ytrmv   | 0.99×  | 3.59× | 6.7 GFs                 |
+
+Plus egemm/ygemv N-branch improvements from Add-34/35.
+
+## Addendum 39: esyrk — full OpenBLAS DSYRK cooperative-kernel port (2026-05-21)
+
+### Problem
+
+esyrk's median OMP=1→OMP=4 scaling sat at 2.38× (Add-38 sweep).
+Worst cells were at small N: UN/LN @ N=128 cliffed at ~1.2× because
+the outer `#pragma omp parallel for schedule(dynamic, 1)` over fixed
+`nb=64` jc-blocks gave 2 jc iterations at N=128 — only 2 of 4 (or
+12) threads got work. Even at large N, the inner `egemm` call
+allocated ~2 MB packed-B and ~256 KB packed-A on every block,
+mmap-heavy.
+
+### What OpenBLAS does (driver/level3/level3_syrk_threaded.c)
+
+1. **Below threshold → serial.** `if (n < nthreads * SWITCH_RATIO)
+   SYRK_LOCAL(...); return;`. SWITCH_RATIO is 8–32 depending on
+   build. Below it, parallelism overhead dominates; just run
+   serial.
+
+2. **Quadratic N partition for cooperative work balance.** Width
+   sequence `w_t = sqrt(i_t² + N²/nthreads) - i_t` is the *same*
+   for LOWER and UPPER; the difference is purely how the array is
+   filled. LOWER fills forward (thread 0 gets the widest band at
+   the low end and dominates the diagonal triangle, no off-diag
+   contribution); UPPER fills backward (thread 0 gets the
+   narrowest band at the low end and contributes off-diag slabs
+   to every higher-index thread). Either way each thread's total
+   work — own diag triangle plus rectangles it produces using
+   OWN-row-panel × OTHER-col-panel — equals N²/(2·nthreads).
+
+3. **Each thread runs the GotoBLAS loop inline.** No recursive
+   gemm call. Per K-chunk: pack own A row panel (`sa`), pack own
+   A column panel sub-pieces (`buffer[bs]`), compute diagonal
+   block via triangle-aware kernel, then consume OTHER threads'
+   buffer pointers for off-diag rectangles.
+
+4. **Lock-free buffer-sharing via per-(producer, consumer, bs)
+   flags.** Each flag occupies one cache line. Producer writes
+   pointer = "buffer ready"; consumer clears = "buffer consumed".
+   Producer waits at top of next K iter for consumers to clear
+   before reusing the buffer slot. `DIVIDE_RATE=2` sub-buffers
+   enable producer/consumer pipelining.
+
+5. **Pre-allocated buffers per thread.** sa and buffer_pool
+   allocated once outside the K loop. No per-block malloc tax.
+
+### Port
+
+`src/parallel_blas/kind10/esyrk.c` rewritten — ~700 LOC. New
+pieces:
+
+- `pack_A_panel` / `pack_B_panel`: identical-pattern packers
+  reused from egemm but renamed; pack A^op (with optional
+  transpose) for row and col panels.
+- `kernel_2x2` / `kernel_edge` / `macro_kernel_rect`: same MR=NR=2
+  x87 stack-resident kernels as egemm.
+- `macro_kernel_tri`: NEW. Triangle-aware variant for the
+  diagonal block. Sub-tiles entirely below/above the diagonal
+  use `kernel_2x2` / `kernel_edge`; sub-tiles crossing the
+  diagonal fall back to entry-by-entry with UPLO check.
+- `syrk_quadratic_partition`: width sequence above; LOWER fills
+  forward, UPPER backward.
+- `inner_syrk`: the per-thread cooperative body. PHASE 1 packs
+  + diagonal; PHASE 2 work-steal own sa × LOWER threads' buffers
+  (LOWER) or HIGHER threads' (UPPER); PHASE 3 iterates remaining
+  own row chunks. Cleanup drain at end of K loop.
+- Flag plumbing: `flag_at` indexer + `cpu_relax`/`WMB`/`RMB`
+  helpers.
+- Serial fallback kept verbatim for small N (`N < nthreads ·
+  ESYRK_SWITCH_RATIO`) and OMP=1.
+
+`ESYRK_SWITCH_RATIO` default 16, `ESYRK_MC=64`, `ESYRK_KC=256`,
+`DIVIDE_RATE=2`. All env-overridable.
+
+### Result
+
+Fuzz: 80/80 cases pass at OMP=1/2/4/8/12, across 4 seeds = 960
+cases clean at machine precision (max abs err ~5e-19).
+
+Perf @ N=512, kind10 i7-8700 (6 P-cores + SMT, 12 threads):
+
+| key | OMP=1  | OMP=4   | OMP=8   | OMP=12  | OMP=1 mig |
+|-----|--------|---------|---------|---------|-----------|
+| UN  | 2.45   | 10.72   | 9.84    | 15.63   | 1.25      |
+| UT  | 2.14   | 10.81   | 10.81   | 16.44   | 2.16      |
+| LN  | 2.39   | 10.75   | 11.24   | 13.15   | 1.24      |
+| LT  | 2.20   | 10.78   | 11.35   | 13.05   | 2.13      |
+
+OMP=1→OMP=4 scaling = ~4.4× (near-linear on 4 P-cores).
+OMP=1→OMP=12 scaling = ~6.5× (SMT contention but still climbing).
+
+esyrk's median OMP=1→OMP=4 scaling went from **2.38× to 4.4×**.
+Absolute throughput at N=512 OMP=4 went from ~5.7 GFs to 10.7 GFs
+(1.9× over the previous structure). At N=512 OMP=12 we hit
+~16 GFs — ≈8× the migrated Fortran reference even at OMP=1, ≈12×
+at the cooperative paths.
+
+OMP=1 path is the serial blocked fallback (same code as before,
+within noise — UN/LN @ N=64–128 at 0.88×–1.04× of pre-Add-39).
+
+### Rules
+
+52. **Recursive gemm calls inside a parallel block create
+    serialization at the gemm packing layer.** Each thread
+    independently allocates and packs its own Bp/Ap inside each
+    block. Splitting one big GotoBLAS pass into N small ones
+    multiplies the packing cost by N AND prevents any
+    inter-thread sharing of the packed panels. If the trailing
+    update is GEMM-shaped, inline the GotoBLAS loop in each
+    thread instead — pre-allocate buffers once, and arrange
+    flag-based packed-buffer sharing so each row of A is packed
+    by exactly one thread per K-chunk.
+
+53. **For SYRK-shaped output (only one input matrix), the
+    cooperative pattern is: each thread produces both a row
+    panel and a col panel of A, then uses OWN row panel ×
+    OTHER thread's col panel for off-diagonal output cells.**
+    Direction follows UPLO: LOWER ⇒ consume LOWER-index
+    threads' buffers (their cols are at indices lower than
+    own rows); UPPER ⇒ HIGHER-index. The own-diagonal
+    contribution stays triangle-aware via a per-sub-tile
+    UPLO check.
+
+54. **Quadratic N partition `w = sqrt(i² + N²/nt) - i` is the
+    right balance for the cooperative kernel — but the
+    direction of fill is UPLO-dependent.** LOWER fills forward
+    (thread 0 = wide leading band, low-index cols, dominated
+    by diagonal); UPPER fills backward (thread 0 = narrow
+    leading band, low-index cols, dominated by off-diagonal
+    rectangles to higher-index threads). NEITHER UPLO mirrors
+    the naive per-col workload — total per-thread work always
+    includes off-diag contributions and only this asymmetric
+    fill makes them sum equally.
+
+55. **Lock-free flag protocol needs producer-side wait at the
+    START of next K iteration, not the end.** Otherwise a
+    fast consumer that already cleared the flag races against
+    the producer overwriting its buffer for the next K chunk.
+    OpenBLAS's pattern: producer waits for `working[i][bs] ==
+    0` before packing buffer[bs] anew; consumer always
+    clears flag AFTER kernel returns (with WMB). On x86 only
+    a compiler barrier is needed for the producer wait → buffer
+    write ordering.
+
+### Addendum 39a: same packed kernel for the OMP=1 serial path
+
+The cooperative kernel sits on a clean packed-MR×NR core. Below the
+cooperative threshold (OMP=1, or `N < nthreads · 16`), the old
+`esyrk_serial_blocked` reverted to per-jc-block beta-scale + scalar
+`syrk_diag_add` + a recursive `egemm_` call for the trailing
+rectangle. The egemm call allocated and freed ~2 MB Bp + ~256 KB Ap
+*per jc-block* — at N=512 with nb=64 that's 8 mmap-heavy alloc/free
+cycles per esyrk call.
+
+Replaced with `esyrk_serial_inline`: same packers, same MR×NR kernel,
+same `macro_kernel_tri` triangle-aware diagonal handling. One thread
+walks (jc, pc, ic); each (ic, jc) tile classifies as `skip` /
+`rect` / `tri` against the UPLO triangle. Buffers allocated once at
+entry.
+
+Perf @ N=512 OMP=1 kind10 (overlay GFs):
+
+| key | before | after | delta |
+|-----|--------|-------|-------|
+| UN  | 2.45   | 3.04  | +24%  |
+| UT  | 2.14   | 3.00  | +40%  |
+| LN  | 2.39   | 2.98  | +24%  |
+| LT  | 2.20   | 3.02  | +37%  |
+
+@ N=128 (the worst old cells):
+| UN  | 0.88   | 2.65  | +201% |
+| LN  | 1.59   | 2.88  | +81%  |
+
+This also wins for "OMP=N large but N<threshold" cases — e.g. OMP=12
+N=128 LN went from 1.36 GFs to 2.68 GFs (the cooperative threshold
+sends those to the serial inline path).
+
+Bonus: removed the `extern egemm_(...)` declaration, the scalar
+`syrk_diag_add` helper, and the `ESYRK_NB` env (replaced by `ESYRK_NC`
+for NC-block sizing — defaults to 512, same as egemm).
+
+### Rules
+
+56. **Once a packed kernel exists, the serial path should use it
+    too.** A "fall back to scalar diagonal + recursive gemm call"
+    serial path leaves perf on the floor: scalar diag misses the
+    packed kernel's stack-resident accumulators, and the recursive
+    gemm call mmaps fresh Ap/Bp per block. Reuse the same packers
+    and macro_kernel — only the threading goes away.
+
+## Addendum 40: egemmtr — same packed-inline + tile-classify treatment (2026-05-21)
+
+egemmtr had the same legacy structure as the old esyrk: per-jc-block
+beta-scale + scalar diag_add + recursive `egemm_` call for the
+trailing rectangle. The Add-38 sweep flagged it (median 2.45×) but
+the sweep's OMP=1 cells were the *worst* outliers in the whole
+catalog: N=64 had 8 cells in the 0.60–0.73× sub-parity range, the
+worst being `UTT @ N=64` at 0.598×.
+
+### Fix
+
+`egemmtr.c` rewritten with the same packed-inline pattern as
+`esyrk_serial_inline` (Add-39a) — packed `pack_A` / `pack_B`,
+MR×NR `kernel_2x2` / `kernel_edge`, triangle-aware
+`macro_kernel_tri`. The (jc, pc, ic) loop nest walks every tile;
+each tile classifies against the UPLO triangle (skip / rect / tri).
+
+Threading uses the egemm pattern (Add-34): one `omp parallel`,
+shared Bp via `omp single` once per (jc, pc), private Ap per
+thread, `omp for schedule(static, 1)` over ic so the triangular
+load — early-ic threads see more skipped tiles for LOWER, more for
+UPPER respectively — balances by interleaving.
+
+Cooperative buffer-sharing (the SYRK trick) doesn't apply here
+because A and B are independent matrices; each thread still has
+to pack its own Ap.
+
+### Result
+
+Fuzz: 720/720 cases × {OMP=1, 4, 12} × {seed 1, 42, 1000} = 9 ·
+80 = 720 cases clean.
+
+OMP=1 — worst sub-parity cells healed:
+
+| key  | N   | before | after |
+|------|-----|--------|-------|
+| UTT  | 64  | 0.598× | 1.195× |
+| UNT  | 64  | 0.715× | 1.579× |
+| LNT  | 64  | 0.717× | 1.604× |
+| LNN  | 64  | 0.730× | 1.444× |
+| UNN  | 64  | 0.732× | 1.050× |
+| UNN  | 128 | 0.78×  | 1.633× |
+| LNN  | 128 | 0.78×  | 1.628× |
+
+All 32 OMP=1 cells now ≥ 0.95× vs migrated (LTN @ N=64 at 0.954
+is the only one below 1.0×; the diagonal kernel is essentially
+matched against migrated at this size). N=512 OMP=1 absolute
+throughput went from ~2.5 GFs to ~3.0 GFs across all (UPLO, TA,
+TB) cells.
+
+OMP=4 reaches ~8 GFs at N=512 (~2.7× scaling), better than the
+pre-Add-40 median of 2.45× but lower than egemm's ~3.5× since the
+triangular work imbalance + tile-skip can't be perfectly
+balanced under static scheduling. Acceptable — the OMP=1 win is
+the structurally important one.
+
+### Rule
+
+57. **For triangular L3 routines like SYRK, GEMMTR, the packed-
+    inline + tile-classify pattern is the canonical fix.** Walk
+    (jc, pc, ic), classify each (ic, jc) tile as skip / rect /
+    tri against the UPLO constraint, and dispatch to
+    `macro_kernel_rect` or `macro_kernel_tri` (entry-by-entry
+    UPLO check only for sub-tiles that actually straddle the
+    diagonal). Don't fall back to a scalar diag + recursive-gemm-
+    call structure — every such case eventually exhibits the
+    same N=64 sub-parity cliff and the same per-block packing
+    tax.

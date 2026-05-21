@@ -32,17 +32,30 @@ void ygeru_(
 
     if (incx == 1 && incy == 1) {
 #ifdef _OPENMP
-        const int use_omp = (N >= YGERU_OMP_MIN && blas_omp_max_threads() > 1);
-        #pragma omp parallel for if(use_omp) schedule(static)
+        const int use_omp = (N >= YGERU_OMP_MIN && blas_omp_max_threads() > 1
+                             && !omp_in_parallel());
+#else
+        const int use_omp = 0;
 #endif
-        for (int j = 0; j < N; ++j) {
-            const T yj = y[j];
-            if (yj != ZERO) {
-                const T t = alpha * yj;
-                T *aj = &A_(0, j);
-                for (int i = 0; i < M; ++i) aj[i] += t * x[i];
-            }
+        /* C-source branch on use_omp (Add-16). */
+#define YGERU_BODY                                                           \
+        for (int j = 0; j < N; ++j) {                                        \
+            const T yj = y[j];                                               \
+            if (yj != ZERO) {                                                \
+                const T t = alpha * yj;                                      \
+                T *aj = &A_(0, j);                                           \
+                for (int i = 0; i < M; ++i) aj[i] += t * x[i];               \
+            }                                                                \
         }
+        if (use_omp) {
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static)
+#endif
+            YGERU_BODY
+        } else {
+            YGERU_BODY
+        }
+#undef YGERU_BODY
     } else {
         int jy = (incy < 0) ? -(N - 1) * incy : 0;
         for (int j = 0; j < N; ++j) {

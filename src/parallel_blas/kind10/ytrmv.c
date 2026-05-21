@@ -6,10 +6,18 @@
  */
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <ctype.h>
+#ifdef _OPENMP
+#include <omp.h>
+#include "../common/blas_omp.h"
+#endif
+
+#define YTRMV_OMP_MIN 128
 
 typedef _Complex long double T;
 static const T ZERO = 0.0L + 0.0Li;
+static const T ONE_C = 1.0L + 0.0Li;
 static inline T cconj(T z) { return ~z; }
 
 static inline char up(const char *p) {
@@ -36,6 +44,104 @@ void ytrmv_(
     if (N == 0) return;
 
     if (incx == 1) {
+#ifdef _OPENMP
+        const int nt = blas_omp_max_threads();
+        const int use_omp = (N >= YTRMV_OMP_MIN && nt > 1 && !omp_in_parallel());
+#else
+        const int use_omp = 0;
+        const int nt = 1;
+#endif
+        if (use_omp) {
+            /* Same dual-pattern as etrmv (Add-36 family). TR='N' uses
+             * per-thread y_priv + reduction; TR='T'/'C' writes to a
+             * single shared y_buf since each j has its own output. */
+            if (TR == 'N') {
+                T *y_priv_all = (T *)aligned_alloc(64,
+                    (((size_t)nt * N * sizeof(T)) + 63) & ~(size_t)63);
+                if (y_priv_all) {
+#ifdef _OPENMP
+                    #pragma omp parallel
+                    {
+                        const int tid = omp_get_thread_num();
+                        T *y_priv = &y_priv_all[(size_t)tid * N];
+                        for (int k = 0; k < N; ++k) y_priv[k] = ZERO;
+
+                        if (UPLO == 'L') {
+                            #pragma omp for schedule(static, 1)
+                            for (int j = 0; j < N; ++j) {
+                                const T xj = x[j];
+                                const T *aj = &A_(0, j);
+                                y_priv[j] += xj * (nounit ? aj[j] : ONE_C);
+                                for (int i = j + 1; i < N; ++i)
+                                    y_priv[i] += xj * aj[i];
+                            }
+                        } else {
+                            #pragma omp for schedule(static, 1)
+                            for (int j = 0; j < N; ++j) {
+                                const T xj = x[j];
+                                const T *aj = &A_(0, j);
+                                for (int i = 0; i < j; ++i)
+                                    y_priv[i] += xj * aj[i];
+                                y_priv[j] += xj * (nounit ? aj[j] : ONE_C);
+                            }
+                        }
+                        #pragma omp for schedule(static)
+                        for (int i = 0; i < N; ++i) {
+                            T s = ZERO;
+                            for (int t = 0; t < nt; ++t)
+                                s += y_priv_all[(size_t)t * N + i];
+                            x[i] = s;
+                        }
+                    }
+#endif
+                    free(y_priv_all);
+                    return;
+                }
+            } else {
+                /* TR = 'T' or 'C' — each j writes its own output slot. */
+                const int conj_a = (TR == 'C');
+                T *y_buf = (T *)aligned_alloc(64,
+                    (((size_t)N * sizeof(T)) + 63) & ~(size_t)63);
+                if (y_buf) {
+#ifdef _OPENMP
+                    #pragma omp parallel
+                    {
+                        if (UPLO == 'L') {
+                            #pragma omp for schedule(static, 1)
+                            for (int j = 0; j < N; ++j) {
+                                T temp = x[j];
+                                if (nounit) temp *= (conj_a ? cconj(A_(j, j)) : A_(j, j));
+                                const T *aj = &A_(0, j);
+                                if (conj_a) {
+                                    for (int i = j + 1; i < N; ++i) temp += cconj(aj[i]) * x[i];
+                                } else {
+                                    for (int i = j + 1; i < N; ++i) temp += aj[i] * x[i];
+                                }
+                                y_buf[j] = temp;
+                            }
+                        } else {
+                            #pragma omp for schedule(static, 1)
+                            for (int j = 0; j < N; ++j) {
+                                T temp = x[j];
+                                if (nounit) temp *= (conj_a ? cconj(A_(j, j)) : A_(j, j));
+                                const T *aj = &A_(0, j);
+                                if (conj_a) {
+                                    for (int i = j - 1; i >= 0; --i) temp += cconj(aj[i]) * x[i];
+                                } else {
+                                    for (int i = j - 1; i >= 0; --i) temp += aj[i] * x[i];
+                                }
+                                y_buf[j] = temp;
+                            }
+                        }
+                        #pragma omp for schedule(static)
+                        for (int i = 0; i < N; ++i) x[i] = y_buf[i];
+                    }
+#endif
+                    free(y_buf);
+                    return;
+                }
+            }
+        }
         if (TR == 'N') {
             if (UPLO == 'L') {
                 /* Inner walks backward to match Fortran ytrmv.f
