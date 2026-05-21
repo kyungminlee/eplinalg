@@ -16,9 +16,12 @@
  *       Cross-thread buffer sharing via per-(producer,consumer,bufferside)
  *       atomic flags eliminates duplicate packing of A.
  *
- *   - Scalar diag + recursive egemm fallback:
- *       Used at small N. Simple per-block beta-scale, scalar diagonal
- *       rank-k add, then one egemm call for the trailing rectangle.
+ *   - Single-thread inline GotoBLAS:
+ *       Used at OMP=1 and at small N below the cooperative threshold.
+ *       Same packers and MR×NR kernels as the cooperative path; one
+ *       thread walks (jc, pc, ic) and classifies each (ic, jc) tile
+ *       against the UPLO triangle (skip / rect / triangle-aware).
+ *       Buffers are allocated once at entry, not per block.
  */
 
 #include <stddef.h>
@@ -38,7 +41,7 @@ typedef long double T;
 #define NR 2
 #define ESYRK_MC_DEFAULT  64
 #define ESYRK_KC_DEFAULT 256
-#define ESYRK_NB_DEFAULT  64
+#define ESYRK_NC_DEFAULT 512
 
 #define ESYRK_OMP_MIN        32
 #define ESYRK_SWITCH_RATIO   16
@@ -46,8 +49,7 @@ typedef long double T;
 #define DIVIDE_RATE   2
 #define CACHE_LINE_T  8   /* 8 × sizeof(uintptr_t) = 64 bytes — one cache line */
 
-static int g_mc = 0, g_kc = 0;
-static int g_nb = 0;
+static int g_mc = 0, g_kc = 0, g_nc = 0;
 static int g_switch_ratio = 0;
 
 static int env_int(const char *name, int dflt) {
@@ -61,7 +63,7 @@ __attribute__((constructor))
 static void esyrk_init(void) {
     g_mc = env_int("ESYRK_MC", ESYRK_MC_DEFAULT);
     g_kc = env_int("ESYRK_KC", ESYRK_KC_DEFAULT);
-    g_nb = env_int("ESYRK_NB", ESYRK_NB_DEFAULT);
+    g_nc = env_int("ESYRK_NC", ESYRK_NC_DEFAULT);
     g_switch_ratio = env_int("ESYRK_SWITCH_RATIO", ESYRK_SWITCH_RATIO);
 }
 
@@ -74,58 +76,6 @@ static inline int imin(int a, int b) { return a < b ? a : b; }
 
 #define A_(i, j)  a[(size_t)(j) * lda + (i)]
 #define C_(i, j)  c[(size_t)(j) * ldc + (i)]
-
-extern void egemm_(
-    const char *transa, const char *transb,
-    const int *m, const int *n, const int *k,
-    const T *alpha,
-    const T *a, const int *lda,
-    const T *b, const int *ldb,
-    const T *beta,
-    T *c, const int *ldc,
-    size_t transa_len, size_t transb_len);
-
-/* ─── Diagonal-block scalar rank-k add (fallback path) ─────────── */
-
-static void syrk_diag_add(int jc, int jb, int K, T alpha,
-                          const T *restrict a, int lda,
-                          T *restrict c, int ldc,
-                          char UPLO, int TR)
-{
-    if (TR == 'N') {
-        for (int j = jc; j < jc + jb; ++j) {
-            const int i_lo = (UPLO == 'L') ? j     : jc;
-            const int i_hi = (UPLO == 'L') ? jc+jb : j + 1;
-            T *cj = c + (size_t)j * ldc;
-            for (int l = 0; l < K; ++l) {
-                const T ajl = A_(j, l);
-                if (ajl != 0.0L) {
-                    const T t = alpha * ajl;
-                    for (int i = i_lo; i < i_hi; ++i) cj[i] += t * A_(i, l);
-                }
-            }
-        }
-    } else {
-        for (int j = jc; j < jc + jb; ++j) {
-            const int i_lo = (UPLO == 'L') ? j     : jc;
-            const int i_hi = (UPLO == 'L') ? jc+jb : j + 1;
-            T *cj = c + (size_t)j * ldc;
-            const T *Aj = a + (size_t)j * lda;
-            for (int i = i_lo; i < i_hi; ++i) {
-                const T *Ai = a + (size_t)i * lda;
-                T s0 = 0.0L, s1 = 0.0L;
-                int l = 0;
-                for (; l + 1 < K; l += 2) {
-                    s0 += Ai[l]     * Aj[l];
-                    s1 += Ai[l + 1] * Aj[l + 1];
-                }
-                T s = s0 + s1;
-                for (; l < K; ++l) s += Ai[l] * Aj[l];
-                cj[i] += alpha * s;
-            }
-        }
-    }
-}
 
 /* ─── GotoBLAS packers + MR×NR micro-kernel (mirrors egemm) ───── */
 
@@ -644,68 +594,117 @@ static void inner_syrk(int N, int K, T alpha, char UPLO, char TR,
     }
 }
 
-/* ─── Fallback serial blocked path (small N) ───────────────────── */
-
-static void esyrk_serial_blocked(char UPLO, char TR, int N, int K,
-                                 T alpha, const T *restrict a, int lda,
-                                 T beta, T *restrict c, int ldc, int nb)
+/* ─── Inline single-thread GotoBLAS path (OMP=1 / N below cooperative
+ *      threshold). Same MR×NR kernel as the cooperative path, but with
+ *      no flag plumbing: one thread walks the (jc, pc, ic) nest and
+ *      classifies each (ic, jc) tile against the UPLO triangle.
+ *
+ *      Three classes:
+ *        skip   — tile entirely outside the stored triangle
+ *        rect   — tile entirely inside (off-diagonal); rectangular kernel
+ *        tri    — tile crosses the diagonal; triangle-aware kernel
+ *      Tiles in 'rect' use the dense 2×2 outer-product kernel; 'tri'
+ *      falls back to per-entry UPLO checks for the sub-tiles that
+ *      actually straddle the diagonal.
+ *
+ *      Buffers (Ap, Bp) are allocated once at function entry. The old
+ *      per-jc-block egemm_ call mmap'd and freed ~2 MB Bp + ~256 KB Ap
+ *      on every block; inlining absorbs that. */
+static void esyrk_serial_inline(char UPLO, char TR, int N, int K,
+                                T alpha, const T *restrict a, int lda,
+                                T beta, T *restrict c, int ldc)
 {
     const T zero = 0.0L, one = 1.0L;
-    const char NN[1] = {'N'};
-    const char TN[1] = {'T'};
 
-    for (int jc = 0; jc < N; jc += nb) {
-        const int jb = (N - jc < nb) ? (N - jc) : nb;
-
-        /* (1) beta-scale this block's UPLO slice */
-        for (int j = jc; j < jc + jb; ++j) {
+    /* Beta-scale the UPLO triangle of C first. */
+    if (beta != one) {
+        for (int j = 0; j < N; ++j) {
             const int i_lo = (UPLO == 'L') ? j : 0;
             const int i_hi = (UPLO == 'L') ? N : j + 1;
             T *cj = c + (size_t)j * ldc;
-            if (beta == zero)      for (int i = i_lo; i < i_hi; ++i) cj[i]  = zero;
-            else if (beta != one)  for (int i = i_lo; i < i_hi; ++i) cj[i] *= beta;
+            if (beta == zero) for (int i = i_lo; i < i_hi; ++i) cj[i] = zero;
+            else              for (int i = i_lo; i < i_hi; ++i) cj[i] *= beta;
         }
+    }
 
-        /* (2) diagonal block */
-        syrk_diag_add(jc, jb, K, alpha, a, lda, c, ldc, UPLO, TR);
+    if (alpha == zero || K == 0) return;
 
-        /* (3) off-diagonal trailing via egemm */
-        if (UPLO == 'L') {
-            const int trailing = N - jc - jb;
-            if (trailing > 0) {
-                const int j0 = jc + jb;
+    const int MC = g_mc, KC = g_kc;
+    int NC = g_nc;
+    if (NC > N) NC = N;
+    if (NC < NR) NC = NR;
+
+    const int sa_rows = round_up(MC, MR);
+    const int sb_cols = round_up(NC, NR);
+    const size_t ap_bytes = (size_t)sa_rows * KC * sizeof(T);
+    const size_t bp_bytes = (size_t)KC * sb_cols * sizeof(T);
+
+    T *Ap = aligned_alloc(64, (ap_bytes + 63) & ~(size_t)63);
+    T *Bp = aligned_alloc(64, (bp_bytes + 63) & ~(size_t)63);
+    if (!Ap || !Bp) {
+        /* OOM — last-ditch O(N²·K) scalar fallback. */
+        free(Ap); free(Bp);
+        for (int j = 0; j < N; ++j) {
+            const int i_lo = (UPLO == 'L') ? j : 0;
+            const int i_hi = (UPLO == 'L') ? N : j + 1;
+            T *cj = c + (size_t)j * ldc;
+            for (int i = i_lo; i < i_hi; ++i) {
+                T s = zero;
                 if (TR == 'N') {
-                    egemm_(NN, TN, &trailing, &jb, &K, &alpha,
-                           &A_(j0, 0), &lda,
-                           &A_(jc, 0), &lda,
-                           &one,
-                           &C_(j0, jc), &ldc, 1, 1);
+                    for (int l = 0; l < K; ++l)
+                        s += a[(size_t)l * lda + i] * a[(size_t)l * lda + j];
                 } else {
-                    egemm_(TN, NN, &trailing, &jb, &K, &alpha,
-                           &A_(0, j0), &lda,
-                           &A_(0, jc), &lda,
-                           &one,
-                           &C_(j0, jc), &ldc, 1, 1);
+                    for (int l = 0; l < K; ++l)
+                        s += a[(size_t)i * lda + l] * a[(size_t)j * lda + l];
                 }
+                cj[i] += alpha * s;
             }
-        } else {
-            if (jc > 0) {
-                if (TR == 'N') {
-                    egemm_(NN, TN, &jc, &jb, &K, &alpha,
-                           &A_(0, 0), &lda,
-                           &A_(jc, 0), &lda,
-                           &one,
-                           &C_(0, jc), &ldc, 1, 1);
+        }
+        return;
+    }
+
+    /* Standard GotoBLAS loop nest: jc (output cols) → pc (depth) → ic
+     * (output rows). Bp packed once per (jc, pc); Ap repacked per
+     * (ic, pc). */
+    for (int jc = 0; jc < N; jc += NC) {
+        const int jb = imin(NC, N - jc);
+        for (int pc = 0; pc < K; pc += KC) {
+            const int pb = imin(KC, K - pc);
+
+            pack_B_panel(a, lda, jc, pc, jb, pb, TR, Bp);
+
+            for (int ic = 0; ic < N; ic += MC) {
+                const int ib = imin(MC, N - ic);
+
+                /* Tile classification against UPLO triangle. */
+                int tile_class;
+                if (UPLO == 'L') {
+                    if (ic + ib <= jc)        tile_class = 0;  /* all i < j: skip */
+                    else if (ic >= jc + jb)   tile_class = 2;  /* all i > j: rect */
+                    else                      tile_class = 1;  /* crosses diag */
                 } else {
-                    egemm_(TN, NN, &jc, &jb, &K, &alpha,
-                           &A_(0, 0), &lda,
-                           &A_(0, jc), &lda,
-                           &one,
-                           &C_(0, jc), &ldc, 1, 1);
+                    if (ic >= jc + jb)        tile_class = 0;  /* all i > j: skip */
+                    else if (ic + ib <= jc)   tile_class = 2;  /* all i < j: rect */
+                    else                      tile_class = 1;
+                }
+                if (tile_class == 0) continue;
+
+                pack_A_panel(a, lda, ic, pc, ib, pb, TR, Ap);
+
+                if (tile_class == 1) {
+                    macro_kernel_tri(ib, jb, pb, alpha, Ap, Bp,
+                                     &c[(size_t)jc * ldc + ic], ldc,
+                                     ic, jc, UPLO);
+                } else {
+                    macro_kernel_rect(ib, jb, pb, alpha, Ap, Bp,
+                                      &c[(size_t)jc * ldc + ic], ldc);
                 }
             }
         }
     }
+
+    free(Ap);
+    free(Bp);
 }
 
 /* ─── Entry point ──────────────────────────────────────────────── */
@@ -763,7 +762,7 @@ void esyrk_(
 #endif
 
     if (!use_cooperative) {
-        esyrk_serial_blocked(UPLO, TR, N, K, alpha, a, lda, beta, c, ldc, g_nb);
+        esyrk_serial_inline(UPLO, TR, N, K, alpha, a, lda, beta, c, ldc);
         return;
     }
 
@@ -774,7 +773,7 @@ void esyrk_(
     /* Partition own col bands. */
     int *range = (int *)malloc((size_t)(nt + 1) * sizeof(int));
     if (!range) {
-        esyrk_serial_blocked(UPLO, TR, N, K, alpha, a, lda, beta, c, ldc, g_nb);
+        esyrk_serial_inline(UPLO, TR, N, K, alpha, a, lda, beta, c, ldc);
         return;
     }
     syrk_quadratic_partition(N, nt, MR - 1, UPLO, range);
@@ -790,7 +789,7 @@ void esyrk_(
     }
     if (min_w <= 0) {
         free(range);
-        esyrk_serial_blocked(UPLO, TR, N, K, alpha, a, lda, beta, c, ldc, g_nb);
+        esyrk_serial_inline(UPLO, TR, N, K, alpha, a, lda, beta, c, ldc);
         return;
     }
     const int buf_div_n = round_up((max_w + DIVIDE_RATE - 1) / DIVIDE_RATE, NR);
@@ -802,7 +801,7 @@ void esyrk_(
             ((flag_count * sizeof(uintptr_t)) + 63) & ~(size_t)63);
     if (!flags) {
         free(range);
-        esyrk_serial_blocked(UPLO, TR, N, K, alpha, a, lda, beta, c, ldc, g_nb);
+        esyrk_serial_inline(UPLO, TR, N, K, alpha, a, lda, beta, c, ldc);
         return;
     }
     memset((void *)flags, 0, flag_count * sizeof(uintptr_t));
@@ -864,11 +863,10 @@ void esyrk_(
 
     if (alloc_failed) {
         /* Lost the parallel run to OOM — re-run via the serial fallback so
-         * the caller still gets a correct C. C is partially-scaled but the
-         * serial path's per-block beta is idempotent once C is fully scaled. */
-        esyrk_serial_blocked(UPLO, TR, N, K, alpha, a, lda, one, c, ldc, g_nb);
-        /* NB: above passes beta=1 since we already scaled C in the parallel
-         * section before any thread hit OOM. */
+         * the caller still gets a correct C. The parallel section already
+         * beta-scaled each thread's own column band before any thread hit
+         * OOM, so pass beta=1 here to avoid double-scaling. */
+        esyrk_serial_inline(UPLO, TR, N, K, alpha, a, lda, one, c, ldc);
     }
 }
 

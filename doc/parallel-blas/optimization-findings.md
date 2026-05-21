@@ -3868,3 +3868,49 @@ within noise — UN/LN @ N=64–128 at 0.88×–1.04× of pre-Add-39).
     clears flag AFTER kernel returns (with WMB). On x86 only
     a compiler barrier is needed for the producer wait → buffer
     write ordering.
+
+### Addendum 39a: same packed kernel for the OMP=1 serial path
+
+The cooperative kernel sits on a clean packed-MR×NR core. Below the
+cooperative threshold (OMP=1, or `N < nthreads · 16`), the old
+`esyrk_serial_blocked` reverted to per-jc-block beta-scale + scalar
+`syrk_diag_add` + a recursive `egemm_` call for the trailing
+rectangle. The egemm call allocated and freed ~2 MB Bp + ~256 KB Ap
+*per jc-block* — at N=512 with nb=64 that's 8 mmap-heavy alloc/free
+cycles per esyrk call.
+
+Replaced with `esyrk_serial_inline`: same packers, same MR×NR kernel,
+same `macro_kernel_tri` triangle-aware diagonal handling. One thread
+walks (jc, pc, ic); each (ic, jc) tile classifies as `skip` /
+`rect` / `tri` against the UPLO triangle. Buffers allocated once at
+entry.
+
+Perf @ N=512 OMP=1 kind10 (overlay GFs):
+
+| key | before | after | delta |
+|-----|--------|-------|-------|
+| UN  | 2.45   | 3.04  | +24%  |
+| UT  | 2.14   | 3.00  | +40%  |
+| LN  | 2.39   | 2.98  | +24%  |
+| LT  | 2.20   | 3.02  | +37%  |
+
+@ N=128 (the worst old cells):
+| UN  | 0.88   | 2.65  | +201% |
+| LN  | 1.59   | 2.88  | +81%  |
+
+This also wins for "OMP=N large but N<threshold" cases — e.g. OMP=12
+N=128 LN went from 1.36 GFs to 2.68 GFs (the cooperative threshold
+sends those to the serial inline path).
+
+Bonus: removed the `extern egemm_(...)` declaration, the scalar
+`syrk_diag_add` helper, and the `ESYRK_NB` env (replaced by `ESYRK_NC`
+for NC-block sizing — defaults to 512, same as egemm).
+
+### Rules
+
+56. **Once a packed kernel exists, the serial path should use it
+    too.** A "fall back to scalar diagonal + recursive gemm call"
+    serial path leaves perf on the floor: scalar diag misses the
+    packed kernel's stack-resident accumulators, and the recursive
+    gemm call mmaps fresh Ap/Bp per block. Reuse the same packers
+    and macro_kernel — only the threading goes away.
