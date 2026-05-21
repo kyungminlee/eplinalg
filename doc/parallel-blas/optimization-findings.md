@@ -3217,3 +3217,129 @@ After this fix the L3 OMP map is uniform: SIDE='L' uses column-
 partition, SIDE='R' uses row-partition, and every routine in
 {e,y,q,x,m,w}trsm has both. The OMP scaling sweep is now flat at
 ~3.5-4.0x across L3 (Amdahl-capped at 6 P-cores).
+
+## Addendum 33: Add-30 catalog re-verification — Rule 30 catches the rest (2026-05-21)
+
+### Motivation
+
+Stop-hook flagged that Addendum 30's "filter-before-investigate"
+Rule 43 had let ~250 cells be dismissed by category match instead of
+re-verified per-routine. Walked the catalog again, this time with
+Rule 30 discipline (≥5 trials, iters≥20000 at small N), to confirm
+each was actually structural and not just bench noise.
+
+### What changed when re-bench discipline was applied
+
+Bench iters mattered more than expected:
+
+```
+Routine cluster                  iters=200    iters=1000    iters≥20000 (5+ trial)
+                                 (Add-30)     (1-trial)     (median)
+─────────────────────────────────────────────────────────────────────────────────
+esbmv unit-stride L N=128        0.775        0.995         1.04
+esbmv unit-stride U N=128        0.878        1.035         1.02
+esbmv strided (all sizes)        0.91         0.86-0.95     0.89-0.93  ← structural
+espmv unit-stride L N=128        0.768        1.05          1.04
+espmv strided (all sizes)        ~0.90        0.86-0.95     0.89-0.92  ← structural
+esymv strided                    0.93         0.84-0.96     0.89-0.93  ← structural
+etbmv UNN N=128                  0.92         0.92          0.97
+etbmv LTN N=128                  0.95         0.37          0.99       ← was pure noise
+etbmv UTU N=512                  0.95         0.93          1.10
+ygbmv N N=128                    0.95         0.83-0.89     0.99       ← was noise
+ygbmv T/x-1/y-1 N=512            0.95         0.91          0.94       ← structural
+ytbsv all                        0.95         0.84-0.99     0.94-1.0
+ytpsv L/U                        0.93         0.95-1.0      1.0
+easum                            0.95         (ratio inverted; see below)
+```
+
+The pattern: **iters=200 catches one class of noise, iters=1000 catches
+a different class, only iters≥20000 with 5+ trials reveals the true
+distribution**. Cells that look structural at iters=1000 can be at
+parity at iters=20000 (etbmv LTN N=128 went from 0.37 to 0.99). Cells
+at parity at iters=1000 can be sub-parity at iters=20000 (the s\*mv
+strided ~10% gap is more visible at high iters where the inner-loop
+overhead amortizes).
+
+### A genuine fix surfaced: esymv/qsymv strided index-recompute
+
+The re-walk caught an anti-pattern in `esymv` and `qsymv` strided
+fallbacks that the iters=200 noise had been masking. Both recomputed
+`kx + k*incx` and `ky + k*incy` inside the inner loop:
+
+```c
+for (int k = i + 1; k < N; ++k) {
+    y[ky + k * incy] += temp1 * A_(k, i);   ← multiply per iter
+    temp2 += A_(k, i) * x[kx + k * incx];
+}
+```
+
+The Netlib Fortran reference (`DSYMV`) uses incrementing IX/IY:
+
+```fortran
+DO 90 I = 1,J - 1
+    Y(IY) = Y(IY) + TEMP1*A(I,J)
+    TEMP2 = TEMP2 + A(I,J)*X(IX)
+    IX = IX + INCX
+    IY = IY + INCY
+   90 CONTINUE
+```
+
+Sister routines `esbmv` and `espmv` already use the increment-based
+form. Converting esymv/qsymv to match gave a modest but consistent
+win on L-branch unit-stride (esymv L N=256 went from 0.949 → 1.00+).
+Strided cases stayed at the Addendum 22 ceiling — that gap is in the
+outer-loop setup, not in the inner.
+
+Committed as `parallel-blas: esymv/qsymv strided — increment-based ix/iy`.
+
+### easum was mis-classified as bandwidth-bound
+
+Addendum 30's table listed "kind10 easum N≥1024 — memory bandwidth
+limit (4 cells)". Re-bench at iters=2000+ shows overlay is **4-9×
+faster** than migrated (ratio = `t_mg/t_ov` so values >1 mean overlay
+wins):
+
+```
+easum N=64    ratio = 4.27
+easum N=512   ratio = 5.59
+easum N=1024  ratio = 9.88
+easum N=4096  ratio = 8.89
+```
+
+The original sweep's iters=200 caught variance-dominated cells where
+absolute timings were too short to discriminate the two
+implementations. With proper iters the overlay's `restrict`-annotated
+loop crushes the migrated build's aliased reads. **Not sub-parity;
+remove from the catalog.**
+
+### What remains genuinely sub-parity (and why it stays)
+
+After Rule 30 discipline applied per-cell, the surviving sub-parity
+cells fall into exactly two documented categories:
+
+1. **s\*mv strided fallback (Add-22 family, ~180 cells across kind10
+   esbmv/espmv/esymv and kind16 qsymv/qspmv).** ~10% gap, 5-trial
+   median 0.89-0.93. The outer-loop setup overhead (one extra mul per
+   index per outer iter) is gcc-vs-gfortran codegen ceiling for
+   strided long-double, not addressable from C. Documented in
+   Addendum 22 with asm proof.
+
+2. **ygbmv T/x-strided (Add-24 follow-up, ~14 cells).** 10-trial
+   median 0.94. The outer-loop dep chain (alpha*s reduction at the
+   end of each outer iter) bounds the throughput; the inner-loop asm
+   already wins. Tag-and-stop per the Add-24 follow-up disposition.
+
+Every other cell from the Addendum 30 catalog — 6 of 8 listed clusters,
+~70+ cells — was bench noise. After Addendum 25 / Rule 30 (≥20000
+iters at small N, ≥5 trials), they are at parity or better.
+
+### Rule
+
+44. **Rule 30 sweeps still need 5+ trials at iters≥20000 to declare
+    structural sub-parity.** The original Add-30 sweep used iters=200
+    and read 1-3 trial values, mis-classifying ~70 cells as
+    structurally sub-parity when they were variance. **Filter-by-
+    category (Rule 43) is not a substitute for re-bench-by-cell.**
+    Cluster-shape matching tells you what tradition of failure a
+    cell *might* fit; only a 5-trial high-iter rerun tells you which
+    cells are *actually* sub-parity.
