@@ -126,79 +126,84 @@ static inline void ytrsm_luTC_core(int j_start, int j_end, int M, T alpha,
     }
 }
 
-/* ── SIDE = 'R' cores (scalar, no coarse-N). */
+/* ── SIDE = 'R' row-range cores ───────────────────────────────────
+ *
+ * The j (column) loop walks the diagonal serially (each B[:,j] depends
+ * on prior B[:,k]), but within each step every row of B is processed
+ * identically. Each thread owns a disjoint row slice [i_start, i_end)
+ * of B and reads shared A read-only — race-free, no barriers needed. */
 
-static void ytrsm_rln_core(int M, int N, T alpha,
-                           const T *a, int lda, T *b, int ldb, int nounit)
+static inline void ytrsm_rln_core(int i_start, int i_end, int N, T alpha,
+                                  const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int j = N - 1; j >= 0; --j) {
-        if (alpha != ONE) for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
+        if (alpha != ONE) for (int i = i_start; i < i_end; ++i) B_(i, j) *= alpha;
         for (int k = j + 1; k < N; ++k) {
             if (A_(k, j) != ZERO) {
                 const T akj = A_(k, j);
-                for (int i = 0; i < M; ++i) B_(i, j) -= akj * B_(i, k);
+                for (int i = i_start; i < i_end; ++i) B_(i, j) -= akj * B_(i, k);
             }
         }
         if (nounit) {
             const T inv = ONE / A_(j, j);
-            for (int i = 0; i < M; ++i) B_(i, j) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, j) *= inv;
         }
     }
 }
 
-static void ytrsm_run_core(int M, int N, T alpha,
-                           const T *a, int lda, T *b, int ldb, int nounit)
+static inline void ytrsm_run_core(int i_start, int i_end, int N, T alpha,
+                                  const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int j = 0; j < N; ++j) {
-        if (alpha != ONE) for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
+        if (alpha != ONE) for (int i = i_start; i < i_end; ++i) B_(i, j) *= alpha;
         for (int k = 0; k < j; ++k) {
             if (A_(k, j) != ZERO) {
                 const T akj = A_(k, j);
-                for (int i = 0; i < M; ++i) B_(i, j) -= akj * B_(i, k);
+                for (int i = i_start; i < i_end; ++i) B_(i, j) -= akj * B_(i, k);
             }
         }
         if (nounit) {
             const T inv = ONE / A_(j, j);
-            for (int i = 0; i < M; ++i) B_(i, j) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, j) *= inv;
         }
     }
 }
 
-static void ytrsm_rlTC_core(int M, int N, T alpha,
-                            const T *a, int lda, T *b, int ldb,
-                            int nounit, int conj_flag)
+static inline void ytrsm_rlTC_core(int i_start, int i_end, int N, T alpha,
+                                   const T *a, int lda, T *b, int ldb,
+                                   int nounit, int conj_flag)
 {
     for (int k = 0; k < N; ++k) {
         if (nounit) {
             const T inv = ONE / A_op(a, lda, k, k, conj_flag);
-            for (int i = 0; i < M; ++i) B_(i, k) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, k) *= inv;
         }
         for (int j = k + 1; j < N; ++j) {
             const T ajk = A_op(a, lda, j, k, conj_flag);
             if (ajk != ZERO) {
-                for (int i = 0; i < M; ++i) B_(i, j) -= ajk * B_(i, k);
+                for (int i = i_start; i < i_end; ++i) B_(i, j) -= ajk * B_(i, k);
             }
         }
-        if (alpha != ONE) for (int i = 0; i < M; ++i) B_(i, k) *= alpha;
+        if (alpha != ONE) for (int i = i_start; i < i_end; ++i) B_(i, k) *= alpha;
     }
 }
 
-static void ytrsm_ruTC_core(int M, int N, T alpha,
-                            const T *a, int lda, T *b, int ldb,
-                            int nounit, int conj_flag)
+static inline void ytrsm_ruTC_core(int i_start, int i_end, int N, T alpha,
+                                   const T *a, int lda, T *b, int ldb,
+                                   int nounit, int conj_flag)
 {
     for (int k = N - 1; k >= 0; --k) {
         if (nounit) {
             const T inv = ONE / A_op(a, lda, k, k, conj_flag);
-            for (int i = 0; i < M; ++i) B_(i, k) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, k) *= inv;
         }
         for (int j = 0; j < k; ++j) {
             const T ajk = A_op(a, lda, j, k, conj_flag);
             if (ajk != ZERO) {
-                for (int i = 0; i < M; ++i) B_(i, j) -= ajk * B_(i, k);
+                for (int i = i_start; i < i_end; ++i) B_(i, j) -= ajk * B_(i, k);
             }
         }
-        if (alpha != ONE) for (int i = 0; i < M; ++i) B_(i, k) *= alpha;
+        if (alpha != ONE) for (int i = i_start; i < i_end; ++i) B_(i, k) *= alpha;
     }
 }
 
@@ -252,13 +257,56 @@ YTRSM_OMP_WRAP_TC(ytrsm_lut, ytrsm_luTC_core, 0)
 YTRSM_OMP_WRAP_TC(ytrsm_llc, ytrsm_llTC_core, 1)
 YTRSM_OMP_WRAP_TC(ytrsm_luc, ytrsm_luTC_core, 1)
 
-/* SIDE='R' direct entries. */
-static void ytrsm_rln(int M, int N, T a_, const T *a, int lda, T *b, int ldb, int n) { ytrsm_rln_core(M, N, a_, a, lda, b, ldb, n); }
-static void ytrsm_run(int M, int N, T a_, const T *a, int lda, T *b, int ldb, int n) { ytrsm_run_core(M, N, a_, a, lda, b, ldb, n); }
-static void ytrsm_rlt(int M, int N, T a_, const T *a, int lda, T *b, int ldb, int n) { ytrsm_rlTC_core(M, N, a_, a, lda, b, ldb, n, 0); }
-static void ytrsm_rut(int M, int N, T a_, const T *a, int lda, T *b, int ldb, int n) { ytrsm_ruTC_core(M, N, a_, a, lda, b, ldb, n, 0); }
-static void ytrsm_rlc(int M, int N, T a_, const T *a, int lda, T *b, int ldb, int n) { ytrsm_rlTC_core(M, N, a_, a, lda, b, ldb, n, 1); }
-static void ytrsm_ruc(int M, int N, T a_, const T *a, int lda, T *b, int ldb, int n) { ytrsm_ruTC_core(M, N, a_, a, lda, b, ldb, n, 1); }
+/* SIDE='R' OMP wrappers: one parallel region partitions the M (row)
+ * axis. Gates on M (the partition axis) >= YTRSM_OMP_N_MIN. */
+#ifdef _OPENMP
+#define YTRSM_OMP_WRAP_R(name, core)                                        \
+    static void name(int M, int N, T alpha,                                 \
+                     const T *a, int lda, T *b, int ldb, int nounit) {      \
+        if (M >= YTRSM_OMP_N_MIN && blas_omp_max_threads() > 1              \
+                                && !omp_in_parallel()) {                    \
+            _Pragma("omp parallel") {                                       \
+                int tid = omp_get_thread_num();                             \
+                int nt  = omp_get_num_threads();                            \
+                int is  = (int)((long long)M * tid / nt);                   \
+                int ie  = (int)((long long)M * (tid + 1) / nt);             \
+                core(is, ie, N, alpha, a, lda, b, ldb, nounit);             \
+            }                                                               \
+        } else { core(0, M, N, alpha, a, lda, b, ldb, nounit); }            \
+    }
+#define YTRSM_OMP_WRAP_R_TC(name, core, cflag)                              \
+    static void name(int M, int N, T alpha,                                 \
+                     const T *a, int lda, T *b, int ldb, int nounit) {      \
+        if (M >= YTRSM_OMP_N_MIN && blas_omp_max_threads() > 1              \
+                                && !omp_in_parallel()) {                    \
+            _Pragma("omp parallel") {                                       \
+                int tid = omp_get_thread_num();                             \
+                int nt  = omp_get_num_threads();                            \
+                int is  = (int)((long long)M * tid / nt);                   \
+                int ie  = (int)((long long)M * (tid + 1) / nt);             \
+                core(is, ie, N, alpha, a, lda, b, ldb, nounit, cflag);      \
+            }                                                               \
+        } else { core(0, M, N, alpha, a, lda, b, ldb, nounit, cflag); }     \
+    }
+#else
+#define YTRSM_OMP_WRAP_R(name, core)                                        \
+    static void name(int M, int N, T alpha,                                 \
+                     const T *a, int lda, T *b, int ldb, int nounit) {      \
+        core(0, M, N, alpha, a, lda, b, ldb, nounit);                       \
+    }
+#define YTRSM_OMP_WRAP_R_TC(name, core, cflag)                              \
+    static void name(int M, int N, T alpha,                                 \
+                     const T *a, int lda, T *b, int ldb, int nounit) {      \
+        core(0, M, N, alpha, a, lda, b, ldb, nounit, cflag);                \
+    }
+#endif
+
+YTRSM_OMP_WRAP_R   (ytrsm_rln, ytrsm_rln_core)
+YTRSM_OMP_WRAP_R   (ytrsm_run, ytrsm_run_core)
+YTRSM_OMP_WRAP_R_TC(ytrsm_rlt, ytrsm_rlTC_core, 0)
+YTRSM_OMP_WRAP_R_TC(ytrsm_rut, ytrsm_ruTC_core, 0)
+YTRSM_OMP_WRAP_R_TC(ytrsm_rlc, ytrsm_rlTC_core, 1)
+YTRSM_OMP_WRAP_R_TC(ytrsm_ruc, ytrsm_ruTC_core, 1)
 
 /* ── Blocked SIDE='L' variants. */
 

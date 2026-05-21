@@ -320,89 +320,125 @@ static void blocked_lut(int M, int N, T alpha,
     blocked_dispatch(LUT, M, N, alpha, a, lda, b, ldb, nounit);
 }
 
-/* ── SIDE = 'R': solve X op(A) = α B, A is N×N, B is M×N ───────── */
+/* ── SIDE = 'R': solve X op(A) = α B, A is N×N, B is M×N ─────────
+ *
+ * R-side cores partition the M (row) axis: the j (column) loop walks
+ * the diagonal serially (each B[:,j] depends on prior B[:,k]), but
+ * within each step every row of B is processed identically. Each
+ * thread owns a disjoint row slice [i_start, i_end) of B and reads
+ * shared A read-only — race-free, no barriers needed. */
 
 /* (R, L, N): solve X · A = α B, A lower triangular.
  * Equivalent to back-substitution on columns of B from j = N-1 down. */
-static void trsm_rln(int M, int N, T alpha,
-                     const T *a, int lda, T *b, int ldb, int nounit)
+static inline void trsm_rln_core(int i_start, int i_end, int N, T alpha,
+                                 const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int j = N - 1; j >= 0; --j) {
-        if (alpha != 1.0L) for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
+        if (alpha != 1.0L) for (int i = i_start; i < i_end; ++i) B_(i, j) *= alpha;
         for (int k = j + 1; k < N; ++k) {
             if (A_(k, j) != 0.0L) {
                 const T akj = A_(k, j);
-                for (int i = 0; i < M; ++i)
+                for (int i = i_start; i < i_end; ++i)
                     B_(i, j) -= akj * B_(i, k);
             }
         }
         if (nounit) {
             const T inv = 1.0L / A_(j, j);
-            for (int i = 0; i < M; ++i) B_(i, j) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, j) *= inv;
         }
     }
 }
 
 /* (R, U, N): solve X · A = α B, A upper triangular.
  * Forward-sub on columns of B from j = 0 up. */
-static void trsm_run(int M, int N, T alpha,
-                     const T *a, int lda, T *b, int ldb, int nounit)
+static inline void trsm_run_core(int i_start, int i_end, int N, T alpha,
+                                 const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int j = 0; j < N; ++j) {
-        if (alpha != 1.0L) for (int i = 0; i < M; ++i) B_(i, j) *= alpha;
+        if (alpha != 1.0L) for (int i = i_start; i < i_end; ++i) B_(i, j) *= alpha;
         for (int k = 0; k < j; ++k) {
             if (A_(k, j) != 0.0L) {
                 const T akj = A_(k, j);
-                for (int i = 0; i < M; ++i)
+                for (int i = i_start; i < i_end; ++i)
                     B_(i, j) -= akj * B_(i, k);
             }
         }
         if (nounit) {
             const T inv = 1.0L / A_(j, j);
-            for (int i = 0; i < M; ++i) B_(i, j) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, j) *= inv;
         }
     }
 }
 
 /* (R, L, T): solve X · Aᵀ = α B, A lower. */
-static void trsm_rlt(int M, int N, T alpha,
-                     const T *a, int lda, T *b, int ldb, int nounit)
+static inline void trsm_rlt_core(int i_start, int i_end, int N, T alpha,
+                                 const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int k = 0; k < N; ++k) {
         if (nounit) {
             const T inv = 1.0L / A_(k, k);
-            for (int i = 0; i < M; ++i) B_(i, k) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, k) *= inv;
         }
         for (int j = k + 1; j < N; ++j) {
             if (A_(j, k) != 0.0L) {
                 const T ajk = A_(j, k);
-                for (int i = 0; i < M; ++i)
+                for (int i = i_start; i < i_end; ++i)
                     B_(i, j) -= ajk * B_(i, k);
             }
         }
-        if (alpha != 1.0L) for (int i = 0; i < M; ++i) B_(i, k) *= alpha;
+        if (alpha != 1.0L) for (int i = i_start; i < i_end; ++i) B_(i, k) *= alpha;
     }
 }
 
 /* (R, U, T): solve X · Aᵀ = α B, A upper. */
-static void trsm_rut(int M, int N, T alpha,
-                     const T *a, int lda, T *b, int ldb, int nounit)
+static inline void trsm_rut_core(int i_start, int i_end, int N, T alpha,
+                                 const T *a, int lda, T *b, int ldb, int nounit)
 {
     for (int k = N - 1; k >= 0; --k) {
         if (nounit) {
             const T inv = 1.0L / A_(k, k);
-            for (int i = 0; i < M; ++i) B_(i, k) *= inv;
+            for (int i = i_start; i < i_end; ++i) B_(i, k) *= inv;
         }
         for (int j = 0; j < k; ++j) {
             if (A_(j, k) != 0.0L) {
                 const T ajk = A_(j, k);
-                for (int i = 0; i < M; ++i)
+                for (int i = i_start; i < i_end; ++i)
                     B_(i, j) -= ajk * B_(i, k);
             }
         }
-        if (alpha != 1.0L) for (int i = 0; i < M; ++i) B_(i, k) *= alpha;
+        if (alpha != 1.0L) for (int i = i_start; i < i_end; ++i) B_(i, k) *= alpha;
     }
 }
+
+/* OMP wrapper for R-side cores: one parallel region partitions the M
+ * axis. Gates on M (the partition axis) >= ETRSM_OMP_N_MIN. */
+#ifdef _OPENMP
+#define ETRSM_OMP_WRAP_R(name, core)                                        \
+    static void name(int M, int N, T alpha,                                 \
+                     const T *a, int lda, T *b, int ldb, int nounit) {      \
+        if (M >= ETRSM_OMP_N_MIN && blas_omp_max_threads() > 1              \
+                                && !omp_in_parallel()) {                    \
+            _Pragma("omp parallel") {                                       \
+                int tid = omp_get_thread_num();                             \
+                int nt  = omp_get_num_threads();                            \
+                int is  = (int)((long long)M * tid / nt);                   \
+                int ie  = (int)((long long)M * (tid + 1) / nt);             \
+                core(is, ie, N, alpha, a, lda, b, ldb, nounit);             \
+            }                                                               \
+        } else { core(0, M, N, alpha, a, lda, b, ldb, nounit); }            \
+    }
+#else
+#define ETRSM_OMP_WRAP_R(name, core)                                        \
+    static void name(int M, int N, T alpha,                                 \
+                     const T *a, int lda, T *b, int ldb, int nounit) {      \
+        core(0, M, N, alpha, a, lda, b, ldb, nounit);                       \
+    }
+#endif
+
+ETRSM_OMP_WRAP_R(trsm_rln, trsm_rln_core)
+ETRSM_OMP_WRAP_R(trsm_run, trsm_run_core)
+ETRSM_OMP_WRAP_R(trsm_rlt, trsm_rlt_core)
+ETRSM_OMP_WRAP_R(trsm_rut, trsm_rut_core)
 
 /* ── Entry point ──────────────────────────────────────────────── */
 
