@@ -119,29 +119,63 @@ void etrsv_serial_(
 
     const T zero = 0.0L;
 
+    (void)zero;
     if (incx == 1) {
         if (TR == 'N') {
             if (UPLO == 'L') {
-                /* Forward substitution: x[i] = (b[i] - sum_{k<i} A(i,k) x[k]) / A(i,i). */
-                for (int i = 0; i < N; ++i) {
-                    if (x[i] != zero) {
-                        if (nounit) x[i] /= A_(i, i);
-                        const T xi = x[i];
-                        const T *ai = &A_(0, i);
-                        /* AXPY-style update of x[i+1..N-1] using column i of A. */
-                        for (int k = i + 1; k < N; ++k) x[k] -= xi * ai[k];
+                /* Forward substitution: x[i] = (b[i] - sum_{k<i} A(i,k) x[k]) / A(i,i).
+                 *
+                 * J-unroll-by-2: process columns i and i+1 jointly so the
+                 * trailing-x update loop loads/stores each x[k] once for
+                 * BOTH columns' contributions. Halves x memory traffic on
+                 * the AXPY-style inner — same trick as egemv N-branch.
+                 * Inner becomes `x[k] = (x[k] - xi*a0[k]) - xi1*a1[k]`. */
+                int i = 0;
+                for (; i + 1 < N; i += 2) {
+                    if (nounit) x[i] /= A_(i, i);
+                    const T xi = x[i];
+                    /* Apply column i's contribution to x[i+1] before solving it. */
+                    x[i + 1] -= xi * A_(i + 1, i);
+                    if (nounit) x[i + 1] /= A_(i + 1, i + 1);
+                    const T xi1 = x[i + 1];
+                    const T *a0 = &A_(0, i);
+                    const T *a1 = &A_(0, i + 1);
+                    for (int k = i + 2; k < N; ++k) {
+                        x[k] = (x[k] - xi * a0[k]) - xi1 * a1[k];
                     }
+                }
+                if (i < N) {
+                    if (nounit) x[i] /= A_(i, i);
+                    const T xi = x[i];
+                    const T *ai = &A_(0, i);
+                    for (int k = i + 1; k < N; ++k) x[k] -= xi * ai[k];
                 }
             } else {
                 /* UPLO='U': back substitution iterates i backward.
-                 * x[i] = (b[i] - sum_{k>i} A(i,k) x[k]) / A(i,i). */
-                for (int i = N - 1; i >= 0; --i) {
-                    if (x[i] != zero) {
-                        if (nounit) x[i] /= A_(i, i);
-                        const T xi = x[i];
-                        const T *ai = &A_(0, i);
-                        for (int k = 0; k < i; ++k) x[k] -= xi * ai[k];
+                 * x[i] = (b[i] - sum_{k>i} A(i,k) x[k]) / A(i,i).
+                 *
+                 * J-unroll-by-2 (same trick as LN branch, descending): pair
+                 * (i, i-1) so the inner k = 0..i-2 walk loads/stores each
+                 * x[k] once for both columns' contributions. */
+                int i = N - 1;
+                for (; i - 1 >= 0; i -= 2) {
+                    if (nounit) x[i] /= A_(i, i);
+                    const T xi = x[i];
+                    /* Apply column i's contribution to x[i-1] before solving it. */
+                    x[i - 1] -= xi * A_(i - 1, i);
+                    if (nounit) x[i - 1] /= A_(i - 1, i - 1);
+                    const T xi1 = x[i - 1];
+                    const T *a0 = &A_(0, i);
+                    const T *a1 = &A_(0, i - 1);
+                    for (int k = 0; k < i - 1; ++k) {
+                        x[k] = (x[k] - xi * a0[k]) - xi1 * a1[k];
                     }
+                }
+                if (i >= 0) {
+                    if (nounit) x[i] /= A_(i, i);
+                    const T xi = x[i];
+                    const T *ai = &A_(0, i);
+                    for (int k = 0; k < i; ++k) x[k] -= xi * ai[k];
                 }
             }
         } else {  /* TRANS = 'T': solve Aᵀ x = b. */

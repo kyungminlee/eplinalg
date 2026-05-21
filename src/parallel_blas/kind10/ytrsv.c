@@ -118,22 +118,51 @@ void ytrsv_serial_(
     if (incx == 1) {
         if (TR == 'N') {
             if (UPLO == 'L') {
-                for (int i = 0; i < N; ++i) {
-                    if (x[i] != ZERO) {
-                        if (nounit) x[i] /= A_(i, i);
-                        const T xi = x[i];
-                        const T *ai = &A_(0, i);
-                        for (int k = i + 1; k < N; ++k) x[k] -= xi * ai[k];
+                /* Forward subst with J-unroll-by-2: process columns i and
+                 * i+1 jointly so the trailing-x AXPY loop loads/stores each
+                 * x[k] once for BOTH columns' contributions. Halves x
+                 * memory traffic on the complex AXPY inner. (Same trick as
+                 * etrsv LN; doubles the saving here since complex x is
+                 * 20 bytes vs 10 for real.) */
+                int i = 0;
+                for (; i + 1 < N; i += 2) {
+                    if (nounit) x[i] /= A_(i, i);
+                    const T xi = x[i];
+                    x[i + 1] -= xi * A_(i + 1, i);
+                    if (nounit) x[i + 1] /= A_(i + 1, i + 1);
+                    const T xi1 = x[i + 1];
+                    const T *a0 = &A_(0, i);
+                    const T *a1 = &A_(0, i + 1);
+                    for (int k = i + 2; k < N; ++k) {
+                        x[k] = (x[k] - xi * a0[k]) - xi1 * a1[k];
                     }
                 }
+                if (i < N) {
+                    if (nounit) x[i] /= A_(i, i);
+                    const T xi = x[i];
+                    const T *ai = &A_(0, i);
+                    for (int k = i + 1; k < N; ++k) x[k] -= xi * ai[k];
+                }
             } else {
-                for (int i = N - 1; i >= 0; --i) {
-                    if (x[i] != ZERO) {
-                        if (nounit) x[i] /= A_(i, i);
-                        const T xi = x[i];
-                        const T *ai = &A_(0, i);
-                        for (int k = 0; k < i; ++k) x[k] -= xi * ai[k];
+                /* UPLO='U': back-subst with J-unroll-by-2 pair (i, i-1). */
+                int i = N - 1;
+                for (; i - 1 >= 0; i -= 2) {
+                    if (nounit) x[i] /= A_(i, i);
+                    const T xi = x[i];
+                    x[i - 1] -= xi * A_(i - 1, i);
+                    if (nounit) x[i - 1] /= A_(i - 1, i - 1);
+                    const T xi1 = x[i - 1];
+                    const T *a0 = &A_(0, i);
+                    const T *a1 = &A_(0, i - 1);
+                    for (int k = 0; k < i - 1; ++k) {
+                        x[k] = (x[k] - xi * a0[k]) - xi1 * a1[k];
                     }
+                }
+                if (i >= 0) {
+                    if (nounit) x[i] /= A_(i, i);
+                    const T xi = x[i];
+                    const T *ai = &A_(0, i);
+                    for (int k = 0; k < i; ++k) x[k] -= xi * ai[k];
                 }
             }
         } else {
