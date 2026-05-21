@@ -3487,3 +3487,93 @@ DRAM-bandwidth bound regardless of compute pattern.
     y-RMW traffic at OMP=4 is a 20-30% win. Use `if (use_omp)`
     in C source to split serial-optimal from parallel-optimal
     inner-loop forms.
+
+## Addendum 36: esymv / yhemv — per-thread y_priv + reduction unlocks SYMV/HEMV scaling (2026-05-21)
+
+### Context
+
+esymv and yhemv had `ESYMV_OMP_MIN` / `YHEMV_OMP_MIN` macros defined
+but *zero* `#pragma omp` directives — completely serial. The
+broad OMP=1 vs OMP=4 sweep flagged both at ~1.0× scaling.
+
+Why no OMP existed: the Netlib two-pass form walks A column-by-
+column (stride-1) and writes y[k] for k > j (L) or k < j (U) on
+each j. Trying to parallelise the outer j loop races on y[k]
+writes since multiple threads' j-ranges produce overlapping k
+output ranges.
+
+### Experiment
+
+Per-thread private y buffer + reduction:
+1. Allocate `y_priv[nt][N]`.
+2. Each thread zeros its own y_priv slice.
+3. `#pragma omp for schedule(static, 1)` over j — interleaves
+   columns across threads to balance the triangular work (per-
+   column work is `(N - j)` for L, `j` for U — linear gradient).
+4. Implicit barrier at end of `omp for`.
+5. `#pragma omp for schedule(static)` reduces y_priv across
+   threads into y.
+
+Same `omp parallel` region wraps both phases; second barrier
+gates the reduction.
+
+`ESYMV_OMP_MIN` / `YHEMV_OMP_MIN` bumped to 128 (work too small
+below that to amortise the alloc + 2 barriers).
+
+### Result
+
+esymv (overlay GFs at unit stride, OMP=4/OMP=1 scaling):
+
+| key | N=128 | N=256 | N=512 | N=1024 |
+|-----|-------|-------|-------|--------|
+| U   | 2.78× | 3.57× | 3.76× | 3.71× |
+| L   | 2.46× | 3.42× | 3.67× | 3.85× |
+
+yhemv:
+
+| key | N=128 | N=256 | N=512 | N=1024 |
+|-----|-------|-------|-------|--------|
+| U   | 4.42× | 5.00× | 5.29× | 5.00× |
+| L   | 3.29× | 4.14× | 4.39× | 4.27× |
+
+yhemv U exceeds 4× on a 4-thread test — likely because the
+serial form was already mildly sub-parity and the parallel form
+also gained per-thread compute density (per-column work fits in
+L1 with no thread contention).
+
+Both fuzz tests clean (80/80, max ulp errors at machine
+precision).
+
+### Debugging note
+
+First version used `nowait` on the work-distribution `omp for`,
+intending only the parallel-region close to barrier. fuzz
+diagnosed real numerical drift (4 of 80 cases at random N
+between 158-236). The reduction `omp for` started before all
+threads had finished writing y_priv. Removed `nowait` — `omp
+for`'s implicit end-of-region barrier is exactly what gates
+the reduction.
+
+### Rules
+
+48. **SYMV / HEMV: per-thread y_priv + reduction is the
+    standard parallelisation, even though it costs `nt*N` extra
+    memory + a reduction pass.** Column-walk (stride-1) is
+    structurally required for memory access; trying to
+    parallelise the outer loop without privatisation races on
+    the cross-diagonal y writes. The reduction overhead is `N
+    * nt` adds — trivial vs `N²/2` cmadds.
+
+49. **`schedule(static, 1)` is the right load balance for
+    triangular column work.** Per-column work is linear in
+    `(N - j)` (L) or `j` (U). Round-robin chunk size 1 gives
+    each thread an interleaved set of columns covering the
+    full range, so heavy and light columns are evenly mixed.
+    `schedule(static)` (no chunk) gives thread 0 the heaviest
+    block, last thread the lightest — 2-3× imbalance.
+
+50. **Don't use `nowait` on the work-distribution `omp for`
+    when the next pragma reads cross-thread output.** The
+    implicit barrier at end of `omp for` is what protects the
+    next pragma from racing on partially-written data. `nowait`
+    only after the final consumer.

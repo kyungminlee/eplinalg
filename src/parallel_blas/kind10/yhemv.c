@@ -8,12 +8,14 @@
  */
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <ctype.h>
 #ifdef _OPENMP
 #include <omp.h>
+#include "../common/blas_omp.h"
 #endif
 
-#define YHEMV_OMP_MIN 64
+#define YHEMV_OMP_MIN 128
 
 typedef _Complex long double T;
 static const T ZERO = 0.0L + 0.0Li;
@@ -61,6 +63,67 @@ void yhemv_(
     if (alpha == ZERO) return;
 
     if (incx == 1 && incy == 1) {
+#ifdef _OPENMP
+        const int nt = blas_omp_max_threads();
+        const int use_omp = (N >= YHEMV_OMP_MIN && nt > 1 && !omp_in_parallel());
+#else
+        const int use_omp = 0;
+        const int nt = 1;
+#endif
+        if (use_omp) {
+            /* Parallel column-walk with per-thread private y, then reduce.
+             * Same pattern as esymv (Addendum 36). Hermitian conjugation
+             * stays inside the column loop unchanged. */
+            T *y_priv_all = (T *)aligned_alloc(64,
+                (((size_t)nt * N * sizeof(T)) + 63) & ~(size_t)63);
+            if (y_priv_all) {
+#ifdef _OPENMP
+                #pragma omp parallel
+                {
+                    const int tid = omp_get_thread_num();
+                    T *y_priv = &y_priv_all[(size_t)tid * N];
+                    for (int k = 0; k < N; ++k) y_priv[k] = ZERO;
+
+                    if (UPLO == 'L') {
+                        #pragma omp for schedule(static, 1)
+                        for (int j = 0; j < N; ++j) {
+                            const T temp1 = alpha * x[j];
+                            T temp2 = ZERO;
+                            const T *aj = &A_(0, j);
+                            y_priv[j] += temp1 * __real__ aj[j];
+                            for (int k = j + 1; k < N; ++k) {
+                                y_priv[k] += temp1 * aj[k];
+                                temp2 += cconj(aj[k]) * x[k];
+                            }
+                            y_priv[j] += alpha * temp2;
+                        }
+                    } else {
+                        #pragma omp for schedule(static, 1)
+                        for (int j = 0; j < N; ++j) {
+                            const T temp1 = alpha * x[j];
+                            T temp2 = ZERO;
+                            const T *aj = &A_(0, j);
+                            for (int k = 0; k < j; ++k) {
+                                y_priv[k] += temp1 * aj[k];
+                                temp2 += cconj(aj[k]) * x[k];
+                            }
+                            y_priv[j] += temp1 * __real__ aj[j] + alpha * temp2;
+                        }
+                    }
+
+                    #pragma omp for schedule(static)
+                    for (int i = 0; i < N; ++i) {
+                        T s = ZERO;
+                        for (int t = 0; t < nt; ++t)
+                            s += y_priv_all[(size_t)t * N + i];
+                        y[i] += s;
+                    }
+                }
+#endif
+                free(y_priv_all);
+                return;
+            }
+        }
         if (UPLO == 'L') {
             for (int i = 0; i < N; ++i) {
                 const T temp1 = alpha * x[i];
