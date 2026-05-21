@@ -283,37 +283,54 @@ void egemm_(
     }
 
     /*
-     * Threading: parallelize the outer N-band (NC) loop. Each thread
-     * owns its packing scratch — no sharing. Reduction order varies
-     * across thread counts; accepted by the 10-ulp tolerance.
+     * Threading: single outer `omp parallel`, shared Bp packed once per
+     * (jc, pc) via `omp single` (implicit barrier), then `omp for` over
+     * the ic loop. Each thread keeps a private Ap.
+     *
+     * The previous 1D `omp for` over jc gave zero scaling whenever
+     * N ≤ NC (default NC=512): only one jc iteration to share across
+     * threads. Splitting along ic (the M axis) restores parallelism;
+     * keeping Bp shared avoids per-tile re-packing that a naive
+     * collapse(2) would force. Effective parallelism is bounded by
+     * (M / MC) per jc-band, which is ample for our typical square
+     * problems (HPC-target overlay, many cores) (Addendum 27 / Rule 35
+     * spirit applied with single-Bp-pack refinement).
      */
+    const size_t ap_bytes = (size_t)round_up(MC, MR) * KC * sizeof(T);
+    const size_t bp_bytes = (size_t)KC * round_up(NC, NR) * sizeof(T);
+    T *Bp = aligned_alloc(64, (bp_bytes + 63) & ~(size_t)63);
+    if (!Bp) return;
 #ifdef _OPENMP
     #pragma omp parallel
 #endif
     {
-        const size_t ap_bytes = (size_t)round_up(MC, MR) * KC * sizeof(T);
-        const size_t bp_bytes = (size_t)KC * round_up(NC, NR) * sizeof(T);
         T *Ap = aligned_alloc(64, (ap_bytes + 63) & ~(size_t)63);
-        T *Bp = aligned_alloc(64, (bp_bytes + 63) & ~(size_t)63);
-        if (Ap && Bp) {
-#ifdef _OPENMP
-            #pragma omp for schedule(static)
-#endif
+        if (Ap) {
             for (int jc = 0; jc < N; jc += NC) {
                 const int jb = (N - jc < NC) ? (N - jc) : NC;
                 for (int pc = 0; pc < K; pc += KC) {
                     const int pb = (K - pc < KC) ? (K - pc) : KC;
+#ifdef _OPENMP
+                    #pragma omp single
+#endif
                     pack_B(b, ldb, pc, jc, pb, jb, tb, Bp);
+                    /* implicit barrier at end of `single` makes Bp safe to
+                     * read in the for below. */
+#ifdef _OPENMP
+                    #pragma omp for schedule(static)
+#endif
                     for (int ic = 0; ic < M; ic += MC) {
                         const int ib = (M - ic < MC) ? (M - ic) : MC;
                         pack_A(a, lda, ic, pc, ib, pb, ta, Ap);
                         macro_kernel(ib, jb, pb, alpha, Ap, Bp,
                                      &c[(size_t)jc * ldc + ic], ldc);
                     }
+                    /* implicit barrier at end of `for` keeps Bp stable
+                     * for the next (jc, pc) iteration. */
                 }
             }
         }
         free(Ap);
-        free(Bp);
     }
+    free(Bp);
 }

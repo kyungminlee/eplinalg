@@ -3343,3 +3343,88 @@ iters at small N, ≥5 trials), they are at parity or better.
     Cluster-shape matching tells you what tradition of failure a
     cell *might* fit; only a 5-trial high-iter rerun tells you which
     cells are *actually* sub-parity.
+
+## Addendum 34: egemm — single-region + omp single Bp + omp for ic restores scaling (2026-05-21)
+
+### Context
+
+egemm's blocked path (NN, NT, TT — i.e. anything that isn't the
+TA='T' TB='N' fast path) was structurally serial whenever N ≤ NC.
+The pre-fix decomposition wrapped the whole call in `#pragma omp
+parallel` and then `#pragma omp for schedule(static)` over `jc`
+(the N-band). With default NC=512, any N ≤ 512 produces a single
+jc iteration, which `omp for` hands to thread 0 — every other
+thread idles. Measured OMP=4/OMP=1 scaling at N=512 was 0.98×.
+N=1024 (2 jc bands) saw 1.90×. Only the column-parallel TN fast
+path (which loops over j2 ∈ [0, N), not NC-bands) scaled cleanly.
+
+Findings note already flagged this as untested ground (line 205,
+"Egemm + ygemm at OMP>1 — current numbers are OMP=1. Threading is
+the actual point of the overlay"). xgemm hit the identical pattern
+and fixed it via `collapse(2)` in Add-27 (Rule 35).
+
+### Experiment
+
+Two refactors in sequence:
+
+1. **First pass: collapse(2) over (jj, ii) tile coordinates.**
+   Same shape as Add-27. Each thread owns Ap+Bp scratch, packs
+   both per (own tile, pc). Big OMP=4 win at large N (3.6×
+   scaling at N≥512), but OMP=1 regressed 3-6% because each
+   tile re-packs Bp instead of once per (jc, pc), and small-N
+   parallelism was still limited by tiles-per-call.
+
+2. **Second pass: single outer `omp parallel`, shared Bp, `omp
+   single` packs it once per (jc, pc), `omp for` over ic.**
+   Each thread keeps a private Ap. The two implicit barriers
+   (after `single` and after `for`) are the cheap synchronisation;
+   Bp is read-only during the `for`. Removes the redundant
+   packing and the OMP=1 regression with it.
+
+### Result
+
+Final OMP=4/OMP=1 scaling (5.5 GFs to 11 GFs absolute throughput
+at N=1024):
+
+| key | N=128 | N=256 | N=512 | N=1024 |
+|-----|-------|-------|-------|--------|
+| NN  | 1.02× | 1.30× | 3.44× | 3.60× |
+| NT  | 0.97× | 1.17× | 3.62× | 3.66× |
+| TT  | 0.93× | 1.33× | 3.31× | 3.64× |
+
+OMP=2/4/8 at N=512 NN: 1.82× → 3.44× → 3.77× (i7-8700 has 6
+P-cores, so 4-8 thread asymptote is expected). OMP=1 numbers
+within 1-2% of pre-fix — no real regression.
+
+Small-N parallelism is bounded by `M / MC` tiles. At N=128 M=128
+MC=64 → 2 ic tiles → 2-way maximum. At N=256 M=256 → 4 ic tiles →
+4-way maximum. The 1.3× actually measured at N=256 OMP=4 leaves
+~3× on the floor — likely heap-lock contention on the per-thread
+Ap alloc + Bp shared-cache contention; deferred since it's a
+small-problem regime and the large-N wins are the primary target.
+
+Versus migrated egemm (perf_egemm output, OMP=4):
+
+| key | N=512 | N=1024 |
+|-----|-------|--------|
+| NN  | 5.46× | 6.52× |
+| NT  | 5.76× | 6.82× |
+| TT  | 8.74× | 13.19× |
+
+### Rules
+
+45. **For GotoBLAS-style packed kernels with shared B-packing per
+    (jc, pc): single outer `omp parallel`, `omp single` to pack
+    Bp once, `omp for` over ic.** The implicit barriers are
+    cheaper than per-(jc, pc) fork-join, and Bp shared across
+    threads avoids the redundant per-tile packing that a naive
+    collapse(2) forces. Apply when Bp dominates per-tile setup
+    cost (true at any KC × NC large enough to matter).
+
+46. **`#pragma omp parallel` + `#pragma omp for` over the *first*
+    loop is a trap when later loops are larger and the first
+    loop is short.** The original egemm parallelised jc (1
+    iteration at N ≤ NC). Same anti-pattern as the pre-Add-27
+    xgemm. Whenever `for_axis_iters < nthreads`, the `omp for`
+    *cannot* parallelise — pick a different axis or use
+    `collapse`.
