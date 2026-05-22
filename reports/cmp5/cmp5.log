@@ -1,0 +1,8 @@
+[fail] epopenblas-omp1/ytpsv exit=124
+[fail] epopenblas-omp1/ytrsv exit=124
+[fail] epopenblas-omp4/ytpsv exit=124
+[fail] epopenblas-omp4/ytrsv exit=124
+[fail] parallel-blas-omp1/ytpsv exit=124
+[fail] parallel-blas-omp1/ytrsv exit=124
+[fail] parallel-blas-omp4/ytpsv exit=124
+[fail] parallel-blas-omp4/ytrsv exit=124
