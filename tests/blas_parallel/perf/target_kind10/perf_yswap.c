@@ -41,22 +41,28 @@ static void run_yswap(int N, int iters, int warmup) {
         memcpy(X, Xi, (size_t)N * sizeof(C10));
         memcpy(Y, Yi, (size_t)N * sizeof(C10));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep the reset memcpy OUT of the
+     * timed window so a single-threaded reset doesn't Amdahl-cap the
+     * measured MT scaling at large N. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         yswap_(&N, X, &one, Y, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof(C10)); memcpy(Y, Yi, (size_t)N * sizeof(C10));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0 - (iters ? iters : 1) * 0.0) / (iters ? iters : 1);
-    /* Approximation: memcpy of Y (and X if swap) is part of timed loop —
-     * same on both sides so the ratio is fair. */
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         yswap_migrated_(&N, X, &one, Y, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof(C10)); memcpy(Y, Yi, (size_t)N * sizeof(C10));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     /* Bytes moved per call: copy=2N*sizeof(T), swap=4N*sizeof(T). Report
      * as "flops" for uniform formatting. */
     double flops = 4.0 * (double)N * (double)sizeof(C10);

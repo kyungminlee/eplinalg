@@ -134,7 +134,7 @@ TYPES = {
 # ---------------------------------------------------------------------------
 KIND10 = (
     'egemm ygemm egemmtr ygemmtr etrsm ytrsm etrmm ytrmm '
-    'esyrk ysyrk yherk egemv ygemv eger ygeru ygerc '
+    'esyrk ysyrk yherk esyr2k ysyr2k yher2k egemv ygemv eger ygeru ygerc '
     'esymv yhemv etrsv ytrsv esymm ysymm yhemm etrmv ytrmv '
     'esyr yher escal eaxpy ecopy eswap erot edot easum '
     'yscal yescal yaxpy ycopy yswap yerot ydotu ydotc '
@@ -301,22 +301,28 @@ static void run_{name}(int N, int iters, int warmup) {{
         memcpy(X, Xi, (size_t)N * sizeof({T}));
         memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep the reset memcpy OUT of the
+     * timed window so a single-threaded reset doesn't Amdahl-cap the
+     * measured MT scaling at large N. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&N, X, &one, Y, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         {'memcpy(X, Xi, (size_t)N * sizeof(' + T + ')); ' if swap else ''}memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0 - (iters ? iters : 1) * 0.0) / (iters ? iters : 1);
-    /* Approximation: memcpy of Y (and X if swap) is part of timed loop —
-     * same on both sides so the ratio is fair. */
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&N, X, &one, Y, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         {'memcpy(X, Xi, (size_t)N * sizeof(' + T + ')); ' if swap else ''}memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     /* Bytes moved per call: copy=2N*sizeof(T), swap=4N*sizeof(T). Report
      * as "flops" for uniform formatting. */
     double flops = {'4.0' if swap else '2.0'} * (double)N * (double)sizeof({T});
@@ -362,21 +368,27 @@ static void run_{name}(int N, int iters, int warmup) {{
         {name}_migrated_(&N, &alpha, X, &one);
         memcpy(X, Xi, (size_t)N * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of the
+     * timed window so it doesn't Amdahl-mask MT scaling. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&N, &alpha, X, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_ov = t_sum / (iters ? iters : 1);
 
-    t0 = perf_now_s();
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&N, &alpha, X, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
     perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
@@ -529,21 +541,26 @@ static void run_one(int M, int N, int incx, int incy, int iters, int warmup) {{
         {name}_migrated_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_ov = t_sum / (iters ? iters : 1);
 
-    t0 = perf_now_s();
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
 
     double flops = {flops};
     char key[24];
@@ -944,20 +961,25 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
         {name}_migrated_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
     char key[16];
     if (incx == 1) {{
@@ -1024,20 +1046,25 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
         {name}_migrated_(&uplo, &N, &alpha, X, &incx, AP, 1);
         memcpy(AP, APi, AP_LEN * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&uplo, &N, &alpha, X, &incx, AP, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(AP, APi, AP_LEN * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&uplo, &N, &alpha, X, &incx, AP, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(AP, APi, AP_LEN * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
     char key[16];
     if (incx == 1) {{
@@ -1195,20 +1222,25 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
         {name}_migrated_(&uplo, &trans, &diag, &N, A, &N, X, &incx, 1, 1, 1);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&uplo, &trans, &diag, &N, A, &N, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&uplo, &trans, &diag, &N, A, &N, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
     /* Key encodes UPLO/TRANS/DIAG + stride. Examples: "LTN" (incx=1),
      * "LTN/x2" (incx=2), "LTN/x-1" (incx=-1). incx=1 keeps the old
@@ -1291,20 +1323,25 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
         {name}_migrated_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
     char key[16];
     if (incx == 1) {{
@@ -1562,20 +1599,25 @@ static void run_one(char uplo, char trans, char diag, int N, int K, int incx,
         {name}_migrated_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
     char key[16];
     if (incx == 1) {{
@@ -1757,6 +1799,83 @@ int main(void) {{
 }}
 '''
 
+# -- L3 syr2k/her2k (UPLO, TRANS, N, K) --------------------------------------
+
+def emit_syr2k_her2k(name: str, ti: TypeInfo, is_c: bool, is_h: bool) -> str:
+    T = ti.cmplx_T if is_c else ti.real_T
+    Talpha = T                              # syr2k: same as matrix; her2k: complex
+    Tbeta = ti.real_T if is_h else T        # her2k: real beta; syr2k: matrix-typed beta
+    p7_alpha = ti.cmplx_lit_p7 if is_c else ti.real_lit_p7
+    p3_beta = ti.real_lit_p3 if is_h else (ti.cmplx_lit_p3 if is_c else ti.real_lit_p3)
+    fill = ti.cmplx_fill if is_c else ti.real_fill
+    flops = '8.0 * (double)N * (double)N * (double)K' if is_c else '2.0 * (double)N * (double)N * (double)K'
+    transes_list = ['N', 'C'] if is_h else (['N', 'T'])
+    return f'''
+BLAS_EXTERN void {name}_(const char *, const char *, const int *, const int *,
+    const {Talpha} *, const {T} *, const int *,
+    const {T} *, const int *,
+    const {Tbeta} *, {T} *, const int *, size_t, size_t);
+BLAS_EXTERN void {name}_migrated_(const char *, const char *, const int *, const int *,
+    const {Talpha} *, const {T} *, const int *,
+    const {T} *, const int *,
+    const {Tbeta} *, {T} *, const int *, size_t, size_t);
+
+static void run_one(char uplo, char trans, int N, int K, int iters, int warmup) {{
+    {Talpha} alpha = {p7_alpha};
+    {Tbeta}  beta  = {p3_beta};
+    int A_rows = (trans == 'N') ? N : K;
+    int A_cols = (trans == 'N') ? K : N;
+    int lda = A_rows, ldb = A_rows, ldc = N;
+    {T} *A  = ({T} *)perf_aligned_alloc(64, (size_t)A_rows * (size_t)A_cols * sizeof({T}));
+    {T} *B  = ({T} *)perf_aligned_alloc(64, (size_t)A_rows * (size_t)A_cols * sizeof({T}));
+    {T} *C  = ({T} *)perf_aligned_alloc(64, (size_t)N * (size_t)N * sizeof({T}));
+    {T} *Ci = ({T} *)perf_aligned_alloc(64, (size_t)N * (size_t)N * sizeof({T}));
+    for (size_t i = 0; i < (size_t)A_rows*A_cols; ++i) {{ int s = 2; A[i] = {fill}; }}
+    for (size_t i = 0; i < (size_t)A_rows*A_cols; ++i) {{ int s = 3; B[i] = {fill}; }}
+    for (size_t i = 0; i < (size_t)N*N; ++i)           {{ int s = 4; Ci[i] = {fill}; }}
+    memcpy(C, Ci, (size_t)N * (size_t)N * sizeof({T}));
+    for (int r = 0; r < warmup; ++r) {{
+        {name}_(&uplo, &trans, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1);
+        memcpy(C, Ci, (size_t)N * (size_t)N * sizeof({T}));
+        {name}_migrated_(&uplo, &trans, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1);
+        memcpy(C, Ci, (size_t)N * (size_t)N * sizeof({T}));
+    }}
+    memcpy(C, Ci, (size_t)N * (size_t)N * sizeof({T}));
+    double t0 = perf_now_s();
+    for (int it = 0; it < iters; ++it)
+        {name}_(&uplo, &trans, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1);
+    double t1 = perf_now_s();
+    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    memcpy(C, Ci, (size_t)N * (size_t)N * sizeof({T}));
+    t0 = perf_now_s();
+    for (int it = 0; it < iters; ++it)
+        {name}_migrated_(&uplo, &trans, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1);
+    t1 = perf_now_s();
+    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double flops = {flops};
+    char key[3] = {{uplo, trans, 0}};
+    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    free(A); free(B); free(C); free(Ci);
+}}
+
+static const int default_sizes[] = {{64, 128, 256, 512}};
+int main(void) {{
+    int iters  = perf_env_int("BLAS_PERF_ITERS",  10);
+    int warmup = perf_env_int("BLAS_PERF_WARMUP", 2);
+    int sizes[32];
+    int n = perf_parse_sizes(default_sizes,
+        (int)(sizeof(default_sizes)/sizeof(default_sizes[0])), sizes, 32);
+    perf_print_header();
+    const char uplos[] = {{'U', 'L'}};
+    const char transes[] = {{ {', '.join("'" + c + "'" for c in transes_list)} }};
+    for (size_t u = 0; u < 2; ++u) for (size_t t = 0; t < 2; ++t)
+        for (int i = 0; i < n; ++i)
+            run_one(uplos[u], transes[t], sizes[i], sizes[i], iters, warmup);
+    return 0;
+}}
+'''
+
 # -- L3 trmm/trsm (SIDE, UPLO, TRANS, DIAG, M, N) ----------------------------
 
 def emit_trmm_trsm(name: str, ti: TypeInfo, is_c: bool) -> str:
@@ -1794,20 +1913,25 @@ static void run_one(char side, char uplo, char trans, char diag,
         {name}_migrated_(&side, &uplo, &trans, &diag, &M, &N, &alpha, A, &lda, B, &ldb, 1, 1, 1, 1);
         memcpy(B, Bi, (size_t)M * (size_t)N * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&side, &uplo, &trans, &diag, &M, &N, &alpha, A, &lda, B, &ldb, 1, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(B, Bi, (size_t)M * (size_t)N * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&side, &uplo, &trans, &diag, &M, &N, &alpha, A, &lda, B, &ldb, 1, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(B, Bi, (size_t)M * (size_t)N * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
     char key[5] = {{side, uplo, trans, diag, 0}};
     perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
@@ -1953,20 +2077,27 @@ static void run_one(int N, int iters, int warmup) {{
         {name}_migrated_(&N, X, &one, Y, &one, &c_, &s_);
         memcpy(X, Xi, (size_t)N * sizeof({T})); memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy resets out of the
+     * timed window so they don't Amdahl-mask MT scaling. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&N, X, &one, Y, &one, &c_, &s_);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof({T})); memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&N, X, &one, Y, &one, &c_, &s_);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof({T})); memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
     perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
@@ -2017,20 +2148,27 @@ static void run_one(int N, int iters, int warmup) {{
         {name}_migrated_(&N, X, &one, Y, &one, PARAM);
         memcpy(X, Xi, (size_t)N * sizeof({T})); memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy resets out of the
+     * timed window so they don't Amdahl-mask MT scaling. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_(&N, X, &one, Y, &one, PARAM);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof({T})); memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
+        double a = perf_now_s();
         {name}_migrated_(&N, X, &one, Y, &one, PARAM);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof({T})); memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 4.0 * (double)N;
     perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
     perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
@@ -2211,6 +2349,10 @@ def emit_routine(name: str, ti: TypeInfo) -> str:
         return prologue + emit_syrk_herk(name, ti, is_c=is_c, is_h=False)
     if suffix == 'herk':
         return prologue + emit_syrk_herk(name, ti, is_c=True, is_h=True)
+    if suffix == 'syr2k':
+        return prologue + emit_syr2k_her2k(name, ti, is_c=is_c, is_h=False)
+    if suffix == 'her2k':
+        return prologue + emit_syr2k_her2k(name, ti, is_c=True, is_h=True)
     if suffix == 'trmm' or suffix == 'trsm':
         return prologue + emit_trmm_trsm(name, ti, is_c)
     if suffix == 'gemmtr':

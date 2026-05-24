@@ -46,20 +46,25 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
         ytrmv_migrated_(&uplo, &trans, &diag, &N, A, &N, X, &incx, 1, 1, 1);
         memcpy(X, Xi, lenx * sizeof(C10));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         ytrmv_(&uplo, &trans, &diag, &N, A, &N, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof(C10));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         ytrmv_migrated_(&uplo, &trans, &diag, &N, A, &N, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof(C10));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 4.0 * (double)N * (double)N;
     /* Key encodes UPLO/TRANS/DIAG + stride. Examples: "LTN" (incx=1),
      * "LTN/x2" (incx=2), "LTN/x-1" (incx=-1). incx=1 keeps the old

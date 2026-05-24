@@ -42,20 +42,25 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {
         espr_migrated_(&uplo, &N, &alpha, X, &incx, AP, 1);
         memcpy(AP, APi, AP_LEN * sizeof(R10));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         espr_(&uplo, &N, &alpha, X, &incx, AP, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(AP, APi, AP_LEN * sizeof(R10));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         espr_migrated_(&uplo, &N, &alpha, X, &incx, AP, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(AP, APi, AP_LEN * sizeof(R10));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 1.0 * (double)N * (double)N;
     char key[16];
     if (incx == 1) {

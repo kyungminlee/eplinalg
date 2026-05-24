@@ -48,20 +48,25 @@ static void run_one(char side, char uplo, char trans, char diag,
         etrmm_migrated_(&side, &uplo, &trans, &diag, &M, &N, &alpha, A, &lda, B, &ldb, 1, 1, 1, 1);
         memcpy(B, Bi, (size_t)M * (size_t)N * sizeof(R10));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         etrmm_(&side, &uplo, &trans, &diag, &M, &N, &alpha, A, &lda, B, &ldb, 1, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(B, Bi, (size_t)M * (size_t)N * sizeof(R10));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_ov = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         etrmm_migrated_(&side, &uplo, &trans, &diag, &M, &N, &alpha, A, &lda, B, &ldb, 1, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(B, Bi, (size_t)M * (size_t)N * sizeof(R10));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 1.0 * (double)M * (double)N * (double)M;
     char key[5] = {side, uplo, trans, diag, 0};
     perf_emit("etrmm", key, N, iters, flops, t_ov, t_mg);

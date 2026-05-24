@@ -74,6 +74,36 @@ set(_kernels
     yhpmv.c
     yhpr.c
     yhpr2.c
+    # ── L3 real ──
+    egemm.c
+    esymm.c
+    esyrk.c
+    esyr2k.c
+    etrmm.c
+    etrsm.c
+    egemmtr.c
+    # ── L3 complex ──
+    ygemm.c
+    ysymm.c
+    ysyrk.c
+    ysyr2k.c
+    ytrmm.c
+    ytrsm.c
+    ygemmtr.c
+    yhemm.c
+    yherk.c
+    yher2k.c
+)
+
+# Internal helper sources — shared L3 kernel + packers (ports of OpenBLAS
+# kernel/generic/{gemmkernel_2x2, gemm_{ncopy,tcopy}_2, gemm_beta}.c for
+# the real path and the matching zgemm_*.c for the complex path). These
+# contribute symbols to the archive but are not Fortran-callable, so
+# they're listed separately from `_kernels` and NOT included in
+# `EPOPENBLAS_OVERLAY_ROUTINES`.
+set(_helpers
+    ../common/eblas_l3_real.c
+    ../common/eblas_l3_complex.c
 )
 
 # Publish the overlay-covered routine set so the BLAS section in
@@ -87,7 +117,10 @@ endforeach()
 set(EPOPENBLAS_OVERLAY_ROUTINES "${_routines}" CACHE INTERNAL
     "BLAS routines provided by the epopenblas overlay for this target")
 
-add_library(${LIB_PREFIX}blas_epopenblas STATIC ${_kernels})
+add_library(${LIB_PREFIX}blas_epopenblas STATIC ${_kernels} ${_helpers})
+
+target_include_directories(${LIB_PREFIX}blas_epopenblas PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 
 target_compile_features(${LIB_PREFIX}blas_epopenblas PRIVATE c_std_99)
 target_compile_options(${LIB_PREFIX}blas_epopenblas PRIVATE

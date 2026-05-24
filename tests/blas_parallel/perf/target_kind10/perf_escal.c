@@ -36,21 +36,27 @@ static void run_escal(int N, int iters, int warmup) {
         escal_migrated_(&N, &alpha, X, &one);
         memcpy(X, Xi, (size_t)N * sizeof(R10));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of the
+     * timed window so it doesn't Amdahl-mask MT scaling. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         escal_(&N, &alpha, X, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof(R10));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_ov = t_sum / (iters ? iters : 1);
 
-    t0 = perf_now_s();
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         escal_migrated_(&N, &alpha, X, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof(R10));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 1.0 * (double)N;
     perf_emit("escal", "-", N, iters, flops, t_ov, t_mg);
     perf_emit_json("escal", "-", N, iters, flops, t_ov, t_mg);
