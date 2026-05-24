@@ -1,0 +1,65 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {"major": 3, "minor": 25},
+
+    "configurePresets": [
+        {
+            "name": "_linux-base",
+            "hidden": true,
+            "description": "Ubuntu/Linux with system gfortran and gcc.",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+
+        {
+            "name": "linux-impi",
+            "displayName": "Linux + Intel MPI 2021.x",
+            "description": "Use Intel MPI's mpiexec/wrapper compilers from /opt/intel/oneapi/mpi/latest. Picks up real distributed MPI so BLACS/PBLAS p2p tests exercise inter-rank communication.",
+            "inherits": "_linux-base",
+            "environment": {
+                "I_MPI_ROOT":  "/opt/intel/oneapi/mpi/latest",
+                "I_MPI_F90":   "gfortran",
+                "I_MPI_F77":   "gfortran",
+                "I_MPI_CC":    "gcc",
+                "I_MPI_CXX":   "g++"
+            },
+            "cacheVariables": {
+                "MPI_C_COMPILER":       "/opt/intel/oneapi/mpi/latest/bin/mpicc",
+                "MPI_CXX_COMPILER":     "/opt/intel/oneapi/mpi/latest/bin/mpicxx",
+                "MPI_Fortran_COMPILER": "/opt/intel/oneapi/mpi/latest/bin/mpif90",
+                "MPIEXEC_EXECUTABLE":   "/opt/intel/oneapi/mpi/latest/bin/mpiexec",
+                "MPIEXEC_PREFLAGS":     "-genv;I_MPI_ROOT=/opt/intel/oneapi/mpi/latest;-genv;I_MPI_ADJUST_REDUCE=1;-genv;I_MPI_ADJUST_ALLREDUCE=1"
+            }
+        },
+
+        {
+            "name": "linux-system-mpi",
+            "displayName": "Linux + system MPI (mpich/openmpi on PATH)",
+            "description": "Use whatever MPI find_package(MPI) discovers via PATH. Typical for CI where Intel MPI is not installed.",
+            "inherits": "_linux-base"
+        }
+    ],
+
+    "buildPresets": [
+        {"name": "linux-impi",       "configurePreset": "linux-impi"},
+        {"name": "linux-system-mpi", "configurePreset": "linux-system-mpi"}
+    ],
+
+    "testPresets": [
+        {
+            "name": "linux-impi",
+            "configurePreset": "linux-impi",
+            "output": {"outputOnFailure": true},
+            "execution": {"timeout": 300}
+        },
+        {
+            "name": "linux-system-mpi",
+            "configurePreset": "linux-system-mpi",
+            "output": {"outputOnFailure": true},
+            "execution": {"timeout": 300}
+        }
+    ]
+}
