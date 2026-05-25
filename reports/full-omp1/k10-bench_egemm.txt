@@ -1,4 +1,4 @@
-trans  size       overlay GFLOP/s   migrated GFLOP/s   speedup
+trans  size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
 NN       64          1.9420             2.3693       0.82x
 NN      128          1.8175             1.3747       1.32x
 NN      256          2.1840             1.3958       1.56x

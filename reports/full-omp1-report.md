@@ -1,13 +1,15 @@
-# Full OMP=1 BLAS overlay vs migrated benchmark
+# Full OMP=1 parallel-blas overlay vs migrated Fortran benchmark
 
 Per-routine speedup at OMP=1. Run with iters=3, warmup=1, sizes=64/128/256/512.
 
-Speedup column: `t_migrated / t_overlay` (>1 = overlay wins).
+Scope: parallel-blas overlay only. (This report predates the epopenblas overlay; see `reports/cmp5/` for epopenblas vs parallel-blas comparisons.)
+
+Speedup column: `t_migrated / t_parallel-blas` (>1 = parallel-blas wins).
 
 ## gemm
 
-| prec | routine | trans | size | overlay GF | migrated GF | speedup |
-|------|---------|-------|------|-----------|-------------|---------|
+| prec | routine | trans | size | parallel-blas GF | migrated GF | speedup |
+|------|---------|-------|------|-----------------|-------------|---------|
 | kind10 | egemm | CC | 64 | 2.1308 | 2.0919 | 1.02× |
 | kind10 | egemm | CC | 128 | 2.1766 | 1.9899 | 1.09× |
 | kind10 | egemm | CC | 256 | 2.2158 | 1.3226 | 1.68× |
@@ -191,8 +193,8 @@ Speedup column: `t_migrated / t_overlay` (>1 = overlay wins).
 
 ## trsm
 
-| prec | routine | size | overlay GF | migrated GF | speedup |
-|------|---------|------|-----------|-------------|---------|
+| prec | routine | size | parallel-blas GF | migrated GF | speedup |
+|------|---------|------|-----------------|-------------|---------|
 | kind10 | etrsm | 64 | 1.6885 | 1.5408 | 1.10× |
 | kind10 | etrsm | 128 | 1.0248 | 0.7097 | 1.44× |
 | kind10 | etrsm | 256 | 1.4356 | 0.7296 | 1.97× |
@@ -216,8 +218,8 @@ Speedup column: `t_migrated / t_overlay` (>1 = overlay wins).
 
 ## trmm
 
-| prec | routine | size | overlay GF | migrated GF | speedup |
-|------|---------|------|-----------|-------------|---------|
+| prec | routine | size | parallel-blas GF | migrated GF | speedup |
+|------|---------|------|-----------------|-------------|---------|
 | kind10 | etrmm | 64 | 1.5489 | 1.7251 | 0.90× |
 | kind10 | etrmm | 128 | 1.0879 | 0.7100 | 1.53× |
 | kind10 | etrmm | 256 | 1.4857 | 0.7294 | 2.04× |
@@ -241,8 +243,8 @@ Speedup column: `t_migrated / t_overlay` (>1 = overlay wins).
 
 ## syrk
 
-| prec | routine | size | overlay GF | migrated GF | speedup |
-|------|---------|------|-----------|-------------|---------|
+| prec | routine | size | parallel-blas GF | migrated GF | speedup |
+|------|---------|------|-----------------|-------------|---------|
 | kind10 | esyrk | 64 | 1.7491 | 1.7449 | 1.00× |
 | kind10 | esyrk | 128 | 1.0262 | 0.7302 | 1.41× |
 | kind10 | esyrk | 256 | 1.3942 | 0.7434 | 1.88× |
@@ -266,8 +268,8 @@ Speedup column: `t_migrated / t_overlay` (>1 = overlay wins).
 
 ## herk
 
-| prec | routine | size | overlay GF | migrated GF | speedup |
-|------|---------|------|-----------|-------------|---------|
+| prec | routine | size | parallel-blas GF | migrated GF | speedup |
+|------|---------|------|-----------------|-------------|---------|
 | kind10 | yherk | 64 | 1.7947 | 1.7614 | 1.02× |
 | kind10 | yherk | 128 | 1.4652 | 1.4034 | 1.04× |
 | kind10 | yherk | 256 | 1.5985 | 1.4059 | 1.14× |
@@ -281,8 +283,8 @@ Speedup column: `t_migrated / t_overlay` (>1 = overlay wins).
 
 ## symm
 
-| prec | routine | size | overlay GF | migrated GF | speedup |
-|------|---------|------|-----------|-------------|---------|
+| prec | routine | size | parallel-blas GF | migrated GF | speedup |
+|------|---------|------|-----------------|-------------|---------|
 | kind10 | esymm | 64 | 0.8154 | 0.7204 | 1.13× |
 | kind10 | esymm | 128 | 1.3093 | 1.4556 | 0.90× |
 | kind10 | esymm | 256 | 1.6416 | 1.4647 | 1.12× |
@@ -306,8 +308,8 @@ Speedup column: `t_migrated / t_overlay` (>1 = overlay wins).
 
 ## hemm
 
-| prec | routine | size | overlay GF | migrated GF | speedup |
-|------|---------|------|-----------|-------------|---------|
+| prec | routine | size | parallel-blas GF | migrated GF | speedup |
+|------|---------|------|-----------------|-------------|---------|
 | kind10 | yhemm | 64 | 2.2442 | 1.9902 | 1.13× |
 | kind10 | yhemm | 128 | 1.9835 | 2.1866 | 0.91× |
 | kind10 | yhemm | 256 | 2.0485 | 2.2504 | 0.91× |

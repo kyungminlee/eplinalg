@@ -1,4 +1,4 @@
-       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
          128          0.0487             0.0498       0.98x
          256          0.0516             0.0521       0.99x
 wrote bench_xsyrk.json

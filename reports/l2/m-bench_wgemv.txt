@@ -1,4 +1,4 @@
-trans    size      overlay GF/s   migrated GF/s   speedup
+trans    size      parallel-blas GF/s   migrated GF/s   speedup
 N        128          0.4914          0.2129       2.31x
 N        256          0.4945          0.2095       2.36x
 N        512          0.4979          0.2131       2.34x

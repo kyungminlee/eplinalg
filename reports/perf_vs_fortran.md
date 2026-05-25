@@ -1,9 +1,9 @@
-# C harness vs Fortran bench — comparison (OMP=1)
+# parallel-blas / migrated ratio — C harness vs Fortran harness (OMP=1)
 
-Per-routine: median ratio across all (key, size) cells, in both the Fortran bench (old) and the C perf harness (new).
+Both harnesses measure the same comparison — parallel-blas overlay GF/s vs migrated Fortran reference GF/s. Per-routine: median ratio across all (key, size) cells, reported by both harnesses.
 
-| target | routine | F median | C median | F #cells | C #cells | Δ |
-|--------|---------|---------:|---------:|---------:|---------:|--:|
+| target | routine | Fortran-harness median | C-harness median | F #cells | C #cells | Δ |
+|--------|---------|----------------------:|----------------:|---------:|---------:|--:|
 | kind10 | `easum` | — | 1.314 | 0 | 9 | — |
 | kind10 | `eaxpy` | — | 1.000 | 0 | 9 | — |
 | kind10 | `ecopy` | — | 3.731 | 0 | 9 | — |
@@ -202,10 +202,10 @@ Per-routine: median ratio across all (key, size) cells, in both the Fortran benc
 
 ## Cells with biggest divergence (|Δ ratio| > 0.10)
 
-Same (target, routine, key, size) tuple in both datasets.
+Same (target, routine, key, size) tuple in both datasets. Both ratios are parallel-blas / migrated.
 
-| target | routine | key | size | F ratio | C ratio | Δ |
-|--------|---------|-----|------|--------:|--------:|--:|
+| target | routine | key | size | Fortran-harness ratio | C-harness ratio | Δ |
+|--------|---------|-----|------|---------------------:|---------------:|--:|
 | kind10 | `egemm` | `TT` | 256 | 1.760 | 2.728 | +0.968 |
 | kind10 | `egemm` | `TT` | 128 | 1.090 | 2.020 | +0.930 |
 | kind10 | `egemm` | `TT` | 128 | 1.230 | 2.020 | +0.790 |

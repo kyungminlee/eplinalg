@@ -1,4 +1,4 @@
-       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
           128          0.0618             0.0617       1.00x
           256          0.0617             0.0553       1.12x
 wrote bench_qtrmm.json
