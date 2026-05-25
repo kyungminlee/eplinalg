@@ -50,7 +50,7 @@ static void run_one(char ta, char tb, int M, int N, int K, int iters, int warmup
     for (int it = 0; it < iters; ++it)
         xgemm_(&ta, &tb, &M, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(C, Ci, (size_t)M * (size_t)N * sizeof(X16));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
@@ -60,8 +60,8 @@ static void run_one(char ta, char tb, int M, int N, int K, int iters, int warmup
 
     double flops = 8.0 * (double)M * (double)N * (double)K;
     char key[3] = {ta, tb, 0};
-    perf_emit("xgemm", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("xgemm", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("xgemm", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("xgemm", key, N, iters, flops, t_subject, t_mg);
     free(A); free(B); free(C); free(Ci);
 }
 

@@ -54,7 +54,7 @@ static void run_one(char uplo, char trans, char diag, int N, int K, int incx,
         t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof(Q16));
     }
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {
         double a = perf_now_s();
@@ -71,8 +71,8 @@ static void run_one(char uplo, char trans, char diag, int N, int K, int incx,
     } else {
         snprintf(key, sizeof(key), "%c%c%c/x%d", uplo, trans, diag, incx);
     }
-    perf_emit("qtbsv", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("qtbsv", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("qtbsv", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("qtbsv", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Xi);
 }
 

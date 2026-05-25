@@ -51,7 +51,7 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {
         t_sum += (b - a);
         memcpy(AP, APi, AP_LEN * sizeof(C10));
     }
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {
         double a = perf_now_s();
@@ -68,8 +68,8 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {
     } else {
         snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
     }
-    perf_emit("yhpr", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("yhpr", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("yhpr", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("yhpr", key, N, iters, flops, t_subject, t_mg);
     free(AP); free(APi); free(X);
 }
 

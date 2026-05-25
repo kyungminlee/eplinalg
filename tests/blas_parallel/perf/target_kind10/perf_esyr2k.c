@@ -54,7 +54,7 @@ static void run_one(char uplo, char trans, int N, int K, int iters, int warmup) 
     for (int it = 0; it < iters; ++it)
         esyr2k_(&uplo, &trans, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(C, Ci, (size_t)N * (size_t)N * sizeof(R10));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
@@ -63,8 +63,8 @@ static void run_one(char uplo, char trans, int N, int K, int iters, int warmup) 
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = 2.0 * (double)N * (double)N * (double)K;
     char key[3] = {uplo, trans, 0};
-    perf_emit("esyr2k", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("esyr2k", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("esyr2k", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("esyr2k", key, N, iters, flops, t_subject, t_mg);
     free(A); free(B); free(C); free(Ci);
 }
 

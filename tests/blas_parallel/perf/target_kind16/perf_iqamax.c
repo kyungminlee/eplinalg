@@ -34,14 +34,14 @@ static void run_one(int N, int iters, int warmup) {
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) r ^= iqamax_(&N, X, &one);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) r ^= iqamax_migrated_(&N, X, &one);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = 1.0 * (double)N;
-    perf_emit("iqamax", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("iqamax", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("iqamax", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("iqamax", "-", N, iters, flops, t_subject, t_mg);
     if (r == -123) { free(X); return; }
     free(X);
 }

@@ -25,11 +25,11 @@ program bench_mgemmtr
     integer, allocatable :: sizes(:)
     type(real64x2), allocatable :: A(:), B(:), C(:)
     type(real64x2) :: alpha, beta
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     iters = read_int_env('BLAS_BENCH_ITERS', 2)
     call read_sizes(sizes); nsizes = size(sizes)
     alpha = real64x2(0.7_8); beta = real64x2(0.3_8)
-    print '(a)', 'ulo  size      overlay GF/s   migrated GF/s   speedup'
+    print '(a)', 'ulo  size      subject GF/s   migrated GF/s   speedup'
     block
         character, parameter :: ULS(2) = ['U', 'L']
         integer :: itr, idx
@@ -64,8 +64,8 @@ contains
         end do
         if (n < size(arr)) arr = arr(1:n)
     end subroutine
-    subroutine run(ul, s, iters, t_ov, t_mig)
-        character, intent(in) :: ul; integer, intent(in) :: s, iters; real(8), intent(out) :: t_ov, t_mig
+    subroutine run(ul, s, iters, t_subject, t_mig)
+        character, intent(in) :: ul; integer, intent(in) :: s, iters; real(8), intent(out) :: t_subject, t_mig
         integer :: it; real(8), allocatable :: so(:), sm(:); real(8) :: t0, t1
         allocate(A(s*s), B(s*s), C(s*s), so(iters), sm(iters))
         call fill_matrix_real(A, s, s, s); call fill_matrix_real(B, s, s, s); call fill_matrix_real(C, s, s, s)
@@ -75,7 +75,7 @@ contains
             call clk(t0); call mgemmtr(ul, 'N', 'N', s, s, alpha, A, s, B, s, beta, C, s); call clk(t1); so(it) = t1 - t0
             call clk(t0); call mgemmtr_migrated(ul, 'N', 'N', s, s, alpha, A, s, B, s, beta, C, s); call clk(t1); sm(it) = t1 - t0
         end do
-        t_ov = med(so); t_mig = med(sm); deallocate(A, B, C, so, sm)
+        t_subject = med(so); t_mig = med(sm); deallocate(A, B, C, so, sm)
     end subroutine
     subroutine clk(t)
         real(8), intent(out) :: t; integer(8) :: c, r

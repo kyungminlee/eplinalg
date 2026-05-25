@@ -57,7 +57,7 @@ static void run_one(char side, char uplo, char trans, char diag,
         t_sum += (b - a);
         memcpy(B, Bi, (size_t)M * (size_t)N * sizeof(Q16));
     }
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {
         double a = perf_now_s();
@@ -69,8 +69,8 @@ static void run_one(char side, char uplo, char trans, char diag,
     double t_mg = t_sum / (iters ? iters : 1);
     double flops = 1.0 * (double)M * (double)N * (double)M;
     char key[5] = {side, uplo, trans, diag, 0};
-    perf_emit("qtrmm", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("qtrmm", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("qtrmm", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("qtrmm", key, N, iters, flops, t_subject, t_mg);
     free(A); free(B); free(Bi);
 }
 

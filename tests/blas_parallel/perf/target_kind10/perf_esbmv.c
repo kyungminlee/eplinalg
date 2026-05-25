@@ -53,7 +53,7 @@ static void run_one(char uplo, int N, int K, int incx, int incy,
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) esbmv_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(Y, Yi, leny * sizeof(R10));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) esbmv_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
@@ -70,8 +70,8 @@ static void run_one(char uplo, int N, int K, int incx, int incy,
     } else {
         snprintf(key, sizeof(key), "%c/x%d/y%d", uplo, incx, incy);
     }
-    perf_emit("esbmv", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("esbmv", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("esbmv", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("esbmv", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }
 

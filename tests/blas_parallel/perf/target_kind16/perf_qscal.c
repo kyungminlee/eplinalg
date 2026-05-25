@@ -46,7 +46,7 @@ static void run_qscal(int N, int iters, int warmup) {
         t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof(Q16));
     }
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
 
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {
@@ -58,8 +58,8 @@ static void run_qscal(int N, int iters, int warmup) {
     }
     double t_mg = t_sum / (iters ? iters : 1);
     double flops = 1.0 * (double)N;
-    perf_emit("qscal", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("qscal", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("qscal", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("qscal", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Xi);
 }
 

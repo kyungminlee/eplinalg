@@ -249,7 +249,7 @@ static void run_{name}(int N, int iters, int warmup) {{
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {name}_(&N, &alpha, X, &one, Y, &one);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
 
     memcpy(Y, Yi, (size_t)N * sizeof({T}));
     t0 = perf_now_s();
@@ -258,8 +258,8 @@ static void run_{name}(int N, int iters, int warmup) {{
     double t_mg = (t1 - t0) / (iters ? iters : 1);
 
     double flops = {flops};
-    perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y); free(Yi);
 }}
 
@@ -312,7 +312,7 @@ static void run_{name}(int N, int iters, int warmup) {{
         t_sum += (b - a);
         {'memcpy(X, Xi, (size_t)N * sizeof(' + T + ')); ' if swap else ''}memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
 
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
@@ -326,8 +326,8 @@ static void run_{name}(int N, int iters, int warmup) {{
     /* Bytes moved per call: copy=2N*sizeof(T), swap=4N*sizeof(T). Report
      * as "flops" for uniform formatting. */
     double flops = {'4.0' if swap else '2.0'} * (double)N * (double)sizeof({T});
-    perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y); free(Xi); free(Yi);
 }}
 
@@ -378,7 +378,7 @@ static void run_{name}(int N, int iters, int warmup) {{
         t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
 
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
@@ -390,8 +390,8 @@ static void run_{name}(int N, int iters, int warmup) {{
     }}
     double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
-    perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Xi);
 }}
 
@@ -454,7 +454,7 @@ static void run_one(char trans, int M, int N, int incx, int incy,
     for (int it = 0; it < iters; ++it)
         {name}_(&trans, &M, &N, &alpha, A, &M, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
 
     memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
@@ -474,8 +474,8 @@ static void run_one(char trans, int M, int N, int incx, int incy,
     }} else {{
         snprintf(key, sizeof(key), "%c/x%d/y%d", trans, incx, incy);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }}
 
@@ -550,7 +550,7 @@ static void run_one(int M, int N, int incx, int incy, int iters, int warmup) {{
         t_sum += (b - a);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
 
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
@@ -573,8 +573,8 @@ static void run_one(int M, int N, int incx, int incy, int iters, int warmup) {{
     }} else {{
         snprintf(key, sizeof(key), "x%d/y%d", incx, incy);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(Ai); free(X); free(Y);
 }}
 
@@ -642,7 +642,7 @@ static void run_one(char ta, char tb, int M, int N, int K, int iters, int warmup
     for (int it = 0; it < iters; ++it)
         {name}_(&ta, &tb, &M, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(C, Ci, (size_t)M * (size_t)N * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
@@ -652,8 +652,8 @@ static void run_one(char ta, char tb, int M, int N, int K, int iters, int warmup
 
     double flops = {flops};
     char key[3] = {{ta, tb, 0}};
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(B); free(C); free(Ci);
 }}
 
@@ -722,7 +722,7 @@ static void run_one(int N, int iters, int warmup) {{
         sink_T(&r);
     }}
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
 
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
@@ -733,8 +733,8 @@ static void run_one(int N, int iters, int warmup) {{
     double t_mg = (t1 - t0) / (iters ? iters : 1);
 
     double flops = {flops};
-    perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y);
 }}
 
@@ -774,14 +774,14 @@ static void run_one(int N, int iters, int warmup) {{
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) r = {name}_(&N, X, &one);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) r = {name}_migrated_(&N, X, &one);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", N, iters, flops, t_subject, t_mg);
     if ((double)(*((double*)&r)) == -123e30) {{ free(X); return; }}
     free(X);
 }}
@@ -818,14 +818,14 @@ static void run_one(int N, int iters, int warmup) {{
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) r ^= {name}_(&N, X, &one);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) r ^= {name}_migrated_(&N, X, &one);
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
-    perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", N, iters, flops, t_subject, t_mg);
     if (r == -123) {{ free(X); return; }}
     free(X);
 }}
@@ -881,7 +881,7 @@ static void run_one(char uplo, int N, int incx, int incy, int iters, int warmup)
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {name}_(&uplo, &N, &alpha, A, &N, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {name}_migrated_(&uplo, &N, &alpha, A, &N, X, &incx, &beta, Y, &incy, 1);
@@ -898,8 +898,8 @@ static void run_one(char uplo, int N, int incx, int incy, int iters, int warmup)
     }} else {{
         snprintf(key, sizeof(key), "%c/x%d/y%d", uplo, incx, incy);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }}
 
@@ -970,7 +970,7 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
         t_sum += (b - a);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
         double a = perf_now_s();
@@ -987,8 +987,8 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
     }} else {{
         snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(Ai); free(X);
 }}
 
@@ -1055,7 +1055,7 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
         t_sum += (b - a);
         memcpy(AP, APi, AP_LEN * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
         double a = perf_now_s();
@@ -1072,8 +1072,8 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {{
     }} else {{
         snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(AP); free(APi); free(X);
 }}
 
@@ -1139,7 +1139,7 @@ static void run_one(char uplo, int N, int incx, int incy, int iters, int warmup)
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {name}_(&uplo, &N, &alpha, AP, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {name}_migrated_(&uplo, &N, &alpha, AP, X, &incx, &beta, Y, &incy, 1);
@@ -1156,8 +1156,8 @@ static void run_one(char uplo, int N, int incx, int incy, int iters, int warmup)
     }} else {{
         snprintf(key, sizeof(key), "%c/x%d/y%d", uplo, incx, incy);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(AP); free(X); free(Y); free(Yi);
 }}
 
@@ -1231,7 +1231,7 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
         t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
         double a = perf_now_s();
@@ -1251,8 +1251,8 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
     }} else {{
         snprintf(key, sizeof(key), "%c%c%c/x%d", uplo, trans, diag, incx);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Xi);
 }}
 
@@ -1332,7 +1332,7 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
         t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
         double a = perf_now_s();
@@ -1349,8 +1349,8 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
     }} else {{
         snprintf(key, sizeof(key), "%c%c%c/x%d", uplo, trans, diag, incx);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(AP); free(X); free(Xi);
 }}
 
@@ -1426,7 +1426,7 @@ static void run_one(char trans, int M, int N, int KL, int KU,
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {name}_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {name}_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
@@ -1443,8 +1443,8 @@ static void run_one(char trans, int M, int N, int KL, int KU,
     }} else {{
         snprintf(key, sizeof(key), "%c/x%d/y%d", trans, incx, incy);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }}
 
@@ -1517,7 +1517,7 @@ static void run_one(char uplo, int N, int K, int incx, int incy,
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {name}_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(Y, Yi, leny * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {name}_migrated_(&uplo, &N, &K, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
@@ -1534,8 +1534,8 @@ static void run_one(char uplo, int N, int K, int incx, int incy,
     }} else {{
         snprintf(key, sizeof(key), "%c/x%d/y%d", uplo, incx, incy);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }}
 
@@ -1608,7 +1608,7 @@ static void run_one(char uplo, char trans, char diag, int N, int K, int incx,
         t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
         double a = perf_now_s();
@@ -1625,8 +1625,8 @@ static void run_one(char uplo, char trans, char diag, int N, int K, int incx,
     }} else {{
         snprintf(key, sizeof(key), "%c%c%c/x%d", uplo, trans, diag, incx);
     }}
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Xi);
 }}
 
@@ -1697,7 +1697,7 @@ static void run_one(char side, char uplo, int M, int N, int iters, int warmup) {
     for (int it = 0; it < iters; ++it)
         {name}_(&side, &uplo, &M, &N, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(C, Ci, (size_t)M * (size_t)N * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
@@ -1706,8 +1706,8 @@ static void run_one(char side, char uplo, int M, int N, int iters, int warmup) {
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
     char key[3] = {{side, uplo, 0}};
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(B); free(C); free(Ci);
 }}
 
@@ -1768,7 +1768,7 @@ static void run_one(char uplo, char trans, int N, int K, int iters, int warmup) 
     for (int it = 0; it < iters; ++it)
         {name}_(&uplo, &trans, &N, &K, &alpha, A, &lda, &beta, C, &ldc, 1, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(C, Ci, (size_t)N * (size_t)N * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
@@ -1777,8 +1777,8 @@ static void run_one(char uplo, char trans, int N, int K, int iters, int warmup) 
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
     char key[3] = {{uplo, trans, 0}};
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(C); free(Ci);
 }}
 
@@ -1845,7 +1845,7 @@ static void run_one(char uplo, char trans, int N, int K, int iters, int warmup) 
     for (int it = 0; it < iters; ++it)
         {name}_(&uplo, &trans, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(C, Ci, (size_t)N * (size_t)N * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
@@ -1854,8 +1854,8 @@ static void run_one(char uplo, char trans, int N, int K, int iters, int warmup) 
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
     char key[3] = {{uplo, trans, 0}};
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(B); free(C); free(Ci);
 }}
 
@@ -1922,7 +1922,7 @@ static void run_one(char side, char uplo, char trans, char diag,
         t_sum += (b - a);
         memcpy(B, Bi, (size_t)M * (size_t)N * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
         double a = perf_now_s();
@@ -1934,8 +1934,8 @@ static void run_one(char side, char uplo, char trans, char diag,
     double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
     char key[5] = {{side, uplo, trans, diag, 0}};
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(B); free(Bi);
 }}
 
@@ -2008,7 +2008,7 @@ static void run_one(char uplo, char ta, char tb, int N, int K, int iters, int wa
     for (int it = 0; it < iters; ++it)
         {name}_(&uplo, &ta, &tb, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(C, Ci, (size_t)N * (size_t)N * sizeof({T}));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
@@ -2017,8 +2017,8 @@ static void run_one(char uplo, char ta, char tb, int N, int K, int iters, int wa
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = {flops};
     char key[4] = {{uplo, ta, tb, 0}};
-    perf_emit("{name}", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", key, N, iters, flops, t_subject, t_mg);
     free(A); free(B); free(C); free(Ci);
 }}
 
@@ -2087,7 +2087,7 @@ static void run_one(int N, int iters, int warmup) {{
         t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof({T})); memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
 
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
@@ -2099,8 +2099,8 @@ static void run_one(int N, int iters, int warmup) {{
     }}
     double t_mg = t_sum / (iters ? iters : 1);
     double flops = {flops};
-    perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y); free(Xi); free(Yi);
 }}
 
@@ -2158,7 +2158,7 @@ static void run_one(int N, int iters, int warmup) {{
         t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof({T})); memcpy(Y, Yi, (size_t)N * sizeof({T}));
     }}
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
 
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {{
@@ -2170,8 +2170,8 @@ static void run_one(int N, int iters, int warmup) {{
     }}
     double t_mg = t_sum / (iters ? iters : 1);
     double flops = 4.0 * (double)N;
-    perf_emit("{name}", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y); free(Xi); free(Yi);
 }}
 
@@ -2215,7 +2215,7 @@ static void run_one(int iters, int warmup) {{
         {Ta} a = A, b = B; {name}_(&a, &b, &C, &S);
     }}
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
         {Ta} a = A, b = B; {name}_migrated_(&a, &b, &C, &S);
@@ -2224,8 +2224,8 @@ static void run_one(int iters, int warmup) {{
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     /* report time per call as "flops" abuse: per-call flop count ~10. */
     double flops = 10.0;
-    perf_emit("{name}", "-", iters, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", iters, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", iters, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", iters, iters, flops, t_subject, t_mg);
 }}
 
 int main(void) {{
@@ -2259,7 +2259,7 @@ static void run_one(int iters, int warmup) {{
         {name}_(&d1, &d2, &x1, &Y1, PARAM);
     }}
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {{
         {T} d1 = D1, d2 = D2, x1 = X1;
@@ -2268,8 +2268,8 @@ static void run_one(int iters, int warmup) {{
     t1 = perf_now_s();
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = 20.0;
-    perf_emit("{name}", "-", iters, iters, flops, t_ov, t_mg);
-    perf_emit_json("{name}", "-", iters, iters, flops, t_ov, t_mg);
+    perf_emit("{name}", "-", iters, iters, flops, t_subject, t_mg);
+    perf_emit_json("{name}", "-", iters, iters, flops, t_subject, t_mg);
 }}
 
 int main(void) {{

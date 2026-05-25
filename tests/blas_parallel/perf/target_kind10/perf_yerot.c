@@ -52,7 +52,7 @@ static void run_one(int N, int iters, int warmup) {
         t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof(C10)); memcpy(Y, Yi, (size_t)N * sizeof(C10));
     }
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
 
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {
@@ -64,8 +64,8 @@ static void run_one(int N, int iters, int warmup) {
     }
     double t_mg = t_sum / (iters ? iters : 1);
     double flops = 12.0 * (double)N;
-    perf_emit("yerot", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("yerot", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("yerot", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("yerot", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y); free(Xi); free(Yi);
 }
 

@@ -27,7 +27,7 @@ program bench_${routine}$
     integer, allocatable :: sizes(:)
     complex(rk), allocatable :: A(:), X(:), Y(:), A_init(:)
     complex(rk) :: alpha
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     character(len=1), parameter :: UPLOS(2) = ['L', 'U']
 
     iters  = read_int_env('BLAS_BENCH_ITERS',  4)
@@ -35,11 +35,11 @@ program bench_${routine}$
     call read_sizes(sizes); nsizes = size(sizes)
     alpha = cmplx(0.7_rk, 0.1_rk, rk)
 
-    print '(a)', 'uplo    size      overlay GF/s   migrated GF/s   speedup'
+    print '(a)', 'uplo    size      subject GF/s   migrated GF/s   speedup'
     do iup = 1, size(UPLOS)
         do i = 1, nsizes
-            call run_size(UPLOS(iup), sizes(i), alpha, iters, warmup, t_ov, t_mig)
-            call emit(UPLOS(iup), sizes(i), t_ov, t_mig)
+            call run_size(UPLOS(iup), sizes(i), alpha, iters, warmup, t_subject, t_mig)
+            call emit(UPLOS(iup), sizes(i), t_subject, t_mig)
         end do
     end do
 
@@ -71,10 +71,10 @@ contains
         end do
         if (n < size(arr)) arr = arr(1:n)
     end subroutine
-    subroutine run_size(uplo, s, alpha, iters, warmup, t_ov, t_mig)
+    subroutine run_size(uplo, s, alpha, iters, warmup, t_subject, t_mig)
         character, intent(in) :: uplo; integer, intent(in) :: s, iters, warmup
         complex(rk), intent(in) :: alpha
-        real(8), intent(out) :: t_ov, t_mig
+        real(8), intent(out) :: t_subject, t_mig
         integer :: it, i
         real(8), allocatable :: so(:), sm(:)
         real(8) :: t0, t1
@@ -91,7 +91,7 @@ contains
             A = A_init; call clk(t0); call ${routine}$(uplo, s, alpha, X, 1, Y, 1, A, s); call clk(t1); so(it) = t1 - t0
             A = A_init; call clk(t0); call ${routine}$_migrated(uplo, s, alpha, X, 1, Y, 1, A, s); call clk(t1); sm(it) = t1 - t0
         end do
-        t_ov = med(so); t_mig = med(sm)
+        t_subject = med(so); t_mig = med(sm)
         deallocate(A, A_init, X, Y, so, sm)
     end subroutine
     subroutine clk(t)

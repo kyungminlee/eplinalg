@@ -37,7 +37,7 @@ static void run_one(int iters, int warmup) {
         C10 a = A, b = B; yrotg_(&a, &b, &C, &S);
     }
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) {
         C10 a = A, b = B; yrotg_migrated_(&a, &b, &C, &S);
@@ -46,8 +46,8 @@ static void run_one(int iters, int warmup) {
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     /* report time per call as "flops" abuse: per-call flop count ~10. */
     double flops = 10.0;
-    perf_emit("yrotg", "-", iters, iters, flops, t_ov, t_mg);
-    perf_emit_json("yrotg", "-", iters, iters, flops, t_ov, t_mg);
+    perf_emit("yrotg", "-", iters, iters, flops, t_subject, t_mg);
+    perf_emit_json("yrotg", "-", iters, iters, flops, t_subject, t_mg);
 }
 
 int main(void) {

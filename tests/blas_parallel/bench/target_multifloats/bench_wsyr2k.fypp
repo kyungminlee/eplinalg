@@ -29,7 +29,7 @@ program bench_wsyr2k
     integer, allocatable :: sizes(:)
     type(cmplx64x2), allocatable :: A(:), B(:), C_init(:), C_use(:)
     type(cmplx64x2) :: alpha, beta
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     character(len=256) :: out_path
     integer :: ios, jio
     character(len=1), parameter :: UPLOS(2)   = ['L', 'U']
@@ -52,15 +52,15 @@ program bench_wsyr2k
     write(jio, '(a,i0,a)') '  "warmup": ', warmup, ','
     write(jio, '(a)') '  "results": ['
 
-    print '(a)', 'uplo trans    size      overlay GFLOP/s   migrated GFLOP/s   speedup'
+    print '(a)', 'uplo trans    size      subject GFLOP/s   migrated GFLOP/s   speedup'
     do iup = 1, 2
         do itr = 1, 2
             do i = 1, nsizes
                 call run_size(UPLOS(iup), TRANSES(itr), sizes(i), alpha, beta, &
-                              iters, warmup, t_ov, t_mig)
-                call emit_json(jio, UPLOS(iup), TRANSES(itr), sizes(i), t_ov, t_mig, &
+                              iters, warmup, t_subject, t_mig)
+                call emit_json(jio, UPLOS(iup), TRANSES(itr), sizes(i), t_subject, t_mig, &
                                iup == 2 .and. itr == 2 .and. i == nsizes)
-                call emit_console(UPLOS(iup), TRANSES(itr), sizes(i), t_ov, t_mig)
+                call emit_console(UPLOS(iup), TRANSES(itr), sizes(i), t_subject, t_mig)
             end do
         end do
     end do
@@ -110,11 +110,11 @@ contains
         if (n < size(arr)) arr = arr(1:n)
     end subroutine read_sizes
 
-    subroutine run_size(uplo, trans, s, alpha, beta, iters, warmup, t_ov, t_mig)
+    subroutine run_size(uplo, trans, s, alpha, beta, iters, warmup, t_subject, t_mig)
         character, intent(in) :: uplo, trans
         integer, intent(in) :: s, iters, warmup
         type(cmplx64x2), intent(in) :: alpha, beta
-        real(8), intent(out) :: t_ov, t_mig
+        real(8), intent(out) :: t_subject, t_mig
         integer :: it
         real(8), allocatable :: samples_ov(:), samples_mig(:)
         real(8) :: t0, t1
@@ -143,7 +143,7 @@ contains
             call cpu_clock(t1)
             samples_mig(it) = t1 - t0
         end do
-        t_ov  = median(samples_ov)
+        t_subject  = median(samples_ov)
         t_mig = median(samples_mig)
         deallocate(A, B, C_init, C_use, samples_ov, samples_mig)
     end subroutine run_size
@@ -179,30 +179,30 @@ contains
         else; g = 0.0_8; end if
     end function gflops
 
-    subroutine emit_console(uplo, trans, s, t_ov, t_mig)
+    subroutine emit_console(uplo, trans, s, t_subject, t_mig)
         character, intent(in) :: uplo, trans
         integer, intent(in) :: s
-        real(8), intent(in) :: t_ov, t_mig
+        real(8), intent(in) :: t_subject, t_mig
         real(8) :: g_ov, g_mig, speedup
-        g_ov = gflops(s, t_ov); g_mig = gflops(s, t_mig)
-        if (t_ov > 0.0_8) then; speedup = t_mig / t_ov
+        g_ov = gflops(s, t_subject); g_mig = gflops(s, t_mig)
+        if (t_subject > 0.0_8) then; speedup = t_mig / t_subject
         else; speedup = 0.0_8; end if
         print '(a1,4x,a1,5x,i6,4x,f12.4,7x,f12.4,4x,f7.2,a)', &
             uplo, trans, s, g_ov, g_mig, speedup, 'x'
     end subroutine emit_console
 
-    subroutine emit_json(io, uplo, trans, s, t_ov, t_mig, last)
+    subroutine emit_json(io, uplo, trans, s, t_subject, t_mig, last)
         integer, intent(in) :: io, s
         character, intent(in) :: uplo, trans
-        real(8), intent(in) :: t_ov, t_mig
+        real(8), intent(in) :: t_subject, t_mig
         logical, intent(in) :: last
         write(io, '(a)') '    {'
         write(io, '(3a)') '      "uplo": "', uplo, '",'
         write(io, '(3a)') '      "trans": "', trans, '",'
         write(io, '(a,i0,a)') '      "size": ', s, ','
-        write(io, '(a,es16.8,a)') '      "t_overlay_s": ',  t_ov,  ','
+        write(io, '(a,es16.8,a)') '      "t_overlay_s": ',  t_subject,  ','
         write(io, '(a,es16.8,a)') '      "t_migrated_s": ', t_mig, ','
-        write(io, '(a,es16.8,a)') '      "gflops_overlay": ',  gflops(s, t_ov),  ','
+        write(io, '(a,es16.8,a)') '      "gflops_subject": ',  gflops(s, t_subject),  ','
         write(io, '(a,es16.8)')   '      "gflops_migrated": ', gflops(s, t_mig)
         if (last) then; write(io, '(a)') '    }'
         else; write(io, '(a)') '    },'; end if

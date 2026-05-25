@@ -24,7 +24,7 @@ program bench_${routine}$
     integer :: iters, warmup, nsizes, i, iup, itr, idg, kband
     integer, allocatable :: sizes(:)
     complex(rk), allocatable :: A(:), X(:), X_init(:)
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     character(len=1), parameter :: UPLOS(2)  = ['L', 'U']
     character(len=1), parameter :: TRANSES(3)= ['N', 'T', 'C']
     character(len=1), parameter :: DIAGS(2)  = ['N', 'U']
@@ -35,13 +35,13 @@ program bench_${routine}$
     call read_sizes(sizes); nsizes = size(sizes)
 
     print '(a,i0)', 'tbsv bench: K=', kband
-    print '(a)', 'uplo trans diag    size      overlay GF/s   migrated GF/s   speedup'
+    print '(a)', 'uplo trans diag    size      subject GF/s   migrated GF/s   speedup'
     do iup = 1, size(UPLOS)
       do itr = 1, size(TRANSES)
         do idg = 1, size(DIAGS)
           do i = 1, nsizes
-            call run_size(UPLOS(iup), TRANSES(itr), DIAGS(idg), sizes(i), kband, iters, warmup, t_ov, t_mig)
-            call emit(UPLOS(iup), TRANSES(itr), DIAGS(idg), sizes(i), kband, t_ov, t_mig)
+            call run_size(UPLOS(iup), TRANSES(itr), DIAGS(idg), sizes(i), kband, iters, warmup, t_subject, t_mig)
+            call emit(UPLOS(iup), TRANSES(itr), DIAGS(idg), sizes(i), kband, t_subject, t_mig)
           end do
         end do
       end do
@@ -75,10 +75,10 @@ contains
         end do
         if (n < size(arr)) arr = arr(1:n)
     end subroutine
-    subroutine run_size(uplo, trans, diag, s, k, iters, warmup, t_ov, t_mig)
+    subroutine run_size(uplo, trans, diag, s, k, iters, warmup, t_subject, t_mig)
         character, intent(in) :: uplo, trans, diag
         integer, intent(in) :: s, k, iters, warmup
-        real(8), intent(out) :: t_ov, t_mig
+        real(8), intent(out) :: t_subject, t_mig
         integer :: it, ke, lda, j, drow
         real(rk) :: dshift
         real(8), allocatable :: so(:), sm(:)
@@ -101,7 +101,7 @@ contains
             X = X_init; call clk(t0); call ${routine}$(uplo, trans, diag, s, ke, A, lda, X, 1); call clk(t1); so(it) = t1 - t0
             X = X_init; call clk(t0); call ${routine}$_migrated(uplo, trans, diag, s, ke, A, lda, X, 1); call clk(t1); sm(it) = t1 - t0
         end do
-        t_ov = med(so); t_mig = med(sm)
+        t_subject = med(so); t_mig = med(sm)
         deallocate(A, X, X_init, so, sm)
     end subroutine
     subroutine clk(t)

@@ -52,7 +52,7 @@ static void run_qcopy(int N, int iters, int warmup) {
         t_sum += (b - a);
         memcpy(Y, Yi, (size_t)N * sizeof(Q16));
     }
-    double t_ov = t_sum / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
 
     t_sum = 0;
     for (int it = 0; it < iters; ++it) {
@@ -66,8 +66,8 @@ static void run_qcopy(int N, int iters, int warmup) {
     /* Bytes moved per call: copy=2N*sizeof(T), swap=4N*sizeof(T). Report
      * as "flops" for uniform formatting. */
     double flops = 2.0 * (double)N * (double)sizeof(Q16);
-    perf_emit("qcopy", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("qcopy", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("qcopy", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("qcopy", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y); free(Xi); free(Yi);
 }
 

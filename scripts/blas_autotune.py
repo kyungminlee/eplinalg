@@ -45,7 +45,7 @@ NC_GRID = [128, 256, 384, 512]
 
 def run_one(bench: Path, env_prefix: str, mc: int, kc: int, nc: int,
             size: int, threads: int, iters: int) -> float | None:
-    """Run bench at (mc, kc, nc); return overlay GFLOP/s (or None on failure)."""
+    """Run bench at (mc, kc, nc); return subject (parallel-blas) GFLOP/s (or None on failure)."""
     env = os.environ.copy()
     env[f"{env_prefix}_MC"] = str(mc)
     env[f"{env_prefix}_KC"] = str(kc)
@@ -60,7 +60,7 @@ def run_one(bench: Path, env_prefix: str, mc: int, kc: int, nc: int,
         subprocess.run([str(bench)], env=env, check=True,
                        capture_output=True, timeout=600)
         data = json.loads(out_json.read_text())
-        return float(data["results"][0]["gflops_overlay"])
+        return float(data["results"][0]["gflops_subject"])
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
             FileNotFoundError, KeyError, json.JSONDecodeError) as e:
         print(f"  ! {mc}/{kc}/{nc}: {e}", file=sys.stderr)
