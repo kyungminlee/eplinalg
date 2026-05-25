@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Compact summary: one row per (precision, routine) showing speedup
-range across all (combo × size) measurements."""
+range across all (combo × size) measurements.
+
+Scope: parallel-blas overlay vs migrated Fortran reference at OMP=1.
+"""
 import re
 from pathlib import Path
 from collections import defaultdict
@@ -23,9 +26,10 @@ for f in sorted(ROOT.glob("*-bench_*.txt")):
         if mt:
             speedups[(prec, prefix)].append((mt.group(1) or "—", int(mt.group(2)), float(mt.group(3))))
 
-out = ["# Compact summary: OMP=1 speedup ranges",
+out = ["# Compact summary: OMP=1 parallel-blas-vs-migrated speedup ranges",
        "",
-       "Per (precision, routine), speedup distribution across all measured (combo × size) cases.",
+       "Per (precision, routine), parallel-blas-overlay vs migrated-Fortran speedup distribution across all measured (combo × size) cases.",
+       "Speedup = `t_migrated / t_parallel-blas` (>1 = parallel-blas wins).",
        "",
        "| prec | routine | combos × sizes | min spd | median | max spd | <1.0× cases |",
        "|------|---------|----------------|---------|--------|---------|-------------|"]
@@ -45,7 +49,7 @@ for (prec, prefix), sps in speedups.items():
         if sp < 1.0:
             worst.append((sp, PREC_NAME[prec], prefix, combo, size))
 worst.sort()
-out.append("## Worst regressions (overlay slower than migrated)")
+out.append("## Worst regressions (parallel-blas slower than migrated)")
 out.append("")
 out.append("| speedup | prec | routine | combo | size |")
 out.append("|---------|------|---------|-------|------|")

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Aggregate full-omp1 bench outputs into a single markdown report.
 
-Reads reports/full-omp1/{prec}-bench_{routine}.txt files and emits
-a per-routine table with all (transpose × size) measurements.
+Reads reports/full-omp1/{prec}-bench_{routine}.txt files (output of the
+parallel-blas bench .fypp harnesses, captured to disk) and emits a
+per-routine table with all (transpose × size) measurements comparing
+parallel-blas overlay GF/s vs migrated Fortran reference GF/s.
+
+Scope: parallel-blas overlay only (this report predates epopenblas).
 """
 import re
 import sys
@@ -11,8 +15,8 @@ from collections import defaultdict
 
 ROOT = Path(__file__).parent / "full-omp1"
 
-# Output table per routine: precision, routine, combo, size, GFLOP/s overlay,
-# GFLOP/s migrated, speedup.
+# Output table per routine: precision, routine, combo, size,
+# parallel-blas GFLOP/s, migrated GFLOP/s, speedup = t_migrated / t_parallel-blas.
 
 PREC_NAME = {"k10": "kind10", "k16": "kind16", "m": "multifloats"}
 PREC_ORDER = ["k10", "k16", "m"]
@@ -62,11 +66,13 @@ for f in sorted(ROOT.glob("*-bench_*.txt")):
         results[r].append((prec, prefix, combo, size, ov, mig, sp))
 
 # Emit markdown
-out = ["# Full OMP=1 BLAS overlay vs migrated benchmark",
+out = ["# Full OMP=1 parallel-blas overlay vs migrated Fortran benchmark",
        "",
        "Per-routine speedup at OMP=1. Run with iters=3, warmup=1, sizes=64/128/256/512.",
        "",
-       "Speedup column: `t_migrated / t_overlay` (>1 = overlay wins).",
+       "Scope: parallel-blas overlay only. (This report predates the epopenblas overlay; see `reports/cmp5/` for epopenblas vs parallel-blas comparisons.)",
+       "",
+       "Speedup column: `t_migrated / t_parallel-blas` (>1 = parallel-blas wins).",
        ""]
 
 for r in ROUTINE_ORDER:
@@ -77,11 +83,11 @@ for r in ROUTINE_ORDER:
     out.append(f"## {r}")
     out.append("")
     if has_combo:
-        hdr = "| prec | routine | trans | size | overlay GF | migrated GF | speedup |"
-        sep = "|------|---------|-------|------|-----------|-------------|---------|"
+        hdr = "| prec | routine | trans | size | parallel-blas GF | migrated GF | speedup |"
+        sep = "|------|---------|-------|------|-----------------|-------------|---------|"
     else:
-        hdr = "| prec | routine | size | overlay GF | migrated GF | speedup |"
-        sep = "|------|---------|------|-----------|-------------|---------|"
+        hdr = "| prec | routine | size | parallel-blas GF | migrated GF | speedup |"
+        sep = "|------|---------|------|-----------------|-------------|---------|"
     out.append(hdr)
     out.append(sep)
     # Group by (prec, prefix) for readability

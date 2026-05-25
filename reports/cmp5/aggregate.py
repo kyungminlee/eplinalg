@@ -2,11 +2,14 @@
 """Aggregate the 4-variant perf sweep into a comparison table.
 
 Input columns (cmp5_raw.tsv):
-    run_id run_binary omp taskset routine key size iters overlay_GFs migrated_GFs
+    run_id run_binary omp taskset routine key size iters subject_GFs migrated_GFs
 
-The same C source is linked into both binaries, so for each (routine, key,
-size) we get four overlay GF/s readings (one per run_id) and four
-migrated GF/s readings (the migrated_ symbol timing inside each run).
+`subject_GFs` is the GF/s of the C overlay routine under test in this row;
+which overlay (epopenblas or parallel-blas) is read from run_id. The same
+perf_<r>.c source is linked into both ep_perf_<r> (against epopenblas) and
+perf_<r> (against parallel-blas), so within each row we get one subject GF/s
+reading and one migrated GF/s reading (the migrated_ Fortran-reference
+symbol's timing inside that same binary).
 
 Output:
     cmp5.tsv  — wide table with columns
@@ -28,7 +31,7 @@ from pathlib import Path
 RAW = Path(__file__).parent / "cmp5_raw.tsv"
 OUT = Path(__file__).parent / "cmp5.tsv"
 
-OVERLAYS = ["epopenblas-omp1", "epopenblas-omp4",
+VARIANTS = ["epopenblas-omp1", "epopenblas-omp4",
             "parallel-blas-omp1", "parallel-blas-omp4"]
 MIG_KEYS = {
     "epopenblas-omp1":     "mig_ep_omp1",
@@ -39,20 +42,20 @@ MIG_KEYS = {
 
 
 def main():
-    overlay = defaultdict(dict)   # (routine, key, size) → {variant: gflops}
+    subject = defaultdict(dict)   # (routine, key, size) → {variant: gflops}
     migrated = defaultdict(dict)  # (routine, key, size) → {mig_*: gflops}
     with RAW.open() as f:
         r = csv.DictReader(f, delimiter="\t")
         for row in r:
             key = (row["routine"], row["key"], int(row["size"]))
             run = row["run_id"]
-            overlay[key][run] = float(row["overlay_GFs"])
+            subject[key][run] = float(row["subject_GFs"])
             migrated[key][MIG_KEYS[run]] = float(row["migrated_GFs"])
 
     rows = []
-    for k in sorted(overlay):
+    for k in sorted(subject):
         routine, ks, size = k
-        o = overlay[k]
+        o = subject[k]
         m = migrated[k]
         rows.append({
             "routine": routine,

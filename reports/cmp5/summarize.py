@@ -38,12 +38,13 @@ def main():
         by_routine[r["routine"]].append(r)
 
     out = []
-    out.append("# 5-column overlay comparison — kind10 (REAL/COMPLEX(KIND=10))")
+    out.append("# 5-way comparison: epopenblas / parallel-blas / migrated — kind10 (REAL/COMPLEX(KIND=10))")
     out.append("")
     out.append(f"- Source: `reports/cmp5/cmp5.tsv` ({len(rows)} (routine,key,size) rows over {len(by_routine)} routines)")
-    out.append("- All four overlay variants are linked from the SAME `tests/blas_parallel/perf/target_kind10/perf_<r>.c` source.")
+    out.append("- Five variants: epopenblas (overlay) at OMP=1 and OMP=4, parallel-blas (overlay) at OMP=1 and OMP=4, and migrated (Fortran reference, serial baseline).")
+    out.append("- All four overlay binaries link the SAME `tests/blas_parallel/perf/target_kind10/perf_<r>.c` source — only the C-overlay symbol differs.")
     out.append("- Same `BLAS_PERF_{ITERS,WARMUP,INCX,INCY}=200/20/1/1`; per-routine default sizes; pinned via `taskset` (P-cores 0 or 0..3).")
-    out.append("- migrated-serial = migrated_GFs from the parallel-blas-omp1 run; mig_* columns are sanity readings of the same `_serial` symbol from each of the four runs (expected to be ~equal since `_serial` contains no OpenMP).")
+    out.append("- migrated-serial = migrated_GFs from the parallel-blas-omp1 run; mig_* columns are sanity readings of the same migrated `_serial` symbol from each of the four runs (expected to be ~equal since `_serial` contains no OpenMP).")
     out.append("")
 
     # 1. migrated drift sanity check.
@@ -74,7 +75,7 @@ def main():
     # 2. Per-routine median GF/s across all (key, size).
     out.append("## Per-routine medians (GF/s) — across all (key, size)")
     out.append("")
-    out.append("Columns: routine, then median GF/s for each of the 5 variants, then OMP=4/OMP=1 speedup for each overlay.")
+    out.append("Columns: routine, then median GF/s for each of the 5 variants (`ep` = epopenblas, `par` = parallel-blas, `mig` = migrated Fortran reference), then OMP=4/OMP=1 speedup for each C overlay.")
     out.append("")
     out.append("| routine | ep-omp1 | ep-omp4 | par-omp1 | par-omp4 | mig-serial | ep4/ep1 | par4/par1 |")
     out.append("|---------|--------:|--------:|---------:|---------:|-----------:|--------:|----------:|")

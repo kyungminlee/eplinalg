@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Run the 4-variant cmp5 perf sweep for kind10:
-#   - epopenblas binaries (ep_perf_*) at OMP=1 and OMP=4
-#   - blas_parallel binaries (perf_*)  at OMP=1 and OMP=4
+#   - epopenblas binaries (ep_perf_*)        at OMP=1 and OMP=4
+#   - parallel-blas binaries (perf_*)        at OMP=1 and OMP=4
 # Pinned to P-core 0. Per-routine wall-clock cap via TIMEOUT env.
 #
 # Output: cmp5_raw.tsv (alongside this script) in the format the existing
 # aggregate.py expects:
-#   run_id  run_binary  omp  taskset  routine  key  size  iters  overlay_GFs  migrated_GFs
+#   run_id  run_binary  omp  taskset  routine  key  size  iters  subject_GFs  migrated_GFs
+#
+# subject_GFs = GF/s of the C-implemented routine under test in this row
+#   (which C overlay it is — epopenblas or parallel-blas — is read from run_id).
+# migrated_GFs = GF/s of the migrated Fortran reference (the migrator-translated
+#   _serial symbol; same symbol in both binaries, so should agree across runs).
 #
 # Usage: bash reports/cmp5/run_cmp5.sh
 # Env:
@@ -28,7 +33,7 @@ LOG="${HERE}/cmp5.log"
 
 : > "$RAW"
 : > "$LOG"
-echo -e "run_id\trun_binary\tomp\ttaskset\troutine\tkey\tsize\titers\toverlay_GFs\tmigrated_GFs" >> "$RAW"
+echo -e "run_id\trun_binary\tomp\ttaskset\troutine\tkey\tsize\titers\tsubject_GFs\tmigrated_GFs" >> "$RAW"
 
 # Collect routine names — both halves must implement the same set, so use
 # the epopenblas binary list as the source of truth and only run a
@@ -68,7 +73,8 @@ run_one() {
         /^#/ {next}
         NF >= 6 {
             gsub(/x$/, "", $7);
-            # cols: routine key size iters overlay_GFs migrated_GFs ratio
+            # perf binary stdout cols: routine key size iters subject_GFs migrated_GFs ratio
+            # (subject = epopenblas or parallel-blas — read from rid)
             printf "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
                 rid, tag, omp, 0, $1, $2, $3, $4, $5, $6;
         }' "$TMP" >> "$RAW"
