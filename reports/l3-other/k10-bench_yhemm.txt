@@ -1,4 +1,4 @@
-side uplo    size      overlay GF/s   migrated GF/s   speedup
+side uplo    size      parallel-blas GF/s   migrated GF/s   speedup
 L    L         64          2.1543          2.2480       0.96x
 L    L        128          2.1772          2.3020       0.95x
 L    L        256          2.1668          2.3250       0.93x

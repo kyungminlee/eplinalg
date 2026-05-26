@@ -54,20 +54,25 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
         wtpsv_migrated_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
         memcpy(X, Xi, lenx * sizeof(MFC));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         wtpsv_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof(MFC));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_subject = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         wtpsv_migrated_(&uplo, &trans, &diag, &N, AP, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof(MFC));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 4.0 * (double)N * (double)N;
     char key[16];
     if (incx == 1) {
@@ -75,8 +80,8 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
     } else {
         snprintf(key, sizeof(key), "%c%c%c/x%d", uplo, trans, diag, incx);
     }
-    perf_emit("wtpsv", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("wtpsv", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("wtpsv", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("wtpsv", key, N, iters, flops, t_subject, t_mg);
     free(AP); free(X); free(Xi);
 }
 

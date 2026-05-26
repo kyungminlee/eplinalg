@@ -21,14 +21,14 @@ program bench_mrotm
     integer, allocatable :: sizes(:)
     type(real64x2), allocatable :: X(:), Y(:), X0(:), Y0(:)
     type(real64x2) :: param(5)
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     iters = read_int_env('BLAS_BENCH_ITERS', 4)
     call read_sizes(sizes); nsizes = size(sizes)
     param(1) = real64x2(-1.0_8); param(2) = real64x2(0.7_8); param(3) = real64x2(-0.2_8)
             param(4) = real64x2(0.3_8); param(5) = real64x2(0.9_8)
-    print '(a)', '   N         overlay GF/s   migrated GF/s   speedup'
+    print '(a)', '   N         subject GF/s   migrated GF/s   speedup'
     do i = 1, nsizes
-        call run_size(sizes(i), iters, t_ov, t_mig); call emit(sizes(i), t_ov, t_mig)
+        call run_size(sizes(i), iters, t_subject, t_mig); call emit(sizes(i), t_subject, t_mig)
     end do
 contains
     function read_int_env(name, dflt) result(v)
@@ -53,8 +53,8 @@ contains
         end do
         if (n < size(arr)) arr = arr(1:n)
     end subroutine
-    subroutine run_size(s, iters, t_ov, t_mig)
-        integer, intent(in) :: s, iters; real(8), intent(out) :: t_ov, t_mig
+    subroutine run_size(s, iters, t_subject, t_mig)
+        integer, intent(in) :: s, iters; real(8), intent(out) :: t_subject, t_mig
         integer :: it; real(8), allocatable :: so(:), sm(:); real(8) :: t0, t1
         allocate(X(s), Y(s), X0(s), Y0(s), so(iters), sm(iters))
         call fill_matrix_real(X0, s, 1, s); call fill_matrix_real(Y0, s, 1, s)
@@ -64,7 +64,7 @@ contains
             X = X0; Y = Y0; call clk(t0); call mrotm(s, X, 1, Y, 1, param); call clk(t1); so(it) = t1 - t0
             X = X0; Y = Y0; call clk(t0); call mrotm_migrated(s, X, 1, Y, 1, param); call clk(t1); sm(it) = t1 - t0
         end do
-        t_ov = med(so); t_mig = med(sm); deallocate(X, Y, X0, Y0, so, sm)
+        t_subject = med(so); t_mig = med(sm); deallocate(X, Y, X0, Y0, so, sm)
     end subroutine
     subroutine clk(t)
         real(8), intent(out) :: t; integer(8) :: c, r

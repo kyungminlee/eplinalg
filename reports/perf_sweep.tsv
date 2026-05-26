@@ -1,4 +1,4 @@
-target	routine	key	size	iters	overlay_GFs	migrated_GFs	ratio
+target	routine	key	size	iters	parallel_blas_GFs	migrated_GFs	ratio
 kind10	easum	-	64	200	1.6728	1.6095	1.039
 kind10	easum	-	128	200	1.8205	1.5127	1.203
 kind10	easum	-	256	200	1.8954	1.4105	1.344

@@ -59,7 +59,7 @@ static void run_one(char trans, int M, int N, int KL, int KU,
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) mgbmv_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(Y, Yi, leny * sizeof(MFR));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) mgbmv_migrated_(&trans, &M, &N, &KL, &KU, &alpha, A, &LDA, X, &incx, &beta, Y, &incy, 1);
@@ -76,8 +76,8 @@ static void run_one(char trans, int M, int N, int KL, int KU,
     } else {
         snprintf(key, sizeof(key), "%c/x%d/y%d", trans, incx, incy);
     }
-    perf_emit("mgbmv", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("mgbmv", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("mgbmv", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("mgbmv", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Y); free(Yi);
 }
 

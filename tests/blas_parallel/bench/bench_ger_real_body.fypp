@@ -25,7 +25,7 @@ program bench_${routine}$
     integer, allocatable :: sizes(:)
     real(rk), allocatable :: A(:), X(:), Y(:), A_init(:)
     real(rk) :: alpha
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     character(len=256) :: out_path
     integer :: ios, jio
 
@@ -41,10 +41,10 @@ program bench_${routine}$
     open(newunit=jio, file=trim(out_path), action='write', status='replace')
     write(jio, '(a)') '{}'; close(jio)
 
-    print '(a)', '   size      overlay GF/s   migrated GF/s   speedup'
+    print '(a)', '   size      subject GF/s   migrated GF/s   speedup'
     do i = 1, nsizes
-        call run_size(sizes(i), alpha, iters, warmup, t_ov, t_mig)
-        call emit_console(sizes(i), t_ov, t_mig)
+        call run_size(sizes(i), alpha, iters, warmup, t_subject, t_mig)
+        call emit_console(sizes(i), t_subject, t_mig)
     end do
 
 contains
@@ -85,10 +85,10 @@ contains
         if (n < size(arr)) arr = arr(1:n)
     end subroutine read_sizes
 
-    subroutine run_size(s, alpha, iters, warmup, t_ov, t_mig)
+    subroutine run_size(s, alpha, iters, warmup, t_subject, t_mig)
         integer, intent(in) :: s, iters, warmup
         real(rk), intent(in) :: alpha
-        real(8), intent(out) :: t_ov, t_mig
+        real(8), intent(out) :: t_subject, t_mig
         integer :: it
         real(8), allocatable :: samples_ov(:), samples_mig(:)
         real(8) :: t0, t1
@@ -117,7 +117,7 @@ contains
             call cpu_clock(t1)
             samples_mig(it) = t1 - t0
         end do
-        t_ov  = median(samples_ov)
+        t_subject  = median(samples_ov)
         t_mig = median(samples_mig)
         deallocate(A, X, Y, A_init, samples_ov, samples_mig)
     end subroutine run_size
@@ -154,12 +154,12 @@ contains
         else; g = 0.0_8; end if
     end function gflops
 
-    subroutine emit_console(s, t_ov, t_mig)
+    subroutine emit_console(s, t_subject, t_mig)
         integer, intent(in) :: s
-        real(8), intent(in) :: t_ov, t_mig
+        real(8), intent(in) :: t_subject, t_mig
         real(8) :: g_ov, g_mig, speedup
-        g_ov  = gflops(s, t_ov); g_mig = gflops(s, t_mig)
-        if (t_ov > 0.0_8) then; speedup = t_mig / t_ov
+        g_ov  = gflops(s, t_subject); g_mig = gflops(s, t_mig)
+        if (t_subject > 0.0_8) then; speedup = t_mig / t_subject
         else; speedup = 0.0_8; end if
         print '(3x,i6,4x,f12.4,4x,f12.4,4x,f7.2,a)', &
             s, g_ov, g_mig, speedup, 'x'

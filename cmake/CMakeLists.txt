@@ -48,6 +48,13 @@ if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parallel_blas)
     add_subdirectory(parallel_blas)
 endif()
 
+# epopenblas overlay — separate static archive (NOT wired into the
+# public ${LIB_PREFIX}blas composite). Consumed only by
+# tests/blas_epopenblas/. See src/epopenblas/CHECKLIST.md.
+if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/epopenblas)
+    add_subdirectory(epopenblas)
+endif()
+
 # ── Compiler-aware install infrastructure ────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
 include(FortranCompiler)
@@ -696,6 +703,48 @@ if(NOT BASELINE_BUILD)
                 IMPORTED_LOCATION ${_migrated_archive})
             add_dependencies(${LIB_PREFIX}blas_migrated
                 ${LIB_PREFIX}blas_migrated_build)
+        endif()
+
+        # ── epopenblas: separate renamed-migrated archive ────────────
+        # `lib${LIB_PREFIX}blas_epopenblas_migrated.a` is an objcopy-renamed
+        # copy of `_serial` covering ONLY the epopenblas overlay routines —
+        # symbols `${prefix}<routine>_` → `${prefix}<routine>_migrated_`.
+        # Test binaries in tests/blas_epopenblas/ link this alongside
+        # `${LIB_PREFIX}blas_epopenblas` to diff overlay vs migrated.
+        #
+        # This is a SEPARATE archive from `${LIB_PREFIX}blas_migrated`
+        # because the epopenblas overlay-routine set is independent —
+        # the file lists may diverge as the port progresses.
+        if(TARGET ${LIB_PREFIX}blas_epopenblas
+                AND DEFINED EPOPENBLAS_OVERLAY_ROUTINES
+                AND NOT "${EPOPENBLAS_OVERLAY_ROUTINES}" STREQUAL "")
+            message(STATUS "epopenblas: wiring ${LIB_PREFIX}blas_epopenblas_migrated archive "
+                           "(objcopy) routines=${EPOPENBLAS_OVERLAY_ROUTINES}")
+            set(_ep_redef_file
+                ${CMAKE_CURRENT_BINARY_DIR}/${LIB_PREFIX}blas_epopenblas_migrated.redef)
+            set(_ep_redef_content "")
+            foreach(_r ${EPOPENBLAS_OVERLAY_ROUTINES})
+                string(APPEND _ep_redef_content "${_r}_ ${_r}_migrated_\n")
+            endforeach()
+            file(GENERATE OUTPUT ${_ep_redef_file} CONTENT "${_ep_redef_content}")
+
+            set(_ep_migrated_archive
+                ${CMAKE_CURRENT_BINARY_DIR}/lib${LIB_PREFIX}blas_epopenblas_migrated.a)
+            add_custom_command(
+                OUTPUT ${_ep_migrated_archive}
+                COMMAND ${CMAKE_OBJCOPY} --redefine-syms=${_ep_redef_file}
+                        $<TARGET_FILE:${LIB_PREFIX}blas_serial>
+                        ${_ep_migrated_archive}
+                DEPENDS ${LIB_PREFIX}blas_serial ${_ep_redef_file}
+                COMMENT "objcopy: emitting lib${LIB_PREFIX}blas_epopenblas_migrated.a"
+                VERBATIM)
+            add_custom_target(${LIB_PREFIX}blas_epopenblas_migrated_build
+                DEPENDS ${_ep_migrated_archive})
+            add_library(${LIB_PREFIX}blas_epopenblas_migrated STATIC IMPORTED GLOBAL)
+            set_target_properties(${LIB_PREFIX}blas_epopenblas_migrated PROPERTIES
+                IMPORTED_LOCATION ${_ep_migrated_archive})
+            add_dependencies(${LIB_PREFIX}blas_epopenblas_migrated
+                ${LIB_PREFIX}blas_epopenblas_migrated_build)
         endif()
     else()
         add_migrated_fortran_library(blas)

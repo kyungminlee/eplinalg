@@ -46,21 +46,26 @@ static void run_one(int M, int N, int incx, int incy, int iters, int warmup) {
         ygerc_migrated_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof(C10));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         ygerc_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof(C10));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = t_sum / (iters ? iters : 1);
 
-    t0 = perf_now_s();
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         ygerc_migrated_(&M, &N, &alpha, X, &incx, Y, &incy, A, &M);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(A, Ai, (size_t)M * (size_t)N * sizeof(C10));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
 
     double flops = 8.0 * (double)M * (double)N;
     char key[24];
@@ -73,8 +78,8 @@ static void run_one(int M, int N, int incx, int incy, int iters, int warmup) {
     } else {
         snprintf(key, sizeof(key), "x%d/y%d", incx, incy);
     }
-    perf_emit("ygerc", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("ygerc", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("ygerc", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("ygerc", key, N, iters, flops, t_subject, t_mg);
     free(A); free(Ai); free(X); free(Y);
 }
 

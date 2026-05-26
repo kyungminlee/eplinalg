@@ -1,4 +1,4 @@
-uplo trans diag    size      overlay GF/s   migrated GF/s   speedup
+uplo trans diag    size      parallel-blas GF/s   migrated GF/s   speedup
 L    N     N        128          0.4430          0.2080       2.13x
 L    N     N        256          0.4468          0.2130       2.10x
 L    N     N        512          0.4510          0.2117       2.13x

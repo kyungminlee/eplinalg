@@ -1,12 +1,14 @@
-# Comprehensive GEMM bench — OMP=1, all (TA, TB, size) combos
+# Comprehensive GEMM bench — parallel-blas vs migrated, OMP=1, all (TA, TB, size) combos
 
 Sizes vary by precision (kind16 omits s=512 to keep run time reasonable).
-Each row: overlay GFLOP/s vs migrated GFLOP/s, speedup = `t_mig / t_ov`.
+Each row: parallel-blas GFLOP/s vs migrated-Fortran GFLOP/s, speedup = `t_migrated / t_parallel-blas` (>1 = parallel-blas wins).
+
+Scope: parallel-blas overlay only.
 
 ## kind10 — `egemm`
 
-| TA | TB | size | overlay GF/s | migrated GF/s | speedup |
-|----|----|------|--------------|---------------|---------|
+| TA | TB | size | parallel-blas GF/s | migrated GF/s | speedup |
+|----|----|------|-------------------|---------------|---------|
 | C | C | 64 | 2.2614 | 2.0839 | 1.09× 🟢 |
 | C | C | 128 | 2.4530 | 1.9911 | 1.23× 🟢 |
 | C | C | 256 | 2.5460 | 1.2706 | 2.00× 🟢 |
@@ -46,8 +48,8 @@ Each row: overlay GFLOP/s vs migrated GFLOP/s, speedup = `t_mig / t_ov`.
 
 ## kind10 — `ygemm`
 
-| TA | TB | size | overlay GF/s | migrated GF/s | speedup |
-|----|----|------|--------------|---------------|---------|
+| TA | TB | size | parallel-blas GF/s | migrated GF/s | speedup |
+|----|----|------|-------------------|---------------|---------|
 | C | C | 64 | 2.2225 | 2.2581 | 0.98× 🔴 |
 | C | C | 128 | 2.2650 | 2.2937 | 0.99× 🔴 |
 | C | C | 256 | 2.0484 | 2.1135 | 0.97× 🔴 |
@@ -87,8 +89,8 @@ Each row: overlay GFLOP/s vs migrated GFLOP/s, speedup = `t_mig / t_ov`.
 
 ## kind16 — `qgemm`
 
-| TA | TB | size | overlay GF/s | migrated GF/s | speedup |
-|----|----|------|--------------|---------------|---------|
+| TA | TB | size | parallel-blas GF/s | migrated GF/s | speedup |
+|----|----|------|-------------------|---------------|---------|
 | C | C | 64 | 0.0580 | 0.0582 | 1.00× 🟢 |
 | C | C | 128 | 0.0602 | 0.0604 | 1.00× 🟢 |
 | C | C | 256 | 0.0606 | 0.0616 | 0.98× 🔴 |
@@ -128,8 +130,8 @@ Each row: overlay GFLOP/s vs migrated GFLOP/s, speedup = `t_mig / t_ov`.
 
 ## kind16 — `xgemm`
 
-| TA | TB | size | overlay GF/s | migrated GF/s | speedup |
-|----|----|------|--------------|---------------|---------|
+| TA | TB | size | parallel-blas GF/s | migrated GF/s | speedup |
+|----|----|------|-------------------|---------------|---------|
 | C | C | 64 | 0.0559 | 0.0559 | 1.00× 🟢 |
 | C | C | 128 | 0.0576 | 0.0576 | 1.00× 🟢 |
 | C | C | 256 | 0.0589 | 0.0590 | 1.00× 🟢 |
@@ -169,8 +171,8 @@ Each row: overlay GFLOP/s vs migrated GFLOP/s, speedup = `t_mig / t_ov`.
 
 ## multifloats — `mgemm`
 
-| TA | TB | size | overlay GF/s | migrated GF/s | speedup |
-|----|----|------|--------------|---------------|---------|
+| TA | TB | size | parallel-blas GF/s | migrated GF/s | speedup |
+|----|----|------|-------------------|---------------|---------|
 | C | C | 64 | 2.5381 | 0.1237 | 20.51× 🟢 |
 | C | C | 128 | 3.6578 | 0.1257 | 29.11× 🟢 |
 | C | C | 256 | 3.8567 | 0.1255 | 30.74× 🟢 |
@@ -201,8 +203,8 @@ Each row: overlay GFLOP/s vs migrated GFLOP/s, speedup = `t_mig / t_ov`.
 
 ## multifloats — `wgemm`
 
-| TA | TB | size | overlay GF/s | migrated GF/s | speedup |
-|----|----|------|--------------|---------------|---------|
+| TA | TB | size | parallel-blas GF/s | migrated GF/s | speedup |
+|----|----|------|-------------------|---------------|---------|
 | C | C | 64 | 3.1308 | 0.1798 | 17.41× 🟢 |
 | C | C | 128 | 3.6063 | 0.1695 | 21.28× 🟢 |
 | C | C | 256 | 3.7999 | 0.1704 | 22.31× 🟢 |

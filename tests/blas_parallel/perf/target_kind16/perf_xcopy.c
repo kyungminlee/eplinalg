@@ -41,27 +41,33 @@ static void run_xcopy(int N, int iters, int warmup) {
         memcpy(X, Xi, (size_t)N * sizeof(X16));
         memcpy(Y, Yi, (size_t)N * sizeof(X16));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep the reset memcpy OUT of the
+     * timed window so a single-threaded reset doesn't Amdahl-cap the
+     * measured MT scaling at large N. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         xcopy_(&N, X, &one, Y, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(Y, Yi, (size_t)N * sizeof(X16));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0 - (iters ? iters : 1) * 0.0) / (iters ? iters : 1);
-    /* Approximation: memcpy of Y (and X if swap) is part of timed loop —
-     * same on both sides so the ratio is fair. */
-    t0 = perf_now_s();
+    double t_subject = t_sum / (iters ? iters : 1);
+
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         xcopy_migrated_(&N, X, &one, Y, &one);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(Y, Yi, (size_t)N * sizeof(X16));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     /* Bytes moved per call: copy=2N*sizeof(T), swap=4N*sizeof(T). Report
      * as "flops" for uniform formatting. */
     double flops = 2.0 * (double)N * (double)sizeof(X16);
-    perf_emit("xcopy", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("xcopy", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("xcopy", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("xcopy", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y); free(Xi); free(Yi);
 }
 

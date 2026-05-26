@@ -45,20 +45,25 @@ static void run_one(char uplo, char trans, char diag, int N, int K, int incx,
         ytbmv_migrated_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
         memcpy(X, Xi, lenx * sizeof(C10));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         ytbmv_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof(C10));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_subject = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         ytbmv_migrated_(&uplo, &trans, &diag, &N, &K, A, &LDA, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof(C10));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 4.0 * (double)(2*K+1) * (double)N;
     char key[16];
     if (incx == 1) {
@@ -66,8 +71,8 @@ static void run_one(char uplo, char trans, char diag, int N, int K, int incx,
     } else {
         snprintf(key, sizeof(key), "%c%c%c/x%d", uplo, trans, diag, incx);
     }
-    perf_emit("ytbmv", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("ytbmv", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("ytbmv", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("ytbmv", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Xi);
 }
 

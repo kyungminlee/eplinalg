@@ -45,7 +45,7 @@ static void run_qaxpy(int N, int iters, int warmup) {
     double t0 = perf_now_s();
     for (int it = 0; it < iters; ++it) qaxpy_(&N, &alpha, X, &one, Y, &one);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
 
     memcpy(Y, Yi, (size_t)N * sizeof(Q16));
     t0 = perf_now_s();
@@ -54,8 +54,8 @@ static void run_qaxpy(int N, int iters, int warmup) {
     double t_mg = (t1 - t0) / (iters ? iters : 1);
 
     double flops = 2.0 * (double)N;
-    perf_emit("qaxpy", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("qaxpy", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("qaxpy", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("qaxpy", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y); free(Yi);
 }
 

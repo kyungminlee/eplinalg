@@ -19,12 +19,12 @@ program bench_${routine}$
     end interface
     integer :: iters, nsizes, i
     integer, allocatable :: sizes(:)
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     iters = read_int_env('BLAS_BENCH_ITERS', 4)
     call read_sizes(sizes); nsizes = size(sizes)
-    print '(a)', '   REPS      overlay GF/s   migrated GF/s   speedup'
+    print '(a)', '   REPS      subject GF/s   migrated GF/s   speedup'
     do i = 1, nsizes
-        call run_size(sizes(i), iters, t_ov, t_mig); call emit(sizes(i), t_ov, t_mig)
+        call run_size(sizes(i), iters, t_subject, t_mig); call emit(sizes(i), t_subject, t_mig)
     end do
 contains
     function read_int_env(name, dflt) result(v)
@@ -49,8 +49,8 @@ contains
         end do
         if (n < size(arr)) arr = arr(1:n)
     end subroutine
-    subroutine run_size(reps, iters, t_ov, t_mig)
-        integer, intent(in) :: reps, iters; real(8), intent(out) :: t_ov, t_mig
+    subroutine run_size(reps, iters, t_subject, t_mig)
+        integer, intent(in) :: reps, iters; real(8), intent(out) :: t_subject, t_mig
         integer :: it, k; real(8), allocatable :: so(:), sm(:); real(8) :: t0, t1
         real(rk) :: a, b, c, s
         ! Use varied inputs so each call does real work (no early-exit branch).
@@ -67,7 +67,7 @@ contains
             do k = 1, reps; a = real(k, rk); b = real(k + 1, rk); call ${routine}$_migrated(a, b, c, s); end do
             call clk(t1); sm(it) = t1 - t0
         end do
-        t_ov = med(so); t_mig = med(sm); deallocate(so, sm)
+        t_subject = med(so); t_mig = med(sm); deallocate(so, sm)
         ! Sink so optimizer doesn't drop the loops.
         if (c == 1.234e9_rk) print *, a, b, c, s
     end subroutine

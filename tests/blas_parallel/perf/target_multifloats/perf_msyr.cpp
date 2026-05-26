@@ -45,20 +45,25 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {
         msyr_migrated_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof(MFR));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         msyr_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof(MFR));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_subject = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         msyr_migrated_(&uplo, &N, &alpha, X, &incx, A, &N, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(A, Ai, (size_t)N * (size_t)N * sizeof(MFR));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 1.0 * (double)N * (double)N;
     char key[16];
     if (incx == 1) {
@@ -66,8 +71,8 @@ static void run_one(char uplo, int N, int incx, int iters, int warmup) {
     } else {
         snprintf(key, sizeof(key), "%c/x%d", uplo, incx);
     }
-    perf_emit("msyr", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("msyr", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("msyr", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("msyr", key, N, iters, flops, t_subject, t_mg);
     free(A); free(Ai); free(X);
 }
 

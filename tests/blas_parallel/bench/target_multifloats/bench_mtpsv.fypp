@@ -23,14 +23,14 @@ program bench_mtpsv
     integer :: iters, warmup, nsizes, i, itr
     integer, allocatable :: sizes(:)
     type(real64x2), allocatable :: AP(:), X(:), X_init(:)
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     character(len=1), parameter :: TRANSES(2) = ['N', 'T']
     iters = read_int_env('BLAS_BENCH_ITERS', 4); warmup = read_int_env('BLAS_BENCH_WARMUP', 1)
     call read_sizes(sizes); nsizes = size(sizes)
-    print '(a)', 'trans    size      overlay GF/s   migrated GF/s   speedup'
+    print '(a)', 'trans    size      subject GF/s   migrated GF/s   speedup'
     do itr = 1, 2; do i = 1, nsizes
-        call run_size(TRANSES(itr), sizes(i), iters, warmup, t_ov, t_mig)
-        call emit(TRANSES(itr), sizes(i), t_ov, t_mig)
+        call run_size(TRANSES(itr), sizes(i), iters, warmup, t_subject, t_mig)
+        call emit(TRANSES(itr), sizes(i), t_subject, t_mig)
     end do; end do
 contains
     function read_int_env(name, dflt) result(v)
@@ -66,9 +66,9 @@ contains
         do i = 1, n - 1; do j = i + 1, n; if (y(j) < y(i)) then; tmp = y(i); y(i) = y(j); y(j) = tmp; end if; end do; end do
         if (mod(n, 2) == 1) then; m = y((n + 1) / 2); else; m = 0.5_8 * (y(n / 2) + y(n / 2 + 1)); end if
     end function
-    subroutine run_size(trans, s, iters, warmup, t_ov, t_mig)
+    subroutine run_size(trans, s, iters, warmup, t_subject, t_mig)
         character, intent(in) :: trans; integer, intent(in) :: s, iters, warmup
-        real(8), intent(out) :: t_ov, t_mig
+        real(8), intent(out) :: t_subject, t_mig
         integer :: it, plen, jj, jk
         real(8), allocatable :: so(:), sm(:); real(8) :: t0, t1
         plen = s * (s + 1) / 2
@@ -93,7 +93,7 @@ contains
             call mtpsv_migrated('U', trans, 'N', s, AP, X, 1)
             call clk(t1); sm(it) = t1 - t0
         end do
-        t_ov = med(so); t_mig = med(sm)
+        t_subject = med(so); t_mig = med(sm)
         deallocate(AP, X, X_init, so, sm)
     end subroutine
     subroutine emit(trans, s, to, tm)

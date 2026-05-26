@@ -25,7 +25,7 @@ program bench_${routine}$
     integer, allocatable :: sizes(:)
     complex(rk), allocatable :: X(:), Y(:)
     complex(rk) :: alpha
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     character(len=256) :: out_path
     integer :: ios, jio
 
@@ -38,10 +38,10 @@ program bench_${routine}$
     write(jio, '(a)') '{}'; close(jio)
 
     alpha = cmplx(0.7_rk, 0.1_rk, rk)
-    print '(a)', '   N         overlay GF/s   migrated GF/s   speedup'
+    print '(a)', '   N         subject GF/s   migrated GF/s   speedup'
     do i = 1, nsizes
-        call run_size(sizes(i), alpha, iters, warmup, t_ov, t_mig)
-        call emit_console(sizes(i), t_ov, t_mig)
+        call run_size(sizes(i), alpha, iters, warmup, t_subject, t_mig)
+        call emit_console(sizes(i), t_subject, t_mig)
     end do
 
 contains
@@ -85,10 +85,10 @@ contains
         if (n < size(arr)) arr = arr(1:n)
     end subroutine read_sizes
 
-    subroutine run_size(s, alpha, iters, warmup, t_ov, t_mig)
+    subroutine run_size(s, alpha, iters, warmup, t_subject, t_mig)
         integer, intent(in) :: s, iters, warmup
         complex(rk), intent(in) :: alpha
-        real(8), intent(out) :: t_ov, t_mig
+        real(8), intent(out) :: t_subject, t_mig
         integer :: it
         real(8), allocatable :: samp_ov(:), samp_mig(:)
         real(8) :: t0, t1
@@ -104,7 +104,7 @@ contains
             call cpu_clock(t0); call ${routine}$_migrated(s, alpha, X, 1, Y, 1); call cpu_clock(t1)
             samp_mig(it) = t1 - t0
         end do
-        t_ov = median(samp_ov); t_mig = median(samp_mig)
+        t_subject = median(samp_ov); t_mig = median(samp_mig)
         deallocate(X, Y, samp_ov, samp_mig)
     end subroutine run_size
 
@@ -136,12 +136,12 @@ contains
         else; g = 0.0_8; end if
     end function gflops
 
-    subroutine emit_console(s, t_ov, t_mig)
+    subroutine emit_console(s, t_subject, t_mig)
         integer, intent(in) :: s
-        real(8), intent(in) :: t_ov, t_mig
+        real(8), intent(in) :: t_subject, t_mig
         real(8) :: g_ov, g_mig, sp
-        g_ov = gflops(s, t_ov); g_mig = gflops(s, t_mig)
-        if (t_ov > 0.0_8) then; sp = t_mig / t_ov; else; sp = 0.0_8; end if
+        g_ov = gflops(s, t_subject); g_mig = gflops(s, t_mig)
+        if (t_subject > 0.0_8) then; sp = t_mig / t_subject; else; sp = 0.0_8; end if
         print '(i8,4x,f12.4,4x,f12.4,4x,f7.2,a)', s, g_ov, g_mig, sp, 'x'
     end subroutine emit_console
 

@@ -27,7 +27,7 @@ program bench_${routine}$
     integer, allocatable :: sizes(:)
     complex(rk), allocatable :: A(:), X(:), Y(:), Y_init(:)
     complex(rk) :: alpha, beta
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     character(len=1), parameter :: UPLOS(2) = ['L', 'U']
 
     iters  = read_int_env('BLAS_BENCH_ITERS',  4)
@@ -37,11 +37,11 @@ program bench_${routine}$
     alpha = cmplx(0.7_rk, 0.1_rk, rk); beta = cmplx(0.3_rk, -0.2_rk, rk)
 
     print '(a,i0)', 'hbmv bench: K=', kband
-    print '(a)', 'uplo    size      overlay GF/s   migrated GF/s   speedup'
+    print '(a)', 'uplo    size      subject GF/s   migrated GF/s   speedup'
     do iup = 1, size(UPLOS)
         do i = 1, nsizes
-            call run_size(UPLOS(iup), sizes(i), kband, alpha, beta, iters, warmup, t_ov, t_mig)
-            call emit(UPLOS(iup), sizes(i), kband, t_ov, t_mig)
+            call run_size(UPLOS(iup), sizes(i), kband, alpha, beta, iters, warmup, t_subject, t_mig)
+            call emit(UPLOS(iup), sizes(i), kband, t_subject, t_mig)
         end do
     end do
 
@@ -73,11 +73,11 @@ contains
         end do
         if (n < size(arr)) arr = arr(1:n)
     end subroutine
-    subroutine run_size(uplo, s, k, alpha, beta, iters, warmup, t_ov, t_mig)
+    subroutine run_size(uplo, s, k, alpha, beta, iters, warmup, t_subject, t_mig)
         character, intent(in) :: uplo
         integer, intent(in) :: s, k, iters, warmup
         complex(rk), intent(in) :: alpha, beta
-        real(8), intent(out) :: t_ov, t_mig
+        real(8), intent(out) :: t_subject, t_mig
         integer :: it, ke, lda, j, drow
         real(8), allocatable :: so(:), sm(:)
         real(8) :: t0, t1
@@ -99,7 +99,7 @@ contains
             Y = Y_init; call clk(t0); call ${routine}$(uplo, s, ke, alpha, A, lda, X, 1, beta, Y, 1); call clk(t1); so(it) = t1 - t0
             Y = Y_init; call clk(t0); call ${routine}$_migrated(uplo, s, ke, alpha, A, lda, X, 1, beta, Y, 1); call clk(t1); sm(it) = t1 - t0
         end do
-        t_ov = med(so); t_mig = med(sm)
+        t_subject = med(so); t_mig = med(sm)
         deallocate(A, X, Y, Y_init, so, sm)
     end subroutine
     subroutine clk(t)

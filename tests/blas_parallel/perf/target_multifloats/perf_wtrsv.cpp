@@ -50,20 +50,25 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
         wtrsv_migrated_(&uplo, &trans, &diag, &N, A, &N, X, &incx, 1, 1, 1);
         memcpy(X, Xi, lenx * sizeof(MFC));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy reset out of timed window. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         wtrsv_(&uplo, &trans, &diag, &N, A, &N, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof(MFC));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_subject = t_sum / (iters ? iters : 1);
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         wtrsv_migrated_(&uplo, &trans, &diag, &N, A, &N, X, &incx, 1, 1, 1);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, lenx * sizeof(MFC));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 4.0 * (double)N * (double)N;
     /* Key encodes UPLO/TRANS/DIAG + stride. Examples: "LTN" (incx=1),
      * "LTN/x2" (incx=2), "LTN/x-1" (incx=-1). incx=1 keeps the old
@@ -74,8 +79,8 @@ static void run_one(char uplo, char trans, char diag, int N, int incx,
     } else {
         snprintf(key, sizeof(key), "%c%c%c/x%d", uplo, trans, diag, incx);
     }
-    perf_emit("wtrsv", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("wtrsv", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("wtrsv", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("wtrsv", key, N, iters, flops, t_subject, t_mg);
     free(A); free(X); free(Xi);
 }
 

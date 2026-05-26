@@ -1,11 +1,13 @@
-# Parallel BLAS overlay — C perf harness sweep (OMP=1)
+# parallel-blas overlay vs migrated Fortran — C perf harness sweep (OMP=1)
 
 Source: `reports/perf_sweep.tsv` (2647 cells, 195 routines)
 
+Ratio column: `parallel-blas GF/s ÷ migrated GF/s` (>1 = parallel-blas wins).
+
 Methodology:
 - Kernel-isolated C harness with `-ffunction-sections -Wl,--gc-sections`
-  (per findings doc Addendum 14 — collapses overlay's symbol footprint
-  to a few KB so iTLB churn doesn't inflate the gap).
+  (per findings doc Addendum 14 — collapses parallel-blas overlay's symbol
+  footprint to a few KB so iTLB churn doesn't inflate the gap).
 - `taskset -c 0 OMP_NUM_THREADS=1` on Intel i3-1315U P-core.
 - Per-routine summary shows median ratio over all (key, size) cells.
 

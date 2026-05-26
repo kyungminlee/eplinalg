@@ -1,4 +1,4 @@
-uplo trans    size      overlay GF/s   migrated GF/s   speedup
+uplo trans    size      parallel-blas GF/s   migrated GF/s   speedup
 L    N         64          1.6398          1.4323       1.14x
 L    N        128          1.8238          1.4865       1.23x
 L    N        256          1.9182          1.5067       1.27x

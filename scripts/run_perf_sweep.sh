@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
-# Run every blas_parallel perf_* executable in /tmp/fortran-migrator/stage-{e,q,m}/build/tests/blas_parallel/
-# at OMP=1, pinned to P-core 0, and append the structured output to a TSV.
+# Run every blas_parallel (parallel-blas overlay) perf_* executable in
+# /tmp/fortran-migrator/stage-{e,q,m}/build/tests/blas_parallel/ at OMP=1,
+# pinned to P-core 0, and append the structured output to a TSV.
+#
+# TSV columns: target routine key size iters parallel_blas_GFs migrated_GFs ratio
+#   parallel_blas_GFs = the C parallel-blas overlay's GF/s for this row
+#   migrated_GFs       = the migrated Fortran reference's GF/s for this row
+#   ratio              = parallel_blas_GFs / migrated_GFs
+#
+# Scope: parallel-blas overlay only. epopenblas comparisons live under
+# reports/cmp5/ (see reports/cmp5/run_cmp5.sh).
 #
 # Usage:
 #   scripts/run_perf_sweep.sh
@@ -22,7 +31,7 @@ LOG="$OUTDIR/perf_sweep.log"
 : > "$TSV"
 : > "$LOG"
 
-echo -e "target\troutine\tkey\tsize\titers\toverlay_GFs\tmigrated_GFs\tratio" >> "$TSV"
+echo -e "target\troutine\tkey\tsize\titers\tparallel_blas_GFs\tmigrated_GFs\tratio" >> "$TSV"
 
 for target in e q m; do
     case "$target" in

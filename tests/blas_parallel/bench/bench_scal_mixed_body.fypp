@@ -21,14 +21,14 @@ program bench_${routine}$
     integer, allocatable :: sizes(:)
     complex(rk), allocatable :: X(:), X0(:)
     real(rk) :: alpha
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     iters = read_int_env('BLAS_BENCH_ITERS', 4)
     call read_sizes(sizes); nsizes = size(sizes)
     alpha = 0.997_rk
-    print '(a)', '   N         overlay GF/s   migrated GF/s   speedup'
+    print '(a)', '   N         subject GF/s   migrated GF/s   speedup'
     do i = 1, nsizes
-        call run_size(sizes(i), iters, t_ov, t_mig)
-        call emit(sizes(i), t_ov, t_mig)
+        call run_size(sizes(i), iters, t_subject, t_mig)
+        call emit(sizes(i), t_subject, t_mig)
     end do
 contains
     function read_int_env(name, dflt) result(v)
@@ -52,8 +52,8 @@ contains
         end do
         if (n < size(arr)) arr = arr(1:n)
     end subroutine
-    subroutine run_size(s, iters, t_ov, t_mig)
-        integer, intent(in) :: s, iters; real(8), intent(out) :: t_ov, t_mig
+    subroutine run_size(s, iters, t_subject, t_mig)
+        integer, intent(in) :: s, iters; real(8), intent(out) :: t_subject, t_mig
         integer :: it; real(8), allocatable :: so(:), sm(:); real(8) :: t0, t1
         allocate(X(s), X0(s), so(iters), sm(iters))
         call fill_matrix_complex(X0, s, 1, s)
@@ -63,7 +63,7 @@ contains
             X = X0; call clk(t0); call ${routine}$(s, alpha, X, 1); call clk(t1); so(it) = t1 - t0
             X = X0; call clk(t0); call ${routine}$_migrated(s, alpha, X, 1); call clk(t1); sm(it) = t1 - t0
         end do
-        t_ov = med(so); t_mig = med(sm)
+        t_subject = med(so); t_mig = med(sm)
         deallocate(X, X0, so, sm)
     end subroutine
     subroutine clk(t)

@@ -1,6 +1,7 @@
-# Compact summary: OMP=1 speedup ranges
+# Compact summary: OMP=1 parallel-blas-vs-migrated speedup ranges
 
-Per (precision, routine), speedup distribution across all measured (combo × size) cases.
+Per (precision, routine), parallel-blas-overlay vs migrated-Fortran speedup distribution across all measured (combo × size) cases.
+Speedup = `t_migrated / t_parallel-blas` (>1 = parallel-blas wins).
 
 | prec | routine | combos × sizes | min spd | median | max spd | <1.0× cases |
 |------|---------|----------------|---------|--------|---------|-------------|
@@ -41,7 +42,7 @@ Per (precision, routine), speedup distribution across all measured (combo × siz
 | multifloats | wtrmm | 4 | 2.31× | 5.19× | 9.52× | 0/4 |
 | multifloats | wtrsm | 4 | 2.24× | 15.57× | 17.44× | 0/4 |
 
-## Worst regressions (overlay slower than migrated)
+## Worst regressions (parallel-blas slower than migrated)
 
 | speedup | prec | routine | combo | size |
 |---------|------|---------|-------|------|

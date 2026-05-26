@@ -47,23 +47,30 @@ static void run_one(int N, int iters, int warmup) {
         mrotm_migrated_(&N, X, &one, Y, &one, PARAM);
         memcpy(X, Xi, (size_t)N * sizeof(MFR)); memcpy(Y, Yi, (size_t)N * sizeof(MFR));
     }
-    double t0 = perf_now_s();
+    /* Per-call kernel-only timing — keep memcpy resets out of the
+     * timed window so they don't Amdahl-mask MT scaling. */
+    double t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         mrotm_(&N, X, &one, Y, &one, PARAM);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof(MFR)); memcpy(Y, Yi, (size_t)N * sizeof(MFR));
     }
-    double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
-    t0 = perf_now_s();
+    double t_subject = t_sum / (iters ? iters : 1);
+
+    t_sum = 0;
     for (int it = 0; it < iters; ++it) {
+        double a = perf_now_s();
         mrotm_migrated_(&N, X, &one, Y, &one, PARAM);
+        double b = perf_now_s();
+        t_sum += (b - a);
         memcpy(X, Xi, (size_t)N * sizeof(MFR)); memcpy(Y, Yi, (size_t)N * sizeof(MFR));
     }
-    t1 = perf_now_s();
-    double t_mg = (t1 - t0) / (iters ? iters : 1);
+    double t_mg = t_sum / (iters ? iters : 1);
     double flops = 4.0 * (double)N;
-    perf_emit("mrotm", "-", N, iters, flops, t_ov, t_mg);
-    perf_emit_json("mrotm", "-", N, iters, flops, t_ov, t_mg);
+    perf_emit("mrotm", "-", N, iters, flops, t_subject, t_mg);
+    perf_emit_json("mrotm", "-", N, iters, flops, t_subject, t_mg);
     free(X); free(Y); free(Xi); free(Yi);
 }
 

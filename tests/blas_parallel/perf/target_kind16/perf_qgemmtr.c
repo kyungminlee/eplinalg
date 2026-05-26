@@ -57,7 +57,7 @@ static void run_one(char uplo, char ta, char tb, int N, int K, int iters, int wa
     for (int it = 0; it < iters; ++it)
         qgemmtr_(&uplo, &ta, &tb, &N, &K, &alpha, A, &lda, B, &ldb, &beta, C, &ldc, 1, 1, 1);
     double t1 = perf_now_s();
-    double t_ov = (t1 - t0) / (iters ? iters : 1);
+    double t_subject = (t1 - t0) / (iters ? iters : 1);
     memcpy(C, Ci, (size_t)N * (size_t)N * sizeof(Q16));
     t0 = perf_now_s();
     for (int it = 0; it < iters; ++it)
@@ -66,8 +66,8 @@ static void run_one(char uplo, char ta, char tb, int N, int K, int iters, int wa
     double t_mg = (t1 - t0) / (iters ? iters : 1);
     double flops = 1.0 * (double)N * (double)N * (double)K;
     char key[4] = {uplo, ta, tb, 0};
-    perf_emit("qgemmtr", key, N, iters, flops, t_ov, t_mg);
-    perf_emit_json("qgemmtr", key, N, iters, flops, t_ov, t_mg);
+    perf_emit("qgemmtr", key, N, iters, flops, t_subject, t_mg);
+    perf_emit_json("qgemmtr", key, N, iters, flops, t_subject, t_mg);
     free(A); free(B); free(C); free(Ci);
 }
 

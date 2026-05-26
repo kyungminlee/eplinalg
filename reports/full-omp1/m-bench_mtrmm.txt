@@ -1,4 +1,4 @@
-       size       overlay GFLOP/s   migrated GFLOP/s   speedup
+       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
            64          0.5000             0.1212       4.13x
           128          0.8563             0.1219       7.03x
           256          1.3905             0.1225      11.35x

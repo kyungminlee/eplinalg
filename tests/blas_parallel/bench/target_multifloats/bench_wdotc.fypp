@@ -21,13 +21,13 @@ program bench_wdotc
     integer :: iters, nsizes, i
     integer, allocatable :: sizes(:)
     type(cmplx64x2) :: r_use
-    real(8) :: t_ov, t_mig
+    real(8) :: t_subject, t_mig
     r_use = cmplx64x2(real64x2(0.0_8), real64x2(0.0_8))
     iters = read_int_env('BLAS_BENCH_ITERS', 4)
     call read_sizes(sizes); nsizes = size(sizes)
-    print '(a)', '   N         overlay GF/s   migrated GF/s   speedup'
+    print '(a)', '   N         subject GF/s   migrated GF/s   speedup'
     do i = 1, nsizes
-        call run_size(sizes(i), iters, t_ov, t_mig); call emit(sizes(i), t_ov, t_mig)
+        call run_size(sizes(i), iters, t_subject, t_mig); call emit(sizes(i), t_subject, t_mig)
     end do
     print '(a, es12.4)', 'sink: ', r_use%re%limbs(1)
 contains
@@ -53,8 +53,8 @@ contains
         end do
         if (n < size(arr)) arr = arr(1:n)
     end subroutine
-    subroutine run_size(s, iters, t_ov, t_mig)
-        integer, intent(in) :: s, iters; real(8), intent(out) :: t_ov, t_mig
+    subroutine run_size(s, iters, t_subject, t_mig)
+        integer, intent(in) :: s, iters; real(8), intent(out) :: t_subject, t_mig
         integer :: it; real(8), allocatable :: so(:), sm(:); real(8) :: t0, t1
         type(cmplx64x2) :: r_v
         type(cmplx64x2), allocatable :: X(:), Y(:)
@@ -66,7 +66,7 @@ contains
             call clk(t0); r_v = wdotc(s, X, 1, Y, 1); call clk(t1); so(it) = t1 - t0; r_use = r_use + r_v
             call clk(t0); r_v = wdotc_migrated(s, X, 1, Y, 1); call clk(t1); sm(it) = t1 - t0; r_use = r_use + r_v
         end do
-        t_ov = med(so); t_mig = med(sm); deallocate(X, Y, so, sm)
+        t_subject = med(so); t_mig = med(sm); deallocate(X, Y, so, sm)
     end subroutine
     subroutine clk(t)
         real(8), intent(out) :: t; integer(8) :: c, r
