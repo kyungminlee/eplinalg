@@ -1314,7 +1314,7 @@ function(_install_library_pair lib_name)
     # The precision target (qmumps) has the canonical dependency set
     # for find_package consumers; siblings sharing the export
     # (qmumps_c, mumps_common) follow after.
-    fortran_install_library(${_precision_target} EXPORT ${_export} ${_install_mpi_arg})
+    fortran_install_library(${_precision_target} EXPORT ${_export} NAMESPACE epla:: ${_install_mpi_arg})
     get_target_property(_fc_moddir ${_precision_target} Fortran_MODULE_DIRECTORY)
     if(_fc_moddir)
         fortran_install_modules(${_precision_target})
@@ -1326,14 +1326,14 @@ function(_install_library_pair lib_name)
     # archive, the C-callable entry-points (qmumps_c, xmumps_c),
     # and the umbrella that wraps them in a LINK_GROUP:RESCAN.
     if("${lib_name}" STREQUAL "mumps" AND TARGET ${LIB_PREFIX}mumps_c)
-        fortran_install_library(${LIB_PREFIX}mumps_c EXPORT ${_export} MPI)
+        fortran_install_library(${LIB_PREFIX}mumps_c EXPORT ${_export} NAMESPACE epla:: MPI)
         install(TARGETS ${LIB_PREFIX}mumps_full
             EXPORT ${_export})
     endif()
 
     # Bundle common library into the same export
     if(TARGET ${_common_target})
-        fortran_install_library(${_common_target} EXPORT ${_export} ${_install_mpi_arg})
+        fortran_install_library(${_common_target} EXPORT ${_export} NAMESPACE epla:: ${_install_mpi_arg})
         get_target_property(_fc_moddir ${_common_target} Fortran_MODULE_DIRECTORY)
         if(_fc_moddir)
             fortran_install_modules(${_common_target})
@@ -1345,7 +1345,7 @@ function(_install_library_pair lib_name)
     # is exportable. Standard archives use the bare library name (e.g.
     # ``blas``); they always go alongside their migrated sibling.
     if(TARGET ${lib_name} AND NOT "${lib_name}" STREQUAL "${_precision_target}")
-        fortran_install_library(${lib_name} EXPORT ${_export} ${_install_mpi_arg})
+        fortran_install_library(${lib_name} EXPORT ${_export} NAMESPACE epla:: ${_install_mpi_arg})
     endif()
 endfunction()
 
@@ -1398,7 +1398,7 @@ if(NEEDS_MULTIFLOATS)
             if("${_t}" IN_LIST _mf_mpi_helpers)
                 set(_mf_mpi_arg "MPI")
             endif()
-            fortran_install_library(${_t} EXPORT ${_t}Targets ${_mf_mpi_arg})
+            fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE epla:: ${_mf_mpi_arg})
             get_target_property(_fc_moddir ${_t} Fortran_MODULE_DIRECTORY)
             if(_fc_moddir)
                 fortran_install_modules(${_t})
