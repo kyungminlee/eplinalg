@@ -130,7 +130,7 @@ overrides:
   multifloats:
     src_dir: scalapack/mfc_overrides
     files:
-      - ptlaiect.c
+      - pmlaiect.c
 
 
 # Convergence whitelist (Phase D). The single divergence

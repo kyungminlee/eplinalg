@@ -1,4 +1,4 @@
-/* pddlaiect.c -- hand-written multifloats override for pdlaiect.c
+/* pmlaiect.c -- hand-written multifloats override for pdlaiect.c
  *
  * The original pdlaiect.c extracts the sign bit of a double via
  * pointer-cast to unsigned int and bit-shift.  That trick relies on
@@ -18,14 +18,14 @@
 extern "C" {
 #endif
 
-void ptlasnbt_(Int *ieflag)
+void pmlasnbt_(Int *ieflag)
 {
     /* For float64x2, sign detection uses C++ comparison operators.
      * Return nonzero to signal that sign detection is available. */
     *ieflag = 1;
 }
 
-void ptlaiectb_(float64x2 *sigma, Int *n, float64x2 *d, Int *count)
+void pmlaiectb_(float64x2 *sigma, Int *n, float64x2 *d, Int *count)
 {
     float64x2 lsigma = *sigma;
     float64x2 *pd = d;
@@ -41,15 +41,15 @@ void ptlaiectb_(float64x2 *sigma, Int *n, float64x2 *d, Int *count)
     }
 }
 
-void ptlaiectl_(float64x2 *sigma, Int *n, float64x2 *d, Int *count)
+void pmlaiectl_(float64x2 *sigma, Int *n, float64x2 *d, Int *count)
 {
     /* The big-endian / little-endian distinction for sign-bit extraction
      * does not apply to float64x2 comparison-based sign detection.
      * Both functions are identical. */
-    ptlaiectb_(sigma, n, d, count);
+    pmlaiectb_(sigma, n, d, count);
 }
 
-void pddlachkieee_(Int *isieee, float64x2 *rmax, float64x2 *rmin)
+void pmlachkieee_(Int *isieee, float64x2 *rmax, float64x2 *rmin)
 {
     /* float64x2 uses C++ operator overloads that handle sign
      * and comparison correctly.  Report IEEE-compatible behaviour. */
