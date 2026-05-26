@@ -1405,16 +1405,6 @@ set(STAGED_LIBRARIES {staged_list})
             shutil.rmtree(tests_dst)
         shutil.copytree(tests_src, tests_dst)
 
-    # Copy parallel_blas/ overlay sources (opt-in via PARALLEL_BLAS=ON
-    # at CMake time). The unified CMakeLists picks it up via
-    # add_subdirectory(parallel_blas) when the directory is present.
-    parallel_blas_src = proj_root / 'src' / 'parallel_blas'
-    if parallel_blas_src.is_dir():
-        parallel_blas_dst = staging_dir / 'parallel_blas'
-        if parallel_blas_dst.exists():
-            shutil.rmtree(parallel_blas_dst)
-        shutil.copytree(parallel_blas_src, parallel_blas_dst)
-
     # Copy epopenblas/ overlay sources — separate OpenBLAS-D/Z-port-at-kind10
     # overlay archive (NOT wired into the public composite). The unified
     # CMakeLists picks it up via add_subdirectory(epopenblas) when the
