@@ -127,6 +127,14 @@ extra_renames:
   PDLAIECTL: P{RPU}LAIECTL
 
 overrides:
+  kind10:
+    src_dir: scalapack/efc_overrides
+    files:
+      - pelaiect.c
+  kind16:
+    src_dir: scalapack/qfc_overrides
+    files:
+      - pqlaiect.c
   multifloats:
     src_dir: scalapack/mfc_overrides
     files:
