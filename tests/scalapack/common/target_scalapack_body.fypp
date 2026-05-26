@@ -1076,6 +1076,32 @@ $:IMPORT_R()
             integer,   intent(out) :: iblock(*), isplit(*), iwork(*), info
         end subroutine
 
+        subroutine ${R}$lasnbt(ieflag)
+            integer, intent(out) :: ieflag
+        end subroutine
+
+        subroutine ${R}$laiectb(sigma, n, d, count)
+$:IMPORT_R()
+            integer,   intent(in)  :: n
+            ${target_real}$, intent(in)    :: sigma
+            ${target_real}$, intent(in)    :: d(*)
+            integer,   intent(out) :: count
+        end subroutine
+
+        subroutine ${R}$laiectl(sigma, n, d, count)
+$:IMPORT_R()
+            integer,   intent(in)  :: n
+            ${target_real}$, intent(in)    :: sigma
+            ${target_real}$, intent(in)    :: d(*)
+            integer,   intent(out) :: count
+        end subroutine
+
+        subroutine ${R}$lachkieee(isieee, rmax, rmin)
+$:IMPORT_R()
+            integer,   intent(out) :: isieee
+            ${target_real}$, intent(in)    :: rmax, rmin
+        end subroutine
+
         subroutine ${R}$syevx(jobz, range, uplo, n, A, ia, ja, desca, &
                               vl, vu, il, iu, abstol, m, nz, w, orfac, &
                               Z, iz, jz, descZ, work, lwork, iwork, liwork, &
@@ -4412,7 +4438,6 @@ contains
     ! override took effect without target-specific link logic.
     subroutine target_pdlasnbt(ieflag)
         integer, intent(out) :: ieflag
-        external :: ${R}$lasnbt
         call ${R}$lasnbt(ieflag)
     end subroutine
 
@@ -4423,7 +4448,6 @@ contains
         integer,   intent(out) :: count
         ${target_real}$ :: sigma_t
         ${target_real}$, allocatable :: dt(:)
-        external :: ${R}$laiectb
         allocate(dt(2*n - 1))
         sigma_t  = q2t_r(sigma)
         dt(1:2*n-1) = q2t_r(d(1:2*n-1))
@@ -4437,7 +4461,6 @@ contains
         integer,   intent(out) :: count
         ${target_real}$ :: sigma_t
         ${target_real}$, allocatable :: dt(:)
-        external :: ${R}$laiectl
         allocate(dt(2*n - 1))
         sigma_t  = q2t_r(sigma)
         dt(1:2*n-1) = q2t_r(d(1:2*n-1))
@@ -4448,7 +4471,6 @@ contains
         integer,  intent(out) :: isieee
         real(ep), intent(in)  :: rmax, rmin
         ${target_real}$ :: rmax_t, rmin_t
-        external :: ${R}$lachkieee
         rmax_t = q2t_r(rmax)
         rmin_t = q2t_r(rmin)
         call ${R}$lachkieee(isieee, rmax_t, rmin_t)

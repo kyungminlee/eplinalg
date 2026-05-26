@@ -27,7 +27,6 @@
 
 #include "pxsyevx.h"
 #include "pblas.h"
-#include <stdio.h>
 
 void pelasnbt_(Int *ieflag)
 {
@@ -44,12 +43,12 @@ void pelaiectb_(EREAL *sigma, Int *n, EREAL *d, Int *count)
     EREAL *pe2 = d + 1;
     EREAL tmp  = *pd - lsigma;
     pd += 2;
-    *count = (tmp < (EREAL)0.0L) ? 1 : 0;
+    *count = (tmp < 0.0L) ? 1 : 0;
     for (Int i = 1; i < *n; i++) {
         tmp = *pd - *pe2 / tmp - lsigma;
         pd += 2;
         pe2 += 2;
-        *count += (tmp < (EREAL)0.0L) ? 1 : 0;
+        *count += (tmp < 0.0L) ? 1 : 0;
     }
 }
 

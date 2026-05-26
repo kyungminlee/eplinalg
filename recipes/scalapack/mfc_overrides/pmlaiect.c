@@ -12,7 +12,6 @@
 
 #include "pxsyevx.h"
 #include "pblas.h"
-#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C" {

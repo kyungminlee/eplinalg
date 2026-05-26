@@ -29,7 +29,7 @@ program test_pdlaiect
     implicit none
 
     integer  :: ieflag, isieee, count_b, count_l
-    real(ep) :: d(5)
+    real(ep) :: d(5), d2(3), d1(1)
     real(ep) :: rmax, rmin
     real(ep) :: err
 
@@ -77,6 +77,41 @@ program test_pdlaiect
         call target_pdlaiectl(1.5_ep, 3, d, count_l)
         err = real(abs(count_l - 3), ep)
         call report_case('pdlaiectl:sigma=1.5:count=3', err, 0.0_ep)
+
+        ! 5. Distinct eigenvalues with non-zero off-diagonal — exercises
+        !    the Sturm recurrence ``tmp - pe2/prev_tmp`` properly. I_3
+        !    (case 3) has E_i^2 = 0, so the recurrence's off-diagonal term
+        !    vanishes; a regression to the buggy bit-twiddle could return
+        !    the same answer for I_3 by coincidence. Distinct eigenvalues
+        !    force the loop body to produce diverse tmp values and detect
+        !    that case.
+        !
+        !    T = tridiag([2,2], diag=[2,2,2], [2,2]) sized n=2 with D=2,
+        !    off-diagonal=1 — eigenvalues are {1, 3} exactly.
+        d2 = [ 2.0_ep, 1.0_ep, 2.0_ep ]
+        call target_pdlaiectb(0.5_ep, 2, d2, count_b)
+        err = real(abs(count_b - 0), ep)
+        call report_case('pdlaiectb:distinct:sigma=0.5:count=0', err, 0.0_ep)
+
+        call target_pdlaiectb(2.5_ep, 2, d2, count_b)
+        err = real(abs(count_b - 1), ep)
+        call report_case('pdlaiectb:distinct:sigma=2.5:count=1', err, 0.0_ep)
+
+        call target_pdlaiectb(3.5_ep, 2, d2, count_b)
+        err = real(abs(count_b - 2), ep)
+        call report_case('pdlaiectb:distinct:sigma=3.5:count=2', err, 0.0_ep)
+
+        ! 6. n=1 edge case — Sturm loop body never executes; only the
+        !    pre-loop initialization runs. Guards against refactor bugs
+        !    in loop-bound handling.
+        d1 = [ 5.0_ep ]
+        call target_pdlaiectb(0.0_ep, 1, d1, count_b)
+        err = real(abs(count_b - 0), ep)
+        call report_case('pdlaiectb:n=1:sigma<lambda:count=0', err, 0.0_ep)
+
+        call target_pdlaiectb(10.0_ep, 1, d1, count_b)
+        err = real(abs(count_b - 1), ep)
+        call report_case('pdlaiectb:n=1:sigma>lambda:count=1', err, 0.0_ep)
     end if
 
     call report_finalize()

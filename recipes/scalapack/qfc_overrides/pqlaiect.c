@@ -27,7 +27,6 @@
 
 #include "pxsyevx.h"
 #include "pblas.h"
-#include <stdio.h>
 
 void pqlasnbt_(Int *ieflag)
 {
@@ -44,12 +43,12 @@ void pqlaiectb_(QREAL *sigma, Int *n, QREAL *d, Int *count)
     QREAL *pe2 = d + 1;
     QREAL tmp  = *pd - lsigma;
     pd += 2;
-    *count = (tmp < (QREAL)0.0q) ? 1 : 0;
+    *count = (tmp < 0.0q) ? 1 : 0;
     for (Int i = 1; i < *n; i++) {
         tmp = *pd - *pe2 / tmp - lsigma;
         pd += 2;
         pe2 += 2;
-        *count += (tmp < (QREAL)0.0q) ? 1 : 0;
+        *count += (tmp < 0.0q) ? 1 : 0;
     }
 }
 
