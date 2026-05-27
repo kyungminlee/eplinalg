@@ -1,2 +1,0 @@
-#:set routine = 'xqrot'
-#:include 'fuzz_rot_mixed_body.fypp'

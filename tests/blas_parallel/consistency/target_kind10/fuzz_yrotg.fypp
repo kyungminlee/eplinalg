@@ -1,2 +1,0 @@
-#:set routine = 'yrotg'
-#:include 'fuzz_rotg_complex_body.fypp'

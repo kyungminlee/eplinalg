@@ -1,2 +1,0 @@
-#:set routine = 'qtbsv'
-#:include 'fuzz_tbsv_real_body.fypp'

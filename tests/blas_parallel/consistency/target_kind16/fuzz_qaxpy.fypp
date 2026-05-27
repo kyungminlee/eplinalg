@@ -1,2 +1,0 @@
-#:set routine = 'qaxpy'
-#:include 'fuzz_axpy_real_body.fypp'

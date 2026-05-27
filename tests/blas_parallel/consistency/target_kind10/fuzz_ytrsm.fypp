@@ -1,2 +1,0 @@
-#:set routine = 'ytrsm'
-#:include 'fuzz_trsm_complex_body.fypp'

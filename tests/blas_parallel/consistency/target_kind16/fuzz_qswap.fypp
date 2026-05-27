@@ -1,2 +1,0 @@
-#:set routine = 'qswap'
-#:include 'fuzz_copyswap_real_body.fypp'

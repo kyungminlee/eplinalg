@@ -1,2 +1,0 @@
-#:set routine = 'esymv'
-#:include 'fuzz_symv_real_body.fypp'

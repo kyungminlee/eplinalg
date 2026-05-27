@@ -1,2 +1,0 @@
-#:set routine = 'xtpmv'
-#:include 'fuzz_tpmv_complex_body.fypp'

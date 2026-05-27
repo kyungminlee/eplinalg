@@ -1,2 +1,0 @@
-#:set routine = 'erot'
-#:include 'fuzz_rot_real_body.fypp'

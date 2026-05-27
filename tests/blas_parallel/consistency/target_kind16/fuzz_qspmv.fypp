@@ -1,2 +1,0 @@
-#:set routine = 'qspmv'
-#:include 'fuzz_spmv_body.fypp'

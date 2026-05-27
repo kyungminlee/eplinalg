@@ -1,2 +1,0 @@
-#:set routine = 'xhemm'
-#:include 'fuzz_hemm_body.fypp'

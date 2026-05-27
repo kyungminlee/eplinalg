@@ -1,2 +1,0 @@
-#:set routine = 'yhpmv'
-#:include 'fuzz_hpmv_body.fypp'
