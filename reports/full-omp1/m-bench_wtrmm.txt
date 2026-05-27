@@ -1,6 +1,0 @@
-       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
-           64          0.4811             0.2084       2.31x
-          128          0.8422             0.2115       3.98x
-          256          1.3560             0.2120       6.40x
-          512          2.0488             0.2153       9.52x
-wrote bench_wtrmm.json

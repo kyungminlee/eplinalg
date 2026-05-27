@@ -1,6 +1,0 @@
-       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
-           64          1.6885             1.5408       1.10x
-          128          1.0248             0.7097       1.44x
-          256          1.4356             0.7296       1.97x
-          512          1.6927             0.7373       2.30x
-wrote bench_etrsm.json

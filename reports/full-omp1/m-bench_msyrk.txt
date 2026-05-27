@@ -1,6 +1,0 @@
-       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
-           64          0.4533             0.1126       4.03x
-          128          0.8045             0.1209       6.66x
-          256          1.3395             0.1226      10.92x
-          512          1.9947             0.1235      16.15x
-wrote bench_msyrk.json

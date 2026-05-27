@@ -1,4 +1,0 @@
-       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
-           64          0.0358             0.0312       1.15x
-          128          0.0282             0.0269       1.05x
-wrote bench_xhemm.json

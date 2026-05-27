@@ -1,4 +1,0 @@
-       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
-          64          0.0380             0.0295       1.29x
-         128          0.0378             0.0383       0.99x
-wrote bench_qsyrk.json

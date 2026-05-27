@@ -1,4 +1,0 @@
-       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
-           64          0.0178             0.0189       0.94x
-          128          0.0408             0.0411       0.99x
-wrote bench_xtrmm.json

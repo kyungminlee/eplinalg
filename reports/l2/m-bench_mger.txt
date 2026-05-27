@@ -1,4 +1,0 @@
-   size      parallel-blas GF/s   migrated GF/s   speedup
-      128          0.5133          0.1231       4.17x
-      256          0.5058          0.1233       4.10x
-      512          0.5073          0.1235       4.11x
