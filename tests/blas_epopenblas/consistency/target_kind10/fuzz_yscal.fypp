@@ -1,2 +1,0 @@
-#:set routine = 'yscal'
-#:include 'fuzz_scal_complex_body.fypp'

@@ -1,2 +1,0 @@
-#:set routine = 'eaxpy'
-#:include 'fuzz_axpy_real_body.fypp'

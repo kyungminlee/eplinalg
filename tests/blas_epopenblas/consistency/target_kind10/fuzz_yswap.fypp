@@ -1,2 +1,0 @@
-#:set routine = 'yswap'
-#:include 'fuzz_copyswap_complex_body.fypp'

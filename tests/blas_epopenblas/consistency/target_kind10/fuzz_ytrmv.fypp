@@ -1,2 +1,0 @@
-#:set routine = 'ytrmv'
-#:include 'fuzz_trmv_complex_body.fypp'
