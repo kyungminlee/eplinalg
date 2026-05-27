@@ -296,7 +296,6 @@ fortran-migrator/
 │   │                        # developer.md, intrinsics.md
 │   ├── output/              # procedures.md, convergence.md, kind16-divergences.md
 │   ├── upstream-bugs/       # Tracked upstream bugs (lapack / scalapack / mumps)
-│   ├── parallel-blas/       # Branch-scoped overlay design & findings
 │   └── archive/             # Historical surveys and timestamped reports
 ├── scripts/             # Manual helpers (compile_*.sh, sweep tools)
 ├── tools/               # Build artifacts (gen_procedures.py)

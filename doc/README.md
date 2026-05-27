@@ -30,11 +30,11 @@ Bugs in the vendored Netlib sources that the migrator works around without editi
 
 ## Parallel BLAS overlay
 
-Branch-scoped sub-project: a hand-written, thread-parallel BLAS overlay for the extended-precision targets.
-
-- [parallel-blas/design.md](parallel-blas/design.md) — overlay design and phased plan
-- [parallel-blas/optimization-findings.md](parallel-blas/optimization-findings.md) — what was tried, what worked, what didn't
-- [`../reports/overlay-coverage.md`](../reports/overlay-coverage.md) — auto-generated coverage + speedup table
+The hand-written extended-precision BLAS overlay moved to a separate
+project: [epparablas](../../epparablas/). Migrator-side, the public
+`${LIB_PREFIX}blas` target is now the plain serial migrated archive;
+the overlay-equipped composite (`epparablas::eblas` and friends)
+ships from the epparablas package.
 
 ## Test suites
 
