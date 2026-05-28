@@ -868,7 +868,10 @@ def replace_intrinsic_calls(
                         matched = line[start:m.end() - 1]
                         repl = new_name.upper() if matched.isupper() else new_name.lower()
                         line = line[:start] + repl + line[start + len(matched):]
-                    break
+                        search_start = start + len(repl)
+                    else:
+                        search_start = m.end()
+                    continue
         else:
             def _call_replace(m, _new=new_name):
                 matched_name = m.group(1)
