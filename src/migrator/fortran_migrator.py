@@ -1890,20 +1890,53 @@ def convert_parameter_stmts(
         re.IGNORECASE,
     )
 
-    # CPP guard stack: each entry is the original ``#if ...`` directive
-    # line (without trailing newline) that's still open at the current
-    # source position. When a PARAMETER is converted to a runtime
-    # assignment, the assignment is wrapped in the same #if/#endif so
-    # it stays in scope only when the original declaration is in scope
-    # — otherwise gfortran sees an assignment to an undeclared symbol.
-    cpp_stack: list[str] = []
+    # CPP guard stack: each frame is the effective ``#if ...`` directive
+    # line (without trailing newline) that should wrap any runtime
+    # assignment emitted under the current source position, plus the
+    # history of conditions seen in this if-block so ``#elif``/``#else``
+    # branches can negate them.
+    #
+    # When a PARAMETER is converted to a runtime assignment, the
+    # assignment is wrapped in the same #if/#endif so it stays in scope
+    # only when the original declaration is in scope — otherwise gfortran
+    # sees an assignment to an undeclared symbol. Tracking
+    # ``#else``/``#elif`` is required so an assignment in the ``#else``
+    # branch isn't wrapped under the (unrelated) ``#if`` true branch.
+    cpp_stack: list[dict] = []
+
+    def _cpp_cond(directive: str) -> str:
+        s = directive.strip()
+        if s.startswith('#ifdef'):
+            return f'defined({s[len("#ifdef"):].strip()})'
+        if s.startswith('#ifndef'):
+            return f'!defined({s[len("#ifndef"):].strip()})'
+        if s.startswith('#elif'):
+            return s[len('#elif'):].strip()
+        if s.startswith('#if'):
+            return s[len('#if'):].strip()
+        return ''
 
     i = 0
     while i < len(lines):
         line = lines[i]
         stripped_for_cpp = line.lstrip()
         if stripped_for_cpp.startswith('#if'):
-            cpp_stack.append(line.rstrip('\n'))
+            cpp_stack.append({
+                'wrap': line.rstrip('\n'),
+                'history': [_cpp_cond(line)],
+            })
+        elif stripped_for_cpp.startswith('#elif'):
+            if cpp_stack:
+                frame = cpp_stack[-1]
+                negated = ' || '.join(f'({c})' for c in frame['history'])
+                new_cond = _cpp_cond(line)
+                frame['history'].append(new_cond)
+                frame['wrap'] = f'#if !({negated}) && ({new_cond})'
+        elif stripped_for_cpp.startswith('#else'):
+            if cpp_stack:
+                frame = cpp_stack[-1]
+                negated = ' || '.join(f'({c})' for c in frame['history'])
+                frame['wrap'] = f'#if !({negated})'
         elif stripped_for_cpp.startswith('#endif'):
             if cpp_stack: cpp_stack.pop()
 
@@ -2016,7 +2049,7 @@ def convert_parameter_stmts(
                 kept_names.append(name)
                 assn = f"{indent}{name} = {val}{comment}\n"
                 if cpp_stack:
-                    pre = ''.join(g + '\n' for g in cpp_stack)
+                    pre = ''.join(f["wrap"] + '\n' for f in cpp_stack)
                     post = '#endif\n' * len(cpp_stack)
                     assn = pre + assn + post
                 line_assignments.append(assn)
@@ -2082,7 +2115,7 @@ def convert_parameter_stmts(
                             continue
                         assn = f"{indent}{name} = {val}{comment}\n"
                         if cpp_stack:
-                            pre = ''.join(g + '\n' for g in cpp_stack)
+                            pre = ''.join(f["wrap"] + '\n' for f in cpp_stack)
                             post = '#endif\n' * len(cpp_stack)
                             assn = pre + assn + post
                         line_assignments.append(assn)
