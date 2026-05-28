@@ -44,6 +44,17 @@ if(BASELINE_BUILD)
         endif()
     endforeach()
 else()
+    # Non-baseline builds must carry a non-empty LIB_PREFIX; otherwise
+    # the gate below would collapse to ``TARGET <lib>`` and accidentally
+    # admit the std archives, running each test tree's non-baseline
+    # branch against the wrong (standard-precision) target.
+    if(LIB_PREFIX STREQUAL "")
+        message(FATAL_ERROR
+            "tests/CMakeLists.txt: LIB_PREFIX is empty in a "
+            "non-baseline build — refusing to descend (would run "
+            "migrated test branches against std archives). Check "
+            "target_config.cmake and the active TARGET_NAME.")
+    endif()
     foreach(_lib ${STAGED_LIBRARIES})
         set(_libdir ${CMAKE_CURRENT_SOURCE_DIR}/${_lib})
         if(TARGET ${LIB_PREFIX}${_lib}
