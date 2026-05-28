@@ -13,6 +13,7 @@ external/*.tar.gz
 external/*.tar.xz
 external/*.dsc
 external/openblas-*/
+external/openblas/
 
 # Bench JSON artifacts (run output, not source)
 /bench_*.json
