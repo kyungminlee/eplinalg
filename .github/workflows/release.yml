@@ -314,8 +314,8 @@ jobs:
           find artifacts -name '*.tar.gz' -exec cp {} release/ \;
           ls -la release/
 
-      - name: Build combined epla tarball
-        # Merge every per-combo tarball into one ``epla-vX.Y.Z-...``
+      - name: Build combined eplinalg tarball
+        # Merge every per-combo tarball into one ``eplinalg-vX.Y.Z-...``
         # archive that holds all targets × compilers × MPIs in a single
         # install tree. Per-combo archives stay alongside it for
         # consumers who only need one variant. Since every library is
@@ -326,7 +326,7 @@ jobs:
         # across the same logical configuration.
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          ARCHIVE="epla-v${VERSION}-linux-x86_64"
+          ARCHIVE="eplinalg-v${VERSION}-linux-x86_64"
           mkdir -p combined
           for t in release/*.tar.gz; do
             echo "  extracting $(basename "$t")"
@@ -347,7 +347,7 @@ jobs:
 
             ### Combined archive
 
-            ``epla-vX.Y.Z-linux-x86_64.tar.gz`` bundles every per-combo
+            ``eplinalg-vX.Y.Z-linux-x86_64.tar.gz`` bundles every per-combo
             archive (target × compiler × MPI) into a single install
             tree. Every library file is tagged with its compiler tag
             and (for MPI-dependent libraries) its MPI flavor + version

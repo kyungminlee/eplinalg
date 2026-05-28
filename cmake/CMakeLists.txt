@@ -1245,24 +1245,24 @@ function(install_library_headers lib_name)
 endfunction()
 
 # Compute the package name a standard archive is installed under.
-# `blas` → `eplaStdBlas`, `scalapack_c` → `eplaStdScalapack_c`, etc.
+# `blas` → `eplinalgStdBlas`, `scalapack_c` → `eplinalgStdScalapack_c`, etc.
 # The capitalization keeps the bare lib name visually intact while
 # satisfying CMake's package-name conventions (leading capital aids
-# readability when grep'ing for find_package(epla...) calls).
+# readability when grep'ing for find_package(eplinalg...) calls).
 function(_std_pkg_name lib_name out_var)
     string(SUBSTRING "${lib_name}" 0 1 _first)
     string(SUBSTRING "${lib_name}" 1 -1 _rest)
     string(TOUPPER "${_first}" _first)
-    set(${out_var} "eplaStd${_first}${_rest}" PARENT_SCOPE)
+    set(${out_var} "eplinalgStd${_first}${_rest}" PARENT_SCOPE)
 endfunction()
 
 # Install the standard-precision archive ``lib_name`` (e.g. ``blas``,
-# ``lapack``) into its own package ``eplaStd<LibName>``. The archive
+# ``lapack``) into its own package ``eplinalgStd<LibName>``. The archive
 # is byte-identical across per-precision build invocations (vanilla
 # Netlib sources, no real-promotion flag, no precision-specific
 # defines), so re-installing on top of an existing prefix overwrites
 # matching content — which is exactly what consumers want: one
-# ``epla::blas`` target shared by ``find_package(qblas)``,
+# ``eplinalg::blas`` target shared by ``find_package(qblas)``,
 # ``find_package(eblas)``, ``find_package(mblas)``, ... avoiding the
 # multi-target redefinition that bundling the std archive in each
 # per-precision export used to cause.
@@ -1288,7 +1288,7 @@ function(_install_standard_archive lib_name)
 
     # Walk the std archive's INTERFACE_LINK_LIBRARIES for std-sibling
     # references (e.g. ``lapack`` PUBLIC-links ``blas``) so the
-    # generated eplaStd<Lib>Config does find_dependency on the other
+    # generated eplinalgStd<Lib>Config does find_dependency on the other
     # std packages it transitively needs.
     set(_std_deps "")
     get_target_property(_ifl ${lib_name} INTERFACE_LINK_LIBRARIES)
@@ -1305,7 +1305,7 @@ function(_install_standard_archive lib_name)
 
     fortran_install_library(${lib_name}
         EXPORT ${_export}
-        NAMESPACE epla::
+        NAMESPACE eplinalg::
         ${_mpi_arg}
         DEPENDS ${_std_deps})
     get_target_property(_fc_moddir ${lib_name} Fortran_MODULE_DIRECTORY)
@@ -1343,13 +1343,13 @@ function(_install_library_pair lib_name)
     # Install the std archive into its own export FIRST. Required so
     # install(EXPORT ${_export}) below can resolve the precision
     # target's PUBLIC link to ``${lib_name}`` (the std archive) as a
-    # cross-export reference ``epla::${lib_name}`` — without this,
+    # cross-export reference ``eplinalg::${lib_name}`` — without this,
     # CMake fails with "target X not in any export set".
     _install_standard_archive(${lib_name})
 
     # If the std archive exists, its package is a transparent dep of
     # the precision Config so consumers only need find_package(qblas)
-    # and ``epla::blas`` resolves automatically.
+    # and ``eplinalg::blas`` resolves automatically.
     set(_precision_deps "")
     if(TARGET ${lib_name} AND NOT "${lib_name}" STREQUAL "${_precision_target}")
         _std_pkg_name(${lib_name} _std_pkg)
@@ -1364,7 +1364,7 @@ function(_install_library_pair lib_name)
     # (qmumps_c, mumps_common) follow after.
     fortran_install_library(${_precision_target}
         EXPORT ${_export}
-        NAMESPACE epla::
+        NAMESPACE eplinalg::
         ${_install_mpi_arg}
         DEPENDS ${_precision_deps})
     get_target_property(_fc_moddir ${_precision_target} Fortran_MODULE_DIRECTORY)
@@ -1378,14 +1378,14 @@ function(_install_library_pair lib_name)
     # archive, the C-callable entry-points (qmumps_c, xmumps_c),
     # and the umbrella that wraps them in a LINK_GROUP:RESCAN.
     if("${lib_name}" STREQUAL "mumps" AND TARGET ${LIB_PREFIX}mumps_c)
-        fortran_install_library(${LIB_PREFIX}mumps_c EXPORT ${_export} NAMESPACE epla:: MPI)
+        fortran_install_library(${LIB_PREFIX}mumps_c EXPORT ${_export} NAMESPACE eplinalg:: MPI)
         install(TARGETS ${LIB_PREFIX}mumps_full
             EXPORT ${_export})
     endif()
 
     # Bundle common library into the same export
     if(TARGET ${_common_target})
-        fortran_install_library(${_common_target} EXPORT ${_export} NAMESPACE epla:: ${_install_mpi_arg})
+        fortran_install_library(${_common_target} EXPORT ${_export} NAMESPACE eplinalg:: ${_install_mpi_arg})
         get_target_property(_fc_moddir ${_common_target} Fortran_MODULE_DIRECTORY)
         if(_fc_moddir)
             fortran_install_modules(${_common_target})
@@ -1442,7 +1442,7 @@ if(NEEDS_MULTIFLOATS)
             if("${_t}" IN_LIST _mf_mpi_helpers)
                 set(_mf_mpi_arg "MPI")
             endif()
-            fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE epla:: ${_mf_mpi_arg})
+            fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE eplinalg:: ${_mf_mpi_arg})
             get_target_property(_fc_moddir ${_t} Fortran_MODULE_DIRECTORY)
             if(_fc_moddir)
                 fortran_install_modules(${_t})
@@ -1450,8 +1450,6 @@ if(NEEDS_MULTIFLOATS)
         endif()
     endforeach()
 endif()
-
-# Parallel-BLAS overlay subtree is added early (right after project()).
 
 # ── Tests ────────────────────────────────────────────────────────────
 # Differential precision test suite. Each library has its own subdir

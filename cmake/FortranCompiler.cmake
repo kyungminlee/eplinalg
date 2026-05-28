@@ -340,8 +340,8 @@ function(fortran_install_library target)
   # No cross-package sibling find_dependency() calls are emitted
   # into the generated Config.cmake — consumers list every archive
   # they need on their own link line; symbol resolution happens at
-  # final link. See ../../epparablas/CONTEXT.md §"No sibling-deps
-  # inside `epla` installed configs" and adr/0001 for rationale.
+  # final link. See ../../epblas-parallel/CONTEXT.md §"No sibling-deps
+  # inside `eplinalg` installed configs" and adr/0001 for rationale.
 
   # Generate Config.cmake that finds the right targets file.
   # Strategy: derive the consumer's compiler tag (and MPI tag if this
@@ -404,8 +404,8 @@ endif()
 
   # Build a block of find_dependency() calls for the DEPENDS list. These
   # are transparent dependencies (not user-facing): the standard-precision
-  # archive `epla::blas` is factored out into its own package
-  # `eplaStdBlas` so multiple per-precision installs share one copy
+  # archive `eplinalg::blas` is factored out into its own package
+  # `eplinalgStdBlas` so multiple per-precision installs share one copy
   # without redefining the imported target. The per-precision Config
   # auto-loads it so consumers only need to find_package(qblas).
   set(_deps_block "")
@@ -429,7 +429,7 @@ cmake_minimum_required(VERSION 3.12)
 # (the standard-precision archive, currently). No precision-sibling
 # find_dependency() calls are emitted — consumers list every
 # per-precision package they need on their own
-# (see ../../epparablas/CONTEXT.md §\"No sibling-deps inside `epla`\").
+# (see ../../epblas-parallel/CONTEXT.md §\"No sibling-deps inside `eplinalg`\").
 include(CMakeFindDependencyMacro)
 ${_deps_block}
 
