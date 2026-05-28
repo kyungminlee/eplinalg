@@ -13,12 +13,17 @@ from pathlib import Path
 # collapse to their target-prefixed form (``QMUMPS_STATIC_PTR_M``)
 # like subroutines. ``MODULE PROCEDURE`` and ``END MODULE`` are
 # excluded — they reference existing names, not new definitions.
+# End-of-block lines (``END SUBROUTINE FOO``, ``END  SUBROUTINE FOO``)
+# are filtered structurally via :data:`_FORTRAN_END_RE` before this
+# regex runs, since Python's fixed-width lookbehind cannot match the
+# variable whitespace those lines may carry.
 _FORTRAN_DEF_RE = re.compile(
-    r'(?<!\w)(?<!END\s)(?<!end\s)'
+    r'(?<!\w)'
     r'(?:SUBROUTINE|FUNCTION|MODULE(?!\s+(?:PROCEDURE|SUBROUTINE|FUNCTION)\b))'
     r'\s+([A-Za-z]\w*)',
     re.IGNORECASE,
 )
+_FORTRAN_END_RE = re.compile(r'^\s*END\b', re.IGNORECASE)
 
 # Derived-type definitions: ``TYPE FOO``, ``TYPE :: FOO``, ``TYPE,
 # attr :: FOO``. Anchored so ``TYPE(FOO)`` (a type reference, not a
@@ -83,6 +88,11 @@ def scan_fortran_source(src_dir: Path,
             # Skip free-form comments
             stripped = line.lstrip()
             if stripped.startswith('!'):
+                continue
+            # Skip END-of-block lines structurally (END SUBROUTINE NAME,
+            # END  SUBROUTINE NAME with multi-space, END MODULE NAME)
+            # — the search regex's fixed-width lookbehind can't.
+            if _FORTRAN_END_RE.match(line):
                 continue
             m = _FORTRAN_DEF_RE.search(line)
             if m:
