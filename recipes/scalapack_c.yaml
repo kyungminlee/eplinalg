@@ -3,9 +3,6 @@ language: c
 source_dir: external/scalapack-2.2.3/SRC
 extensions: [.c, .h]
 
-symbols:
-  method: scan_source
-
 depends:
   - lapack.yaml
   - blacs.yaml
@@ -26,9 +23,6 @@ extra_symbol_dirs:
 extra_c_dirs:
   - external/scalapack-2.2.3/REDIST/SRC
   - external/scalapack-2.2.3/TOOLS
-
-prefix:
-  style: scalapack   # P + S/D/C/Z
 
 # These routines already exist in PBLAS/SRC (modern ANSI C) and were
 # migrated as part of the PBLAS pipeline. The SRC/ copies are older

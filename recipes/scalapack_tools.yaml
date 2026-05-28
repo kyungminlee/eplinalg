@@ -30,9 +30,6 @@ language: fortran
 source_dir: recipes/scalapack_tools/source
 extensions: [.f]
 
-symbols:
-  method: scan_source
-
 extra_symbol_dirs:
   - external/scalapack-2.2.3/TOOLS
 
@@ -40,8 +37,5 @@ extra_migrate_files:
   - external/scalapack-2.2.3/TOOLS/iceil.f
   - external/scalapack-2.2.3/TOOLS/ilcm.f
   - external/scalapack-2.2.3/TOOLS/numroc.f
-
-prefix:
-  style: direct
 
 skip_files: []

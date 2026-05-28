@@ -11,12 +11,6 @@ extensions: [.F, .h]
 extra_fortran_dirs:
   - external/MUMPS_5.8.2/include
 
-symbols:
-  method: scan_source
-
-prefix:
-  style: direct
-
 depends:
   - blas.yaml
   - lapack.yaml

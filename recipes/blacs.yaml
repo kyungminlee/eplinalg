@@ -3,12 +3,6 @@ language: c
 source_dir: external/scalapack-2.2.3/BLACS/SRC
 extensions: [.c, .h]
 
-symbols:
-  method: scan_source
-
-prefix:
-  style: direct
-
 # The upstream S/D/C/Z entry points (dgesd2d_, sgebr2d_, igsum2d_, ...)
 # and precision-independent helpers (BI_BlacsErr, BI_GetBuff,
 # blacs_setup_, ...) live in the standard-precision archive ``blacs``

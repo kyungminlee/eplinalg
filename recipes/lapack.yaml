@@ -3,9 +3,6 @@ language: fortran
 source_dir: external/lapack-3.12.1/SRC
 extensions: [.f, .f90, .F90]
 
-symbols:
-  method: scan_source
-
 depends:
   - blas.yaml
   # XBLAS extended-precision routines are called from the LAPACK
@@ -49,9 +46,6 @@ extra_migrate_files:
   - recipes/lapack/extras/ilaenv_ep.f
   - recipes/lapack/extras/ilaenv2stage_ep.f
   - recipes/lapack/extras/iparam2stage_ep.F
-
-prefix:
-  style: direct
 
 # Patches applied to staged sources before migration. Unified diffs
 # vs upstream Netlib LAPACK 3.12.1. See doc/upstream-bugs/lapack.md

@@ -3,12 +3,6 @@ language: fortran
 source_dir: external/lapack-3.12.1/BLAS/SRC
 extensions: [.f, .f90]
 
-symbols:
-  method: scan_source
-
-prefix:
-  style: direct
-
 # Files dropped entirely from the migrated archive:
 #  - DSDOT / SDSDOT — cross-precision routines (single+double mixed).
 #    No single-kind target; not migratable to extended precision.

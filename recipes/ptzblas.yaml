@@ -6,9 +6,6 @@ language: fortran
 source_dir: external/scalapack-2.2.3/PBLAS/SRC/PTZBLAS
 extensions: [.f]
 
-symbols:
-  method: scan_source
-
 depends:
   - blas.yaml
 
@@ -26,8 +23,5 @@ extra_symbol_dirs:
 extra_migrate_files:
   - external/scalapack-2.2.3/TOOLS/zzdotc.f
   - external/scalapack-2.2.3/TOOLS/zzdotu.f
-
-prefix:
-  style: direct
 
 skip_files: []

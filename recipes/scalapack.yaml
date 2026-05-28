@@ -3,9 +3,6 @@ language: fortran
 source_dir: external/scalapack-2.2.3/SRC
 extensions: [.f, .f90]
 
-symbols:
-  method: scan_source
-
 depends:
   - lapack.yaml         # transitively includes BLAS
   - blacs.yaml          # BLACS comm routines (SGEBR2D/DGEBR2D, etc.)
@@ -136,9 +133,6 @@ extra_migrate_files:
   - external/scalapack-2.2.3/TOOLS/ssdot.f
   - external/scalapack-2.2.3/TOOLS/zlatcpy.f
   - external/scalapack-2.2.3/TOOLS/zmatadd.f
-
-prefix:
-  style: scalapack  # P + S/D/C/Z
 
 skip_files:
   # PJLAENV / PILAENVX are replaced in the migrated archive by their

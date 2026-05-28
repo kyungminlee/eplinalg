@@ -20,7 +20,7 @@ except ImportError:
 # default to empty and produce a partially-migrated tree.
 _KNOWN_RECIPE_KEYS: frozenset[str] = frozenset({
     'library', 'language', 'source_dir', 'extensions',
-    'symbols', 'prefix',
+    'symbols',
     'skip_files', 'copy_files', 'prefer_source',
     'module_renames', 'extra_renames',
     'copy_all_originals', 'patches',

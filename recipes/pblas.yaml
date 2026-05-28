@@ -3,9 +3,6 @@ language: c
 source_dir: external/scalapack-2.2.3/PBLAS/SRC
 extensions: [.c, .h]
 
-symbols:
-  method: scan_source
-
 depends:
   - blas.yaml    # BLAS kernels called from PBLAS Fortran kernels
   - blacs.yaml   # BLACS comm routines called from PBLAS
@@ -24,9 +21,6 @@ extra_symbol_dirs:
 # PB_Cdtypeset symbol still exists but PB_Cddtypeset would not.
 extra_c_dirs:
   - external/scalapack-2.2.3/PBLAS/SRC/PTOOLS
-
-prefix:
-  style: scalapack   # P + S/D/C/Z entry points
 
 # Extra C return types used by PBLAS helper routines that the scanner's
 # built-in return-type set does not cover. Each entry is a regex fragment

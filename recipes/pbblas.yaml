@@ -6,9 +6,6 @@ language: fortran
 source_dir: external/scalapack-2.2.3/PBLAS/SRC/PBBLAS
 extensions: [.f]
 
-symbols:
-  method: scan_source
-
 depends:
   - blas.yaml
   - blacs.yaml
@@ -22,8 +19,5 @@ depends:
 # PBBLAS files also reference PTZBLAS routines (DAGEMV, etc.)
 extra_symbol_dirs:
   - external/scalapack-2.2.3/PBLAS/SRC/PTZBLAS
-
-prefix:
-  style: direct
 
 skip_files: []
