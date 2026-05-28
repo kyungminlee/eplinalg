@@ -16,7 +16,7 @@ upstream-only names (`dsdot`, `sdsdot`) that the migrator never re-emits.
 from pathlib import Path
 import re
 
-ROOT = Path("/home/kyungminlee/Code/fortran-migrator")
+ROOT = Path(__file__).resolve().parents[1]
 NETLIB = {
     "blas":      ROOT / "external/lapack-3.12.1/BLAS/SRC",
     "lapack":    ROOT / "external/lapack-3.12.1/SRC",

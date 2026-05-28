@@ -14,7 +14,7 @@ aggregator. All three targets pass 26/26 mumps ctests under
 ## How to run
 
 ```bash
-cd /home/kyungminlee/code/fortran-migrator/src
+cd /home/kyungminlee/code/eplinalg/src
 uv run python -m migrator stage /tmp/stg-q --target kind16 --parser gfortran
 cmake -S /tmp/stg-q -B /tmp/stg-q/build --preset=linux-impi
 cmake --build /tmp/stg-q/build -j8
@@ -38,7 +38,7 @@ uv run python -m migrator stage /tmp/stg-q --target kind16 \
 (The default — no `--libraries` flag — stages everything and is fine.)
 
 The `recipes/` and `cmake/` trees live in this single repo
-(`fortran-migrator`) — the historical fm-mumps split was retired when
+(`eplinalg`) — the historical fm-mumps split was retired when
 the mumps work merged into `tests` (see TODO.md B7).
 
 Tests are wrapped via `mpiexec -n 1` because the migrated qmumps archive

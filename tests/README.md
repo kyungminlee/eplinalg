@@ -1,7 +1,7 @@
 # Test suites
 
 This directory holds runtime correctness and performance tests for the
-libraries produced by the fortran-migrator. They exercise the *outputs*
+libraries produced by eplinalg. They exercise the *outputs*
 of migration — the compiled extended-precision libraries — not the
 migration engine itself (engine tests live under `src/tests/`).
 

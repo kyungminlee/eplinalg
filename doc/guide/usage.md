@@ -1,6 +1,6 @@
 # Usage Guide
 
-**fortran-migrator** provides a multi-step pipeline to migrate numerical Fortran/C libraries to extended precision.
+**eplinalg** provides a multi-step pipeline to migrate numerical Fortran/C libraries to extended precision.
 
 The tool is primarily used through the Python engine (`migrator`) in `src/`.
 

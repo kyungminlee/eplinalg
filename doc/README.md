@@ -1,4 +1,4 @@
-# fortran-migrator documentation
+# eplinalg documentation
 
 ## Guide
 

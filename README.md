@@ -1,4 +1,4 @@
-# fortran-migrator
+# eplinalg
 
 Automated type-migration pipeline for the classical numerical-linear-algebra
 stack — BLAS, BLACS, LAPACK, PBLAS, ScaLAPACK, MUMPS — retargeted from the

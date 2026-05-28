@@ -1,6 +1,6 @@
 # Architecture
 
-**fortran-migrator** is an automated source-to-source translation tool
+**eplinalg** is an automated source-to-source translation tool
 for numerical libraries. It produces extended-precision (kind10,
 kind16) and double-double (multifloats) variants of the standard
 Netlib BLAS / LAPACK / ScaLAPACK / BLACS / PBLAS / PBBLAS / PTZBLAS

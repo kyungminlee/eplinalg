@@ -4,7 +4,7 @@ See [`../README.md`](../README.md) for the full documentation index.
 
 ## Project Goal
 
-**fortran-migrator** converts BLAS, LAPACK, BLACS, ScaLAPACK, and similar
+**eplinalg** converts BLAS, LAPACK, BLACS, ScaLAPACK, and similar
 numerical Fortran libraries from standard precision (`REAL`/`DOUBLE PRECISION`,
 `COMPLEX`/`DOUBLE COMPLEX`) to extended precision (`KIND=10` for 80-bit,
 `KIND=16` for 128-bit) or multiword floating-point (`float64x2` via the
