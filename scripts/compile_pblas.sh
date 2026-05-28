@@ -49,10 +49,10 @@ f_ok=0; f_fail=0
 for d in "$PTZBLAS_DIR" "$PBBLAS_DIR"; do
     for f in "$d"/*.f; do
         [ -f "$f" ] || continue
-        out=$(gfortran -c -ffixed-line-length-72 \
+        gfortran -c -ffixed-line-length-72 \
             -I "$MF_MOD" \
-            "$f" -o "$OUT_DIR/objs/$(basename "$f").o" 2>&1)
-        if [ -z "$out" ]; then
+            "$f" -o "$OUT_DIR/objs/$(basename "$f").o" 2>/dev/null
+        if [ $? -eq 0 ]; then
             f_ok=$((f_ok+1))
         else
             f_fail=$((f_fail+1))

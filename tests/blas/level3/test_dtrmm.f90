@@ -7,15 +7,13 @@ program test_dtrmm
     use ref_quad_blas, only: dtrmm
     implicit none
 
-    integer, parameter :: ms(*) = [4, 32, 100, 64]
-    integer, parameter :: ns(*) = [5, 40,  80, 48]
-    ! Cycle (SIDE, UPLO, TRANS, DIAG) so the four shapes hit each
-    ! independent code path: left-upper-N-N, right-upper-N-N,
-    ! left-lower-N-N, left-upper-T-U.
-    character(len=1), parameter :: sides(*)   = ['L', 'R', 'L', 'L']
-    character(len=1), parameter :: uplos(*)   = ['U', 'U', 'L', 'U']
-    character(len=1), parameter :: transes(*) = ['N', 'N', 'N', 'T']
-    character(len=1), parameter :: diags(*)   = ['N', 'N', 'N', 'U']
+    ! Sweep SIDE × UPLO × TRANS × DIAG = 16 combos.
+    integer, parameter :: ms(*) = [4, 32, 100, 64, 4, 32, 100, 64, 4, 32, 100, 64, 4, 32, 100, 64]
+    integer, parameter :: ns(*) = [5, 40,  80, 48, 5, 40,  80, 48, 5, 40,  80, 48, 5, 40,  80, 48]
+    character(len=1), parameter :: sides(*)   = ['L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R']
+    character(len=1), parameter :: uplos(*)   = ['U', 'U', 'U', 'U', 'L', 'L', 'L', 'L', 'U', 'U', 'U', 'U', 'L', 'L', 'L', 'L']
+    character(len=1), parameter :: transes(*) = ['N', 'N', 'T', 'T', 'N', 'N', 'T', 'T', 'N', 'N', 'T', 'T', 'N', 'N', 'T', 'T']
+    character(len=1), parameter :: diags(*)   = ['N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U']
     integer :: i, m, n, na, lda
     real(ep), allocatable :: A(:,:), B0(:,:), B_ref(:,:), B_got(:,:)
     real(ep) :: alpha, err, tol

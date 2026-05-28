@@ -53,7 +53,7 @@ diff -urN work/dgsum2d_.c /tmp/tmp.JL4TCVjgBQ/work/dgsum2d_.c
 + * No quad-MPI helper or runtime registration is needed — the user-op
 + * is created and freed per call, exactly like the existing complex
 + * ``zgsum2d_`` path. The companion ``BI_dMPI_sum.c`` ships alongside
-+ * this file via the same ``source_overrides`` recipe entry.
++ * this file via the same ``patches:`` recipe list.
 + *
 + * See the B01 description in recipes/blacs.yaml for full context.
 + */

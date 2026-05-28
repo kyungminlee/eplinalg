@@ -3,9 +3,6 @@ language: c
 source_dir: external/scalapack-2.2.3/PBLAS/SRC
 extensions: [.c, .h]
 
-symbols:
-  method: scan_source
-
 depends:
   - blas.yaml    # BLAS kernels called from PBLAS Fortran kernels
   - blacs.yaml   # BLACS comm routines called from PBLAS
@@ -24,9 +21,6 @@ extra_symbol_dirs:
 # PB_Cdtypeset symbol still exists but PB_Cddtypeset would not.
 extra_c_dirs:
   - external/scalapack-2.2.3/PBLAS/SRC/PTOOLS
-
-prefix:
-  style: scalapack   # P + S/D/C/Z entry points
 
 # Extra C return types used by PBLAS helper routines that the scanner's
 # built-in return-type set does not cover. Each entry is a regex fragment
@@ -274,7 +268,7 @@ skip_files: []
 
 # Patches applied to staged sources before migration. Unified diffs
 # vs upstream Netlib; one patch per UPSTREAM_BUGS.md ID. See
-# doc/refactor-20260509.md.
+# doc/archive/refactor-20260509.md.
 patches:
   - S04__atrmv-alpha-hardcoded-one.patch
 
@@ -285,7 +279,7 @@ patches:
 # the migrator should strip them everywhere, but the converge re-
 # migration path doesn't. All 61 PBLAS divergences (61/61) trace to
 # this; closing the gap is migrator-side work tracked separately,
-# orthogonal to upstream-bug patching. See doc/convergence-20260507.md
+# orthogonal to upstream-bug patching. See doc/archive/convergence-20260507.md
 # §pblas.
 defer_all_divergences: true
 

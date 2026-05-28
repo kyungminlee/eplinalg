@@ -212,12 +212,12 @@ static int mpiseq_base_type_bytes(MPI_Datatype t)
     if (t == MPI_DOUBLE)           return 8;
     if (t == MPI_DOUBLE_PRECISION) return 8;
     if (t == MPI_REAL8)            return 8;
-    if (t == MPI_LONG_DOUBLE)      return 10;   /* x87 80-bit */
+    if (t == MPI_LONG_DOUBLE)      return 16;   /* x86_64 long double storage = 16 bytes */
     if (t == MPI_REAL16)           return 16;
     if (t == MPI_COMPLEX)          return 8;
     if (t == MPI_DOUBLE_COMPLEX)   return 16;
     if (t == MPI_COMPLEX32)        return 32;
-    if (t == MPI_C_LONG_DOUBLE_COMPLEX) return 20;
+    if (t == MPI_C_LONG_DOUBLE_COMPLEX) return 32;
     /* Already-derived multifloats sentinels: pass byte-size through. */
     if (((uintptr_t) t & 0xFF000000U) == 0x10000000U)
         return (int)((uintptr_t) t & 0x00FFFFFFU);

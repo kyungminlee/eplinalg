@@ -1,15 +1,57 @@
-# Differential precision tests for migrated numerical libraries
+# Test suites
 
-This directory holds runtime correctness tests for the libraries produced
-by the fortran-migrator (BLAS, LAPACK, BLACS, PBLAS, MUMPS). Each
-library has its own subdirectory; only `blas/` is implemented today.
+This directory holds runtime correctness and performance tests for the
+libraries produced by eplinalg. They exercise the *outputs*
+of migration — the compiled extended-precision libraries — not the
+migration engine itself (engine tests live under `src/tests/`).
 
-The tests do not unit-test the migration *engine* — that lives under
-`src/tests/`. These tests exercise the *outputs* of migration: the
-compiled extended-precision libraries.
+Tests here are all of one form: **migrated vs Netlib reference compiled
+at REAL(KIND=16)** (`tests/{blas,lapack,blacs,pblas,pbblas,scalapack,mumps,xblas,ptzblas}/`).
+Differential precision: run the same operation through the migrated
+extended-precision library and through Netlib source compiled with
+`-freal-8-real-16`, compare in `REAL(KIND=16)`. JSON reports under
+`<build>/precision_reports/`, aggregated by
+`scripts/precision_report.py`.
 
+The overlay-vs-migrated test scheme (epblas-parallel, epblas-openblas) moved
+to the [epblas-parallel](../../epblas-parallel/) sibling repo along with the
+overlays themselves.
 
-## Testing model
+## Migrated vs Netlib reference @ KIND=16 (differential precision)
+
+Tests the *migrated* libraries against the original Netlib source
+compiled with `-freal-8-real-16`. All comparisons happen in
+`REAL(KIND=16)` regardless of which migrated target is under test.
+
+Test data is generated at `KIND=16`, converted down to the target's
+precision before calling the migrated routine, converted back to
+`KIND=16` after, and compared against the reference call which stayed
+at `KIND=16` throughout.
+
+```
+tolerance = safety_factor * n_ops * target_eps
+pass      = max_rel_err <= tolerance
+```
+
+| Domain | Test files | Reference | Notes |
+|---|---|---|---|
+| `tests/blas/` | 25 L1 + 33 L2 + 17 L3 = **75** | `refblas_quad` (Netlib BLAS @ KIND=16, built from `_refblas_src/`) | Canonical scheme; mirrored by every other domain |
+| `tests/xblas/` | 15 L1 + 14 L2 + 15 L3 = **44** | Netlib XBLAS @ extended precision | Tests the `BLAS_qgemv_x` etc surface |
+| `tests/lapack/` | **669** under `auxiliary/`, `eigenvalue/`, `factorization/`, `linear_solve/` | `reflapack_quad` | Largest domain |
+| `tests/ptzblas/` | **35** | tz-prefix triangle/packed-zero BLAS variants | |
+| `tests/blacs/` | **22** | BLACS ref @ KIND=16 | Distributed; uses MPI |
+| `tests/pblas/` | **62** across `level1/`, `level2/`, `level3/` | serial quad BLAS on global matrix | Distributed; BLACS process grids |
+| `tests/pbblas/` | **21** | PBBLAS ref | Distributed pbblas |
+| `tests/scalapack/` | **178** under `auxiliary/`, `eigenvalue/`, `factorization/`, `linear_solve/` | serial quad LAPACK on global matrix | Distributed |
+| `tests/mumps/` | **25** under `fortran/` and `c/` | `refmumps_quad` (sparse direct) | Both Fortran and C entrypoints |
+
+Plus infrastructure:
+
+- `tests/blas/refblas/` — builds `refblas_quad.a` from `_refblas_src/`
+- `tests/common/` — `prec_kinds`, `compare`, `prec_report`, `test_data` modules used across domains
+- `tests/common/target_<name>/` — per-target conversion wrappers (cast `KIND=16` ↔ target precision)
+
+### Testing model
 
 Each test runs the same operation through two implementations and
 compares the results in REAL(KIND=16) space:
@@ -27,14 +69,6 @@ inputs to the target's precision (REAL(KIND=10) for kind10,
 TYPE(real64x2) for multifloats) and converts the result back to quad
 for comparison. Comparison precision is **always REAL(KIND=16)**,
 regardless of which target is being tested.
-
-Per-test pass/fail uses a tolerance scaled by operation count and the
-target's epsilon:
-
-```
-tolerance = safety_factor * n_ops * target_eps
-pass      = max_rel_err <= tolerance
-```
 
 Each test program writes one JSON file per `(routine, target)` pair to
 `<build>/precision_reports/`. A Python aggregator
@@ -56,8 +90,7 @@ For routines whose specification leaves some output slots unset
 flag is `1`), the test skips those slots — comparing them is a false
 positive, not a real divergence.
 
-
-## Directory layout
+### Directory layout (BLAS example)
 
 ```
 tests/
@@ -105,8 +138,7 @@ ctest --test-dir /tmp/staging/build
 python scripts/precision_report.py /tmp/staging/build/precision_reports/
 ```
 
-
-## Per-target wrapper contract
+### Per-target wrapper contract
 
 Every `target_<target>/target_blas.f90` exposes the same module
 `target_blas` with the same set of public symbols:
@@ -131,8 +163,7 @@ The wrapper is the only place that knows the target's prefix
 stay precision-agnostic — the same test source runs unchanged against
 all three targets.
 
-
-## Adding a new test
+### Adding a new test
 
 For a routine `xroutine` that's already declared in
 `common/ref_quad_blas.f90` and wrapped in every `target_*/target_blas.f90`:
@@ -162,8 +193,7 @@ For a routine `xroutine` that's already declared in
    `target_<target>/target_blas.f90`. The wrapper signature is
    uniformly REAL(KIND=16) / COMPLEX(KIND=16) on the outside.
 
-
-## Adding a new library subdirectory
+### Adding a new library subdirectory
 
 The same scaffold extends to LAPACK, MUMPS, PBLAS:
 
@@ -178,8 +208,7 @@ The same scaffold extends to LAPACK, MUMPS, PBLAS:
    `external/lapack-3.12.1/SRC/` into the staging dir (extend
    `cmd_stage` similarly), and compile with `-freal-8-real-16`.
 
-
-## Reference selection
+### Reference selection
 
 `tests/blas/CMakeLists.txt` exposes one cache option:
 
@@ -195,8 +224,7 @@ removes the dependency on whatever BLAS happens to be installed.
 `system` is a fallback for environments where gfortran's
 `-freal-8-real-16` is unavailable.
 
-
-## Reading the report
+### Reading the report
 
 Per-routine summary, sample (kind10 / kind16 / multifloats):
 
@@ -220,3 +248,28 @@ Theoretical ceilings per target:
 - kind16 (IEEE binary128): ~33 decimal digits — but capped at "exact"
   here because reference and target are computed identically
 - multifloats (double-double): ~32 decimal digits
+
+---
+
+## How to run
+
+| Test type | Command |
+|---|---|
+| Differential precision (BLAS) | `ctest -R '^blas_'` — writes JSON to `precision_reports/` |
+| All differential-precision tests | `ctest` from the staging build dir |
+| Aggregate precision JSON → Markdown | `uv run scripts/precision_report.py` |
+
+For the overlay-vs-migrated test suite (epblas-parallel, epblas-openblas),
+see [epblas-parallel/tests/](../../epblas-parallel/tests/).
+
+## Quick mental model
+
+- **precision tests** = migrated vs Netlib@KIND=16, all 9 library
+  domains, JSON-aggregated via `precision_report.py`. Lives here.
+- **overlay tests** = hand-written kernels vs migrated baseline at
+  the same precision. Lives in `../../epblas-parallel/tests/`.
+
+## Related docs
+
+- `../../epblas-parallel/doc/optimization-findings.md` — overlay perf findings
+- `../scripts/precision_report.py` — aggregates per-test JSON reports across domains

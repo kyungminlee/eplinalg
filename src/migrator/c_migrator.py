@@ -113,26 +113,8 @@ def _build_sub_vars(target_mode: TargetMode) -> dict[str, str]:
 
 
 # ------------------------------------------------------------------ #
-# K&R → ANSI function-definition converter                           #
+# Source-stem decoration helpers                                     #
 # ------------------------------------------------------------------ #
-
-# Regex for the start of a K&R-style function definition:
-#   <return_type> <name>( <ident>, <ident>, ... )
-# where the identifiers are NOT preceded by a type specifier.
-_KR_FUNC_START_RE = re.compile(
-    r'^(\w[\w\s*]*?\s+)'        # return type (e.g. "void ")
-    r'(\w+\s*\()'               # function name + '('
-)
-
-_KR_DECL_RE = re.compile(
-    r'^\s*'
-    r'([\w][\w\s]*?)'           # base type (e.g. "Int", "complex16")
-    r'\s+'
-    r'((?:[*\s]*\w+(?:\s*\[\s*\])*'
-    r'(?:\s*,\s*[*\s]*\w+(?:\s*\[\s*\])*)*)'  # declarators
-    r')\s*;\s*$'
-)
-
 
 # XBLAS f2c-bridge file naming: ``BLAS_dgemv_x-f2c.c`` carries the
 # Fortran-callable wrapper for the C routine ``BLAS_dgemv_x``. The
@@ -180,213 +162,6 @@ def _redist_clone_stem(routine: str,
     return 'p' + new_char.lower() + routine[2:].lower()
 
 
-def _resolve_stdc_ifdefs(text: str) -> str:
-    """Resolve ``#ifdef __STDC__`` / ``#else`` / ``#endif`` blocks.
-
-    Legacy C libraries (ScaLAPACK/PBLAS) wrap function signatures in::
-
-        #ifdef __STDC__
-        void func( int *a, float *b )   /* ANSI signature */
-        #else
-        void func( a, b )               /* K&R signature */
-           int *a;
-           float *b;
-        #endif
-        {
-
-    Since all modern compilers define ``__STDC__``, we keep only the
-    ``#ifdef`` branch and drop the ``#else`` branch entirely.
-    """
-    lines = text.split('\n')
-    result: list[str] = []
-    i = 0
-    while i < len(lines):
-        stripped = lines[i].strip()
-        if stripped == '#ifdef __STDC__':
-            # Keep lines from after #ifdef until #else
-            i += 1
-            while i < len(lines):
-                s = lines[i].strip()
-                if s == '#else':
-                    # Skip lines from #else until #endif
-                    i += 1
-                    while i < len(lines):
-                        if lines[i].strip() == '#endif':
-                            i += 1
-                            break
-                        i += 1
-                    break
-                elif s == '#endif':
-                    # No #else branch — just drop the #endif
-                    i += 1
-                    break
-                else:
-                    result.append(lines[i])
-                    i += 1
-        else:
-            result.append(lines[i])
-            i += 1
-    return '\n'.join(result)
-
-
-def _convert_kr_to_ansi(text: str) -> str:
-    """Convert K&R-style function definitions to ANSI C prototypes.
-
-    K&R style (invalid in C++):
-        void func(a, b, c)
-           int *a;
-           float *b, *c;
-        {
-
-    Becomes ANSI style:
-        void func(int *a, float *b, float *c)
-        {
-
-    Only rewrites definitions where *all* parameter names can be
-    resolved to a type declaration. Leaves everything else untouched.
-    """
-    # Pre-pass A: join split return-type-only lines with the following
-    # ``name(...)`` line. REDIST/SRC sources (pctrmr2.c, …) wrap the
-    # return type onto its own line:
-    #     static2 Int
-    #     insidemat(uplo, diag, i, j, m, n, offset)
-    # which the per-line K&R detector below would otherwise miss.
-    text = re.sub(
-        r'(?m)^([A-Za-z_][\w\s\*]*?[A-Za-z_]\w*)[ \t]*\n'
-        r'([ \t]*[A-Za-z_]\w*[ \t]*\()',
-        lambda m: m.group(1) + ' ' + m.group(2)
-        if not any(kw == w for w in m.group(1).split() for kw in
-                   ('return', 'if', 'else', 'while', 'for', 'do', 'switch',
-                    'case', 'goto', 'break', 'continue', 'sizeof', 'typedef'))
-        else m.group(0),
-        text)
-    lines = text.split('\n')
-    result: list[str] = []
-    i = 0
-    while i < len(lines):
-        # Quick check: does this line look like a function definition?
-        m = _KR_FUNC_START_RE.match(lines[i])
-        if not m:
-            result.append(lines[i])
-            i += 1
-            continue
-
-        # Collect the full signature up to and including ')'
-        sig_lines = [lines[i]]
-        j = i
-        sig_text = lines[i]
-        while ')' not in sig_text:
-            j += 1
-            if j >= len(lines):
-                break
-            sig_lines.append(lines[j])
-            sig_text += ' ' + lines[j]
-
-        # Extract parameter names from between ( and )
-        paren_open = sig_text.index('(')
-        paren_close = sig_text.index(')')
-        # Forward declaration / extern (closing ``)`` followed by ``;``) —
-        # bail before the K&R fallback below walks until the *next* ``{``
-        # and consumes the intervening extern block. REDIST/SRC sources
-        # interleave dozens of these whose parameter types aren't in
-        # ``type_keywords`` (``MDESC *a``, ``IDESC *result``, …).
-        if sig_text[paren_close + 1:].lstrip().startswith(';'):
-            result.extend(sig_lines)
-            i = j + 1
-            continue
-        params_str = sig_text[paren_open + 1:paren_close]
-        param_names = [p.strip() for p in params_str.split(',') if p.strip()]
-
-        # If any param name contains a type keyword, this is already ANSI
-        type_keywords = {'int', 'char', 'float', 'double', 'void', 'long',
-                         'short', 'unsigned', 'signed', 'struct', 'enum',
-                         'const', 'Int', 'complex', 'complex16',
-                         'float64x2', 'complex64x2',
-                         'F_CHAR', 'F_VOID_FCT', 'F_INTG_FCT', 'F_DBLE_FCT',
-                         'SCOMPLEX', 'DCOMPLEX'}
-        # Use whole-word matching (``\b``) — substring checks would mis-flag
-        # K&R param names that happen to contain a type keyword as a
-        # substring (e.g. ``v_inter`` / ``vinter_nb`` contain ``int``,
-        # which would otherwise short-circuit the converter on every
-        # K&R definition that uses those parameter names).
-        kw_re = re.compile(r'\b(?:' + '|'.join(re.escape(k) for k in type_keywords) + r')\b')
-        if any(kw_re.search(name) for name in param_names):
-            # Already ANSI style
-            result.extend(sig_lines)
-            i = j + 1
-            continue
-
-        # Collect lines between ')' and '{', parsing declarations
-        # Find the matching ``{`` that opens the function body, then
-        # take the entire region between ``)`` and ``{`` as the K&R
-        # parameter-declaration block. This collapses multi-line
-        # declarations and multi-line embedded ``/* … */`` comments
-        # into one piece of text the per-statement parser can handle.
-        param_type_map: dict[str, str] = {}
-        decl_region_end = j
-        body_start = -1
-        # Start one line past the signature line(s) — the signature
-        # itself ends with ``)`` (already captured in ``sig_lines``)
-        # and isn't part of the declaration region.
-        j += 1
-        for k in range(j, len(lines)):
-            if lines[k].lstrip().startswith('{'):
-                body_start = k
-                break
-        if body_start < 0:
-            # No opening-brace-on-its-own-line found within file — bail
-            # out. We must not skip past ``j`` here because the
-            # signature might have been a false positive (e.g. an
-            # ``extern void FC_FUNC_(...)`` macro call in an XBLAS
-            # f2c-bridge whose real parameter list is on the *next*
-            # line). Resume at i+1 so subsequent lines still go
-            # through the loop.
-            result.extend(sig_lines)
-            i += 1
-            continue
-        decl_region_end = body_start
-        decl_blob = '\n'.join(lines[j:body_start])
-        # Drop block comments from the decl blob (they may straddle
-        # lines and contain stray ``;`` / quotes that confuse the
-        # statement splitter below).
-        decl_blob = re.sub(r'/\*.*?\*/', '', decl_blob, flags=re.DOTALL)
-        for stmt in decl_blob.split(';'):
-            stmt = stmt.strip()
-            if not stmt:
-                continue
-            dm = _KR_DECL_RE.match(stmt + ';')
-            if not dm:
-                continue
-            base_type = dm.group(1).strip()
-            declarators = dm.group(2)
-            for decl in declarators.split(','):
-                decl = decl.strip()
-                name_m = re.search(r'(\w+)', decl)
-                if name_m:
-                    name = name_m.group(1)
-                    if name in param_names:
-                        param_type_map[name] = f'{base_type} {decl}'
-        j = body_start
-
-        # Check if all parameter names were resolved
-        if len(param_type_map) == len(param_names) and param_names:
-            # Build ANSI signature
-            prefix = sig_text[:paren_open + 1].rstrip()
-            # Normalize multi-line prefix to single line
-            prefix = ' '.join(prefix.split())
-            ansi_params = ', '.join(param_type_map[n] for n in param_names)
-            result.append(f'{prefix} {ansi_params} )')
-            # Preserve the body-opening line verbatim — it may carry
-            # trailing content (a comment that opens on the same line
-            # as ``{``, like ``{/* Rmk: ... */``) that the body needs.
-            result.append(lines[decl_region_end])
-            i = decl_region_end + 1
-        else:
-            # Could not resolve — keep original lines
-            result.extend(sig_lines)
-            i = j if j > i else i + 1
-
-    return '\n'.join(result)
 
 
 def clone_c_file(src_path: Path, dst_path: Path,
@@ -1192,8 +967,6 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
                     r'#include\s*"\.\./([^"]+)"',
                     r'#include "\1"', text)
             if f.suffix.lower() == '.c':
-                text = _resolve_stdc_ifdefs(text)
-                text = _convert_kr_to_ansi(text)
                 # Aliases (cmplx16 → cmplxQ, (double*) → (REAL_TYPE*))
                 # apply to:
                 #   (a) precision-independent dispatchers (not in
@@ -1346,10 +1119,6 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
             text = re.sub(
                 r'#include\s*"\.\./([^"]+)"',
                 r'#include "\1"', text)
-        # Resolve #ifdef __STDC__ blocks (keep ANSI branch, drop K&R branch).
-        text = _resolve_stdc_ifdefs(text)
-        # Convert any remaining K&R function definitions to ANSI for C++ compatibility.
-        text = _convert_kr_to_ansi(text)
         # Apply renames first, then type upgrades — the two domains
         # don't overlap but this order preserves identifier names that
         # happen to coincide with generic type keywords.

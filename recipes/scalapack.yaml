@@ -3,9 +3,6 @@ language: fortran
 source_dir: external/scalapack-2.2.3/SRC
 extensions: [.f, .f90]
 
-symbols:
-  method: scan_source
-
 depends:
   - lapack.yaml         # transitively includes BLAS
   - blacs.yaml          # BLACS comm routines (SGEBR2D/DGEBR2D, etc.)
@@ -137,9 +134,6 @@ extra_migrate_files:
   - external/scalapack-2.2.3/TOOLS/zlatcpy.f
   - external/scalapack-2.2.3/TOOLS/zmatadd.f
 
-prefix:
-  style: scalapack  # P + S/D/C/Z
-
 skip_files:
   # PJLAENV / PILAENVX are replaced in the migrated archive by their
   # *_EP variants (see extras/p{jl,il}aenv*_ep.f and the extra_renames
@@ -222,10 +216,10 @@ extra_renames:
   PILAENVX: PILAENVX_EP
 
 # Patches applied to staged sources before migration (one per upstream
-# bug). See doc/UPSTREAM_BUGS-ScaLAPACK.md for the bug catalogue
+# bug). See doc/upstream-bugs/scalapack.md for the bug catalogue
 # (prose section titles; the S##/X##/P##/I##/W## tags below are an
 # older internal index that no longer cross-references the doc) and
-# doc/refactor-20260509.md for the patch convention.
+# doc/archive/refactor-20260509.md for the patch convention.
 #
 # Bug summaries:
 #   lanhs (NPROW=1 underestimate + IAROW double-advance)
@@ -302,7 +296,7 @@ patches:
   - pslascl.f.patch
   - pzlascl.f.patch
   - pclascl.f.patch
-  # 2026-05-11 audit (doc/scalapack-residual-divergence-categorization.md)
+  # 2026-05-11 audit (doc/archive/scalapack-residual-divergence-categorization.md)
   - pzungql.f.patch    # PB_TOPGET → PB_TOPSET (topology restore)
   - pzunml2.f.patch    # PB_TOPGET → PB_TOPSET (topology restore)
   - pdsyevd.f.patch    # LQUERY missing LIWORK.EQ.-1 branch
@@ -318,10 +312,10 @@ patches:
 # (WCOPY, MSCAL) don't shadow any local in the affected files.
 
 
-# Convergence whitelist (Phase D, doc/refactor-20260509.md).
+# Convergence whitelist (Phase D, doc/archive/refactor-20260509.md).
 # Most are upstream MINRGP/larre2/larrf2 tuning splits and larzc/larzb/
-# stebz/lanhs algorithmic asymmetries. See doc/convergence-20260507.md
-# §scalapack and doc/UPSTREAM_BUGS-ScaLAPACK.md.
+# stebz/lanhs algorithmic asymmetries. See doc/archive/convergence-20260507.md
+# §scalapack and doc/upstream-bugs/scalapack.md.
 expected_divergences:
   # Bugs that remain asymmetric (genuine upstream design split):
   - BDLAEXC          # bdlaexc/bslaexc: 1.0E1 vs TEN parameter constant
@@ -357,3 +351,8 @@ asymmetric_patches:
   # pzunmbr fixes PCHK1MAT→PCHK2MAT in EXTERNAL list; pcunmbr already
   # has PCHK2MAT upstream, so no sibling patch is needed.
   - pzunmbr.f.patch
+  # 2026-05-11 audit one-sided fixes (sibling half is correct upstream):
+  - pzungql.f.patch    # pcungql already has PB_TOPSET
+  - pzunml2.f.patch    # pcunml2 already has PB_TOPSET
+  - pdsyevd.f.patch    # pssyevd already has LIWORK.EQ.-1 branch
+  - pslaed3.f.patch    # pdlaed3 already has INFO init + guard

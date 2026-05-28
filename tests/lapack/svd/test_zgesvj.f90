@@ -1,7 +1,6 @@
 ! zgesvj: complex one-sided Jacobi SVD. Smoke test.
-! KNOWN FAILING on multifloats target only (Phase L5): vgesvj returns
-! Infinity for all singular values. kind10/kind16 pass. See
-! tests/lapack/TODO.md.
+! Historical note: previously failed on multifloats (Phase L5 — vgesvj
+! returned Infinity); resolved per tests/lapack/CHANGELOG.md.
 program test_zgesvj
     use prec_kinds,      only: ep
     use prec_report,     only: report_init, report_case, report_finalize

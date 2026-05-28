@@ -276,6 +276,14 @@ set(_mumps_link_group_archives
     ${LIB_PREFIX}lapack
     ${LIB_PREFIX}blas
 )
+# Under PARALLEL_BLAS, ${LIB_PREFIX}blas is an INTERFACE composite.
+# $<TARGET_FILE:...> can't resolve interfaces, AND substituting
+# _serial into this list creates a CMake target-dep cycle (elapack
+# PUBLIC-links the composite, which links _serial, which is also in
+# the group). The fix lives in the per-target foreach below: we keep
+# ${LIB_PREFIX}blas in the list for add_dependencies(), but in the
+# link-line construction we route the blas slot through
+# target_link_libraries() (composite) instead of $<TARGET_FILE:>.
 # qxblas is a PUBLIC dep of qlapack (cmake/CMakeLists.txt:600). qblas is
 # already in the cycle, so qxblas → qblas → group → qxblas closes a
 # cycle CMake refuses to build unless qxblas is named in the LINK_GROUP.
@@ -298,6 +306,8 @@ set(_mumps_link_group_archives_seq
 if(TARGET ${LIB_PREFIX}xblas)
     list(APPEND _mumps_link_group_archives_seq ${LIB_PREFIX}xblas)
 endif()
+# (PARALLEL_BLAS workaround: see comment on _mumps_link_group_archives;
+# same per-target swap-in-foreach trick applies to _seq.)
 
 # Link-variant registry. Every Fortran/C test source is built twice:
 #
@@ -402,6 +412,14 @@ function(_mumps_attach_link_group tgt variant want_c)
         if(TARGET ${LIB_PREFIX}xblas)
             list(APPEND _archives ${LIB_PREFIX}xblas)
         endif()
+        # Composite-${LIB_PREFIX}blas is an INTERFACE under
+        # PARALLEL_BLAS=ON; $<TARGET_FILE:...> can't resolve it.
+        # Swap to the underlying _serial. See note above near
+        # _mumps_link_group_archives.
+        if(PARALLEL_BLAS AND TARGET ${LIB_PREFIX}blas_serial)
+            list(TRANSFORM _archives REPLACE
+                "^${LIB_PREFIX}blas$" "${LIB_PREFIX}blas_serial")
+        endif()
         if(NEEDS_MULTIFLOATS)
             # multifloats_mpi (C++ MPI bridge) included as a raw
             # archive — its calls to MPI_Type_create_struct /
@@ -425,7 +443,21 @@ function(_mumps_attach_link_group tgt variant want_c)
         # resolve test_*.o symbols against the group.
         target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
         foreach(_arc IN LISTS _archives)
-            target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
+            if(_arc STREQUAL "${LIB_PREFIX}blas" AND PARALLEL_BLAS
+                    AND TARGET ${LIB_PREFIX}blas_serial)
+                # Composite is INTERFACE → $<TARGET_FILE:> can't
+                # resolve. Inline the two underlying archives directly.
+                # Overlay first so its egemm_ wins over the serial
+                # archive's egemm_ when ld scans the group.
+                if(TARGET ${LIB_PREFIX}blas_parallel)
+                    target_link_libraries(${tgt} PRIVATE
+                        $<TARGET_FILE:${LIB_PREFIX}blas_parallel>)
+                endif()
+                target_link_libraries(${tgt} PRIVATE
+                    $<TARGET_FILE:${LIB_PREFIX}blas_serial>)
+            else()
+                target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
+            endif()
         endforeach()
         target_link_libraries(${tgt} PRIVATE "-Wl,--end-group")
         # mumps_test_target / mumps_c_bridge / mumps_test_common /

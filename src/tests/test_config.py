@@ -68,7 +68,6 @@ def test_empty_symbols_block_loads(tmp_path):
         symbols:
     """)
     config = load_recipe(recipe, project_root=tmp_path)
-    assert config.symbols_method == 'scan_source'
     assert config.library_path is None
 
 
@@ -79,8 +78,10 @@ def test_empty_prefix_block_loads(tmp_path):
         source_dir: src
         prefix:
     """)
-    config = load_recipe(recipe, project_root=tmp_path)
-    assert config.prefix_style == 'direct'
+    # Empty ``prefix:`` block must load without raising; the field
+    # itself was retired in v0.3.3, but YAML loader tolerance is
+    # still a regression-worthy property.
+    load_recipe(recipe, project_root=tmp_path)
 
 
 def test_non_mapping_top_level_raises(tmp_path):

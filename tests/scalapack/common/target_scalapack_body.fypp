@@ -84,6 +84,7 @@ module target_scalapack
     public :: target_pdtrord, target_pdtrsen
     public :: target_pdsyevr, target_pzheevr
     public :: target_pdstebz, target_pdsyevx, target_pzheevx
+    public :: target_pdlasnbt, target_pdlaiectb, target_pdlaiectl, target_pdlachkieee
     public :: target_pdgeqrf, target_pdgeqr2, target_pdorgqr, target_pdormqr
     public :: target_pdorg2l, target_pdorg2r, target_pdorm2l, target_pdorm2r
     public :: target_pdormbr
@@ -1073,6 +1074,32 @@ $:IMPORT_R()
             integer,   intent(out) :: m, nsplit
             ${target_real}$, intent(out)   :: w(*), work(*)
             integer,   intent(out) :: iblock(*), isplit(*), iwork(*), info
+        end subroutine
+
+        subroutine ${R}$lasnbt(ieflag)
+            integer, intent(out) :: ieflag
+        end subroutine
+
+        subroutine ${R}$laiectb(sigma, n, d, count)
+$:IMPORT_R()
+            integer,   intent(in)  :: n
+            ${target_real}$, intent(in)    :: sigma
+            ${target_real}$, intent(in)    :: d(*)
+            integer,   intent(out) :: count
+        end subroutine
+
+        subroutine ${R}$laiectl(sigma, n, d, count)
+$:IMPORT_R()
+            integer,   intent(in)  :: n
+            ${target_real}$, intent(in)    :: sigma
+            ${target_real}$, intent(in)    :: d(*)
+            integer,   intent(out) :: count
+        end subroutine
+
+        subroutine ${R}$lachkieee(isieee, rmax, rmin)
+$:IMPORT_R()
+            integer,   intent(out) :: isieee
+            ${target_real}$, intent(in)    :: rmax, rmin
         end subroutine
 
         subroutine ${R}$syevx(jobz, range, uplo, n, A, ia, ja, desca, &
@@ -4400,6 +4427,53 @@ contains
             w(1:n) = t2q_r(wt)
             Z(1:nzz) = t2q_c(Zt)
         end if
+    end subroutine
+
+    ! C-side IEEE sign-bit helpers used by pdstebz fast-path. Migrated
+    ! ${R}$lasnbt / ${R}$laiectb / ${R}$laiectl / ${R}$lachkieee live in
+    ! the migrated scalapack_c archive (after override for kind10/kind16/
+    ! multifloats — the auto-clones bit-twiddle on the wrong layout for
+    ! long-double / __float128 / float64x2). Wrappers expose them via
+    ! the target_* dispatch namespace so test_pdlaiect can verify the
+    ! override took effect without target-specific link logic.
+    subroutine target_pdlasnbt(ieflag)
+        integer, intent(out) :: ieflag
+        call ${R}$lasnbt(ieflag)
+    end subroutine
+
+    subroutine target_pdlaiectb(sigma, n, d, count)
+        integer,   intent(in)  :: n
+        real(ep),  intent(in)  :: sigma
+        real(ep),  intent(in)  :: d(*)
+        integer,   intent(out) :: count
+        ${target_real}$ :: sigma_t
+        ${target_real}$, allocatable :: dt(:)
+        allocate(dt(2*n - 1))
+        sigma_t  = q2t_r(sigma)
+        dt(1:2*n-1) = q2t_r(d(1:2*n-1))
+        call ${R}$laiectb(sigma_t, n, dt, count)
+    end subroutine
+
+    subroutine target_pdlaiectl(sigma, n, d, count)
+        integer,   intent(in)  :: n
+        real(ep),  intent(in)  :: sigma
+        real(ep),  intent(in)  :: d(*)
+        integer,   intent(out) :: count
+        ${target_real}$ :: sigma_t
+        ${target_real}$, allocatable :: dt(:)
+        allocate(dt(2*n - 1))
+        sigma_t  = q2t_r(sigma)
+        dt(1:2*n-1) = q2t_r(d(1:2*n-1))
+        call ${R}$laiectl(sigma_t, n, dt, count)
+    end subroutine
+
+    subroutine target_pdlachkieee(isieee, rmax, rmin)
+        integer,  intent(out) :: isieee
+        real(ep), intent(in)  :: rmax, rmin
+        ${target_real}$ :: rmax_t, rmin_t
+        rmax_t = q2t_r(rmax)
+        rmin_t = q2t_r(rmin)
+        call ${R}$lachkieee(isieee, rmax_t, rmin_t)
     end subroutine
 
     subroutine target_pdstebz(ictxt, range, order, n, vl, vu, il, iu, &

@@ -55,5 +55,5 @@ unchanged. The sweep script reports the list of shared files it detects
   un-prefixed file belong in `copy_files`).
 - *Routines* with no arithmetic variant — same, via `skip_files`.
 
-See `doc/DEVELOPER.md` §3 for the definition of divergence that motivates
+See `doc/guide/developer.md` §3 for the definition of divergence that motivates
 this mechanism.

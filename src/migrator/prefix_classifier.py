@@ -119,7 +119,10 @@ class SymbolClassification:
         # rename to the same target. We hit this with multifloats'
         # D→T, Z→V where DVASUM and DZASUM both rename to TVASUM.
         # That's a hard merge; one of them needs an explicit
-        # ``name_overrides`` entry in targets/<target>.yaml.
+        # ``extra_renames`` entry in the owning library's recipe to
+        # pin the source to a distinct target name, or the target's
+        # ``prefixes:`` map in ``targets/<target>.yaml`` must move
+        # the conflicting letter to an unused one.
         targets: dict[str, list[str]] = {}
         for src, tgt in rename.items():
             targets.setdefault(tgt, []).append(src)
@@ -156,13 +159,14 @@ class SymbolClassification:
                 "same target — the migrator would silently merge "
                 "them, leading to nondeterministic link-time symbol "
                 "selection and (typically) a SEGV from a calling "
-                "convention mismatch. Add a ``name_overrides:`` entry "
-                "in targets/<target>.yaml that pins one of the "
-                "conflicting sources to a distinct target name "
-                "(see targets/multifloats.yaml for an example), or "
-                "switch the conflicting prefix to an unused letter "
-                "(W and U are unused across the entire BLAS / LAPACK "
-                "/ ScaLAPACK / MUMPS source corpus)."
+                "convention mismatch. Add an ``extra_renames:`` "
+                "entry in the owning library's recipe (recipes/"
+                "<lib>.yaml) that pins one of the conflicting sources "
+                "to a distinct target name, or remap the conflicting "
+                "letter in ``prefixes:`` of targets/<target>.yaml to "
+                "an unused letter (W and U are unused across the "
+                "entire BLAS / LAPACK / ScaLAPACK / MUMPS source "
+                "corpus)."
             )
         if collisions:
             import sys

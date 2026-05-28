@@ -139,7 +139,8 @@ _PROC_NAME_RE = re.compile(r'^\s*procedure name\s*=\s*(\w+)', re.IGNORECASE)
 
 # Regex for CALL in code section: ``CALL name (...)``
 _CALL_RE = re.compile(r'\bCALL\s+(\w+)\s*\(')
-_USE_STMT_RE = re.compile(r'^\s+USE\s+(\w+)', re.IGNORECASE)
+_USE_STMT_RE = re.compile(
+    r'^\s*USE(?:\s*,[^:]*)?\s*(?:::)?\s+(\w+)', re.IGNORECASE)
 _USE_ASSOC_RE = re.compile(r'USE-ASSOC\(([\w]+)\)')
 _DATA_RE = re.compile(r'^\s+DATA\s+(\w+)/([^/]+)/', re.IGNORECASE)
 _ATTRS_RE = re.compile(r'attributes:\s*\(([^)]*)\)')

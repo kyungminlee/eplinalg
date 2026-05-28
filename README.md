@@ -1,4 +1,4 @@
-# fortran-migrator
+# eplinalg
 
 Automated type-migration pipeline for the classical numerical-linear-algebra
 stack — BLAS, BLACS, LAPACK, PBLAS, ScaLAPACK, MUMPS — retargeted from the
@@ -80,6 +80,21 @@ gfortran demo.f90 -o demo \
     -Wl,--start-group /tmp/stage-q/build/lib*.a -Wl,--end-group \
     -lmpi -lmpicxx -lmpifort -lquadmath -lstdc++ -lpthread
 ```
+
+## How it works
+
+The migrator parses each source file with a compiler-based front-end
+(Flang or GFortran) to extract structural facts — symbol kinds, call
+graph, EXTERNAL/INTRINSIC tables — then applies regex-based rewrites
+guided by those facts. The hybrid keeps the transform syntactically
+aware while preserving formatting, comments, and preprocessor
+directives. C libraries in the stack (BLACS, PBLAS) are handled by
+template-based cloning with mechanical type substitution rather than
+full parsing.
+
+See [`doc/README.md`](doc/README.md) for the full documentation
+index — including the developer guide, architecture overview, and
+upstream-bug catalogues.
 
 ## CLI
 

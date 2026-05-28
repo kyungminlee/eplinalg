@@ -1,0 +1,99 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {"major": 3, "minor": 25},
+
+    "configurePresets": [
+        {
+            "name": "_linux-base",
+            "hidden": true,
+            "description": "Ubuntu/Linux with system gfortran and gcc.",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+
+        {
+            "name": "linux-impi",
+            "displayName": "Linux + Intel MPI 2021.x",
+            "description": "Use Intel MPI's mpiexec/wrapper compilers from /opt/intel/oneapi/mpi/latest. Picks up real distributed MPI so BLACS/PBLAS p2p tests exercise inter-rank communication.",
+            "inherits": "_linux-base",
+            "environment": {
+                "I_MPI_ROOT":  "/opt/intel/oneapi/mpi/latest",
+                "I_MPI_F90":   "gfortran-15",
+                "I_MPI_F77":   "gfortran-15",
+                "I_MPI_CC":    "gcc",
+                "I_MPI_CXX":   "g++"
+            },
+            "cacheVariables": {
+                "CMAKE_Fortran_COMPILER": "gfortran-15",
+                "MPI_C_COMPILER":       "/opt/intel/oneapi/mpi/latest/bin/mpicc",
+                "MPI_CXX_COMPILER":     "/opt/intel/oneapi/mpi/latest/bin/mpicxx",
+                "MPI_Fortran_COMPILER": "/opt/intel/oneapi/mpi/latest/bin/mpif90",
+                "MPI_Fortran_MODULE_DIR": "/opt/intel/oneapi/mpi/latest/include/mpi/gfortran/14.2.0",
+                "MPI_Fortran_COMPILER_INCLUDE_DIRS": "/opt/intel/oneapi/mpi/latest/include/mpi/gfortran/14.2.0;/opt/intel/oneapi/mpi/latest/include",
+                "MPIEXEC_EXECUTABLE":   "/opt/intel/oneapi/mpi/latest/bin/mpiexec",
+                "MPIEXEC_PREFLAGS":     "-genv;I_MPI_ROOT=/opt/intel/oneapi/mpi/latest;-genv;I_MPI_ADJUST_REDUCE=1;-genv;I_MPI_ADJUST_ALLREDUCE=1"
+            }
+        },
+
+        {
+            "name": "archlinux-impi-gfortran15",
+            "displayName": "Arch Linux + Intel MPI 2021.x + gfortran-15 (gcc15-fortran)",
+            "description": "Arch-specific: pairs the AUR/extra gcc15-fortran package (/usr/bin/gfortran-15) with Intel MPI 2021.x. System gfortran on Arch is GCC 16, which can't read Intel MPI's bundled .mod files (max gcc-14.2.0); gfortran-15 reads them fine. Use this on Arch boxes where `which gfortran` is GCC 16+.",
+            "inherits": "_linux-base",
+            "environment": {
+                "I_MPI_ROOT":  "/opt/intel/oneapi/mpi/latest",
+                "I_MPI_F90":   "gfortran-15",
+                "I_MPI_F77":   "gfortran-15",
+                "I_MPI_CC":    "gcc",
+                "I_MPI_CXX":   "g++"
+            },
+            "cacheVariables": {
+                "CMAKE_Fortran_COMPILER": "gfortran-15",
+                "MPI_C_COMPILER":       "/opt/intel/oneapi/mpi/latest/bin/mpicc",
+                "MPI_CXX_COMPILER":     "/opt/intel/oneapi/mpi/latest/bin/mpicxx",
+                "MPI_Fortran_COMPILER": "/opt/intel/oneapi/mpi/latest/bin/mpif90",
+                "MPI_Fortran_MODULE_DIR": "/opt/intel/oneapi/mpi/latest/include/mpi/gfortran/14.2.0",
+                "MPI_Fortran_COMPILER_INCLUDE_DIRS": "/opt/intel/oneapi/mpi/latest/include/mpi/gfortran/14.2.0;/opt/intel/oneapi/mpi/latest/include",
+                "MPIEXEC_EXECUTABLE":   "/opt/intel/oneapi/mpi/latest/bin/mpiexec",
+                "MPIEXEC_PREFLAGS":     "-genv;I_MPI_ROOT=/opt/intel/oneapi/mpi/latest;-genv;I_MPI_ADJUST_REDUCE=1;-genv;I_MPI_ADJUST_ALLREDUCE=1"
+            }
+        },
+
+        {
+            "name": "linux-system-mpi",
+            "displayName": "Linux + system MPI (mpich/openmpi on PATH)",
+            "description": "Use whatever MPI find_package(MPI) discovers via PATH. Typical for CI where Intel MPI is not installed.",
+            "inherits": "_linux-base"
+        }
+    ],
+
+    "buildPresets": [
+        {"name": "linux-impi",                 "configurePreset": "linux-impi"},
+        {"name": "archlinux-impi-gfortran15",  "configurePreset": "archlinux-impi-gfortran15"},
+        {"name": "linux-system-mpi",           "configurePreset": "linux-system-mpi"}
+    ],
+
+    "testPresets": [
+        {
+            "name": "linux-impi",
+            "configurePreset": "linux-impi",
+            "output": {"outputOnFailure": true},
+            "execution": {"timeout": 300}
+        },
+        {
+            "name": "archlinux-impi-gfortran15",
+            "configurePreset": "archlinux-impi-gfortran15",
+            "output": {"outputOnFailure": true},
+            "execution": {"timeout": 300}
+        },
+        {
+            "name": "linux-system-mpi",
+            "configurePreset": "linux-system-mpi",
+            "output": {"outputOnFailure": true},
+            "execution": {"timeout": 300}
+        }
+    ]
+}

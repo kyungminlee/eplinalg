@@ -3,9 +3,6 @@ language: fortran
 source_dir: external/lapack-3.12.1/SRC
 extensions: [.f, .f90, .F90]
 
-symbols:
-  method: scan_source
-
 depends:
   - blas.yaml
   # XBLAS extended-precision routines are called from the LAPACK
@@ -50,13 +47,10 @@ extra_migrate_files:
   - recipes/lapack/extras/ilaenv2stage_ep.f
   - recipes/lapack/extras/iparam2stage_ep.F
 
-prefix:
-  style: direct
-
 # Patches applied to staged sources before migration. Unified diffs
-# vs upstream Netlib LAPACK 3.12.1. See doc/UPSTREAM_BUGS-LAPACK.md
+# vs upstream Netlib LAPACK 3.12.1. See doc/upstream-bugs/lapack.md
 # for the bug catalogue (prose section titles) and
-# doc/refactor-20260509.md for the patch-file convention.
+# doc/archive/refactor-20260509.md for the patch-file convention.
 patches:
   #  ?orbdb3 ?ROT INCY uses LDX11 where it should be LDX21
   - dorbdb3.f.patch
@@ -277,12 +271,12 @@ extra_renames:
   ILAENV2STAGE: ILAENV2STAGE_EP
   IPARAM2STAGE: IPARAM2STAGE_EP
 
-# Convergence whitelist (Phase D, doc/refactor-20260509.md).
+# Convergence whitelist (Phase D, doc/archive/refactor-20260509.md).
 # Co-family pairs whose normalized texts disagree post-patch. Most
 # are upstream S/D drift the migrator cannot reconcile (header doc
 # paraphrasing, INTRINSIC list ordering, workspace-formula choices,
 # label numbering, dead-code asymmetry) — listed in
-# doc/convergence-20260507.md §lapack as the known cosmetic cohort.
+# doc/archive/convergence-20260507.md §lapack as the known cosmetic cohort.
 # The patches above address the bug subset; remaining drift is
 # upstream design.
 #
@@ -422,7 +416,7 @@ expected_divergences:
 
 # Patches whose sibling half upstream is genuinely correct or has a
 # different bug shape — periodically review whether a sibling patch
-# could be added. See doc/refactor-20260509.md.
+# could be added. See doc/archive/refactor-20260509.md.
 asymmetric_patches:
   # Patches whose S/C sibling is already correct upstream (bug only
   # exists on D/Z half). Audited 2026-05-11; verified by inspecting
@@ -439,6 +433,36 @@ asymmetric_patches:
   - zla_syrfsx_extended.f.patch  # cla_syrfsx_extended already correct
   - dorgr2.f.patch         # sorgr2 already correct
   - zgelss.f.patch         # cgelss already correct
+  # C-only bugs (S/D/Z halves correct upstream):
+  - clahef.f.patch         # slasyf/dlasyf/zlahef all use J.LT.N
+  - clahef_rk.f.patch      # slasyf_rk/dlasyf_rk/zlahef_rk already correct
+  - cgesvj.f.patch         # sgesvj/dgesvj/zgesvj all use LAMCH form
+  - cheevx.f.patch         # zheevx already has MAX(1,...) guard
+  - cgedmdq.f90.patch      # 2026-05-12 B? deep-dive — C-half workspace-query bugs
+  # D-only bugs (S correct upstream):
+  - dopmtr.f.patch         # sopmtr/zunmr2/cunmr2 use DLARF1F/DLARF1L
+  - dormr2.f.patch         # sormr2 already correct
+  # C+Z-pair bugs (S+D siblings correct upstream):
+  - dlarf1l.f.patch        # no slarf1l patch shipped; S-half non-canonical
+  - zlarf1l.f.patch        # ditto — paired with dlarf1l/clarf1l
+  - clarf1l.f.patch        # ditto
+  - zlarf1f.f.patch        # no slarf1f/dlarf1f patch shipped
+  - clarf1f.f.patch        # ditto
+  - zrscl.f.patch          # no srscl/drscl patch shipped (real halves already correct)
+  - crscl.f.patch          # ditto (doc-header only)
+  - zlaqz0.f.patch         # no slaqz0/dlaqz0 patch shipped
+  - claqz0.f.patch         # ditto
+  - zlaqz2.f.patch         # no slaqz2/dlaqz2 patch shipped
+  - claqz2.f.patch         # ditto
+  # S-only bugs (D correct upstream):
+  - sgeesx.f.patch         # dgeesx wraps in MAX(1,...)
+  - sgges.f.patch          # dgges declares XERBLA
+  - sggev3.f.patch         # dggev3 declares XERBLA
+  - slaqr2.f.patch         # dlaqr2 declares correct EXTERNAL
+  - slaqr5.f.patch         # dlaqr5 uses T1*VT(3) (not T2*VT(3))
+  - stgex2.f.patch         # dtgex2 has the MAX(1,...) guard
+  # Z-only bugs (S/C/D correct upstream):
+  - zgemlq.f.patch         # sgemlq/cgemlq/dgemlq all use LWMIN
 
 # Patches that close a D↔S or Z↔C cosmetic asymmetry (dead PARAMETER
 # blocks, redundant CMPLX casts, dead INTRINSIC entries, literal-style

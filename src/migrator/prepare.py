@@ -10,7 +10,7 @@ preparation last completed. If the stamp is newer than every listed patch
 file, the stage is skipped. Pass ``rebuild=True`` to force a clean re-stage.
 
 This module is the input side of the pipeline reshape described in
-``doc/refactor-20260509.md``. Phase A wires it as a no-op-by-default CLI
+``doc/archive/refactor-20260509.md``. Phase A wires it as a no-op-by-default CLI
 command; subsequent phases route migration to read from the staged tree.
 """
 
@@ -42,7 +42,7 @@ def staged_root_for(project_root: Path, library: str) -> Path:
 # exponent groups so the substitution can rewrite to D-suffix form.
 _E_LITERAL_RE = re.compile(r'(?<![\w.])(\d+\.\d*|\d*\.\d+)([Ee])([+-]?\d+)')
 _BARE_LITERAL_RE = re.compile(
-    r'(?<![\w.\[])(\d+\.\d*|\d*\.\d+)(?![DdEe\w]|_\d|_[A-Za-z])'
+    r'(?<![\w.])(\d+\.\d*|\d*\.\d+)(?![DdEe\w]|_\d|_[A-Za-z])'
 )
 _INTEGER_PARAM_DECL_RE = re.compile(
     r'^\s*INTEGER\b.*\bPARAMETER\b.*::', re.IGNORECASE

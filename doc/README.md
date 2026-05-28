@@ -1,41 +1,45 @@
-# fortran-migrator
+# eplinalg documentation
 
-**fortran-migrator** is an automated type-migration tool for Fortran and C codebases, built specifically for high-performance computing libraries such as BLAS, LAPACK, BLACS, PBLAS, and ScaLAPACK.
+## Guide
 
-It parses existing fixed- and free-form Fortran source code to safely convert `REAL` and `COMPLEX` types from one kind to another, automatically updating the corresponding function names to match the new precision prefixes.
+User- and contributor-facing reference for the migration tool itself.
 
-## Key Features
-* **Automated Type Conversion:** Upgrades standard precision types to extended precisions (`KIND=10`, `KIND=16`) or multiword floating-point (`float64x2` via the multifloats target).
-* **Smart Renaming:** Automatically updates function prefixes (e.g., converting `dgemm` to `qgemm` for KIND=16, or `mgemm` for multifloats).
-* **Format Agnostic:** Supports both fixed-form and free-form Fortran source code.
-* **C Migration:** Template-based cloning for C libraries (BLACS, PBLAS) with mechanical type substitution.
-* **Convergence Testing:** Dual-origin verification confirms migration correctness by comparing S-half and D-half migrated output.
-* **YAML Recipes:** Declarative library descriptions drive the migration pipeline.
+- [architecture.md](guide/architecture.md) — system overview, components, data flow
+- [usage.md](guide/usage.md) — running the `migrator` CLI
+- [recipes.md](guide/recipes.md) — writing library recipes (YAML)
+- [developer.md](guide/developer.md) — contributing, build, repo layout
+- [intrinsics.md](guide/intrinsics.md) — Fortran intrinsics reference for KIND=16
 
-## Target Modes
+## Migrator output
 
-### KIND-based targets
+Catalogues describing what the migration pipeline emits.
 
-| Data Type | Target Extended Type | New Prefix | Example Conversion |
-| :--- | :--- | :--- | :--- |
-| `REAL` | `REAL(KIND=10)` * | `E` | `dgemm` → `egemm` |
-| `REAL` | `REAL(KIND=16)` | `Q` | `dgemm` → `qgemm` |
-| `COMPLEX` | `COMPLEX(KIND=10)` * | `Y` | `zgemm` → `ygemm` |
-| `COMPLEX` | `COMPLEX(KIND=16)` | `X` | `zgemm` → `xgemm` |
+- [procedures.md](output/procedures.md) — auto-generated routine cross-reference (Netlib → kind10/kind16/multifloats), produced by `tools/gen_procedures.py`
+- [convergence.md](output/convergence.md) — what "convergence" means and how it's measured
+- [kind16-divergences.md](output/kind16-divergences.md) — per-routine KIND=16 divergence analysis
 
-*\* Note: `KIND=10` is specifically targeted for supported x86 architectures.*
+## Upstream bugs
 
-### Multifloats target
+Bugs in the vendored Netlib sources that the migrator works around without editing `external/`.
 
-Uses `float64x2` (double-double) arithmetic via an external module:
+- [upstream-bugs/](upstream-bugs/README.md) — index, methodology, cross-library summary
+  - [lapack.md](upstream-bugs/lapack.md)
+  - [scalapack.md](upstream-bugs/scalapack.md)
+  - [mumps.md](upstream-bugs/mumps.md)
+  - [lapack-nits.md](upstream-bugs/lapack-nits.md) — cosmetic dead declarations (catalogued, not patched)
 
-| Data Type | Target Type | New Prefix | Example Conversion |
-| :--- | :--- | :--- | :--- |
-| `REAL` | `TYPE(float64x2)` | `M` | `dgemm` → `mgemm` |
-| `COMPLEX` | `TYPE(complex64x2)` | `W` | `zgemm` → `wgemm` |
+## Parallel BLAS overlay
 
-## Implementation Details
+The hand-written extended-precision BLAS overlay moved to a separate
+project: [epblas-parallel](../../epblas-parallel/). Migrator-side, the public
+`${LIB_PREFIX}blas` target is now the plain serial migrated archive;
+the overlay-equipped composite (`epblas-parallel::eblas` and friends)
+ships from the epblas-parallel package.
 
-Under the hood, **fortran-migrator** uses a **hybrid approach**: a compiler-based parser (Flang or GFortran) extracts structural facts from source files, and the Python engine applies regex-based transformations guided by those facts. This ensures syntactically aware conversions while preserving all formatting, comments, and preprocessor directives.
+## Test suites
 
-See [DEVELOPER.md](DEVELOPER.md) for the full developer guide.
+- [`../tests/README.md`](../tests/README.md) — map of every test family (overlay-vs-migrated and migrated-vs-Netlib schemes)
+
+## Archive
+
+- [archive/](archive/) — historical surveys and timestamped reports

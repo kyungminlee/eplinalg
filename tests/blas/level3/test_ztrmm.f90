@@ -7,11 +7,13 @@ program test_ztrmm
     use ref_quad_blas, only: ztrmm
     implicit none
 
-    integer, parameter :: cases(*)              = [16, 64, 32, 24]
-    character(len=1), parameter :: sides(*)    = ['L', 'R', 'L', 'R']
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U', 'L']
-    character(len=1), parameter :: transas(*)  = ['N', 'C', 'T', 'N']
-    character(len=1), parameter :: diags(*)    = ['N', 'N', 'U', 'N']
+    ! Sweep SIDE × UPLO × TRANS × DIAG = 24 combos. 'C' (conjugate-
+    ! transpose) is its own complex-only code path.
+    integer, parameter :: cases(*)             = [16, 64, 32, 24, 16, 64, 32, 24, 16, 64, 32, 24, 16, 64, 32, 24, 16, 64, 32, 24, 16, 64, 32, 24]
+    character(len=1), parameter :: sides(*)    = ['L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R', 'R']
+    character(len=1), parameter :: uplos(*)    = ['U', 'U', 'U', 'U', 'U', 'U', 'L', 'L', 'L', 'L', 'L', 'L', 'U', 'U', 'U', 'U', 'U', 'U', 'L', 'L', 'L', 'L', 'L', 'L']
+    character(len=1), parameter :: transas(*)  = ['N', 'N', 'T', 'T', 'C', 'C', 'N', 'N', 'T', 'T', 'C', 'C', 'N', 'N', 'T', 'T', 'C', 'C', 'N', 'N', 'T', 'T', 'C', 'C']
+    character(len=1), parameter :: diags(*)    = ['N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U', 'N', 'U']
     integer :: i, m, n, an
     complex(ep), allocatable :: A(:,:), B0(:,:), B_ref(:,:), B_got(:,:)
     complex(ep) :: alpha

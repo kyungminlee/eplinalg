@@ -7,11 +7,14 @@ program test_zgemmtr
     use ref_quad_blas, only: zgemmtr
     implicit none
 
-    integer, parameter :: cases(*)              = [16, 64, 32]
-    integer, parameter :: ks(*)                 = [10, 32, 24]
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U']
-    character(len=1), parameter :: transas(*)  = ['N', 'C', 'N']
-    character(len=1), parameter :: transbs(*)  = ['N', 'N', 'T']
+    ! Sweep UPLO × TRANSA × TRANSB = 2 × 3 × 3 = 18 combos. 'C'
+    ! (conjugate-transpose) is its own code path in zgemmtr and the
+    ! most bug-prone in complex BLAS.
+    integer, parameter :: cases(*)             = [16, 64, 32, 16, 64, 32, 16, 64, 32, 16, 64, 32, 16, 64, 32, 16, 64, 32]
+    integer, parameter :: ks(*)                = [10, 32, 24, 10, 32, 24, 10, 32, 24, 10, 32, 24, 10, 32, 24, 10, 32, 24]
+    character(len=1), parameter :: uplos(*)    = ['U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'U', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L']
+    character(len=1), parameter :: transas(*)  = ['N', 'N', 'N', 'T', 'T', 'T', 'C', 'C', 'C', 'N', 'N', 'N', 'T', 'T', 'T', 'C', 'C', 'C']
+    character(len=1), parameter :: transbs(*)  = ['N', 'T', 'C', 'N', 'T', 'C', 'N', 'T', 'C', 'N', 'T', 'C', 'N', 'T', 'C', 'N', 'T', 'C']
     integer :: i, n, k, lda, ldb
     complex(ep), allocatable :: A(:,:), B(:,:), C0(:,:), C_ref(:,:), C_got(:,:)
     complex(ep) :: alpha, beta

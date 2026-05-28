@@ -868,7 +868,10 @@ def replace_intrinsic_calls(
                         matched = line[start:m.end() - 1]
                         repl = new_name.upper() if matched.isupper() else new_name.lower()
                         line = line[:start] + repl + line[start + len(matched):]
-                    break
+                        search_start = start + len(repl)
+                    else:
+                        search_start = m.end()
+                    continue
         else:
             def _call_replace(m, _new=new_name):
                 matched_name = m.group(1)
@@ -1887,20 +1890,53 @@ def convert_parameter_stmts(
         re.IGNORECASE,
     )
 
-    # CPP guard stack: each entry is the original ``#if ...`` directive
-    # line (without trailing newline) that's still open at the current
-    # source position. When a PARAMETER is converted to a runtime
-    # assignment, the assignment is wrapped in the same #if/#endif so
-    # it stays in scope only when the original declaration is in scope
-    # — otherwise gfortran sees an assignment to an undeclared symbol.
-    cpp_stack: list[str] = []
+    # CPP guard stack: each frame is the effective ``#if ...`` directive
+    # line (without trailing newline) that should wrap any runtime
+    # assignment emitted under the current source position, plus the
+    # history of conditions seen in this if-block so ``#elif``/``#else``
+    # branches can negate them.
+    #
+    # When a PARAMETER is converted to a runtime assignment, the
+    # assignment is wrapped in the same #if/#endif so it stays in scope
+    # only when the original declaration is in scope — otherwise gfortran
+    # sees an assignment to an undeclared symbol. Tracking
+    # ``#else``/``#elif`` is required so an assignment in the ``#else``
+    # branch isn't wrapped under the (unrelated) ``#if`` true branch.
+    cpp_stack: list[dict] = []
+
+    def _cpp_cond(directive: str) -> str:
+        s = directive.strip()
+        if s.startswith('#ifdef'):
+            return f'defined({s[len("#ifdef"):].strip()})'
+        if s.startswith('#ifndef'):
+            return f'!defined({s[len("#ifndef"):].strip()})'
+        if s.startswith('#elif'):
+            return s[len('#elif'):].strip()
+        if s.startswith('#if'):
+            return s[len('#if'):].strip()
+        return ''
 
     i = 0
     while i < len(lines):
         line = lines[i]
         stripped_for_cpp = line.lstrip()
         if stripped_for_cpp.startswith('#if'):
-            cpp_stack.append(line.rstrip('\n'))
+            cpp_stack.append({
+                'wrap': line.rstrip('\n'),
+                'history': [_cpp_cond(line)],
+            })
+        elif stripped_for_cpp.startswith('#elif'):
+            if cpp_stack:
+                frame = cpp_stack[-1]
+                negated = ' || '.join(f'({c})' for c in frame['history'])
+                new_cond = _cpp_cond(line)
+                frame['history'].append(new_cond)
+                frame['wrap'] = f'#if !({negated}) && ({new_cond})'
+        elif stripped_for_cpp.startswith('#else'):
+            if cpp_stack:
+                frame = cpp_stack[-1]
+                negated = ' || '.join(f'({c})' for c in frame['history'])
+                frame['wrap'] = f'#if !({negated})'
         elif stripped_for_cpp.startswith('#endif'):
             if cpp_stack: cpp_stack.pop()
 
@@ -2013,7 +2049,7 @@ def convert_parameter_stmts(
                 kept_names.append(name)
                 assn = f"{indent}{name} = {val}{comment}\n"
                 if cpp_stack:
-                    pre = ''.join(g + '\n' for g in cpp_stack)
+                    pre = ''.join(f["wrap"] + '\n' for f in cpp_stack)
                     post = '#endif\n' * len(cpp_stack)
                     assn = pre + assn + post
                 line_assignments.append(assn)
@@ -2079,7 +2115,7 @@ def convert_parameter_stmts(
                             continue
                         assn = f"{indent}{name} = {val}{comment}\n"
                         if cpp_stack:
-                            pre = ''.join(g + '\n' for g in cpp_stack)
+                            pre = ''.join(f["wrap"] + '\n' for f in cpp_stack)
                             post = '#endif\n' * len(cpp_stack)
                             assn = pre + assn + post
                         line_assignments.append(assn)
@@ -2507,6 +2543,17 @@ def _build_use_only_clause(proc_lines: list[str], target_mode: TargetMode) -> st
         # that some local is real64x2-typed and may be passed through
         # ``int(var, K)``, which the rewrite then routes via ``dble``.
         referenced.add('dble')
+    # Predict the ``real`` calls that ``_rewrite_int_of_complex`` will
+    # inject when ``INT(zvar)`` / ``NINT(zvar)`` appear in a body that
+    # declares a complex variable. The rewrite emits ``real(zvar)`` and
+    # the only-clause must import the multifloats ``real`` generic for
+    # gfortran to dispatch it. Mirror the predictive ``dble`` path:
+    # add ``real`` whenever an INT/NINT call co-occurs with any complex
+    # variable name in the procedure.
+    if (target_mode.intrinsic_mode == 'wrap_constructor'
+            and re.search(r'\b(?:int|nint)\s*\(', body_text, re.IGNORECASE)
+            and _scan_complex_var_names(body_text)):
+        referenced.add('real')
     declared = _scan_local_declared_names(proc_lines)
     # Determine constant name prefix for sorting (e.g. 'mf_' for multifloats)
     const_prefixes = set()
@@ -3912,14 +3959,6 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
         clean_intrinsic, migrated,
     )
     return out_name, migrated
-
-
-def migrate_file(src_path: Path, output_dir: Path, rename_map: dict[str, str], target_mode: TargetMode, parser: str | None = None, parser_cmd: str | None = None, keep_kind_lines: frozenset[int] | None = None) -> str | None:
-    result = migrate_file_to_string(src_path, rename_map, target_mode, parser, parser_cmd, keep_kind_lines)
-    if result is None: return None
-    out_name, migrated = result
-    (output_dir / out_name).write_text(migrated)
-    return out_name
 
 
 def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], target_mode: TargetMode, facts,

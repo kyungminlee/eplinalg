@@ -224,17 +224,12 @@ jobs:
   # Build and run the differential-precision test suite for a single
   # representative combination so the release workflow has at least
   # one correctness signal. We pick kind10 + gfortran-15 + intelmpi
-  # because kind10 has a 100% ctest pass rate and Intel MPI is the
-  # canonical MPI for the migrated stack — the libmpiseq path was
-  # written against Intel MPI's handle ABI, so OpenMPI/MPICH-linked
-  # _seq tests fail to resolve ompi_mpi_byte etc. at link time.
-  # Other targets are not run here because:
-  #   - kind16 has 2 known failures pending the P22 reference-side
-  #     override (commit 36f6f24); they pass on a fresh stage but
-  #     CI's caching pattern can drift.
-  #   - multifloats has 3 known failures (L5 gesvj Infinity + P22
-  #     zgedmdq) documented in tests/lapack/TODO.md.
-  # Add more combos here once the failures resolve.
+  # because Intel MPI is the canonical MPI for the migrated stack —
+  # the libmpiseq path was written against Intel MPI's handle ABI,
+  # so OpenMPI/MPICH-linked _seq tests fail to resolve
+  # ``ompi_mpi_byte`` etc. at link time. The non-_seq surface should
+  # work on any MPI; extending the matrix to kind16 / multifloats /
+  # openmpi / mpich is a known follow-up.
   test:
     needs: stage
     runs-on: ubuntu-latest
@@ -319,8 +314,8 @@ jobs:
           find artifacts -name '*.tar.gz' -exec cp {} release/ \;
           ls -la release/
 
-      - name: Build combined epla tarball
-        # Merge every per-combo tarball into one ``epla-vX.Y.Z-...``
+      - name: Build combined eplinalg tarball
+        # Merge every per-combo tarball into one ``eplinalg-vX.Y.Z-...``
         # archive that holds all targets × compilers × MPIs in a single
         # install tree. Per-combo archives stay alongside it for
         # consumers who only need one variant. Since every library is
@@ -331,7 +326,7 @@ jobs:
         # across the same logical configuration.
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          ARCHIVE="epla-v${VERSION}-linux-x86_64"
+          ARCHIVE="eplinalg-v${VERSION}-linux-x86_64"
           mkdir -p combined
           for t in release/*.tar.gz; do
             echo "  extracting $(basename "$t")"
@@ -352,7 +347,7 @@ jobs:
 
             ### Combined archive
 
-            ``epla-vX.Y.Z-linux-x86_64.tar.gz`` bundles every per-combo
+            ``eplinalg-vX.Y.Z-linux-x86_64.tar.gz`` bundles every per-combo
             archive (target × compiler × MPI) into a single install
             tree. Every library file is tagged with its compiler tag
             and (for MPI-dependent libraries) its MPI flavor + version

@@ -7,9 +7,10 @@ program test_ztpsv
     use ref_quad_blas, only: ztpsv
     implicit none
 
-    integer, parameter :: cases(*)              = [10, 50, 200]
-    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U']
-    character(len=1), parameter :: transes(*)  = ['N', 'C', 'T']
+    ! Sweep UPLO × TRANS = 6 combos. DIAG='U' is pinned below.
+    integer, parameter :: cases(*)              = [10, 50, 200, 64, 100, 50]
+    character(len=1), parameter :: uplos(*)    = ['U', 'L', 'U', 'L', 'U', 'L']
+    character(len=1), parameter :: transes(*)  = ['N', 'N', 'T', 'T', 'C', 'C']
     integer :: i, n, aps
     complex(ep), allocatable :: ap(:), x0(:), x_ref(:), x_got(:)
     real(ep) :: err, tol

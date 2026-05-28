@@ -3,9 +3,6 @@ language: c
 source_dir: external/scalapack-2.2.3/SRC
 extensions: [.c, .h]
 
-symbols:
-  method: scan_source
-
 depends:
   - lapack.yaml
   - blacs.yaml
@@ -26,9 +23,6 @@ extra_symbol_dirs:
 extra_c_dirs:
   - external/scalapack-2.2.3/REDIST/SRC
   - external/scalapack-2.2.3/TOOLS
-
-prefix:
-  style: scalapack   # P + S/D/C/Z
 
 # These routines already exist in PBLAS/SRC (modern ANSI C) and were
 # migrated as part of the PBLAS pipeline. The SRC/ copies are older
@@ -127,15 +121,23 @@ extra_renames:
   PDLAIECTL: P{RPU}LAIECTL
 
 overrides:
+  kind10:
+    src_dir: scalapack/efc_overrides
+    files:
+      - pelaiect.c
+  kind16:
+    src_dir: scalapack/qfc_overrides
+    files:
+      - pqlaiect.c
   multifloats:
     src_dir: scalapack/mfc_overrides
     files:
-      - ptlaiect.c
+      - pmlaiect.c
 
 
 # Convergence whitelist (Phase D). The single divergence
 # (clamov vs zlamov → xlamov) traces to a migrator-internal C-pass
 # gap: re-migration of the C-half emits ``# define TYPE complex``
 # while the canonical has ``QCOMPLEX``. Migrator-side fix tracked
-# separately. See doc/convergence-20260507.md §scalapack_c.
+# separately. See doc/archive/convergence-20260507.md §scalapack_c.
 defer_all_divergences: true

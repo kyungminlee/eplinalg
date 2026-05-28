@@ -3,9 +3,6 @@ language: c
 source_dir: external/xblas-1.0.248/src
 extensions: [.c, .h]
 
-symbols:
-  method: scan_source
-
 # XBLAS internal residual refinement is built on top of regular BLAS:
 # the *_x routines call DDOT/DGEMV/etc. for the working-precision pass
 # before the extra-precision correction step. Listing blas as a
@@ -48,9 +45,6 @@ extra_c_dirs:
   - external/xblas-1.0.248/src/trmv
   - external/xblas-1.0.248/src/trsv
   - external/xblas-1.0.248/src/waxpby
-
-prefix:
-  style: direct
 
 # The C migrator's broad ``double``/``float`` → ``{REAL_TYPE}`` (e.g.
 # QREAL for kind16) substitution rewrites function bodies and

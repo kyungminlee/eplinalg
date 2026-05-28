@@ -257,101 +257,11 @@ INTRINSIC_MAP: dict[str, tuple[str, bool]] = {
 #
 # When a name appears in an  INTRINSIC  declaration, the type-specific
 # name should be replaced by its generic equivalent.  This map mirrors
-# INTRINSIC_MAP but uses plain str→str (no needs_kind flag).
-#
-# Only entries that can plausibly appear in INTRINSIC declarations in
-# real-world code are listed.
+# INTRINSIC_MAP but uses plain str→str (no needs_kind flag); the
+# ``k != v[0]`` filter drops the bare ``CMPLX → CMPLX`` self-rename,
+# which only appears in call-site rewriting (where it gates KIND
+# annotation), never in INTRINSIC declarations.
 
 INTRINSIC_DECL_MAP: dict[str, str] = {
-    # ABS family
-    'IABS':   'ABS',
-    'DABS':   'ABS',
-    'CABS':   'ABS',
-    'ZABS':   'ABS',
-    'CDABS':  'ABS',
-    # AIMAG
-    'DIMAG':  'AIMAG',
-    # AINT / ANINT / NINT
-    'DINT':   'AINT',
-    'DNINT':  'ANINT',
-    'IDNINT': 'NINT',
-    # Trigonometric
-    'DACOS':  'ACOS',
-    'DASIN':  'ASIN',
-    'DATAN':  'ATAN',
-    'DATAN2': 'ATAN2',
-    'DCOS':   'COS',
-    'CCOS':   'COS',
-    'ZCOS':   'COS',
-    'CDCOS':  'COS',
-    'DSIN':   'SIN',
-    'CSIN':   'SIN',
-    'ZSIN':   'SIN',
-    'CDSIN':  'SIN',
-    'DTAN':   'TAN',
-    # Hyperbolic
-    'DCOSH':  'COSH',
-    'DSINH':  'SINH',
-    'DTANH':  'TANH',
-    # Inverse hyperbolic
-    'DACOSH': 'ACOSH',
-    'DASINH': 'ASINH',
-    'DATANH': 'ATANH',
-    # CONJG
-    'DCONJG': 'CONJG',
-    # DIM
-    'IDIM':   'DIM',
-    'DDIM':   'DIM',
-    # ERF / ERFC
-    'DERF':   'ERF',
-    'DERFC':  'ERFC',
-    # EXP
-    'DEXP':   'EXP',
-    'CEXP':   'EXP',
-    'ZEXP':   'EXP',
-    'CDEXP':  'EXP',
-    # GAMMA / LOG_GAMMA
-    'DGAMMA': 'GAMMA',
-    'ALGAMA': 'LOG_GAMMA',
-    'DLGAMA': 'LOG_GAMMA',
-    # INT
-    'IFIX':   'INT',
-    'IDINT':  'INT',
-    # LOG / LOG10
-    'ALOG':   'LOG',
-    'DLOG':   'LOG',
-    'CLOG':   'LOG',
-    'ZLOG':   'LOG',
-    'CDLOG':  'LOG',
-    'ALOG10': 'LOG10',
-    'DLOG10': 'LOG10',
-    # MAX / MIN
-    'MAX0':   'MAX',
-    'MAX1':   'MAX',
-    'AMAX0':  'MAX',
-    'AMAX1':  'MAX',
-    'DMAX1':  'MAX',
-    'MIN0':   'MIN',
-    'MIN1':   'MIN',
-    'AMIN0':  'MIN',
-    'AMIN1':  'MIN',
-    'DMIN1':  'MIN',
-    # MOD
-    'AMOD':   'MOD',
-    'DMOD':   'MOD',
-    # SIGN
-    'ISIGN':  'SIGN',
-    'DSIGN':  'SIGN',
-    # SQRT
-    'DSQRT':  'SQRT',
-    'CSQRT':  'SQRT',
-    'ZSQRT':  'SQRT',
-    'CDSQRT': 'SQRT',
-    # Type conversion
-    'DBLE':   'REAL',
-    'SNGL':   'REAL',
-    'FLOAT':  'REAL',
-    'DFLOAT': 'REAL',
-    'DREAL':  'REAL',
-    'DCMPLX': 'CMPLX',
+    k: v[0] for k, v in INTRINSIC_MAP.items() if k != v[0]
 }
