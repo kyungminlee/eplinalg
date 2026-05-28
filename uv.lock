@@ -12,7 +12,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fortran-migrator"
+name = "eplinalg"
 version = "0.3.2"
 source = { editable = "." }
 dependencies = [

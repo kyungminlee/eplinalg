@@ -13,8 +13,8 @@ extended-precision library and through Netlib source compiled with
 `<build>/precision_reports/`, aggregated by
 `scripts/precision_report.py`.
 
-The overlay-vs-migrated test scheme (parallel-blas, epopenblas) moved
-to the [epparablas](../../epparablas/) sibling repo along with the
+The overlay-vs-migrated test scheme (epblas-parallel, epblas-openblas) moved
+to the [epblas-parallel](../../epblas-parallel/) sibling repo along with the
 overlays themselves.
 
 ## Migrated vs Netlib reference @ KIND=16 (differential precision)
@@ -259,17 +259,17 @@ Theoretical ceilings per target:
 | All differential-precision tests | `ctest` from the staging build dir |
 | Aggregate precision JSON → Markdown | `uv run scripts/precision_report.py` |
 
-For the overlay-vs-migrated test suite (parallel-blas, epopenblas),
-see [epparablas/tests/](../../epparablas/tests/).
+For the overlay-vs-migrated test suite (epblas-parallel, epblas-openblas),
+see [epblas-parallel/tests/](../../epblas-parallel/tests/).
 
 ## Quick mental model
 
 - **precision tests** = migrated vs Netlib@KIND=16, all 9 library
   domains, JSON-aggregated via `precision_report.py`. Lives here.
 - **overlay tests** = hand-written kernels vs migrated baseline at
-  the same precision. Lives in `../../epparablas/tests/`.
+  the same precision. Lives in `../../epblas-parallel/tests/`.
 
 ## Related docs
 
-- `../../epparablas/doc/optimization-findings.md` — overlay perf findings
+- `../../epblas-parallel/doc/optimization-findings.md` — overlay perf findings
 - `../scripts/precision_report.py` — aggregates per-test JSON reports across domains

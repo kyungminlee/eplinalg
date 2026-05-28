@@ -31,10 +31,10 @@ Bugs in the vendored Netlib sources that the migrator works around without editi
 ## Parallel BLAS overlay
 
 The hand-written extended-precision BLAS overlay moved to a separate
-project: [epparablas](../../epparablas/). Migrator-side, the public
+project: [epblas-parallel](../../epblas-parallel/). Migrator-side, the public
 `${LIB_PREFIX}blas` target is now the plain serial migrated archive;
-the overlay-equipped composite (`epparablas::eblas` and friends)
-ships from the epparablas package.
+the overlay-equipped composite (`epblas-parallel::eblas` and friends)
+ships from the epblas-parallel package.
 
 ## Test suites
 

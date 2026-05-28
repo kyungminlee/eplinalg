@@ -1,5 +1,5 @@
 [project]
-name = "fortran-migrator"
+name = "eplinalg"
 version = "0.3.2"
 description = "Automated type-migration tool for Fortran/C numerical libraries"
 requires-python = ">=3.11"
@@ -7,6 +7,9 @@ dependencies = [
     "pyyaml>=6.0.3",
     "tqdm>=4.67.3",
 ]
+
+[project.urls]
+Repository = "https://github.com/kyungminlee/eplinalg"
 
 [project.scripts]
 migrator = "migrator.__main__:main"
