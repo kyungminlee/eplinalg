@@ -42,7 +42,7 @@ def staged_root_for(project_root: Path, library: str) -> Path:
 # exponent groups so the substitution can rewrite to D-suffix form.
 _E_LITERAL_RE = re.compile(r'(?<![\w.])(\d+\.\d*|\d*\.\d+)([Ee])([+-]?\d+)')
 _BARE_LITERAL_RE = re.compile(
-    r'(?<![\w.\[])(\d+\.\d*|\d*\.\d+)(?![DdEe\w]|_\d|_[A-Za-z])'
+    r'(?<![\w.])(\d+\.\d*|\d*\.\d+)(?![DdEe\w]|_\d|_[A-Za-z])'
 )
 _INTEGER_PARAM_DECL_RE = re.compile(
     r'^\s*INTEGER\b.*\bPARAMETER\b.*::', re.IGNORECASE
