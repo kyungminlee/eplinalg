@@ -30,15 +30,15 @@ mkdir -p "$MOD_DIR/objs"
 compile_one() {
     f="$1"
     if [[ "$f" == *.f90 ]]; then
-        out=$(gfortran -c -ffree-line-length-132 \
+        gfortran -c -ffree-line-length-132 \
             -I "$2" -I "$3" \
-            "$f" -o "$3/objs/$(basename "$f").o" 2>&1)
+            "$f" -o "$3/objs/$(basename "$f").o" 2>/dev/null
     else
-        out=$(gfortran -c -ffixed-line-length-72 \
+        gfortran -c -ffixed-line-length-72 \
             -I "$2" -I "$3" \
-            "$f" -o "$3/objs/$(basename "$f").o" 2>&1)
+            "$f" -o "$3/objs/$(basename "$f").o" 2>/dev/null
     fi
-    if [ -z "$out" ]; then
+    if [ $? -eq 0 ]; then
         echo OK
     else
         echo "FAIL $(basename "$f")"

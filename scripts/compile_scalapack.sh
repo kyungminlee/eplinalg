@@ -57,15 +57,15 @@ for f in "$F_DIR"/*.f "$F_DIR"/*.f90; do
     [ -f "$f" ] || continue
     base="$(basename "$f")"
     if [[ "$f" == *.f90 ]]; then
-        out=$(gfortran -c -ffree-line-length-132 \
+        gfortran -c -ffree-line-length-132 \
             -I "$MF_MOD" -I "$MOD_DIR" \
-            "$f" -o "$MOD_DIR/objs/$base.o" 2>&1)
+            "$f" -o "$MOD_DIR/objs/$base.o" 2>/dev/null
     else
-        out=$(gfortran -c -ffixed-line-length-72 \
+        gfortran -c -ffixed-line-length-72 \
             -I "$MF_MOD" -I "$MOD_DIR" \
-            "$f" -o "$MOD_DIR/objs/$base.o" 2>&1)
+            "$f" -o "$MOD_DIR/objs/$base.o" 2>/dev/null
     fi
-    if [ -z "$out" ]; then
+    if [ $? -eq 0 ]; then
         f_ok=$((f_ok+1))
     else
         f_fail=$((f_fail+1))
