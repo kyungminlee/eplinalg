@@ -1717,6 +1717,7 @@ def main():
     # --- verify ---
     p = sub.add_parser('verify', help='Verify migrated output')
     p.add_argument('output_dir', type=Path)
+    _add_target_args(p)
     p.set_defaults(func=cmd_verify)
 
     # --- build ---
