@@ -1187,6 +1187,13 @@ def cmd_stage(args):
     # Determine which libraries to stage
     if args.libraries:
         lib_set = set(args.libraries)
+        valid = {n for n, _ in LIBRARY_ORDER}
+        unknown = lib_set - valid
+        if unknown:
+            sys.exit(
+                f'error: unknown library name(s) in --libraries: '
+                f'{sorted(unknown)}. Valid: {sorted(valid)}'
+            )
         libraries = [(n, r) for n, r in LIBRARY_ORDER if n in lib_set]
     else:
         libraries = list(LIBRARY_ORDER)
