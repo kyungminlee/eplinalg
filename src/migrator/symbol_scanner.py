@@ -26,7 +26,8 @@ _FORTRAN_DEF_RE = re.compile(
 # MUMPS's ``DMUMPS_STRUC`` — defined in dmumps_struc.h — are picked up
 # and renamed alongside routines in the same family.
 _FORTRAN_TYPE_DEF_RE = re.compile(
-    r'^\s*TYPE\b(?!\s*\()(?:\s*,[^:]*)?(?:\s*::)?\s*([A-Za-z]\w*)\s*(?:!.*)?$',
+    r'^\s*TYPE\b(?!\s*\()(?:\s*,[^:]*)?(?:\s*::)?\s*'
+    r'(?!(?:IS|DEFAULT)\b)([A-Za-z]\w*)\s*(?:!.*)?$',
     re.IGNORECASE,
 )
 
