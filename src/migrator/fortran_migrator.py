@@ -2543,6 +2543,17 @@ def _build_use_only_clause(proc_lines: list[str], target_mode: TargetMode) -> st
         # that some local is real64x2-typed and may be passed through
         # ``int(var, K)``, which the rewrite then routes via ``dble``.
         referenced.add('dble')
+    # Predict the ``real`` calls that ``_rewrite_int_of_complex`` will
+    # inject when ``INT(zvar)`` / ``NINT(zvar)`` appear in a body that
+    # declares a complex variable. The rewrite emits ``real(zvar)`` and
+    # the only-clause must import the multifloats ``real`` generic for
+    # gfortran to dispatch it. Mirror the predictive ``dble`` path:
+    # add ``real`` whenever an INT/NINT call co-occurs with any complex
+    # variable name in the procedure.
+    if (target_mode.intrinsic_mode == 'wrap_constructor'
+            and re.search(r'\b(?:int|nint)\s*\(', body_text, re.IGNORECASE)
+            and _scan_complex_var_names(body_text)):
+        referenced.add('real')
     declared = _scan_local_declared_names(proc_lines)
     # Determine constant name prefix for sorting (e.g. 'mf_' for multifloats)
     const_prefixes = set()
