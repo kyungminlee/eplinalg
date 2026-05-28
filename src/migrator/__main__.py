@@ -1315,7 +1315,31 @@ set({lib_name}_LANGUAGE {config.language})
     lib_prefix = pmap['R'].lower()
     lib_prefix_complex = pmap['C'].lower()
     needs_mf = target_mode.module_name is not None
-    staged_list = ';'.join(staged)
+
+    # Re-stage with a subset of --libraries must not shrink the unified
+    # build's library list. Read STAGED_LIBRARIES from any prior
+    # target_config.cmake, keep entries whose lib_dir still exists on
+    # disk, and union them with this run's freshly-staged set so the
+    # rewritten config reflects everything currently present in the
+    # staging tree.
+    prior_staged: list[str] = []
+    prior_config = staging_dir / 'target_config.cmake'
+    if prior_config.exists():
+        m = re.search(
+            r'^\s*set\s*\(\s*STAGED_LIBRARIES\s+([^)]*)\)',
+            prior_config.read_text(),
+            re.MULTILINE,
+        )
+        if m:
+            for tok in m.group(1).replace(';', ' ').split():
+                tok = tok.strip().strip('"')
+                if tok and (staging_dir / tok).is_dir():
+                    prior_staged.append(tok)
+    merged: list[str] = []
+    for n in prior_staged + staged:
+        if n not in merged:
+            merged.append(n)
+    staged_list = ';'.join(merged)
 
     helpers_src = proj_root / 'recipes' / 'lapack' / 'mf_helpers'
     helpers_dst = staging_dir / '_helpers'
