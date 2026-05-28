@@ -1,2 +1,0 @@
-#:set routine = 'qsyr2'
-#:include 'fuzz_syr2_real_body.fypp'

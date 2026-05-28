@@ -1,2 +1,0 @@
-#:set routine = 'easum'
-#:include 'fuzz_norm_real_body.fypp'

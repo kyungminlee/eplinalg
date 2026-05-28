@@ -52,24 +52,4 @@ else()
         endif()
     endforeach()
 
-    # Parallel BLAS overlay test suite — consistency (overlay vs
-    # migrated archive at REAL(KIND=10/16/MF)) + fuzz + bench. Gated
-    # on PARALLEL_BLAS and on the presence of the renamed migrated
-    # archive (created by the BLAS section in cmake/CMakeLists.txt).
-    if(PARALLEL_BLAS
-            AND TARGET ${LIB_PREFIX}blas_parallel
-            AND TARGET ${LIB_PREFIX}blas_migrated
-            AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/blas_parallel/CMakeLists.txt)
-        add_subdirectory(blas_parallel)
-    endif()
-
-    # epopenblas overlay test suite — separate fuzz + bench (OMP=1, OMP=4)
-    # comparing the OpenBLAS-derived port against the renamed migrated
-    # archive. Independent of PARALLEL_BLAS — gated only on the presence
-    # of the epopenblas archive + its renamed-migrated companion.
-    if(TARGET ${LIB_PREFIX}blas_epopenblas
-            AND TARGET ${LIB_PREFIX}blas_epopenblas_migrated
-            AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/blas_epopenblas/CMakeLists.txt)
-        add_subdirectory(blas_epopenblas)
-    endif()
 endif()

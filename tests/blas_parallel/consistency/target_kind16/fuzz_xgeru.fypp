@@ -1,2 +1,0 @@
-#:set routine = 'xgeru'
-#:include 'fuzz_ger_complex_body.fypp'

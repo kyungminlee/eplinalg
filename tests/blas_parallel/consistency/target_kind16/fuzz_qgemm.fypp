@@ -1,2 +1,0 @@
-#:set routine = 'qgemm'
-#:include 'fuzz_gemm_real_body.fypp'

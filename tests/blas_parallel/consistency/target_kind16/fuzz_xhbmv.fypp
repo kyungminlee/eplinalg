@@ -1,2 +1,0 @@
-#:set routine = 'xhbmv'
-#:include 'fuzz_hbmv_body.fypp'

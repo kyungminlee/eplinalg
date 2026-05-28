@@ -1,2 +1,0 @@
-#:set routine = 'etrsm'
-#:include 'fuzz_trsm_real_body.fypp'

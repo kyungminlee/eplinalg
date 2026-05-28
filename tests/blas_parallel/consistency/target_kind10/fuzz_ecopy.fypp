@@ -1,2 +1,0 @@
-#:set routine = 'ecopy'
-#:include 'fuzz_copyswap_real_body.fypp'

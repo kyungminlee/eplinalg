@@ -1,5 +1,0 @@
-[fail] kind16/perf_xgemm exit=124
-[fail] kind16/perf_xhemm exit=124
-[fail] kind16/perf_xsymm exit=124
-[fail] kind16/perf_xtrmm exit=124
-[fail] kind16/perf_xtrsm exit=124

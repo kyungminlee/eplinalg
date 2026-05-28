@@ -1,2 +1,0 @@
-#:set routine = 'xtbmv'
-#:include 'fuzz_tbmv_complex_body.fypp'

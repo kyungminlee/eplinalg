@@ -1,2 +1,0 @@
-#:set routine = 'xqscal'
-#:include 'fuzz_scal_mixed_body.fypp'

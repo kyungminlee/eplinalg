@@ -1,2 +1,0 @@
-#:set routine = 'ydotc'
-#:include 'fuzz_dot_complex_body.fypp'

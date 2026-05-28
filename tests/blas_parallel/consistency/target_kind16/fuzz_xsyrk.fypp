@@ -1,2 +1,0 @@
-#:set routine = 'xsyrk'
-#:include 'fuzz_syrk_complex_body.fypp'

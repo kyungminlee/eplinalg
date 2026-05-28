@@ -1,4 +1,0 @@
-       size       parallel-blas GFLOP/s   migrated GFLOP/s   speedup
-         128          0.0501             0.0501       1.00x
-         256          0.0504             0.0518       0.97x
-wrote bench_xherk.json

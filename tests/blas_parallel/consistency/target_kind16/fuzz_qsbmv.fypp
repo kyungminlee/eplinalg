@@ -1,2 +1,0 @@
-#:set routine = 'qsbmv'
-#:include 'fuzz_sbmv_body.fypp'

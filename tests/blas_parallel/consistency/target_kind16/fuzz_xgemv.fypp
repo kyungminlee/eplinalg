@@ -1,2 +1,0 @@
-#:set routine = 'xgemv'
-#:include 'fuzz_gemv_complex_body.fypp'

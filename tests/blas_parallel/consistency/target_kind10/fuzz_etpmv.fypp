@@ -1,2 +1,0 @@
-#:set routine = 'etpmv'
-#:include 'fuzz_tpmv_real_body.fypp'

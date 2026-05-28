@@ -28,33 +28,6 @@ endif()
 
 project(${TARGET_NAME}_libraries Fortran C CXX)
 
-# Parallel-BLAS overlay master switch. Declared early so the BLAS
-# section (which runs before add_subdirectory(parallel_blas)) can
-# branch on it. The overlay archive itself is ALWAYS built when the
-# parallel_blas/ subtree is present in staging; this option only
-# governs whether the public ${LIB_PREFIX}blas target is rewired as
-# an INTERFACE composite linking the overlay before the serial
-# migrated archive. See doc/parallel-blas-20260513.md §1.
-option(PARALLEL_BLAS
-    "Wire parallel BLAS overlay into the public \${LIB_PREFIX}blas target" ON)
-
-# Build the parallel-BLAS overlay subtree EARLY so its `${LIB_PREFIX}blas_parallel`
-# static target exists by the time the BLAS section below tries to
-# wire the public ${LIB_PREFIX}blas composite. (Originally
-# add_subdirectory(parallel_blas) sat at the end of this file; that
-# left the composite linking only `_serial` at evaluation time and
-# silently dropped the overlay from every consumer.)
-if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parallel_blas)
-    add_subdirectory(parallel_blas)
-endif()
-
-# epopenblas overlay — separate static archive (NOT wired into the
-# public ${LIB_PREFIX}blas composite). Consumed only by
-# tests/blas_epopenblas/. See src/epopenblas/CHECKLIST.md.
-if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/epopenblas)
-    add_subdirectory(epopenblas)
-endif()
-
 # ── Compiler-aware install infrastructure ────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
 include(FortranCompiler)
@@ -369,14 +342,6 @@ endfunction()
 
 
 function(add_migrated_fortran_library lib_name)
-    # Optional kwarg TARGET_NAME <name> overrides the default
-    # ${LIB_PREFIX}${lib_name} target name. Used by the parallel-BLAS
-    # overlay to publish the migrated archive as ${LIB_PREFIX}blas_serial
-    # so the public name ${LIB_PREFIX}blas can be redefined as an
-    # INTERFACE composite over (serial, parallel). See
-    # doc/parallel-blas-20260513.md §1.
-    cmake_parse_arguments(AMFL "" "TARGET_NAME" "" ${ARGN})
-
     set(_dir ${CMAKE_CURRENT_SOURCE_DIR}/${lib_name})
     if(NOT EXISTS "${_dir}/manifest.cmake")
         return()
@@ -394,11 +359,7 @@ function(add_migrated_fortran_library lib_name)
     endforeach()
 
     set(_common_target "${lib_name}_common")
-    if(AMFL_TARGET_NAME)
-        set(_precision_target "${AMFL_TARGET_NAME}")
-    else()
-        set(_precision_target "${LIB_PREFIX}${lib_name}")
-    endif()
+    set(_precision_target "${LIB_PREFIX}${lib_name}")
 
     if(_common)
         add_library(${_common_target} STATIC ${_common})
@@ -601,156 +562,9 @@ add_standard_fortran_library(blas
     ${CMAKE_CURRENT_SOURCE_DIR}/_refblas_src
     EXCLUDE_REGEX "/(dsdot|sdsdot)\\.f9?0?$")
 if(NOT BASELINE_BUILD)
-    # Parallel-BLAS overlay (opt-in): the public CMake target
-    # ${LIB_PREFIX}blas becomes an INTERFACE composite that links
-    # _parallel before _serial, so every downstream consumer
-    # (${LIB_PREFIX}lapack, scalapack, mumps, downstream apps)
-    # transparently picks up overlay symbols at link time. See
-    # doc/parallel-blas-20260513.md §1.
-    if(PARALLEL_BLAS)
-        add_migrated_fortran_library(blas
-            TARGET_NAME ${LIB_PREFIX}blas_serial)
-        if(TARGET ${LIB_PREFIX}blas_serial AND TARGET blas)
-            target_link_libraries(${LIB_PREFIX}blas_serial PUBLIC blas)
-        endif()
-        # Composite. The _parallel target is created later by
-        # add_subdirectory(parallel_blas); link it in if/when it
-        # exists. We add both link deps unconditionally — if the
-        # overlay subdir was skipped (e.g. no kernels for this
-        # target), _parallel simply won't be a target and the link
-        # is a no-op.
-        add_library(${LIB_PREFIX}blas INTERFACE)
-        # OpenMP runtime needs to land in every executable that links
-        # the overlay. PUBLIC dep on the parallel kernel target alone
-        # doesn't propagate cleanly through the $<LINK_LIBRARY:
-        # WHOLE_ARCHIVE,...> generator expression (the gen-expr treats
-        # the wrapped target as an object set, not as a full target
-        # dep). Add it directly to the composite's INTERFACE so any
-        # consumer of ${LIB_PREFIX}blas pulls libgomp at link time.
-        if(OpenMP_C_FOUND AND TARGET ${LIB_PREFIX}blas_parallel)
-            target_link_libraries(${LIB_PREFIX}blas INTERFACE OpenMP::OpenMP_C)
-        endif()
-        if(TARGET ${LIB_PREFIX}blas_parallel)
-            # WHOLE_ARCHIVE is mandatory: a static archive's members
-            # are normally only extracted to satisfy unresolved
-            # symbols, so overlay objects (egemm.c.o etc.) would be
-            # silently dropped when `_serial` already defines the
-            # same Fortran symbols. WHOLE_ARCHIVE forces every overlay
-            # object into the link, where its definitions take
-            # precedence over the serial archive's (linker picks the
-            # first definition seen — overlay listed first below).
-            # CMake 3.24+ generator expression.
-            target_link_libraries(${LIB_PREFIX}blas INTERFACE
-                "$<LINK_LIBRARY:WHOLE_ARCHIVE,${LIB_PREFIX}blas_parallel>")
-        endif()
-        target_link_libraries(${LIB_PREFIX}blas INTERFACE
-            ${LIB_PREFIX}blas_serial)
-
-        # ── Renamed migrated archive for consistency tests ───────────
-        # `lib${LIB_PREFIX}blas_migrated.a` is the _serial archive with
-        # overlay-covered routines (and their internal call sites)
-        # renamed `${prefix}<routine>_` → `${prefix}<routine>_migrated_`
-        # via objcopy --redefine-syms. Lets a single test binary link
-        # both the composite eblas (overlay's egemm_) AND the renamed
-        # archive (egemm_migrated_) and diff them at REAL(KIND=10) —
-        # the primary consistency oracle (10 ulp rel err).
-        #
-        # NOT linked into the public composite — would collide on
-        # non-renamed entry points (eaxpy_, edot_, ...). Test
-        # executables link this archive directly. Archive semantics
-        # ensure only the .o's referenced by name (i.e. *_migrated_
-        # ones) are pulled in.
-        # Routines with overlay implementations — full prefixed lower-
-        # case names (matching the C kernel filenames under
-        # src/parallel_blas/${TARGET_NAME}/). The per-target subdir
-        # publishes its list via the PARALLEL_BLAS_OVERLAY_ROUTINES
-        # CACHE INTERNAL variable; users can override on the cmake
-        # command line to limit or grow the set.
-        if(NOT DEFINED PARALLEL_BLAS_OVERLAY_ROUTINES OR
-                "${PARALLEL_BLAS_OVERLAY_ROUTINES}" STREQUAL "")
-            message(WARNING
-                "parallel_blas: PARALLEL_BLAS_OVERLAY_ROUTINES is empty for "
-                "target '${TARGET_NAME}' — the per-target CMakeLists should "
-                "set it (CACHE INTERNAL) to the list of overlay-covered "
-                "routines. Skipping the renamed migrated archive.")
-            set(_skip_migrated_archive TRUE)
-        endif()
-
-        if(NOT _skip_migrated_archive)
-            message(STATUS "parallel_blas: wiring ${LIB_PREFIX}blas_migrated archive "
-                           "(objcopy) routines=${PARALLEL_BLAS_OVERLAY_ROUTINES}")
-            set(_redef_file ${CMAKE_CURRENT_BINARY_DIR}/${LIB_PREFIX}blas_migrated.redef)
-            set(_redef_content "")
-            foreach(_r ${PARALLEL_BLAS_OVERLAY_ROUTINES})
-                string(APPEND _redef_content "${_r}_ ${_r}_migrated_\n")
-            endforeach()
-            file(GENERATE OUTPUT ${_redef_file} CONTENT "${_redef_content}")
-
-            set(_migrated_archive
-                ${CMAKE_CURRENT_BINARY_DIR}/lib${LIB_PREFIX}blas_migrated.a)
-            add_custom_command(
-                OUTPUT ${_migrated_archive}
-                COMMAND ${CMAKE_OBJCOPY} --redefine-syms=${_redef_file}
-                        $<TARGET_FILE:${LIB_PREFIX}blas_serial>
-                        ${_migrated_archive}
-                DEPENDS ${LIB_PREFIX}blas_serial ${_redef_file}
-                COMMENT "objcopy: emitting lib${LIB_PREFIX}blas_migrated.a"
-                VERBATIM)
-            add_custom_target(${LIB_PREFIX}blas_migrated_build
-                DEPENDS ${_migrated_archive})
-            add_library(${LIB_PREFIX}blas_migrated STATIC IMPORTED GLOBAL)
-            set_target_properties(${LIB_PREFIX}blas_migrated PROPERTIES
-                IMPORTED_LOCATION ${_migrated_archive})
-            add_dependencies(${LIB_PREFIX}blas_migrated
-                ${LIB_PREFIX}blas_migrated_build)
-        endif()
-
-        # ── epopenblas: separate renamed-migrated archive ────────────
-        # `lib${LIB_PREFIX}blas_epopenblas_migrated.a` is an objcopy-renamed
-        # copy of `_serial` covering ONLY the epopenblas overlay routines —
-        # symbols `${prefix}<routine>_` → `${prefix}<routine>_migrated_`.
-        # Test binaries in tests/blas_epopenblas/ link this alongside
-        # `${LIB_PREFIX}blas_epopenblas` to diff overlay vs migrated.
-        #
-        # This is a SEPARATE archive from `${LIB_PREFIX}blas_migrated`
-        # because the epopenblas overlay-routine set is independent —
-        # the file lists may diverge as the port progresses.
-        if(TARGET ${LIB_PREFIX}blas_epopenblas
-                AND DEFINED EPOPENBLAS_OVERLAY_ROUTINES
-                AND NOT "${EPOPENBLAS_OVERLAY_ROUTINES}" STREQUAL "")
-            message(STATUS "epopenblas: wiring ${LIB_PREFIX}blas_epopenblas_migrated archive "
-                           "(objcopy) routines=${EPOPENBLAS_OVERLAY_ROUTINES}")
-            set(_ep_redef_file
-                ${CMAKE_CURRENT_BINARY_DIR}/${LIB_PREFIX}blas_epopenblas_migrated.redef)
-            set(_ep_redef_content "")
-            foreach(_r ${EPOPENBLAS_OVERLAY_ROUTINES})
-                string(APPEND _ep_redef_content "${_r}_ ${_r}_migrated_\n")
-            endforeach()
-            file(GENERATE OUTPUT ${_ep_redef_file} CONTENT "${_ep_redef_content}")
-
-            set(_ep_migrated_archive
-                ${CMAKE_CURRENT_BINARY_DIR}/lib${LIB_PREFIX}blas_epopenblas_migrated.a)
-            add_custom_command(
-                OUTPUT ${_ep_migrated_archive}
-                COMMAND ${CMAKE_OBJCOPY} --redefine-syms=${_ep_redef_file}
-                        $<TARGET_FILE:${LIB_PREFIX}blas_serial>
-                        ${_ep_migrated_archive}
-                DEPENDS ${LIB_PREFIX}blas_serial ${_ep_redef_file}
-                COMMENT "objcopy: emitting lib${LIB_PREFIX}blas_epopenblas_migrated.a"
-                VERBATIM)
-            add_custom_target(${LIB_PREFIX}blas_epopenblas_migrated_build
-                DEPENDS ${_ep_migrated_archive})
-            add_library(${LIB_PREFIX}blas_epopenblas_migrated STATIC IMPORTED GLOBAL)
-            set_target_properties(${LIB_PREFIX}blas_epopenblas_migrated PROPERTIES
-                IMPORTED_LOCATION ${_ep_migrated_archive})
-            add_dependencies(${LIB_PREFIX}blas_epopenblas_migrated
-                ${LIB_PREFIX}blas_epopenblas_migrated_build)
-        endif()
-    else()
-        add_migrated_fortran_library(blas)
-        if(TARGET ${LIB_PREFIX}blas AND TARGET blas)
-            target_link_libraries(${LIB_PREFIX}blas PUBLIC blas)
-        endif()
+    add_migrated_fortran_library(blas)
+    if(TARGET ${LIB_PREFIX}blas AND TARGET blas)
+        target_link_libraries(${LIB_PREFIX}blas PUBLIC blas)
     endif()
 endif()
 
@@ -1430,6 +1244,76 @@ function(install_library_headers lib_name)
         FILES_MATCHING PATTERN "*.h")
 endfunction()
 
+# Compute the package name a standard archive is installed under.
+# `blas` → `eplaStdBlas`, `scalapack_c` → `eplaStdScalapack_c`, etc.
+# The capitalization keeps the bare lib name visually intact while
+# satisfying CMake's package-name conventions (leading capital aids
+# readability when grep'ing for find_package(epla...) calls).
+function(_std_pkg_name lib_name out_var)
+    string(SUBSTRING "${lib_name}" 0 1 _first)
+    string(SUBSTRING "${lib_name}" 1 -1 _rest)
+    string(TOUPPER "${_first}" _first)
+    set(${out_var} "eplaStd${_first}${_rest}" PARENT_SCOPE)
+endfunction()
+
+# Install the standard-precision archive ``lib_name`` (e.g. ``blas``,
+# ``lapack``) into its own package ``eplaStd<LibName>``. The archive
+# is byte-identical across per-precision build invocations (vanilla
+# Netlib sources, no real-promotion flag, no precision-specific
+# defines), so re-installing on top of an existing prefix overwrites
+# matching content — which is exactly what consumers want: one
+# ``epla::blas`` target shared by ``find_package(qblas)``,
+# ``find_package(eblas)``, ``find_package(mblas)``, ... avoiding the
+# multi-target redefinition that bundling the std archive in each
+# per-precision export used to cause.
+function(_install_standard_archive lib_name)
+    if(NOT TARGET ${lib_name})
+        return()
+    endif()
+    _std_pkg_name(${lib_name} _pkg)
+    set(_export "${_pkg}Targets")
+
+    # In a given configure, multiple precision libs might trigger
+    # install of the same std archive — guard so only the first wins.
+    get_property(_done GLOBAL PROPERTY _FC_STD_INSTALLED_${_pkg})
+    if(_done)
+        return()
+    endif()
+    set_property(GLOBAL PROPERTY _FC_STD_INSTALLED_${_pkg} TRUE)
+
+    set(_mpi_arg "")
+    if("${lib_name}" IN_LIST _MPI_DEPENDENT_LIBS)
+        set(_mpi_arg "MPI")
+    endif()
+
+    # Walk the std archive's INTERFACE_LINK_LIBRARIES for std-sibling
+    # references (e.g. ``lapack`` PUBLIC-links ``blas``) so the
+    # generated eplaStd<Lib>Config does find_dependency on the other
+    # std packages it transitively needs.
+    set(_std_deps "")
+    get_target_property(_ifl ${lib_name} INTERFACE_LINK_LIBRARIES)
+    if(_ifl)
+        foreach(_d IN LISTS _ifl)
+            if(TARGET "${_d}")
+                _std_pkg_name("${_d}" _dep_pkg)
+                if(NOT "${_dep_pkg}" STREQUAL "${_pkg}")
+                    list(APPEND _std_deps "${_dep_pkg}")
+                endif()
+            endif()
+        endforeach()
+    endif()
+
+    fortran_install_library(${lib_name}
+        EXPORT ${_export}
+        NAMESPACE epla::
+        ${_mpi_arg}
+        DEPENDS ${_std_deps})
+    get_target_property(_fc_moddir ${lib_name} Fortran_MODULE_DIRECTORY)
+    if(_fc_moddir)
+        fortran_install_modules(${lib_name})
+    endif()
+endfunction()
+
 function(_install_library_pair lib_name)
     set(_precision_target "${LIB_PREFIX}${lib_name}")
     set(_common_target "${lib_name}_common")
@@ -1442,11 +1326,35 @@ function(_install_library_pair lib_name)
     set(_install_mpi_arg "")
     if("${lib_name}" IN_LIST _MPI_DEPENDENT_LIBS)
         set(_install_mpi_arg "MPI")
+        # MPI-dependent libs only compile when MPI is available; the
+        # target exists but the build never produces an archive file,
+        # which would later cause cmake --install to fail with "file
+        # INSTALL cannot find ...". Skip install when MPI is missing —
+        # the same gate that tests/blacs/pblas/scalapack subdirs apply.
+        if(NOT MPI_C_FOUND OR NOT MPI_Fortran_FOUND)
+            return()
+        endif()
     endif()
 
     # Install per-library headers and extend the targets' install-time
     # include directories before the export captures them.
     install_library_headers(${lib_name})
+
+    # Install the std archive into its own export FIRST. Required so
+    # install(EXPORT ${_export}) below can resolve the precision
+    # target's PUBLIC link to ``${lib_name}`` (the std archive) as a
+    # cross-export reference ``epla::${lib_name}`` — without this,
+    # CMake fails with "target X not in any export set".
+    _install_standard_archive(${lib_name})
+
+    # If the std archive exists, its package is a transparent dep of
+    # the precision Config so consumers only need find_package(qblas)
+    # and ``epla::blas`` resolves automatically.
+    set(_precision_deps "")
+    if(TARGET ${lib_name} AND NOT "${lib_name}" STREQUAL "${_precision_target}")
+        _std_pkg_name(${lib_name} _std_pkg)
+        list(APPEND _precision_deps "${_std_pkg}")
+    endif()
 
     # Install precision-specific library FIRST. fortran_install_library
     # only writes Config.cmake on the first call per export, scanning
@@ -1454,7 +1362,11 @@ function(_install_library_pair lib_name)
     # The precision target (qmumps) has the canonical dependency set
     # for find_package consumers; siblings sharing the export
     # (qmumps_c, mumps_common) follow after.
-    fortran_install_library(${_precision_target} EXPORT ${_export} ${_install_mpi_arg})
+    fortran_install_library(${_precision_target}
+        EXPORT ${_export}
+        NAMESPACE epla::
+        ${_install_mpi_arg}
+        DEPENDS ${_precision_deps})
     get_target_property(_fc_moddir ${_precision_target} Fortran_MODULE_DIRECTORY)
     if(_fc_moddir)
         fortran_install_modules(${_precision_target})
@@ -1466,40 +1378,18 @@ function(_install_library_pair lib_name)
     # archive, the C-callable entry-points (qmumps_c, xmumps_c),
     # and the umbrella that wraps them in a LINK_GROUP:RESCAN.
     if("${lib_name}" STREQUAL "mumps" AND TARGET ${LIB_PREFIX}mumps_c)
-        fortran_install_library(${LIB_PREFIX}mumps_c EXPORT ${_export} MPI)
+        fortran_install_library(${LIB_PREFIX}mumps_c EXPORT ${_export} NAMESPACE epla:: MPI)
         install(TARGETS ${LIB_PREFIX}mumps_full
             EXPORT ${_export})
     endif()
 
-    # Parallel-BLAS overlay: the public ${LIB_PREFIX}blas is an
-    # INTERFACE composite whose link deps (_serial, _parallel) must
-    # also be in the export set, or install(EXPORT) bails.
-    if("${lib_name}" STREQUAL "blas" AND PARALLEL_BLAS)
-        if(TARGET ${LIB_PREFIX}blas_serial)
-            fortran_install_library(${LIB_PREFIX}blas_serial
-                EXPORT ${_export} ${_install_mpi_arg})
-        endif()
-        if(TARGET ${LIB_PREFIX}blas_parallel)
-            fortran_install_library(${LIB_PREFIX}blas_parallel
-                EXPORT ${_export} ${_install_mpi_arg})
-        endif()
-    endif()
-
     # Bundle common library into the same export
     if(TARGET ${_common_target})
-        fortran_install_library(${_common_target} EXPORT ${_export} ${_install_mpi_arg})
+        fortran_install_library(${_common_target} EXPORT ${_export} NAMESPACE epla:: ${_install_mpi_arg})
         get_target_property(_fc_moddir ${_common_target} Fortran_MODULE_DIRECTORY)
         if(_fc_moddir)
             fortran_install_modules(${_common_target})
         endif()
-    endif()
-
-    # Bundle the standard-precision archive of the same library into
-    # the same export so the migrated target's PUBLIC link dependency
-    # is exportable. Standard archives use the bare library name (e.g.
-    # ``blas``); they always go alongside their migrated sibling.
-    if(TARGET ${lib_name} AND NOT "${lib_name}" STREQUAL "${_precision_target}")
-        fortran_install_library(${lib_name} EXPORT ${_export} ${_install_mpi_arg})
     endif()
 endfunction()
 
@@ -1552,7 +1442,7 @@ if(NEEDS_MULTIFLOATS)
             if("${_t}" IN_LIST _mf_mpi_helpers)
                 set(_mf_mpi_arg "MPI")
             endif()
-            fortran_install_library(${_t} EXPORT ${_t}Targets ${_mf_mpi_arg})
+            fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE epla:: ${_mf_mpi_arg})
             get_target_property(_fc_moddir ${_t} Fortran_MODULE_DIRECTORY)
             if(_fc_moddir)
                 fortran_install_modules(${_t})

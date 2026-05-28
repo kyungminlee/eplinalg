@@ -1,2 +1,0 @@
-#:set routine = 'qrotm'
-#:include 'fuzz_rotm_real_body.fypp'

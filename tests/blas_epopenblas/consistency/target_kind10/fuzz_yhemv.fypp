@@ -1,2 +1,0 @@
-#:set routine = 'yhemv'
-#:include 'fuzz_hemv_body.fypp'

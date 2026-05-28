@@ -1,2 +1,0 @@
-#:set routine = 'yhpr'
-#:include 'fuzz_hpr_body.fypp'

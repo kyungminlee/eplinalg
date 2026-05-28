@@ -1,2 +1,0 @@
-#:set routine = 'yerot'
-#:include 'fuzz_rot_mixed_body.fypp'

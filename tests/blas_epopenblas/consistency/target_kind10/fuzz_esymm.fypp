@@ -1,2 +1,0 @@
-#:set routine = 'esymm'
-#:include 'fuzz_symm_real_body.fypp'

@@ -1,2 +1,0 @@
-#:set routine = 'qcabs1'
-#:include 'fuzz_cabs1_body.fypp'
