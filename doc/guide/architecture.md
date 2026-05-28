@@ -281,7 +281,7 @@ ctest runs.
 ## Repository layout
 
 ```
-fortran-migrator/
+eplinalg/
 ├── src/migrator/        # The migration engine (12 modules, ~9k LOC)
 ├── recipes/             # 11 library recipes
 ├── targets/             # 3 precision targets
