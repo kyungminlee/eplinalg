@@ -14,9 +14,6 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 permissions:
   contents: write
 
@@ -28,12 +25,12 @@ jobs:
       matrix:
         target: [kind16, kind10, multifloats]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
 
       - name: Extract external sources
         run: |
@@ -71,7 +68,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload staged sources
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: staging-${{ matrix.target }}
           path: staging-${{ matrix.target }}/
@@ -81,6 +78,17 @@ jobs:
   build:
     needs: stage
     runs-on: ubuntu-latest
+    env:
+      # The kind10 + gfortran-15 + intelmpi slot also runs ctest as
+      # the release workflow's one correctness signal. We pick
+      # kind10 + gfortran-15 + intelmpi because Intel MPI is the
+      # canonical MPI for the migrated stack — the libmpiseq path
+      # was written against Intel MPI's handle ABI, so
+      # OpenMPI/MPICH-linked _seq tests fail to resolve
+      # ``ompi_mpi_byte`` etc. at link time. The non-_seq surface
+      # should work on any MPI; extending the test coverage to
+      # kind16 / multifloats / openmpi / mpich is a known follow-up.
+      IS_TEST_SLOT: ${{ matrix.target == 'kind10' && matrix.compiler.name == 'gfortran-15' && matrix.mpi.name == 'intelmpi' }}
     strategy:
       fail-fast: false
       matrix:
@@ -100,13 +108,13 @@ jobs:
           - { name: intelmpi }
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           sparse-checkout: |
             cmake/
 
       - name: Download staged sources
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: staging-${{ matrix.target }}
           path: staging/
@@ -163,48 +171,60 @@ jobs:
         run: |
           sudo apt-get install -y intel-oneapi-mpi-devel
 
-      - name: Install fypp (needed by multifloats)
-        if: matrix.target == 'multifloats'
+      - name: Install fypp (needed by multifloats and tests)
+        if: matrix.target == 'multifloats' || env.IS_TEST_SLOT == 'true'
         run: pipx install fypp
+
+      # Source Intel oneAPI's setvars.sh once and forward the resulting
+      # environment to subsequent steps via $GITHUB_ENV instead of
+      # re-sourcing it inside every cmake invocation. Only vars that
+      # setvars.sh actually adds/changes are forwarded.
+      - name: Setup Intel oneAPI environment
+        if: matrix.compiler.oneapi != '' || matrix.mpi.name == 'intelmpi'
+        run: |
+          env | sort > /tmp/env.before
+          source /opt/intel/oneapi/setvars.sh > /dev/null
+          env | sort > /tmp/env.after
+          comm -13 /tmp/env.before /tmp/env.after >> "$GITHUB_ENV"
+
+      - name: Setup Intel MPI compiler shims
+        if: matrix.mpi.name == 'intelmpi' && matrix.compiler.oneapi == ''
+        run: |
+          {
+            echo "I_MPI_F90=${{ matrix.compiler.fc }}"
+            echo "I_MPI_CC=${{ matrix.compiler.cc }}"
+            echo "I_MPI_CXX=${{ matrix.compiler.cxx }}"
+          } >> "$GITHUB_ENV"
 
       - name: Configure
         run: |
-          # Source Intel oneAPI environment if needed
-          if [ -n "${{ matrix.compiler.oneapi }}" ] || [ "${{ matrix.mpi.name }}" = "intelmpi" ]; then
-            source /opt/intel/oneapi/setvars.sh
-          fi
-          # For Intel MPI with non-Intel compilers, set underlying compiler
-          if [ "${{ matrix.mpi.name }}" = "intelmpi" ] && [ -z "${{ matrix.compiler.oneapi }}" ]; then
-            export I_MPI_F90=${{ matrix.compiler.fc }}
-            export I_MPI_CC=${{ matrix.compiler.cc }}
-            export I_MPI_CXX=${{ matrix.compiler.cxx }}
-          fi
           cmake -S staging -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_Fortran_COMPILER=${{ matrix.compiler.fc }} \
             -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }} \
             -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }} \
-            -DMIGRATOR_BUILD_TESTS=OFF \
+            -DMIGRATOR_BUILD_TESTS=${{ env.IS_TEST_SLOT == 'true' && 'ON' || 'OFF' }} \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
 
       - name: Build
-        run: |
-          if [ -n "${{ matrix.compiler.oneapi }}" ] || [ "${{ matrix.mpi.name }}" = "intelmpi" ]; then
-            source /opt/intel/oneapi/setvars.sh
-          fi
-          if [ "${{ matrix.mpi.name }}" = "intelmpi" ] && [ -z "${{ matrix.compiler.oneapi }}" ]; then
-            export I_MPI_F90=${{ matrix.compiler.fc }}
-            export I_MPI_CC=${{ matrix.compiler.cc }}
-            export I_MPI_CXX=${{ matrix.compiler.cxx }}
-          fi
-          cmake --build build -j$(nproc)
+        run: cmake --build build -j$(nproc)
+
+      - name: Run ctest
+        if: env.IS_TEST_SLOT == 'true'
+        run: ctest --test-dir build -j$(nproc) --output-on-failure
+
+      - name: Upload ctest log on failure
+        if: failure() && env.IS_TEST_SLOT == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: ctest-kind10-gfortran-15-intelmpi-LastTest
+          path: |
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          retention-days: 7
 
       - name: Install
-        run: |
-          if [ -n "${{ matrix.compiler.oneapi }}" ] || [ "${{ matrix.mpi.name }}" = "intelmpi" ]; then
-            source /opt/intel/oneapi/setvars.sh
-          fi
-          cmake --install build
+        run: cmake --install build
 
       - name: Package
         run: |
@@ -214,96 +234,20 @@ jobs:
           echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ env.ARCHIVE }}
           path: ${{ env.ARCHIVE }}.tar.gz
           retention-days: 7
 
-  # ── Smoke ctest (one combo) ──────────────────────────────────────
-  # Build and run the differential-precision test suite for a single
-  # representative combination so the release workflow has at least
-  # one correctness signal. We pick kind10 + gfortran-15 + intelmpi
-  # because Intel MPI is the canonical MPI for the migrated stack —
-  # the libmpiseq path was written against Intel MPI's handle ABI,
-  # so OpenMPI/MPICH-linked _seq tests fail to resolve
-  # ``ompi_mpi_byte`` etc. at link time. The non-_seq surface should
-  # work on any MPI; extending the matrix to kind16 / multifloats /
-  # openmpi / mpich is a known follow-up.
-  test:
-    needs: stage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            cmake/
-
-      - name: Download staged sources
-        uses: actions/download-artifact@v4
-        with:
-          name: staging-kind10
-          path: staging/
-
-      - name: Install GCC 15 + gfortran 15
-        run: |
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-          sudo apt-get install -y gcc-15 g++-15 gfortran-15
-
-      - name: Install Intel MPI
-        run: |
-          wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
-            | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
-            | sudo tee /etc/apt/sources.list.d/oneAPI.list
-          sudo apt-get update
-          sudo apt-get install -y intel-oneapi-mpi-devel
-
-      - name: Install fypp (required by tests/)
-        run: pipx install fypp
-
-      - name: Configure
-        run: |
-          source /opt/intel/oneapi/setvars.sh
-          export I_MPI_F90=gfortran-15
-          export I_MPI_CC=gcc-15
-          export I_MPI_CXX=g++-15
-          cmake -S staging -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_Fortran_COMPILER=gfortran-15 \
-            -DCMAKE_C_COMPILER=gcc-15 \
-            -DCMAKE_CXX_COMPILER=g++-15 \
-            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
-
-      - name: Build (libraries + tests)
-        run: |
-          source /opt/intel/oneapi/setvars.sh
-          cmake --build build -j$(nproc)
-
-      - name: Run ctest
-        run: |
-          source /opt/intel/oneapi/setvars.sh
-          ctest --test-dir build -j$(nproc) --output-on-failure
-
-      - name: Upload ctest log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ctest-kind10-gfortran-15-intelmpi-LastTest
-          path: |
-            build/Testing/Temporary/LastTest.log
-            build/Testing/Temporary/LastTestsFailed.log
-          retention-days: 7
-
   # ── Create GitHub Release ────────────────────────────────────────
   release:
-    needs: [build, test]
+    needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts/
           pattern: '*-*-*-linux-x86_64'
