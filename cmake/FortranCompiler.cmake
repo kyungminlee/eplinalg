@@ -403,11 +403,13 @@ endif()
   endif()
 
   # Build a block of find_dependency() calls for the DEPENDS list. These
-  # are transparent dependencies (not user-facing): the standard-precision
-  # archive `eplinalg::blas` is factored out into its own package
-  # `eplinalgStdBlas` so multiple per-precision installs share one copy
-  # without redefining the imported target. The per-precision Config
-  # auto-loads it so consumers only need to find_package(qblas).
+  # are transparent dependencies (not user-facing): factored-out shared
+  # packages that the precision archive PUBLIC-links and that are each
+  # installed as their own Config. Examples: the standard-precision
+  # archive `eplinalg::blas` (package `eplinalgStdBlas`), and for
+  # multifloats targets the `la_constants_mf` / `la_xisnan_mf` helper
+  # archives. The per-precision Config auto-loads them so consumers only
+  # need to find_package(qblas) / find_package(mblas).
   set(_deps_block "")
   foreach(_dep IN LISTS ARG_DEPENDS)
     string(APPEND _deps_block "find_dependency(${_dep})\n")

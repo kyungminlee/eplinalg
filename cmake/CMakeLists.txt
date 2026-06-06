@@ -1356,6 +1356,21 @@ function(_install_library_pair lib_name)
         list(APPEND _precision_deps "${_std_pkg}")
     endif()
 
+    # NEEDS_MULTIFLOATS precision targets also PUBLIC-link the
+    # la_constants_mf / la_xisnan_mf helper archives (see ~line 403),
+    # each installed as its own Config package (EXPORT ${_t}Targets,
+    # ~line 1439). Like eplinalgStdBlas they are transparent deps, so
+    # consumers only need find_package(mblas) — without these the
+    # generated Config references undefined imported targets and sets
+    # mblas_FOUND = FALSE.
+    if(NEEDS_MULTIFLOATS)
+        foreach(_mf_helper la_constants_mf la_xisnan_mf)
+            if(TARGET ${_mf_helper})
+                list(APPEND _precision_deps ${_mf_helper})
+            endif()
+        endforeach()
+    endif()
+
     # Install precision-specific library FIRST. fortran_install_library
     # only writes Config.cmake on the first call per export, scanning
     # THAT target's INTERFACE_LINK_LIBRARIES for cross-package deps.
