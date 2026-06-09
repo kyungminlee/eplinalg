@@ -117,7 +117,6 @@ int main(void) {
         "${CMAKE_BINARY_DIR}/CMakeFiles/mpi_probe.dir"
         "${_mpi_probe_c}"
         CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${_mpi_inc}"
-        COMPILE_OUTPUT_VARIABLE _mpi_co
         RUN_OUTPUT_VARIABLE _mpi_id)
     if(_mpi_compile_rc AND "${_mpi_run_rc}" STREQUAL "0")
         string(STRIP "${_mpi_id}" _mpi_id)
