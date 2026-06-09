@@ -14,7 +14,7 @@ User- and contributor-facing reference for the migration tool itself.
 
 Catalogues describing what the migration pipeline emits.
 
-- [procedures.md](output/procedures.md) — auto-generated routine cross-reference (Netlib → kind10/kind16/multifloats), produced by `tools/gen_procedures.py`
+- [procedures.md](output/procedures.md) — auto-generated routine cross-reference (Netlib → kind10/kind16/multifloats), produced by `scripts/gen_procedures.py`
 - [convergence.md](output/convergence.md) — what "convergence" means and how it's measured
 - [kind16-divergences.md](output/kind16-divergences.md) — per-routine KIND=16 divergence analysis
 

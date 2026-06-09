@@ -25,6 +25,10 @@ _build/
 _lib/
 *.o
 *.mod
+# Committed kind10 stage snapshot was removed from tracking — it is
+# regenerable build output (`migrator stage staged --target kind10`) and
+# was drifting from the recipes. Treat like the other output dirs above.
+staged/
 external/multifloats/multifloats.f90
 
 # Repro binaries (built locally)
