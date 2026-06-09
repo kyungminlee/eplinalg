@@ -1034,7 +1034,7 @@ def cmd_build(args):
     configure_log = build_dir / 'configure.log'
     build_log = build_dir / 'build.log'
 
-    print(f'\nConfiguring...')
+    print('\nConfiguring...')
     with configure_log.open('w') as logf:
         r = subprocess.run(configure_args, stdout=logf,
                            stderr=subprocess.STDOUT, text=True)
@@ -1075,7 +1075,7 @@ def cmd_build(args):
     common_lib_name = f'lib{lib_name}_common.a'
     ref_lib_name = f'lib{lib_name}.a'
 
-    print(f'\nBuild succeeded:')
+    print('\nBuild succeeded:')
     for name in [common_lib_name, ref_lib_name, precision_lib_name]:
         matches = list(build_dir.rglob(name))
         if matches:
@@ -1535,7 +1535,7 @@ set(STAGED_LIBRARIES {staged_list})
     print(f'{"=" * 60}')
     print(f'  Target:  {target_mode.name} (prefix: {lib_prefix})')
     print(f'  Output:  {staging_dir}')
-    print(f'\nTo build:')
+    print('\nTo build:')
     print(f'  cmake -S {staging_dir} -B {staging_dir}/build -DCMAKE_BUILD_TYPE=Release')
     print(f'  cmake --build {staging_dir}/build -j')
 
@@ -1662,7 +1662,7 @@ def _stage_baseline(args, target_name: str):
         _stage_dst(dst_name, _staged_or_external(rel_src, recipe_name))
 
     print(f'  Output:  {staging_dir}')
-    print(f'\nTo build:')
+    print('\nTo build:')
     print(f'  cmake -S {staging_dir} -B {staging_dir}/build -DCMAKE_BUILD_TYPE=Release')
     print(f'  cmake --build {staging_dir}/build -j')
     print(f'  ctest --test-dir {staging_dir}/build')
