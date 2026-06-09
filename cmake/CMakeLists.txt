@@ -373,15 +373,21 @@ function(add_migrated_fortran_library lib_name)
 
     # The migrator can lengthen tokens (e.g. MPI_DOUBLE_COMPLEX →
     # MPI_C_LONG_DOUBLE_COMPLEX for kind10), pushing fixed-form ``.F``
-    # lines past column 72. Disable the fixed-form line-length limit
-    # so the post-migration source compiles regardless of growth.
+    # lines past column 72 and free-form ``.f90`` lines past column 132.
+    # Disable both line-length limits so the post-migration source
+    # compiles regardless of growth. (Free-form is latent today — the
+    # widest migrated ``.f90`` sits at ~113 cols — but the same token
+    # growth that overflows fixed form can overflow free form, so guard
+    # both rather than wait for it to bite.)
     if(FORTRAN_COMPILER_FAMILY STREQUAL "gfortran"
        OR FORTRAN_COMPILER_FAMILY STREQUAL "flang")
         target_compile_options(${_precision_target} PRIVATE
-            $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>)
+            $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>
+            $<$<COMPILE_LANGUAGE:Fortran>:-ffree-line-length-none>)
         if(TARGET ${_common_target})
             target_compile_options(${_common_target} PRIVATE
-                $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>)
+                $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>
+                $<$<COMPILE_LANGUAGE:Fortran>:-ffree-line-length-none>)
         endif()
     elseif(FORTRAN_COMPILER_FAMILY STREQUAL "intel")
         target_compile_options(${_precision_target} PRIVATE

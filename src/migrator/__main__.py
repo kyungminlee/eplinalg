@@ -839,6 +839,25 @@ if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} -std=legacy")
 endif()
 
+# Source-form line-length relief. The migrator lengthens tokens (e.g.
+# MPI_DOUBLE_COMPLEX -> MPI_C_LONG_DOUBLE_COMPLEX), which can push
+# fixed-form .F lines past column 72 and free-form .f90 lines past 132.
+# Disable both limits, keyed on compiler family. Mirrors
+# add_migrated_fortran_library in cmake/CMakeLists.txt (the canonical
+# `migrator stage` path) so single-library `migrator build` builds stay
+# consistent across gfortran / flang / Intel. CMAKE_Fortran_COMPILER_ID
+# is the built-in analog of that file's FORTRAN_COMPILER_FAMILY.
+if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU|Flang")
+    set(_fortran_line_length_flags
+        $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>
+        $<$<COMPILE_LANGUAGE:Fortran>:-ffree-line-length-none>)
+elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
+    set(_fortran_line_length_flags
+        $<$<COMPILE_LANGUAGE:Fortran>:-extend-source>)
+else()
+    set(_fortran_line_length_flags "")
+endif()
+
 # Enable Fortran preprocessing for .F90 files
 set(CMAKE_Fortran_PREPROCESS ON)
 
@@ -879,15 +898,10 @@ if(REF_SOURCES)
         Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
     target_include_directories({lib_name} PUBLIC
         $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
-    # The migrator can lengthen tokens (e.g. MPI_DOUBLE_COMPLEX →
-    # MPI_C_LONG_DOUBLE_COMPLEX), pushing fixed-form .F lines past
-    # column 72. Disable the line-length limit on the standard
-    # archive too — same flag as the precision archive — so the
+    # Disable the line-length limit on the standard archive too — same
+    # family-aware flags as the precision archive (set above) — so the
     # build stays consistent across the pair.
-    if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
-        target_compile_options({lib_name} PRIVATE
-            $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>)
-    endif()
+    target_compile_options({lib_name} PRIVATE ${{_fortran_line_length_flags}})
 endif()
 
 # --- Common (type-independent) library ---
@@ -906,6 +920,7 @@ if(COMMON_SOURCES)
         Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
     target_include_directories({common_lib} PUBLIC
         $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
+    target_compile_options({common_lib} PRIVATE ${{_fortran_line_length_flags}})
 endif()
 
 add_library({precision_lib} STATIC ${{PRECISION_SOURCES}})
@@ -914,10 +929,7 @@ set_target_properties({precision_lib} PROPERTIES
 target_include_directories({precision_lib} PUBLIC
     $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>
     $<BUILD_INTERFACE:${{CMAKE_CURRENT_SOURCE_DIR}}>)
-if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
-    target_compile_options({precision_lib} PRIVATE
-        $<$<COMPILE_LANGUAGE:Fortran>:-ffixed-line-length-none>)
-endif()
+target_compile_options({precision_lib} PRIVATE ${{_fortran_line_length_flags}})
 if(TARGET {common_lib})
     target_link_libraries({precision_lib} PUBLIC {common_lib})
 endif()
