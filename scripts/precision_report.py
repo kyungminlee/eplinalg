@@ -19,7 +19,6 @@ Reads every *.json in <reports-dir>; writes Markdown to stdout (or
 
 import argparse
 import json
-import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Iterable

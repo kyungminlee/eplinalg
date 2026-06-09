@@ -1332,12 +1332,6 @@ _REAL_DECL_RE = re.compile(
     r'|TYPE\s*\(\s*real64x2\s*\))',
     re.IGNORECASE,
 )
-_INTEGER_DECL_RE = re.compile(
-    r'^\s+INTEGER(?!\s*\()',
-    re.IGNORECASE,
-)
-
-
 def _scan_typed_var_names(source: str, decl_re: re.Pattern) -> set[str]:
     """Return the set of (uppercase) variable names declared by lines
     matching ``decl_re``. Multi-line decls are joined first.
@@ -1390,10 +1384,6 @@ def _scan_complex_var_names(source: str) -> set[str]:
 
 def _scan_real_var_names(source: str) -> set[str]:
     return _scan_typed_var_names(source, _REAL_DECL_RE)
-
-
-def _scan_integer_var_names(source: str) -> set[str]:
-    return _scan_typed_var_names(source, _INTEGER_DECL_RE)
 
 
 # Note: an experimental ``_force_int_assignment`` pass was prototyped
@@ -2412,7 +2402,7 @@ def specialize_use_module(source: str, target_mode: TargetMode, fixed_form: bool
     # the header). This is approximate but works for BLAS/LAPACK where
     # CONTAINS is rare.
     out = list(lines)
-    for h_idx, h in enumerate(headers):
+    for h in headers:
         # Determine the end of this procedure.
         next_end = next((e for e in ends if e >= h), len(lines) - 1)
         proc_lines = lines[h:next_end + 1]
@@ -2589,7 +2579,6 @@ def insert_use_multifloats(source: str, target_mode: TargetMode,
     lines = source.splitlines(keepends=True)
     result = []
     proc_header_re = _PROC_HEADER_RE
-    end_proc_re = _END_PROC_RE
 
     # Normalise extra_lines: support both scoped (int, str) tuples and
     # legacy flat strings (all go to scope -1 which matches every scope

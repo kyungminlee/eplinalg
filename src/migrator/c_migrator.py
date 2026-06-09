@@ -591,8 +591,6 @@ def _apply_c_type_subs(text: str, template_vars: dict[str, str],
         # Local declaration lines for cost-estimate locals. Match the
         # leading 'double' keyword on a line that mentions one of the
         # known cost-estimate names somewhere on the same line.
-        def _protect_decl(m):
-            return decl_marker + m.group(2)
         text = re.sub(
             r'(?m)^(\s*)double(\s+[^;\n]*\b(?:'
             + _PBLAS_COST_LOCAL

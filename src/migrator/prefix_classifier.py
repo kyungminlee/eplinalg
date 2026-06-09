@@ -356,8 +356,7 @@ def classify_symbols(symbols: set[str]) -> SymbolClassification:
 
 # Convenience wrappers
 
-def build_rename_map(symbols: set[str], target_mode,
-                     style: str = 'direct') -> dict[str, str]:
+def build_rename_map(symbols: set[str], target_mode) -> dict[str, str]:
     """Build old_name → new_name mapping."""
     classification = classify_symbols(symbols)
     return classification.build_rename_map(target_mode)

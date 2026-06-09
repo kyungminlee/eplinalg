@@ -913,7 +913,6 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
     lines (without context) from the unified diff of the two
     canonicalized texts.
     """
-    import difflib
     config = prepare_recipe(recipe_path, project_root)
 
     symbols = _collect_all_symbols(config, project_root)
@@ -937,7 +936,7 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
 
     # Migrate every member of every multi-member group in parallel.
     pairs: list[tuple[Path, Path]] = []
-    for tn, members in by_target.items():
+    for members in by_target.values():
         if len(members) < 2:
             continue
         members.sort(key=lambda p: (

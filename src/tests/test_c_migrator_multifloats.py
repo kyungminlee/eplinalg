@@ -12,7 +12,6 @@ These cover the c_migrator changes that unblock multifloats:
 """
 
 import textwrap
-from pathlib import Path
 
 import pytest
 
