@@ -70,6 +70,16 @@ def specialize_use_module(source: str, target_mode: TargetMode, fixed_form: bool
         next_end = next((e for e in ends if e >= h), len(lines) - 1)
         proc_lines = lines[h:next_end + 1]
         only_clause = _build_use_only_clause(proc_lines, target_mode)
+        if only_clause is None:
+            # Scope references no module public name — drop the injected
+            # bare ``USE <module>`` line(s) entirely. Leaving them would
+            # import the operator/assignment generics into a scope that
+            # can never use them, gratuitously diverging this file's
+            # object from the (identical) kind10/kind16 builds.
+            for k in range(h, next_end + 1):
+                if use_mod_re.match(out[k]):
+                    out[k] = ''
+            continue
         if not only_clause:
             continue
         # Replace the bare ``USE <module>`` line(s) inside this
@@ -147,14 +157,18 @@ def _wrap_use_clause(indent: str, body: str, fixed_form: bool) -> str:
     return ''.join(out_lines)
 
 
-def _build_use_only_clause(proc_lines: list[str], target_mode: TargetMode) -> str:
+def _build_use_only_clause(proc_lines: list[str],
+                           target_mode: TargetMode) -> str | None:
     """Compute the ``, only:`` clause for a module-based USE statement.
 
-    Returns the empty string if the target does not use a module. Otherwise
-    returns ``", only: name1, name2, ..., operator(+), ..."`` listing
-    the module public names referenced by ``proc_lines`` (minus any name
-    that the procedure declares as a local variable, so that the local
-    declaration is not shadowed by the use-associated generic interface).
+    Returns the empty string if the target does not use a module. Returns
+    ``None`` when the scope references no module public name at all — the
+    injected bare ``USE`` should then be removed entirely (its operator
+    generics are dead weight). Otherwise returns
+    ``", only: name1, name2, ..., operator(+), ..."`` listing the module
+    public names referenced by ``proc_lines`` (minus any name that the
+    procedure declares as a local variable, so that the local declaration
+    is not shadowed by the use-associated generic interface).
     """
     if target_mode.intrinsic_mode != 'wrap_constructor':
         return ''
@@ -220,6 +234,18 @@ def _build_use_only_clause(proc_lines: list[str], target_mode: TargetMode) -> st
         (referenced & target_mode.module_public_names) - declared,
         key=_sort_key,
     )
+    # A scope that references no module public name (no target type, no
+    # module constant, no wrapped generic like ``dble``/``real``) cannot
+    # invoke any operator/assignment overload either — an overloaded
+    # ``+``/``=`` only fires on a target-typed operand, and every such
+    # operand is a local/dummy whose declaration names the target type,
+    # which would have put that type into ``selected``. So the operator
+    # generics are dead weight here. Signal removal of the bare USE line
+    # with ``None`` (distinct from ``''``, "leave as-is"). If the scope
+    # does need the overloads via some path the scanner missed, gfortran
+    # rejects the build — a hard gate, never a silent miscompile.
+    if not selected:
+        return None
     parts = list(selected) + list(target_mode.module_operator_generics)
     return ', only: ' + ', '.join(parts) if parts else ''
 
