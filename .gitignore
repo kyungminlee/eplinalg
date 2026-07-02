@@ -18,6 +18,10 @@ external/openblas/
 # Bench JSON artifacts (run output, not source)
 /bench_*.json
 
+# Test-report JSON artifacts (per-target harness output, not source)
+/*.kind*.json
+/*.multifloats.json
+
 # Work directories (migration output)
 work/
 output/
