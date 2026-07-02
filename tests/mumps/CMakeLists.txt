@@ -2,7 +2,8 @@
 #
 # Mirrors tests/lapack/CMakeLists.txt with two extras:
 #   1. C-side bridge — upstream mumps_c.c is compiled twice (Q + X arith)
-#      against tests/mumps/c/include/'s quad-precision type shadow, plus
+#      against target_${TARGET_NAME}/c/include/'s mumps_c_types_extended.h
+#      (extends upstream mumps_c_types.h to the target widths), plus
 #      type-agnostic upstream helpers (mumps_common.c, mumps_addr.c, IO
 #      / save / thread / metis / pord / scotch). See tests/mumps/TODO.md
 #      B2 for the override design.
@@ -49,12 +50,14 @@ if(NOT IS_DIRECTORY ${_MUMPS_C_SRC} OR NOT IS_DIRECTORY ${_MUMPS_C_INC})
     return()
 endif()
 
-# Per-target bridge include directory carries the precision-aware
-# mumps_c_types.h shadow plus the ${LIB_PREFIX}mumps_c.h /
-# ${LIB_PREFIX_COMPLEX}mumps_c.h wrappers around upstream's
-# dmumps_c.h / zmumps_c.h. ${PFX} / ${PFX_C} are the upper-case
-# arithmetic prefixes used in the bridge's macro renames. The
-# target-agnostic mumps_int_def.h sits in the shared c/include/.
+# Per-target bridge include directory carries two independent artifacts:
+# mumps_c_types_extended.h — force-included ONLY into the mumps_c.c bridge
+# objects to override upstream's ``double`` widths — and the standalone
+# consumer headers ${LIB_PREFIX}mumps_c.h / ${LIB_PREFIX_COMPLEX}mumps_c.h,
+# which carry their own widened widths inline and do NOT include the
+# extended header. ${PFX} / ${PFX_C} are the upper-case arithmetic
+# prefixes used in the bridge's macro renames. The target-agnostic
+# mumps_int_def.h sits in the shared c/include/.
 set(_BRIDGE_INC_TARGET ${CMAKE_CURRENT_SOURCE_DIR}/target_${TARGET_NAME}/c/include)
 set(_BRIDGE_INC_SHARED ${CMAKE_CURRENT_SOURCE_DIR}/c/include)
 if(NOT IS_DIRECTORY ${_BRIDGE_INC_TARGET})
@@ -93,12 +96,12 @@ target_compile_definitions(${LIB_PREFIX}mumps_c_bridge PRIVATE
     dmumps_c=${LIB_PREFIX}mumps_c
     DMUMPS_STRUC_C=${PFX}MUMPS_STRUC_C
 )
-# Force-include the per-target mumps_c_types.h shadow BEFORE
-# mumps_c.c gets a chance to pull in upstream's via mumps_common.h's
-# `#include "mumps_c_types.h"` (which would otherwise resolve to
-# upstream's via same-directory search).
+# Force-include the per-target mumps_c_types_extended.h BEFORE
+# mumps_c.c pulls in mumps_c_types.h via mumps_common.h — the extended
+# header includes upstream's (guarded) then overrides its ``double``
+# widths, so the whole translation unit sees the target types.
 target_compile_options(${LIB_PREFIX}mumps_c_bridge PRIVATE
-    -include mumps_c_types.h)
+    -include mumps_c_types_extended.h)
 
 add_library(${LIB_PREFIX_COMPLEX}mumps_c_bridge OBJECT ${_MUMPS_C_SRC}/mumps_c.c)
 target_include_directories(${LIB_PREFIX_COMPLEX}mumps_c_bridge PRIVATE
@@ -112,19 +115,20 @@ target_compile_definitions(${LIB_PREFIX_COMPLEX}mumps_c_bridge PRIVATE
     ZMUMPS_STRUC_C=${PFX_C}MUMPS_STRUC_C
 )
 target_compile_options(${LIB_PREFIX_COMPLEX}mumps_c_bridge PRIVATE
-    -include mumps_c_types.h)
+    -include mumps_c_types_extended.h)
 
 # mumps_addr.c stays at upstream double precision because the migrated
 # Fortran callers (qtools.F's QMUMPS_UPDATE_PROGRESS, xtools.F's
 # XMUMPS_UPDATE_PROGRESS) pass DOUBLE PRECISION OPELI — the keep-kind
 # manifest preserved DP for those callers. Compiling mumps_addr.c with
-# the precision-shadow types would make MUMPS_SETDVAL_ADDR_C write the
+# the extended types would make MUMPS_SETDVAL_ADDR_C write the
 # wider value into the 8-byte caller buffer (silent corruption →
 # SIGSEGV inside ${LIB_PREFIX}mumps_update_progress_).
 add_library(mumps_c_addr_obj OBJECT ${_MUMPS_C_SRC}/mumps_addr.c)
 # Include path order matters: list _MUMPS_C_INC FIRST so upstream's
 # `double`-typed mumps_c_types.h gets resolved by mumps_addr.c's
-# `#include "mumps_c_types.h"` chain. _BRIDGE_INC_SHARED is still on
+# `#include "mumps_c_types.h"` chain (the target dir with the extended
+# header is not on this object's path at all). _BRIDGE_INC_SHARED is still on
 # the search path so upstream's `#include "mumps_int_def.h"` falls
 # through to our generated stand-in (upstream ships only a .in
 # template).
@@ -168,7 +172,7 @@ add_library(mumps_c_bridge STATIC
     ${_MUMPS_C_SRC}/mumps_scotch_int.c
 )
 target_include_directories(mumps_c_bridge PUBLIC
-    $<BUILD_INTERFACE:${_BRIDGE_INC_TARGET}>  # FIRST — per-target type shadow
+    $<BUILD_INTERFACE:${_BRIDGE_INC_TARGET}>  # FIRST — per-target extended types
     $<BUILD_INTERFACE:${_BRIDGE_INC_SHARED}>  # then mumps_int_def.h fallback
     $<BUILD_INTERFACE:${_MUMPS_C_INC}>        # then upstream include/
     $<BUILD_INTERFACE:${_MUMPS_C_SRC}>        # then upstream src/
@@ -189,10 +193,11 @@ target_compile_definitions(mumps_c_bridge PRIVATE Add_
 # so its compile flags are frozen). The non-_addr files are either
 # integer-only (mumps_common.c, IO/save/thread/etc. helpers — the
 # override is harmless) or they're the per-arithmetic bridge sources
-# that NEED the precision-shadow types.
+# that NEED the extended types.
 target_compile_options(mumps_c_bridge PRIVATE
-    -include mumps_c_types.h)
+    -include mumps_c_types_extended.h)
 target_link_libraries(mumps_c_bridge PRIVATE MPI::MPI_C)
+
 
 # ── Common helper modules ────────────────────────────────────────────
 add_library(mumps_test_common STATIC
@@ -320,10 +325,16 @@ endif()
 # layer differs. Single-rank numerics should be bit-equivalent across
 # the two; the ``_seq`` set exercises the libmpiseq path that
 # downstream consumers use when they want a no-MPI executable.
+#
+# The plain (real-MPI) variant is keyed by the sentinel ``plain`` rather
+# than an empty string: a bare "" is a *zero-element* list in CMake, so
+# ``foreach(v IN LISTS _mumps_test_variants)`` over "" would iterate zero
+# times and silently register NO mumps tests on non-Intel-MPI hosts
+# (where ``mpiseq`` is absent). The consumer loops translate ``plain`` ->
+# "" for the target-name suffix.
+set(_mumps_test_variants "plain")
 if(TARGET mpiseq)
-    set(_mumps_test_variants ""  "_seq")
-else()
-    set(_mumps_test_variants "")
+    list(APPEND _mumps_test_variants "_seq")
 endif()
 
 function(_mumps_apply_link_variant tgt variant want_c)
@@ -485,7 +496,12 @@ endfunction()
 
 function(add_mumps_fortran_test test_src)
     get_filename_component(name ${test_src} NAME_WE)
-    foreach(variant IN LISTS _mumps_test_variants)
+    foreach(_vkey IN LISTS _mumps_test_variants)
+        if(_vkey STREQUAL "plain")
+            set(variant "")
+        else()
+            set(variant "${_vkey}")
+        endif()
         set(tgt ${name}${variant})
         add_executable(${tgt} ${test_src})
         _mumps_attach_link_group(${tgt} "${variant}" FALSE)
@@ -504,7 +520,12 @@ endfunction()
 function(add_mumps_c_test test_src)
     get_filename_component(name ${test_src} NAME_WE)
     string(TOUPPER "${TARGET_NAME}" _ttn_upper)
-    foreach(variant IN LISTS _mumps_test_variants)
+    foreach(_vkey IN LISTS _mumps_test_variants)
+        if(_vkey STREQUAL "plain")
+            set(variant "")
+        else()
+            set(variant "${_vkey}")
+        endif()
         set(tgt ${name}${variant})
         add_executable(${tgt} ${test_src})
         # Same Fortran-linker / no-LTO setup as the Fortran tests — the
@@ -562,7 +583,193 @@ endforeach()
 
 # C-side tests now portable across all targets — the multifloats
 # branch in test_real_compat.h widens at the bridge boundary.
+#
+# test_mumps_c_coexist.c is NOT an add_mumps_c_test: it is a link-only
+# probe against the SHIPPED bridge archives (not the test-tree
+# mumps_c_bridge), wired separately just below. Exclude it from the glob.
 file(GLOB _ctests CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/c/test_*.c)
+list(FILTER _ctests EXCLUDE REGEX "/test_mumps_c_coexist\\.c$")
 foreach(_t ${_ctests})
     add_mumps_c_test(${_t})
 endforeach()
+
+# --- C bridge coexistence link checks --------------------------------
+# A release emits FOUR ?mumps_c entry points: the migrated real/complex
+# pair bundled in ${LIB_PREFIX}mumps_c (e/y, q/x or m/w — always the
+# upstream d/z lineages) and the genuine double dmumps_c / zmumps_c.
+# All share the arithmetic-independent libmumps_c_runtime.
+#
+# test_mumps_c_coexist.c names all four and is force-linked (whole
+# archive) against each COHERENT family; each MUST link with no
+# "multiple definition" of a shared runtime symbol. The two families
+# are deliberately never linked together: the migrated real bridge is
+# compiled at MUMPS_ARITH_d and so emits the same dmumps_* Fortran
+# callbacks as the genuine d bridge (likewise z), and their Fortran
+# commons collide — one family per program, exactly as upstream ships
+# one libmumps_common per program. Unresolved Fortran/MPI/cross-family
+# symbols are ignored: this is a pure duplicate-symbol link check, not a
+# run. The tests drive the build of an EXCLUDE_FROM_ALL target, so a
+# duplicate-symbol regression fails only this test, loudly.
+set(_coexist_src ${CMAKE_CURRENT_SOURCE_DIR}/c/test_mumps_c_coexist.c)
+set(_coexist_defs
+    TARGET_REAL_MUMPS_C=${LIB_PREFIX}mumps_c
+    TARGET_COMPLEX_MUMPS_C=${LIB_PREFIX_COMPLEX}mumps_c)
+
+# genuine double pair — the capability the shared runtime unlocks
+# (standard upstream "use dmumps_c and zmumps_c in one program").
+if(TARGET dmumps_c AND TARGET zmumps_c AND TARGET mumps_c_runtime)
+    add_executable(test_mumps_c_coexist_genuine EXCLUDE_FROM_ALL ${_coexist_src})
+    target_compile_definitions(test_mumps_c_coexist_genuine PRIVATE ${_coexist_defs})
+    target_link_options(test_mumps_c_coexist_genuine PRIVATE
+        -Wl,--whole-archive
+        $<TARGET_FILE:dmumps_c> $<TARGET_FILE:zmumps_c> $<TARGET_FILE:mumps_c_runtime>
+        -Wl,--no-whole-archive
+        -Wl,--unresolved-symbols=ignore-all
+        -fno-lto)
+    add_dependencies(test_mumps_c_coexist_genuine dmumps_c zmumps_c mumps_c_runtime)
+    add_test(NAME mumps_c_coexist_genuine
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+                --target test_mumps_c_coexist_genuine --config $<CONFIG>)
+endif()
+
+# migrated pair — already shipped; guards the ${LIB_PREFIX}mumps_c bridge
+# (both e/y-lineage objects) against a future runtime-duplication regression.
+if(TARGET ${LIB_PREFIX}mumps_c AND TARGET mumps_c_runtime)
+    add_executable(test_mumps_c_coexist_migrated EXCLUDE_FROM_ALL ${_coexist_src})
+    target_compile_definitions(test_mumps_c_coexist_migrated PRIVATE ${_coexist_defs})
+    target_link_options(test_mumps_c_coexist_migrated PRIVATE
+        -Wl,--whole-archive
+        $<TARGET_FILE:${LIB_PREFIX}mumps_c> $<TARGET_FILE:mumps_c_runtime>
+        -Wl,--no-whole-archive
+        -Wl,--unresolved-symbols=ignore-all
+        -fno-lto)
+    add_dependencies(test_mumps_c_coexist_migrated ${LIB_PREFIX}mumps_c mumps_c_runtime)
+    add_test(NAME mumps_c_coexist_migrated
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+                --target test_mumps_c_coexist_migrated --config $<CONFIG>)
+endif()
+
+# --- Genuine double-precision solve test -----------------------------
+# The d/z-named tests under c/ are remapped (LIB_PREFIX / LIB_PREFIX_COMPLEX)
+# onto the MIGRATED bridge (q/x, e/y or m/w) and so NEVER exercise the
+# genuine double dmumps_c / zmumps_c — coexist_genuine above is only a
+# link probe (--unresolved-symbols=ignore-all, never run). This test
+# fills that gap: one executable runs a real solve through genuine
+# dmumps_c and a complex solve through genuine zmumps_c, each to
+# plain-double accuracy (~1e-16), host-guarded so it is correct under
+# mpiexec -n>1 as well as MPISEQ. Kept under c/genuine/ so the
+# c/test_*.c glob (compiled against the migrated bridge) skips it.
+#
+# Genuine and migrated collide on the unprefixed Fortran commons, so the
+# genuine link group is a DISJOINT archive set from the migrated one:
+# dmumps_c/zmumps_c + dmumps/zmumps + dzmumps_common + the MPI-matched
+# in-tree parallel stack (cmake/CMakeLists.txt's _genuine_parallel_stack:
+# bundled ScaLAPACK/PBLAS/BLACS/LAPACK/BLAS built against the chosen MPI).
+# The circular static refs among those archives are resolved by the same
+# LINK_GROUP RESCAN the migrated tests use. The _seq variant swaps the
+# whole parallel stack for libmpiseq, which natively supplies the
+# DOUBLE / PD* BLACS + ScaLAPACK stubs the genuine solvers call.
+set(_genuine_solve_src ${CMAKE_CURRENT_SOURCE_DIR}/c/genuine/test_genuine_dz_solve.c)
+if(TARGET dmumps_c AND TARGET zmumps_c AND TARGET dmumps AND TARGET zmumps
+        AND TARGET mumps_c_runtime AND EXISTS ${_genuine_solve_src})
+    # "" variant: genuine bridges + solvers + common + full parallel stack.
+    set(_genuine_group
+        dmumps_c zmumps_c mumps_c_runtime
+        dmumps zmumps dzmumps_common)
+    foreach(_p scalapack scalapack_common pblas pblas_common pbblas
+               ptzblas ptzblas_common blacs blacs_common
+               lapack lapack_common blas)
+        if(TARGET ${_p})
+            list(APPEND _genuine_group ${_p})
+        endif()
+    endforeach()
+    # _seq variant: libmpiseq replaces ScaLAPACK/PBLAS/BLACS entirely;
+    # keep the std double LAPACK + BLAS the genuine solvers call.
+    set(_genuine_group_seq
+        dmumps_c zmumps_c mumps_c_runtime
+        dmumps zmumps dzmumps_common)
+    foreach(_p lapack blas)
+        if(TARGET ${_p})
+            list(APPEND _genuine_group_seq ${_p})
+        endif()
+    endforeach()
+
+    foreach(_vkey IN LISTS _mumps_test_variants)
+        if(_vkey STREQUAL "plain")
+            set(variant "")
+        else()
+            set(variant "${_vkey}")
+        endif()
+        set(tgt test_genuine_dz_solve${variant})
+        add_executable(${tgt} ${_genuine_solve_src})
+        # Fortran linker + no-LTO: the genuine bridges pull gfortran-LTO
+        # bitcode from libdmumps/libzmumps, exactly like the migrated
+        # C tests (see add_mumps_c_test).
+        set_target_properties(${tgt} PROPERTIES LINKER_LANGUAGE Fortran)
+        target_link_options(${tgt} PRIVATE -fno-lto)
+        # Upstream dmumps_c.h / zmumps_c.h / mumps_c_types.h.
+        target_include_directories(${tgt} PRIVATE ${_MUMPS_C_INC})
+        if(variant STREQUAL "_seq")
+            add_dependencies(${tgt} ${_genuine_group_seq} mpiseq)
+            target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
+            foreach(_arc IN LISTS _genuine_group_seq)
+                target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
+            endforeach()
+            target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:mpiseq>)
+            target_link_libraries(${tgt} PRIVATE "-Wl,--end-group")
+            foreach(_arc IN LISTS _genuine_group_seq mpiseq)
+                target_include_directories(${tgt} PRIVATE
+                    $<TARGET_PROPERTY:${_arc},INTERFACE_INCLUDE_DIRECTORIES>)
+            endforeach()
+        else()
+            target_link_libraries(${tgt} PRIVATE
+                "$<LINK_GROUP:RESCAN,${_genuine_group}>")
+        endif()
+        _mumps_apply_link_variant(${tgt} "${variant}" TRUE)
+        _mumps_register_test_variant(${tgt} "${variant}")
+    endforeach()
+
+    # ── genuine Fortran-API solve test ───────────────────────────────
+    # Companion to the C-bridge test above: calls the genuine DMUMPS /
+    # ZMUMPS Fortran entry points directly on the DMUMPS_STRUC /
+    # ZMUMPS_STRUC derived types (upstream's canonical usage). The C
+    # bridge only reaches libdmumps/libzmumps through the dmumps_f77_
+    # shim, so the Fortran calling convention and derived-type layout are
+    # covered ONLY here. Reuses the same disjoint genuine link groups
+    # (the solver needs mumps_c_runtime for its C ordering/IO symbols);
+    # want_c is FALSE — a pure Fortran executable, no C bridge object.
+    set(_genuine_solve_f_src
+        ${CMAKE_CURRENT_SOURCE_DIR}/fortran/genuine/test_genuine_dz_solve_f.F90)
+    if(EXISTS ${_genuine_solve_f_src})
+        foreach(_vkey IN LISTS _mumps_test_variants)
+            if(_vkey STREQUAL "plain")
+                set(variant "")
+            else()
+                set(variant "${_vkey}")
+            endif()
+            set(tgt test_genuine_dz_solve_f${variant})
+            add_executable(${tgt} ${_genuine_solve_f_src})
+            target_link_options(${tgt} PRIVATE -fno-lto)
+            # dmumps_struc.h / zmumps_struc.h live in the upstream include.
+            target_include_directories(${tgt} PRIVATE ${_MUMPS_C_INC})
+            if(variant STREQUAL "_seq")
+                add_dependencies(${tgt} ${_genuine_group_seq} mpiseq)
+                target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
+                foreach(_arc IN LISTS _genuine_group_seq)
+                    target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
+                endforeach()
+                target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:mpiseq>)
+                target_link_libraries(${tgt} PRIVATE "-Wl,--end-group")
+                foreach(_arc IN LISTS _genuine_group_seq mpiseq)
+                    target_include_directories(${tgt} PRIVATE
+                        $<TARGET_PROPERTY:${_arc},INTERFACE_INCLUDE_DIRECTORIES>)
+                endforeach()
+            else()
+                target_link_libraries(${tgt} PRIVATE
+                    "$<LINK_GROUP:RESCAN,${_genuine_group}>")
+            endif()
+            _mumps_apply_link_variant(${tgt} "${variant}" FALSE)
+            _mumps_register_test_variant(${tgt} "${variant}")
+        endforeach()
+    endif()
+endif()

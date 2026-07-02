@@ -46,7 +46,8 @@ program test_zmumps_c_parity
     end interface
 
     integer, parameter :: n = 16
-    integer            :: ierr, nz, c_code
+    integer            :: ierr, nz, c_code, myid
+    logical            :: is_host
     complex(ep), allocatable :: A(:,:), x_true(:), b(:)
     integer,     allocatable :: irn(:), jcn(:)
     complex(ep), allocatable :: A_trip(:)
@@ -57,7 +58,13 @@ program test_zmumps_c_parity
     real(ep)                 :: err, tol
 
     call MPI_INIT(ierr)
-    call report_init('test_zmumps_c_parity', target_name)
+    ! Centralized-input MUMPS: matrix + RHS on the host only, centralized
+    ! solution returned on the host only. Both solve paths stay collective;
+    ! matrix population, solution readback and parity checks are host-guarded.
+    ! See test_dmumps_c_parity.fypp for the full rationale.
+    call MPI_COMM_RANK(MPI_COMM_WORLD, myid, ierr)
+    is_host = (myid == 0)
+    if (is_host) call report_init('test_zmumps_c_parity', target_name)
 
     call gen_dense_problem_z(n, A, x_true, b, seed = 32001)
     call dense_to_triplet_z (A, irn, jcn, A_trip, nz)
@@ -67,21 +74,25 @@ program test_zmumps_c_parity
     id%COMM = MPI_COMM_WORLD;  id%PAR = 1;  id%SYM = 0;  id%JOB = -1
     call target_xmumps(id)
     id%ICNTL(1) = -1; id%ICNTL(2) = -1; id%ICNTL(3) = -1; id%ICNTL(4) = 0
-    id%N   = n
-    id%NNZ = int(nz, kind=8)
-    allocate(id%IRN(nz));  id%IRN = irn
-    allocate(id%JCN(nz));  id%JCN = jcn
-    allocate(id%A(nz));    id%A   = q2t_c(A_trip)
-    allocate(id%RHS(n));   id%RHS = q2t_c(b)
+    if (is_host) then
+        id%N   = n
+        id%NNZ = int(nz, kind=8)
+        allocate(id%IRN(nz));  id%IRN = irn
+        allocate(id%JCN(nz));  id%JCN = jcn
+        allocate(id%A(nz));    id%A   = q2t_c(A_trip)
+        allocate(id%RHS(n));   id%RHS = q2t_c(b)
+    end if
     id%JOB = 6
     call target_xmumps(id)
     if (id%INFOG(1) < 0) then
         write(*, '(a,i0)') 'Fortran path failed, INFOG(1)=', id%INFOG(1)
         error stop 1
     end if
-    allocate(x_fortran(n));  x_fortran = t2q_c(id%RHS)
-    deallocate(id%IRN, id%JCN, id%A, id%RHS)
-    nullify(id%IRN, id%JCN, id%A, id%RHS)
+    if (is_host) then
+        allocate(x_fortran(n));  x_fortran = t2q_c(id%RHS)
+        deallocate(id%IRN, id%JCN, id%A, id%RHS)
+        nullify(id%IRN, id%JCN, id%A, id%RHS)
+    end if
     id%JOB = -2;  call target_xmumps(id)
 
     ! Path B — C bridge: c_complex_mumps_solve → migrated xmumps_c → xmumps_f77_
@@ -142,16 +153,20 @@ program test_zmumps_c_parity
         error stop 1
     end if
 
-    err = max_rel_err_vec_z(x_fortran, x_c)
-    call report_case('fortran-vs-c', err, 0.0_ep)
+    if (is_host) then
+        err = max_rel_err_vec_z(x_fortran, x_c)
+        call report_case('fortran-vs-c', err, 0.0_ep)
 
-    err = max_rel_err_vec_z(x_fortran, x_true)
-    call report_case('fortran-vs-truth', err, tol)
-    err = max_rel_err_vec_z(x_c, x_true)
-    call report_case('c-vs-truth', err, tol)
+        err = max_rel_err_vec_z(x_fortran, x_true)
+        call report_case('fortran-vs-truth', err, tol)
+        err = max_rel_err_vec_z(x_c, x_true)
+        call report_case('c-vs-truth', err, tol)
 
-    deallocate(A, x_true, b, irn, jcn, A_trip, x_fortran, x_c)
-    call report_finalize()
+        deallocate(x_fortran)
+        call report_finalize()
+    end if
+
+    deallocate(A, x_true, b, irn, jcn, A_trip, x_c)
     call MPI_FINALIZE(ierr)
-    call report_check_status()
+    if (is_host) call report_check_status()
 end program test_zmumps_c_parity

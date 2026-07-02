@@ -29,6 +29,16 @@ module target_mumps
     ! The wrapper below calls it lazily so test drivers don't need a
     ! per-target init step.
     use multifloats_mpi_f, only: multifloats_mpi_init
+#:elif target == 'kind16'
+    ! On kind16, MUMPS reduces through custom MPI ops (MPI_QQ_SUM /
+    ! MPI_XX_* on the standard MPI_REAL16 / MPI_COMPLEX32 datatypes)
+    ! because Intel MPI's builtin MPI_SUM/MAX/MIN have no 16-byte-real
+    ! kernel. Those ops are created by ``quad_mpi_init`` and their
+    ! Fortran handles are 0 until it runs; BLACS's blacs_pinfo hook is
+    ! too late for this test path (MUMPS issues an Allreduce before any
+    ! BLACS call), so the wrapper below calls it lazily — mirroring the
+    ! multifloats bridge.
+    use quad_mpi_f, only: quad_mpi_init
 #:endif
     implicit none
 
@@ -64,6 +74,8 @@ contains
         type(dmumps_struc), intent(inout) :: id
 #:if target == 'multifloats'
         call multifloats_mpi_init()  ! idempotent; registers MPI handles on first call
+#:elif target == 'kind16'
+        call quad_mpi_init()         ! idempotent; registers custom quad reduce ops
 #:endif
         call ${prefix_real}$(id)
     end subroutine target_qmumps
@@ -72,6 +84,8 @@ contains
         type(zmumps_struc), intent(inout) :: id
 #:if target == 'multifloats'
         call multifloats_mpi_init()
+#:elif target == 'kind16'
+        call quad_mpi_init()
 #:endif
         call ${prefix_complex}$(id)
     end subroutine target_xmumps

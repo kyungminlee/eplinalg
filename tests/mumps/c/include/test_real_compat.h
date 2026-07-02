@@ -37,15 +37,20 @@
 #include <stdio.h>
 
 /* Pull in the per-target real/complex types so test_complex can be
- * typedef'd to mumps_double_complex on kind16/kind10 and
- * mumps_float64x2 / mumps_complex64x2 are visible on multifloats. */
+ * typedef'd to the target's own extended complex type (mumps_float128_complex
+ * on kind16, mumps_long_double_complex on kind10 — both defined by the
+ * migrated bridge header this test #includes), and mumps_float64x2 /
+ * mumps_complex64x2 are visible on multifloats. Using the bridge's exact
+ * complex type (rather than the double-precision mumps_double_complex) keeps
+ * the complex C test at the target's true precision AND lets id.a / id.rhs
+ * take test_complex arrays directly with no type mismatch. */
 #include TARGET_REAL_HEADER
 #include TARGET_COMPLEX_HEADER
 
 #if defined(TEST_TARGET_KIND16)
 #  include <quadmath.h>
    typedef __float128 test_real;
-   typedef mumps_double_complex test_complex;
+   typedef mumps_float128_complex test_complex;
 #  define TR_LIT(x)      x##q
 #  define TR_FABS(x)     fabsq(x)
 #  define TR_SQRT(x)     sqrtq(x)
@@ -58,7 +63,7 @@
 #  include <float.h>
 #  include <math.h>
    typedef long double test_real;
-   typedef mumps_double_complex test_complex;
+   typedef mumps_long_double_complex test_complex;
 #  define TR_LIT(x)      x##L
 #  define TR_FABS(x)     fabsl(x)
 #  define TR_SQRT(x)     sqrtl(x)
@@ -109,6 +114,28 @@
    }
 #else
 #  error "test_real_compat.h: define TEST_TARGET_KIND16, TEST_TARGET_KIND10, or TEST_TARGET_MULTIFLOATS"
+#endif
+
+/* Per-target one-time MPI setup, called by each C test immediately after
+ * MPI_Init and before the first MUMPS_C. This mirrors the Fortran
+ * target_qmumps wrapper's lazy init:
+ *   kind16      — registers the custom quad reduce ops (the MPI_QQ and
+ *                 MPI_XX families); Intel MPI has no 16-byte-real reduce
+ *                 kernel, so MUMPS's
+ *                 first Allreduce SIGSEGVs / reports Invalid MPI_Op at
+ *                 np >= 1 without them.
+ *   multifloats — registers the custom datatypes + reduce ops.
+ *   kind10      — none needed (long-double reductions use builtin ops).
+ * Routing through this hook keeps the C tests target-agnostic (they call
+ * test_target_mpi_init() regardless of precision). */
+#if defined(TEST_TARGET_KIND16)
+   extern void quad_mpi_init(void);
+   static inline void test_target_mpi_init(void) { quad_mpi_init(); }
+#elif defined(TEST_TARGET_MULTIFLOATS)
+   extern void multifloats_mpi_init(void);
+   static inline void test_target_mpi_init(void) { multifloats_mpi_init(); }
+#else
+   static inline void test_target_mpi_init(void) { }
 #endif
 
 #ifndef TEST_TARGET_NAME

@@ -56,7 +56,8 @@ program test_dmumps_c_parity
     end interface
 
     integer, parameter :: n = 16
-    integer            :: ierr, nz, c_code
+    integer            :: ierr, nz, c_code, myid
+    logical            :: is_host
     real(ep), allocatable :: A(:,:), x_true(:), b(:)
     integer,  allocatable :: irn(:), jcn(:)
     real(ep), allocatable :: A_trip(:)
@@ -67,7 +68,16 @@ program test_dmumps_c_parity
     real(ep)              :: err, tol
 
     call MPI_INIT(ierr)
-    call report_init('test_dmumps_c_parity', target_name)
+    ! Centralized-input MUMPS: matrix + RHS supplied on the host only, and
+    ! the centralized solution comes back on the host only. Both solve paths
+    ! (Fortran-direct and C-bridge) stay collective, but matrix population,
+    ! the solution readback and the parity checks are host-guarded. Mirrors
+    ! test_dmumps_basic.f90. The problem is generated on every rank (the
+    ! generator is deterministic and the arrays must stay valid as the
+    ! collective C-bridge call's actual arguments on every rank).
+    call MPI_COMM_RANK(MPI_COMM_WORLD, myid, ierr)
+    is_host = (myid == 0)
+    if (is_host) call report_init('test_dmumps_c_parity', target_name)
 
     call gen_dense_problem(n, A, x_true, b, seed = 31001)
     call dense_to_triplet (A, irn, jcn, A_trip, nz)
@@ -77,21 +87,25 @@ program test_dmumps_c_parity
     id%COMM = MPI_COMM_WORLD;  id%PAR = 1;  id%SYM = 0;  id%JOB = -1
     call target_qmumps(id)
     id%ICNTL(1) = -1; id%ICNTL(2) = -1; id%ICNTL(3) = -1; id%ICNTL(4) = 0
-    id%N   = n
-    id%NNZ = int(nz, kind=8)
-    allocate(id%IRN(nz));  id%IRN = irn
-    allocate(id%JCN(nz));  id%JCN = jcn
-    allocate(id%A(nz));    id%A   = q2t_r(A_trip)
-    allocate(id%RHS(n));   id%RHS = q2t_r(b)
+    if (is_host) then
+        id%N   = n
+        id%NNZ = int(nz, kind=8)
+        allocate(id%IRN(nz));  id%IRN = irn
+        allocate(id%JCN(nz));  id%JCN = jcn
+        allocate(id%A(nz));    id%A   = q2t_r(A_trip)
+        allocate(id%RHS(n));   id%RHS = q2t_r(b)
+    end if
     id%JOB = 6
     call target_qmumps(id)
     if (id%INFOG(1) < 0) then
         write(*, '(a,i0)') 'Fortran path failed, INFOG(1)=', id%INFOG(1)
         error stop 1
     end if
-    allocate(x_fortran(n));  x_fortran = t2q_r(id%RHS)
-    deallocate(id%IRN, id%JCN, id%A, id%RHS)
-    nullify(id%IRN, id%JCN, id%A, id%RHS)
+    if (is_host) then
+        allocate(x_fortran(n));  x_fortran = t2q_r(id%RHS)
+        deallocate(id%IRN, id%JCN, id%A, id%RHS)
+        nullify(id%IRN, id%JCN, id%A, id%RHS)
+    end if
     id%JOB = -2;  call target_qmumps(id)
 
     ! Path B — C bridge: c_real_mumps_solve → migrated qmumps_c → qmumps_f77_
@@ -148,16 +162,20 @@ program test_dmumps_c_parity
     ! before reaching the f77 call, so any non-zero diff would mean
     ! the bridge mishandles a struct field — silent ABI corruption
     ! that the per-side basic tests can't catch.
-    err = max_rel_err_vec(x_fortran, x_c)
-    call report_case('fortran-vs-c', err, 0.0_ep)
+    if (is_host) then
+        err = max_rel_err_vec(x_fortran, x_c)
+        call report_case('fortran-vs-c', err, 0.0_ep)
 
-    err = max_rel_err_vec(x_fortran, x_true)
-    call report_case('fortran-vs-truth', err, tol)
-    err = max_rel_err_vec(x_c, x_true)
-    call report_case('c-vs-truth', err, tol)
+        err = max_rel_err_vec(x_fortran, x_true)
+        call report_case('fortran-vs-truth', err, tol)
+        err = max_rel_err_vec(x_c, x_true)
+        call report_case('c-vs-truth', err, tol)
 
-    deallocate(A, x_true, b, irn, jcn, A_trip, x_fortran, x_c)
-    call report_finalize()
+        deallocate(x_fortran)
+        call report_finalize()
+    end if
+
+    deallocate(A, x_true, b, irn, jcn, A_trip, x_c)
     call MPI_FINALIZE(ierr)
-    call report_check_status()
+    if (is_host) call report_check_status()
 end program test_dmumps_c_parity
