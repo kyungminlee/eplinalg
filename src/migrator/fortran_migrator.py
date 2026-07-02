@@ -30,6 +30,21 @@ from pathlib import Path
 from .intrinsics import INTRINSIC_MAP, INTRINSIC_DECL_MAP
 from .target_mode import TargetMode
 
+# Lexical + scanning primitives now live in ``fortran/lex.py`` (bottom layer
+# of the split). Re-imported here so this module's namespace — and every
+# caller that reaches these names through it — is unchanged.
+from .fortran.lex import (  # noqa: F401  (re-export)
+    is_comment_line, _iter_outside_strings, is_continuation_line,
+    _find_inline_bang, _count_open_parens, _build_split_mask,
+    _strip_strings_and_comments, _looks_like_statement_function,
+    _join_continued_lines, _is_fp_value, _scope_indices,
+    _scan_local_declared_names, _scan_referenced_identifiers,
+    _STRING_RE, _IDENT_RE, _DECL_LINE_RE, _STMT_FN_RE, _FP_VALUE_RE,
+    _FORTRAN_OP_RE, _INT_CALL_RE, _NINT_CALL_RE,
+    _PROC_HEADER_RE, _END_PROC_RE, _PROC_HEADER_RE_SCOPE,
+    _INTERFACE_BEGIN_RE, _INTERFACE_END_RE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Type declaration replacement
@@ -407,28 +422,11 @@ def strip_known_constants_from_decls(
     return ''.join(out), removed
 
 
-# Hoisted patterns reused across hot-path callers (replace_literals,
-# replace_generic_conversions, _rewrite_int_of_complex / _rewrite_int_kind_on_real64x2,
-# _filter_known_constants_from_decl, _unwrap_redundant_constructors). All
-# depend only on constants known at module load time or values that are
-# stable for the duration of a run; rebuilding them per line was the
-# dominant cost in microbenchmarks of the migrator hot loops.
-#
-# ``.EQ.`` / ``.AND.`` etc. operator detector used in ``replace_literals``
-# to mask operator dots out before the bare-literal pass scans for
-# floating-point suffixes.
-_FORTRAN_OP_RE = re.compile(
-    r'\.\s*(EQ|NE|LT|GT|LE|GE|AND|OR|NOT|TRUE|FALSE|EQV|NEQV)\s*\.',
-    re.IGNORECASE,
-)
 # ``REAL(`` / ``CMPLX(`` paren-call detector for ``replace_generic_conversions``.
 _GENERIC_CONV_RE: dict[str, re.Pattern] = {
     _name: re.compile(rf'(?<=[=+\-*/,(.\0])\s*\b({_name})\s*\(', re.IGNORECASE)
     for _name in ('REAL', 'CMPLX')
 }
-# ``INT(`` / ``NINT(`` detectors for the two _rewrite_int_* helpers.
-_INT_CALL_RE = re.compile(r'\bINT\s*\(', re.IGNORECASE)
-_NINT_CALL_RE = re.compile(r'\bNINT\s*\(', re.IGNORECASE)
 
 
 @functools.cache
@@ -1730,102 +1728,16 @@ def replace_xerbla_strings(line: str, rename_map: dict[str, str]) -> str:
     return _XERBLA_STR_RE.sub(sub, line)
 
 
-_FP_VALUE_RE = re.compile(
-    r'^[+-]?\s*(?:'
-    r'\d+\.\d*|\d*\.\d+|\d+'
-    r')(?:[DdEe][+-]?\d+)?\s*$'
-)
 
 
-def _is_fp_value(text: str, known_constants: dict) -> bool:
-    """Heuristic: does the trimmed PARAMETER/DATA value look like an
-    FP literal, a known-constant reference, or an expression that
-    contains one?
-
-    Tighter than a substring scan: rejects identifiers like ``ELEMENT``
-    that happen to contain ``E``. The composite-expression case splits
-    on Fortran operators and checks each operand: if ANY operand is a
-    known FP constant or an FP literal, the whole expression counts.
-    """
-    s = text.strip()
-    if not s:
-        return False
-    if _FP_VALUE_RE.match(s):
-        # Pure numeric token: FP iff it has a decimal point or exponent.
-        return ('.' in s) or ('D' in s.upper()) or ('E' in s.upper())
-    # Tokenize on identifiers + numeric literals; ignore operators.
-    tokens = re.findall(r'[A-Za-z_]\w*|\d+\.\d*[DdEe][+-]?\d+|\d*\.\d+[DdEe]?[+-]?\d*|\d+\.\d*|\d*\.\d+', s)
-    for tok in tokens:
-        if tok.upper() in known_constants:
-            return True
-        if _FP_VALUE_RE.match(tok) and (('.' in tok) or ('D' in tok.upper()) or ('E' in tok.upper())):
-            return True
-    return False
 
 
-def _join_continued_lines(lines: list[str], start: int) -> tuple[str, int]:
-    """Join a fixed-form statement starting at ``lines[start]`` with any
-    continuation lines (column-6 marker). Returns ``(joined_text, end)``
-    where ``end`` is the index of the first line NOT consumed.
-    """
-    out = lines[start].rstrip('\n')
-    j = start + 1
-    while j < len(lines):
-        nxt = lines[j]
-        if is_continuation_line(nxt):
-            out += ' ' + nxt[6:].rstrip('\n')
-            j += 1
-            continue
-        break
-    return out, j
 
 
-_PROC_HEADER_RE_SCOPE = re.compile(
-    r'^\s*(?:RECURSIVE\s+|PURE\s+|ELEMENTAL\s+)*'
-    r'(?:(?:INTEGER|REAL|COMPLEX|LOGICAL|CHARACTER|TYPE\s*\([^)]+\)|DOUBLE\s+PRECISION|DOUBLE\s+COMPLEX)'
-    r'(?:\s*\*\s*\d+)?\s+)?'
-    r'(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE|BLOCK\s+DATA)\b',
-    re.IGNORECASE,
-)
 
 
-_INTERFACE_BEGIN_RE = re.compile(r'^\s*(?:ABSTRACT\s+)?INTERFACE\b', re.IGNORECASE)
-_INTERFACE_END_RE = re.compile(r'^\s*END\s*INTERFACE\b', re.IGNORECASE)
 
 
-def _scope_indices(lines: list[str]) -> list[int]:
-    """Return a per-line list mapping line index → procedure scope index.
-
-    Scope index 0 is the first SUBROUTINE/FUNCTION header encountered
-    when scanning forward from the top of the file. Lines before any
-    header are scope -1 (module/global level). Used by
-    ``convert_parameter_stmts`` / ``convert_data_stmts`` to tag each
-    converted assignment with the scope it belongs to, so that
-    ``insert_use_multifloats`` can insert only the assignments
-    belonging to the current scope.
-
-    INTERFACE-block inner SUBROUTINE/FUNCTION declarations are NOT
-    counted as new scopes — they declare prototypes for external
-    procedures, not local scopes that take runtime assignments.
-
-    Replaces the prior per-call ``_scope_index_at`` helper that
-    rescanned ``lines[0..i]`` on every invocation (O(N²) when called
-    from a per-statement outer loop). Compute the full vector once
-    in O(N) and index into it.
-    """
-    scopes: list[int] = []
-    scope = -1
-    in_interface = 0
-    for ln in lines:
-        if _INTERFACE_BEGIN_RE.match(ln):
-            in_interface += 1
-        elif _INTERFACE_END_RE.match(ln):
-            if in_interface > 0:
-                in_interface -= 1
-        elif in_interface == 0 and _PROC_HEADER_RE_SCOPE.match(ln):
-            scope += 1
-        scopes.append(scope)
-    return scopes
 
 
 def convert_parameter_stmts(
@@ -2198,36 +2110,8 @@ def convert_data_stmts(
     return "".join(result), fp_assignments, dropped_known
 
 
-_STMT_FN_RE = re.compile(r'^[A-Za-z_]\w*\s*\(\s*[A-Za-z_]\w*\s*\)\s*=')
 
 
-def _looks_like_statement_function(stripped: str, lines: list[str], k: int) -> bool:
-    """Heuristic: does line k look like a LAPACK statement function
-    definition that the declaration-block walker should step over?
-
-    A statement function has the form ``NAME(SCALAR_ARG) = expression``
-    and appears in the LAPACK source between a comment marker like
-    ``*     .. Statement Function definitions ..`` and the executable
-    statements section. We detect by looking back at recent lines for
-    that marker (within ~10 lines).
-    """
-    if not _STMT_FN_RE.match(stripped):
-        return False
-    look = max(0, k - 12)
-    for kk in range(k - 1, look - 1, -1):
-        prev = lines[kk]
-        if not prev.strip():
-            continue
-        if 'Statement Function' in prev:
-            return True
-        if prev and prev[0] in ('C', 'c', '*', '!'):
-            continue
-        if prev.lstrip().startswith('!'):
-            continue
-        # Hit a code line that wasn't a statement function — stop.
-        if not _STMT_FN_RE.match(prev.lstrip()):
-            return False
-    return False
 
 
 # Module public names (type names, constants, generics, operator generics)
@@ -2238,123 +2122,14 @@ def _looks_like_statement_function(stripped: str, lines: list[str], k: int) -> b
 #   target_mode.module_public_names  (union of the above three)
 #   target_mode.module_operator_generics
 
-_DECL_LINE_RE = re.compile(
-    r'^\s+(?:TYPE\s*\([^)]*\)|INTEGER\b|REAL\b|COMPLEX\b|LOGICAL\b|'
-    r'CHARACTER\b|DOUBLE\s+PRECISION\b|DOUBLE\s+COMPLEX\b)',
-    re.IGNORECASE,
-)
-_IDENT_RE = re.compile(r"\b([A-Za-z_]\w*)\b")
-_STRING_RE = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"")
 
 
-def _strip_strings_and_comments(line: str) -> str:
-    """Drop string literals and trailing inline comments."""
-    out = _STRING_RE.sub('', line)
-    bang = out.find('!')
-    if bang >= 0:
-        out = out[:bang]
-    return out
 
 
-def _scan_local_declared_names(proc_lines: list[str]) -> set[str]:
-    """Collect local variable names from type-declaration statements
-    inside a procedure. Used to suppress matching multifloats public
-    names so that the local variable can shadow the use-associated
-    generic interface (gfortran refuses if the name is in scope).
-    """
-    names: set[str] = set()
-    joined: list[str] = []
-    cur = ''
-    for raw in proc_lines:
-        # Skip pure comment lines (fixed and free form).
-        if raw[:1] in ('C', 'c', '*', '!'):
-            continue
-        if cur and is_continuation_line(raw):
-            # Fixed-form continuation.
-            cur += ' ' + raw[6:].rstrip('\n')
-            continue
-        if cur and cur.rstrip().endswith('&'):
-            cur = cur.rstrip().rstrip('&') + ' ' + raw.lstrip().lstrip('&').rstrip('\n')
-            continue
-        if cur:
-            joined.append(cur)
-        cur = raw.rstrip('\n')
-    if cur:
-        joined.append(cur)
-
-    for stmt in joined:
-        if not _DECL_LINE_RE.match(stmt):
-            continue
-        # Strip the type prefix (everything up to and including the
-        # first ``::`` if present, otherwise up to the type keyword).
-        if '::' in stmt:
-            tail = stmt.split('::', 1)[1]
-        else:
-            m = _DECL_LINE_RE.match(stmt)
-            tail = stmt[m.end():]
-        tail = _strip_strings_and_comments(tail)
-        # Drop array specs and KIND parameters in parentheses so we
-        # don't pick up bound expressions (``WNRM(MAX(M,N))``) as
-        # local-variable names. Iterate until no more nested parens
-        # remain.
-        while True:
-            new_tail = re.sub(r'\([^()]*\)', '', tail)
-            if new_tail == tail:
-                break
-            tail = new_tail
-        # Drop ``= initializer`` clauses (PARAMETER initializers may
-        # contain references to module names like ``complex128x2``
-        # that should not be treated as locally-declared variables).
-        # Split at top-level commas, then drop everything from ``=``
-        # onward in each item.
-        items = []
-        cur = ''
-        for ch in tail + ',':
-            if ch == ',':
-                items.append(cur)
-                cur = ''
-            else:
-                cur += ch
-        for item in items:
-            lhs = item.split('=', 1)[0]
-            for m in _IDENT_RE.finditer(lhs):
-                names.add(m.group(1).lower())
-    return names
 
 
-def _scan_referenced_identifiers(proc_lines: list[str]) -> set[str]:
-    """Lower-cased identifiers referenced anywhere in the procedure
-    body, excluding comments and string literals."""
-    names: set[str] = set()
-    for raw in proc_lines:
-        if raw[:1] in ('C', 'c', '*', '!'):
-            continue
-        cleaned = _strip_strings_and_comments(raw)
-        for m in _IDENT_RE.finditer(cleaned):
-            names.add(m.group(1).lower())
-    return names
 
 
-# Procedure header for SUBROUTINE/FUNCTION/PROGRAM/MODULE/BLOCK DATA.
-# ``MODULE PROCEDURE`` (inside an INTERFACE block) is NOT a procedure
-# header and is excluded — injecting USE between ``MODULE PROCEDURE foo``
-# and ``END INTERFACE`` is illegal Fortran.
-_PROC_HEADER_RE = re.compile(
-    r'^(\s{6,}|^\s*)(?:RECURSIVE\s+|PURE\s+|ELEMENTAL\s+)*'
-    r'(?:(?:INTEGER|REAL|COMPLEX|LOGICAL|CHARACTER|TYPE\s*\([^)]+\)|DOUBLE\s+PRECISION|DOUBLE\s+COMPLEX)'
-    r'(?:\s*\*\s*\d+)?\s+)?'
-    r'(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE(?!\s+PROCEDURE\b)|BLOCK\s+DATA)\b',
-    re.IGNORECASE,
-)
-# ``END SUBROUTINE FOO``, ``END FUNCTION``, plain ``END``. Crucially
-# NOT ``END IF`` / ``END DO`` / ``END SELECT`` — the keyword whitelist
-# must be required when any word follows ``END``, otherwise inner
-# control-flow ENDs would falsely terminate body scans.
-_END_PROC_RE = re.compile(
-    r'^\s*END(?:\s+(?:PROGRAM|SUBROUTINE|FUNCTION|MODULE|BLOCK\s*DATA)'
-    r'(?:\s+\w+)?)?\s*(?:!.*)?$',
-    re.IGNORECASE,
-)
 def specialize_use_module(source: str, target_mode: TargetMode, fixed_form: bool) -> str:
     """Replace bare ``USE <module>`` clauses with explicit ``only:``
     lists tailored to each procedure.
@@ -2839,101 +2614,14 @@ def insert_use_multifloats(source: str, target_mode: TargetMode,
     return "".join(result)
 
 
-def is_comment_line(line: str) -> bool:
-    return bool(line) and line[0] in ('C', 'c', '*', '!')
-
-def _iter_outside_strings(text: str):
-    """Yield ``(i, ch)`` for each character in ``text`` that is NOT
-    inside a Fortran string literal. Recognizes both ``'`` and ``"``
-    delimiters and the Fortran doubled-quote escape (``''`` inside a
-    ``'``-string, ``""`` inside a ``"``-string).
-
-    Canonical primitive shared by every scanner that needs to find
-    inline ``!`` comments, count parens, or build a string-mask while
-    respecting quoted-literal boundaries.
-    """
-    n = len(text)
-    in_string = False
-    quote = ''
-    i = 0
-    while i < n:
-        ch = text[i]
-        if in_string:
-            if ch == quote:
-                if i + 1 < n and text[i + 1] == quote:
-                    # Doubled-quote escape — both chars stay in-string.
-                    i += 2
-                    continue
-                in_string = False
-        else:
-            if ch in ("'", '"'):
-                in_string = True
-                quote = ch
-            else:
-                yield i, ch
-        i += 1
 
 
-def _find_inline_bang(text: str) -> int:
-    """Return the index of the first inline ``!`` comment marker in
-    ``text``, or ``len(text)`` if none. Quote-aware (doubled-quote
-    escape included).
-
-    Fast path: when the line has no string-delimiter characters at
-    all (the common case for code-bearing source lines), fall through
-    to ``str.find`` which runs in C. Only when a quote appears do we
-    need the full quote-aware scan.
-    """
-    if "'" not in text and '"' not in text:
-        idx = text.find('!')
-        return idx if idx != -1 else len(text)
-    for i, ch in _iter_outside_strings(text):
-        if ch == '!':
-            return i
-    return len(text)
 
 
-def _count_open_parens(line: str) -> int:
-    """Net paren delta for ``line`` ignoring quoted strings and inline
-    fixed-form ``!`` / ``C`` / ``*`` comments. Used to track when a
-    SUBROUTINE/FUNCTION formal-arg list is still open across CPP
-    ``#if/#endif`` blocks."""
-    if not line:
-        return 0
-    if line[0] in ('C', 'c', '*'):
-        return 0
-    depth = 0
-    for _, ch in _iter_outside_strings(line):
-        if ch == '!':
-            break
-        if ch == '(':
-            depth += 1
-        elif ch == ')':
-            depth -= 1
-    return depth
 
 
-def is_continuation_line(line: str) -> bool:
-    # Fixed-form continuation: cols 1-5 blank (spaces only — NOT tabs), col 6
-    # holds a non-blank, non-zero marker. A tab in col 1 is the gfortran/intel
-    # extension that means "rest of line is normal source from col 7"; such a
-    # line is a fresh statement, not a continuation, even when col 6 (i.e. the
-    # 6th character after the tab) happens to be alphabetic. See dlarre2.f in
-    # ScaLAPACK 2.2.3 for the wild form: `\t    CALL DLARRC(...)`.
-    if not line or line[0] == '\t':
-        return False
-    return len(line) > 5 and line[0:5] == '     ' and line[5] not in (' ', '0', '')
 
-def _build_split_mask(body: str) -> list[bool]:
-    """Boolean mask over ``body`` — True at positions safe to split a
-    fixed-form line at (i.e. not inside a string literal). The opening
-    quote of a literal is itself marked unsafe, matching legacy
-    behavior so the splitter never lands a continuation marker
-    immediately before a string."""
-    mask = [False] * len(body)
-    for i, _ in _iter_outside_strings(body):
-        mask[i] = True
-    return mask
+
 
 def reformat_fixed_line(line: str, cont_char: str = '+') -> str:
     # Preprocessor directives (``#if``, ``#include``, ``#define`` ...) are
@@ -3738,34 +3426,62 @@ def _rewrite_mpi_sum(source: str, target_mode: TargetMode) -> str:
     return _MPI_REDUCE_CALL_RE.sub(rewrite, source)
 
 
-# Multifloats MPI handle tokens emitted by ``_rewrite_mpi_datatypes`` for
-# the multifloats target (``MPI_DOUBLE_PRECISION`` → ``MPI_FLOAT64X2``,
-# ``MPI_DOUBLE_COMPLEX`` → ``MPI_COMPLEX64X2``) plus the real + complex
-# reduction op handles the bridge exposes. Migrated MUMPS Fortran calls
-# MPI directly with these names; without a Fortran module declaring
-# them, gfortran rejects every site with "has no IMPLICIT type". The
-# ``multifloats_mpi_f`` module
-# (external/multifloats-mpi/multifloats_mpi_f.f90) bind-to-C declares
-# them as default-INTEGER variables populated at MPI init time.
-_MF_MPI_TOKENS = (
-    'MPI_FLOAT64X2', 'MPI_COMPLEX64X2',
-    'MPI_DD_SUM', 'MPI_DD_AMX', 'MPI_DD_AMN',
-    'MPI_ZZ_SUM', 'MPI_ZZ_AMX', 'MPI_ZZ_AMN',
-)
-_MF_MPI_ANY_RE = re.compile(r'\b(?:' + '|'.join(_MF_MPI_TOKENS) + r')\b')
+# Predefined MPI handle names that mpif.h / the MPI module already
+# declares. A target may keep one of these as its datatype (kind16
+# transports quad reals as the standard ``MPI_REAL16``) while routing
+# only the *reduction ops* through custom handles — those standard
+# names must NOT trigger a support-module ``USE`` (they are already in
+# scope) and are never declared by the support module.
+_STANDARD_MPI_HANDLES = frozenset({
+    'MPI_SUM', 'MPI_MAX', 'MPI_MIN',
+    'MPI_REAL16', 'MPI_COMPLEX32',
+    'MPI_LONG_DOUBLE',
+    'MPI_DOUBLE_PRECISION', 'MPI_DOUBLE_COMPLEX',
+    'MPI_REAL', 'MPI_COMPLEX', 'MPI_REAL8', 'MPI_COMPLEX16',
+})
+
+
+def _custom_mpi_tokens(target_mode: TargetMode) -> tuple[str, ...]:
+    """The custom (non-predefined) MPI handle names the target's support
+    module declares — i.e. the ``c_mpi_*`` datatype/op values that are
+    not standard MPI handles. For multifloats these are the custom
+    datatypes (``MPI_FLOAT64X2`` ...) plus all six reduction ops; for
+    kind16 the datatypes stay standard so only the six quad ops
+    (``MPI_QQ_SUM`` ...) qualify."""
+    seen: dict[str, None] = {}
+    for v in (target_mode.c_mpi_real, target_mode.c_mpi_complex,
+              target_mode.c_mpi_sum_real, target_mode.c_mpi_sum_complex,
+              target_mode.c_mpi_max_real, target_mode.c_mpi_max_complex,
+              target_mode.c_mpi_min_real, target_mode.c_mpi_min_complex):
+        if v and v not in _STANDARD_MPI_HANDLES:
+            seen[v] = None
+    return tuple(seen)
 
 
 def insert_use_multifloats_mpi_f(source: str, target_mode: TargetMode) -> str:
-    """For multifloats targets only: inject ``USE multifloats_mpi_f``
-    after each procedure header in sources that reference custom MPI
-    handles. Runs after ``_rewrite_mpi_datatypes`` so the rewritten
-    tokens are visible. The module exports only ``MPI_*``-prefixed
-    names plus ``multifloats_mpi_init``, so no ONLY clause is needed
-    — collision risk is nil and the bare USE keeps fixed-form lines
-    well under column 72 even when many tokens are involved."""
-    if target_mode.is_kind_based:
+    """Inject ``USE <c_mpi_module>`` after each procedure header in
+    sources that reference the target's custom MPI handle names. Runs
+    after ``_rewrite_mpi_datatypes`` / ``_rewrite_mpi_sum`` so the
+    rewritten tokens are visible. Migrated MUMPS Fortran calls MPI
+    directly with names like ``MPI_FLOAT64X2`` (multifloats) or
+    ``MPI_QQ_SUM`` (kind16); without a Fortran module declaring them,
+    gfortran rejects every site with "has no IMPLICIT type". The
+    support module (``multifloats_mpi_f`` / ``quad_mpi_f``) bind-to-C
+    declares them as default-INTEGER handles populated at MPI init
+    time. It exports only ``MPI_*``-prefixed names plus its ``*_init``
+    routine, so no ONLY clause is needed — collision risk is nil and
+    the bare USE keeps fixed-form lines under column 72.
+
+    Targets without a ``mpi_module`` (genuine d/z, kind10) declare no
+    custom handles and are a no-op."""
+    module = target_mode.c_mpi_module
+    if not module:
         return source
-    if not _MF_MPI_ANY_RE.search(source):
+    tokens = _custom_mpi_tokens(target_mode)
+    if not tokens:
+        return source
+    any_token_re = re.compile(r'\b(?:' + '|'.join(map(re.escape, tokens)) + r')\b')
+    if not any_token_re.search(source):
         return source
 
     lines = source.splitlines(keepends=True)
@@ -3819,13 +3535,14 @@ def insert_use_multifloats_mpi_f(source: str, target_mode: TargetMode) -> str:
                     break
             k += 1
         body_text = ''.join(lines[j:k + 1])
-        if _MF_MPI_ANY_RE.search(body_text):
-            already_has = any('USE multifloats_mpi_f' in lines[kk]
+        if any_token_re.search(body_text):
+            use_stmt = f"USE {module}"
+            already_has = any(use_stmt in lines[kk]
                               for kk in range(j, min(j + 30, len(lines))))
             if not already_has:
                 indent = m.group(1)
                 ind = indent if indent.strip() else '      '
-                result.append(f"{ind}USE multifloats_mpi_f\n")
+                result.append(f"{ind}{use_stmt}\n")
         i = j
     return ''.join(result)
 
