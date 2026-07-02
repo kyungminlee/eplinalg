@@ -451,9 +451,6 @@ def _filter_known_decl_re(real_target: str, complex_target: str) -> re.Pattern:
 
 
 @functools.cache
-
-
-@functools.cache
 def _known_constants_pattern(keys: frozenset) -> re.Pattern:
     """Cache the comma-name alternation in ``replace_known_constants``.
 

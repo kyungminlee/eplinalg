@@ -10,6 +10,7 @@ import functools
 from ..target_mode import TargetMode
 
 
+@functools.cache
 def _unwrap_ctor_re(ctor: str) -> re.Pattern:
     """Cache the ``_unwrap_redundant_constructors`` matcher per
     constructor name (``target_mode.real_constructor`` is run-stable)."""
