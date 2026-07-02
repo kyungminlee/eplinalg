@@ -1,6 +1,7 @@
 ! ICNTL(7) ordering coverage for DMUMPS:
 !   0 — AMD (approximate minimum degree)
 !   2 — AMF (approximate minimum fill)
+!   4 — PORD (nested dissection; ships in-tree with MUMPS)
 !   6 — QAMD (with extra quasi-dense rows)
 !   7 — automatic (let MUMPS choose)
 !
@@ -8,24 +9,29 @@
 ! analysis phase; they alter the elimination tree and thus the exact
 ! floating-point order of the factorization, but should produce the
 ! same numeric solution to within a fairly tight tolerance against
-! the quad-precision ground truth. Orderings 3 (Scotch), 4 (PORD),
-! 5 (Metis) require external libraries we don't link in this build.
+! the quad-precision ground truth. Orderings 3 (Scotch) and 5 (Metis)
+! require external libraries not yet linked in this build.
+!
+! The problem is a SPARSE 2D-Laplacian SPD system (not the dense
+! generators the other tests use): nested-dissection orderings such as
+! PORD need a graph with real vertex separators — on a dense/complete
+! graph they abort with "no valid number of stages in multisector".
 
 program test_dmumps_orderings
     use prec_kinds,            only: ep
     use prec_report,           only: report_init, report_case, report_finalize, report_check_status
     use compare,               only: max_rel_err_vec
-    use test_data_mumps,       only: gen_dense_problem, dense_to_triplet
+    use test_data_mumps,       only: gen_sparse_spd_problem
     use target_mumps,          only: target_name, target_eps, &
                                      dmumps_struc, target_qmumps, &
                                      q2t_r, t2q_r
     use mpi
     implicit none
 
-    integer, parameter :: n = 24
-    integer, parameter :: orderings(*) = [0, 2, 6, 7]
-    integer            :: ierr, i, nz, ord
-    real(ep), allocatable :: A(:,:), x_true(:), b(:), x_solve(:)
+    integer, parameter :: nx = 8, ny = 8
+    integer, parameter :: orderings(*) = [0, 2, 4, 6, 7]
+    integer            :: n, ierr, i, nz, ord
+    real(ep), allocatable :: x_true(:), b(:), x_solve(:)
     integer,  allocatable :: irn(:), jcn(:)
     real(ep), allocatable :: A_trip(:)
     type(dmumps_struc)    :: id
@@ -35,8 +41,8 @@ program test_dmumps_orderings
     call MPI_INIT(ierr)
     call report_init('test_dmumps_orderings', target_name)
 
-    call gen_dense_problem(n, A, x_true, b, seed = 5001)
-    call dense_to_triplet (A, irn, jcn, A_trip, nz)
+    call gen_sparse_spd_problem(nx, ny, n, x_true, b, irn, jcn, A_trip, nz, &
+                                seed = 5001)
 
     do i = 1, size(orderings)
         ord = orderings(i)
@@ -86,7 +92,7 @@ program test_dmumps_orderings
         call target_qmumps(id)
     end do
 
-    deallocate(A, x_true, b, irn, jcn, A_trip)
+    deallocate(x_true, b, irn, jcn, A_trip)
     call report_finalize()
     call MPI_FINALIZE(ierr)
     call report_check_status()

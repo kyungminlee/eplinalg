@@ -198,6 +198,20 @@ target_compile_options(mumps_c_bridge PRIVATE
     -include mumps_c_types_extended.h)
 target_link_libraries(mumps_c_bridge PRIVATE MPI::MPI_C)
 
+# PORD ordering (ICNTL(7)=4). The bridge recompiles mumps_pord.c, whose
+# MUMPS_PORDF / MUMPS_PORDF_WND bodies are guarded by ``#if defined(pord)``.
+# Without -Dpord here the bridge object is empty, and the migrated
+# ana_orderings_wrappers_m.F (in mumps_common) references mumps_pordf_ with
+# no definition on the test link line. Mirror the shipped mumps_c_runtime
+# wiring: define pord, expose the PORD headers, and link libpord so
+# SPACE_ordering et al. resolve in the final test executables. Gated on the
+# pord target so the tree still builds when PORD wasn't staged.
+if(TARGET pord)
+    target_compile_definitions(mumps_c_bridge PRIVATE pord)
+    target_include_directories(mumps_c_bridge PRIVATE
+        $<TARGET_PROPERTY:pord,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_link_libraries(mumps_c_bridge PUBLIC pord)
+endif()
 
 # ── Common helper modules ────────────────────────────────────────────
 add_library(mumps_test_common STATIC
@@ -282,6 +296,13 @@ set(_mumps_link_group_archives
     mumps_test_target
     mumps_c_bridge
     ${LIB_PREFIX}mumps
+    # mumps_common carries ana_orderings_wrappers_m, whose only external
+    # ordering reference (mumps_pordf_ under -Dpord) is defined in the C
+    # bridge. It's a transitive dep of qmumps and would otherwise land
+    # AFTER --end-group, where that reference can't reach back into the
+    # bridge. Naming it in the group keeps the mumps_common <-> bridge
+    # cycle inside the RESCAN.
+    mumps_common
     ${LIB_PREFIX}scalapack
     ${LIB_PREFIX}scalapack_c
     ${LIB_PREFIX}pblas
@@ -315,6 +336,7 @@ set(_mumps_link_group_archives_seq
     mumps_test_target
     mumps_c_bridge
     ${LIB_PREFIX}mumps
+    mumps_common   # see _mumps_link_group_archives note (mumps_pordf_)
     ${LIB_PREFIX}lapack
     ${LIB_PREFIX}blas
 )

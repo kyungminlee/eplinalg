@@ -447,6 +447,15 @@ set(STAGED_LIBRARIES {staged_list})
         # cheaper than per-file plumbing and matches the convention.
         ('_mumps_upstream_src',     'MUMPS_5.8.2/src'),
         ('_mumps_upstream_include', 'MUMPS_5.8.2/include'),
+        # PORD nested-dissection ordering — ships in-tree with MUMPS and
+        # is self-contained standard C (no MPI / external dep). Staging
+        # its algorithm sources (PORD/lib) + headers (PORD/include) lets
+        # cmake build ``libpord`` and define ``-Dpord`` so ICNTL(7)=4
+        # works; without it mumps_pord.c compiles as an inert stub.
+        # Precision-agnostic (permutes the integer adjacency graph), so a
+        # single build serves every migrated arithmetic.
+        ('_mumps_pord_src',         'MUMPS_5.8.2/PORD/lib'),
+        ('_mumps_pord_include',     'MUMPS_5.8.2/PORD/include'),
     ]
     for dst_name, rel_src in _std_dirs:
         src = proj_root / 'external' / rel_src
@@ -593,6 +602,8 @@ def _stage_baseline(args, target_name: str):
         ('_mpiseq_src',           'MUMPS_5.8.2/libseq',                None),
         ('_mumps_upstream_src',   'MUMPS_5.8.2/src',                   'mumps'),
         ('_mumps_upstream_include', 'MUMPS_5.8.2/include',             None),
+        ('_mumps_pord_src',       'MUMPS_5.8.2/PORD/lib',              None),
+        ('_mumps_pord_include',   'MUMPS_5.8.2/PORD/include',          None),
     ]
     for dst_name, rel_src, recipe_name in _std_dirs:
         _stage_dst(dst_name, _staged_or_external(rel_src, recipe_name))

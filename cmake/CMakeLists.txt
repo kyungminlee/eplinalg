@@ -959,6 +959,41 @@ endif()
 if(NOT BASELINE_BUILD)
     add_migrated_fortran_library(mumps)
 
+    # ── PORD ordering library (ships in-tree with MUMPS) ────────────
+    # PORD is a self-contained standard-C nested-dissection ordering
+    # (no MPI, no external dependency); its 14 algorithm sources live
+    # under MUMPS_5.8.2/PORD/lib and are staged verbatim into
+    # _mumps_pord_src. Building ``libpord`` here and defining ``-Dpord``
+    # on the MUMPS C runtime + Fortran analysis routines activates the
+    # ICNTL(7)=4 ordering; without the define, mumps_pord.c compiles as
+    # an inert stub (its body is guarded by ``#if defined(pord)``) and
+    # the Fortran never references PORD, so the archive is unused dead
+    # code. PORD permutes the INTEGER adjacency graph — it never touches
+    # FP values — so this single build links into every migrated
+    # arithmetic (and the genuine double MUMPS) alike.
+    set(_mumps_pord_src ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_pord_src)
+    set(_mumps_pord_inc ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_pord_include)
+    set(MUMPS_HAVE_PORD FALSE)
+    if(IS_DIRECTORY ${_mumps_pord_src} AND IS_DIRECTORY ${_mumps_pord_inc})
+        file(GLOB _pord_c CONFIGURE_DEPENDS ${_mumps_pord_src}/*.c)
+        if(_pord_c)
+            add_library(pord STATIC ${_pord_c})
+            # PORD symbols (SPACE_ordering, firstPostorder, …) are called
+            # by plain C name from mumps_pord.c — no Fortran mangling, so
+            # no ``Add_`` here. Its sources #include <space.h> etc. from
+            # PORD/include (angle-bracket), hence the PUBLIC include dir,
+            # which also reaches mumps_pord.c once the runtime links pord.
+            target_include_directories(pord PUBLIC
+                $<BUILD_INTERFACE:${_mumps_pord_inc}>)
+            set(MUMPS_HAVE_PORD TRUE)
+            message(STATUS "MUMPS: PORD ordering enabled (ICNTL(7)=4)")
+        endif()
+    endif()
+    if(NOT MUMPS_HAVE_PORD)
+        message(STATUS "MUMPS: PORD ordering unavailable "
+                       "(no _mumps_pord_src) — ICNTL(7)=4 will be inactive")
+    endif()
+
     if(TARGET ${LIB_PREFIX}mumps)
         foreach(_dep ${LIB_PREFIX}scalapack ${LIB_PREFIX}lapack ${LIB_PREFIX}blas)
             if(TARGET ${_dep})
@@ -986,9 +1021,21 @@ if(NOT BASELINE_BUILD)
         if(NEEDS_QUAD_MPI AND TARGET quad_mpi_f)
             target_link_libraries(${LIB_PREFIX}mumps PUBLIC quad_mpi_f)
         endif()
+        # -Dpord reaches the migrated Fortran (CMAKE_Fortran_PREPROCESS is
+        # ON) so [ey|qx|mw]ana_aux.F et al. compile the PORD call path
+        # (MUMPS_PORDF, resolved from mumps_c_runtime's mumps_pord.c).
+        if(MUMPS_HAVE_PORD)
+            target_compile_definitions(${LIB_PREFIX}mumps PRIVATE pord)
+        endif()
     endif()
     if(TARGET mumps_common AND MPI_Fortran_FOUND)
         target_link_libraries(mumps_common PRIVATE MPI::MPI_Fortran)
+    endif()
+    # ana_set_ordering.F / ana_orderings_wrappers_m.F / tools_common.F /
+    # mumps_print_defined.F (in mumps_common) gate their PORD branches on
+    # the same define.
+    if(TARGET mumps_common AND MUMPS_HAVE_PORD)
+        target_compile_definitions(mumps_common PRIVATE pord)
     endif()
 
     # ── MUMPS C-side bridge ─────────────────────────────────────────
@@ -1114,6 +1161,16 @@ if(NOT BASELINE_BUILD)
                 $<BUILD_INTERFACE:${_mumps_c_src}>
                 $<INSTALL_INTERFACE:include/mumps>)
         target_compile_definitions(mumps_c_runtime PRIVATE Add_)
+        # PORD: define -Dpord so mumps_pord.c compiles its real body
+        # (MUMPS_PORDF / MUMPS_PORDF_WND), add PORD/include for its
+        # <space.h>, and link the algorithm archive. PUBLIC so pord is
+        # pulled through the RESCAN umbrellas into the final link.
+        if(MUMPS_HAVE_PORD)
+            target_compile_definitions(mumps_c_runtime PRIVATE pord)
+            target_include_directories(mumps_c_runtime PRIVATE
+                $<BUILD_INTERFACE:${_mumps_pord_inc}>)
+            target_link_libraries(mumps_c_runtime PUBLIC pord)
+        endif()
         target_compile_options(mumps_c_runtime PRIVATE
             -include mumps_c_types_extended.h)
         if(MPI_C_FOUND)
@@ -1306,6 +1363,13 @@ if(NOT BASELINE_BUILD)
                 # pass -DAdd_ to the Fortran compile.
                 target_compile_definitions(${_g} PRIVATE
                     $<$<COMPILE_LANGUAGE:C>:Add_>)
+                # -Dpord for the genuine analysis Fortran ([dz]ana_aux.F,
+                # ana_set_ordering.F, …); MUMPS_PORDF resolves from the
+                # shared mumps_c_runtime, which links libpord.
+                if(MUMPS_HAVE_PORD)
+                    target_compile_definitions(${_g} PRIVATE
+                        $<$<COMPILE_LANGUAGE:Fortran>:pord>)
+                endif()
                 # Pristine upstream compiles within column limits, but
                 # relieve line length anyway to match the migrated macro
                 # and stay robust to compiler defaults.
@@ -1721,6 +1785,15 @@ function(_install_library_pair lib_name)
     # archive, the C-callable entry-points (qmumps_c, xmumps_c),
     # and the umbrella that wraps them in a LINK_GROUP:RESCAN.
     if("${lib_name}" STREQUAL "mumps" AND TARGET ${LIB_PREFIX}mumps_c)
+        # PORD ordering archive — PUBLIC-linked by mumps_c_runtime, so
+        # it must join the same export (CMake rejects an exported target
+        # that requires a non-exported one). A leaf C archive: no Fortran
+        # modules, no MPI, its include dir is BUILD_INTERFACE-only, so a
+        # plain install(TARGETS) suffices. Consumers of find_package(qmumps)
+        # need it on the link line to resolve PORD's SPACE_ordering et al.
+        if(TARGET pord)
+            install(TARGETS pord EXPORT ${_export})
+        endif()
         # Shared C runtime — PUBLIC-linked by the migrated bridge (and
         # the genuine bridges below), so it must join the export.
         if(TARGET mumps_c_runtime)
