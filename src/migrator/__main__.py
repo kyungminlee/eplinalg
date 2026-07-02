@@ -25,6 +25,9 @@ from .prepare import prepare_recipe, run_prepare, verify_patches
 from .prefix_classifier import classify_symbols
 from .symbol_scanner import scan_symbols
 from .target_mode import load_target
+from .cli_common import (  # noqa: F401  (re-export)
+    _get_target_mode, _parser_args,
+)
 
 # BLACS-style dual-entry-point detector used by ``cmd_stage`` to
 # identify C sources that switch their public symbol via the
@@ -37,16 +40,7 @@ _DUAL_ENTRY_C_RE = re.compile(
 )
 
 
-def _get_target_mode(args):
-    """Construct TargetMode based on CLI arguments."""
-    target_str = getattr(args, 'target', None) or 'kind16'
-    return load_target(target_str)
 
-def _parser_args(args):
-    """Extract parser/parser_cmd from CLI args."""
-    parser = getattr(args, 'parser', None)
-    parser_cmd = getattr(args, 'parser_cmd', None)
-    return parser, parser_cmd
 
 
 def cmd_verify_patches(args):
