@@ -770,17 +770,28 @@ def test_rewrite_mpi_sum_mixed_arith_in_one_file():
     assert 'MPI_ZZ_SUM' not in lines[2]
 
 
-def test_rewrite_mpi_sum_kind16_is_noop():
-    """KIND targets set c_mpi_sum_* = 'MPI_SUM' so the pass returns
-    early and leaves the source untouched."""
+def test_rewrite_mpi_sum_kind16_uses_custom_quad_ops():
+    """KIND=16 keeps the standard MPI_REAL16 / MPI_COMPLEX32 datatypes but
+    routes reductions through custom MPI_Op handles (quad_mpi_init), because
+    Intel MPI's builtin MPI_SUM / MPI_MAX / MPI_MIN have no 16-byte-real
+    kernel and segfault at np >= 2. So the reduce op — not the datatype — is
+    rewritten inside any reduce call carrying the quad datatype; integer
+    reductions are left untouched."""
     k16 = load_target('kind16')
     src = (
         "      CALL MPI_ALLREDUCE(R, S, 1, MPI_DOUBLE_PRECISION, MPI_SUM, C, I)\n"
+        "      CALL MPI_ALLREDUCE(Z, W, 1, MPI_DOUBLE_COMPLEX, MPI_SUM, C, I)\n"
+        "      CALL MPI_REDUCE(R, S, 1, MPI_DOUBLE_PRECISION, MPI_MAX, 0, C, I)\n"
+        "      CALL MPI_ALLREDUCE(N, M, 1, MPI_INTEGER, MPI_SUM, C, I)\n"
     )
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, k16), k16)
-    assert 'MPI_REAL16' in out
-    assert 'MPI_SUM' in out
-    assert 'MPI_DD_SUM' not in out
+    lines = out.splitlines()
+    assert 'MPI_REAL16' in lines[0] and 'MPI_QQ_SUM' in lines[0]
+    assert 'MPI_COMPLEX32' in lines[1] and 'MPI_XX_SUM' in lines[1]
+    assert 'MPI_REAL16' in lines[2] and 'MPI_QQ_AMX' in lines[2]
+    # integer reductions stay on the stock builtin op
+    assert 'MPI_INTEGER' in lines[3] and 'MPI_SUM' in lines[3]
+    assert 'MPI_QQ_SUM' not in lines[3]
 
 
 def test_rewrite_mpi_sum_kind10_is_noop():

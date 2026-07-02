@@ -54,6 +54,7 @@ class TargetMode:
     c_mpi_max_complex: Optional[str] = None   # 'MPI_MAX' / 'MPI_ZZ_AMX'
     c_mpi_min_real: Optional[str] = None      # 'MPI_MIN' / 'MPI_DD_AMN'
     c_mpi_min_complex: Optional[str] = None   # 'MPI_MIN' / 'MPI_ZZ_AMN'
+    c_mpi_module: Optional[str] = None        # 'multifloats_mpi_f' / 'quad_mpi_f'
     c_needs_mpi_check: bool = False           # True only for KIND=16
     c_header_mode: Optional[str] = None       # 'typedef' or 'include'
     c_header: Optional[str] = None            # 'multifloats_bridge.h'
@@ -155,6 +156,7 @@ def _load_target_yaml(path: Path) -> TargetMode:
         c_mpi_max_complex=c.get('mpi_max_complex'),
         c_mpi_min_real=c.get('mpi_min_real'),
         c_mpi_min_complex=c.get('mpi_min_complex'),
+        c_mpi_module=c.get('mpi_module'),
         c_needs_mpi_check=c.get('needs_mpi_check', False),
         c_header_mode=c.get('header_mode'),
         c_header=c.get('header'),

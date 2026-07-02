@@ -57,9 +57,13 @@ def test_build_sub_vars_multifloats_struct_types():
     assert v['CPU'] == _CPU
 
 
-def test_build_sub_vars_kind16_unchanged():
-    """KIND targets keep the legacy values; the new MPI_SUM_* keys
-    expand to plain 'MPI_SUM' so the substitution rule is a no-op."""
+def test_build_sub_vars_kind16_uses_custom_quad_ops():
+    """KIND=16 keeps the standard MPI_REAL16 / MPI_COMPLEX32 datatypes but,
+    like multifloats, routes reductions through custom MPI_Op handles
+    (registered by quad_mpi_init) because Intel MPI's builtin MPI_SUM has no
+    16-byte-real kernel. In the BLACS C clones the live gsum2d path uses the
+    B01 per-call BlacComb user-op, so the only place MPI_SUM_* actually lands
+    is doc-comment prose — harmless, and identical to the multifloats sibling."""
     k16 = load_target('kind16')
     v = _build_sub_vars(k16)
     assert v['REAL_TYPE'] == 'QREAL'
@@ -67,8 +71,8 @@ def test_build_sub_vars_kind16_unchanged():
     assert v['C_REAL_TYPE'] == '__float128'
     assert v['MPI_REAL'] == 'MPI_REAL16'
     assert v['MPI_COMPLEX'] == 'MPI_COMPLEX32'
-    assert v['MPI_SUM_REAL'] == 'MPI_SUM'
-    assert v['MPI_SUM_COMPLEX'] == 'MPI_SUM'
+    assert v['MPI_SUM_REAL'] == 'MPI_QQ_SUM'
+    assert v['MPI_SUM_COMPLEX'] == 'MPI_XX_SUM'
     assert v['RP'] == 'q'
     assert v['CP'] == 'x'
 
@@ -122,9 +126,12 @@ def test_blacs_real_clone_multifloats(tmp_path):
     assert f'BI_{_RP}MPI_sum' in text
 
 
-def test_blacs_real_clone_kind16_still_uses_mpi_sum(tmp_path):
-    """Regression: the new MPI_SUM->{MPI_SUM_REAL} rule must be a
-    textual no-op for KIND targets."""
+def test_blacs_real_clone_kind16_uses_custom_quad_op(tmp_path):
+    """KIND=16 now rewrites MPI_SUM -> MPI_QQ_SUM in the real BLACS clone,
+    mirroring multifloats. (In the real staged tree the B01 patch has already
+    turned the live gsum2d MPI_SUM into a BlacComb user-op, so this rewrite
+    only ever lands on doc-comment prose; the synthetic sample keeps a raw
+    MPI_SUM to exercise the substitution rule directly.)"""
     src = tmp_path / 'BI_dvvsum.c'
     src.write_text(_BLACS_REAL_SAMPLE)
     target = load_target('kind16')
@@ -134,9 +141,9 @@ def test_blacs_real_clone_kind16_still_uses_mpi_sum(tmp_path):
     assert new_name == 'BI_qvvsum.c'
     assert 'QREAL *v1' in text
     assert 'MPI_REAL16' in text
-    # KIND target still uses stock MPI_SUM
-    assert 'MPI_SUM' in text
-    assert 'MPI_DD_SUM' not in text
+    # KIND=16 routes the reduction through the custom quad op
+    assert 'MPI_QQ_SUM' in text
+    assert 'MPI_SUM,' not in text  # the stock builtin is gone
 
 
 # ---------------------------------------------------------------------------

@@ -167,6 +167,11 @@ c_interop:
   mpi_max_complex: MPI_ZZ_AMX
   mpi_min_real: MPI_DD_AMN
   mpi_min_complex: MPI_ZZ_AMN
+  # Fortran module (bind-c) that surfaces the custom datatype + op
+  # handles above to migrated MUMPS. Was formerly hardcoded in the
+  # migrator; now target-driven so KIND targets (kind16 -> quad_mpi_f)
+  # can supply their own support module the same way.
+  mpi_module: multifloats_mpi_f
   needs_mpi_check: false
   header_mode: include
   header: multifloats_bridge.h

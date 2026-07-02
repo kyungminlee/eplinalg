@@ -235,6 +235,16 @@ if(NEEDS_MULTIFLOATS AND TARGET multifloats_mpi_f)
     target_link_libraries(mumps_test_target PUBLIC
         $<BUILD_INTERFACE:multifloats_mpi_f>)
 endif()
+if(NEEDS_QUAD_MPI AND TARGET quad_mpi_f)
+    # On kind16, target_qmumps / target_xmumps lazily call
+    # ``quad_mpi_init`` to register the custom quad reduce ops
+    # (MPI_QQ_SUM / MPI_XX_* on MPI_REAL16 / MPI_COMPLEX32) that MUMPS
+    # uses internally — Intel MPI's builtin MPI_SUM/MAX/MIN have no
+    # 16-byte-real kernel. The wrapper needs quad_mpi_f's .mod file to
+    # compile and its handles to link.
+    target_link_libraries(mumps_test_target PUBLIC
+        $<BUILD_INTERFACE:quad_mpi_f>)
+endif()
 # qmumps + scalapack + lapack + blas + mumps_c_bridge are NOT attached
 # as PUBLIC dependencies because cmake's PUBLIC propagation would place
 # them OUTSIDE the per-test LINK_GROUP wrapper. They're listed
@@ -447,6 +457,16 @@ function(_mumps_attach_link_group tgt variant want_c)
                 multifloats_mpi_f multifloats_mpi
                 la_constants_mf la_xisnan_mf
                 multifloatsf multifloats)
+        endif()
+        if(NEEDS_QUAD_MPI)
+            # quad_mpi (C MPI bridge) + quad_mpi_f (Fortran handles)
+            # included as raw archives — quad_mpi's MPI_Op_create calls
+            # resolve against libmpiseq's mpiseq_c_stubs.c. Registration
+            # runs but produces zeroed handles; single-rank in-place
+            # reductions short-circuit before libseq's MUMPS_COPY sees
+            # the handle, so this is harmless for the MPI_IN_PLACE path
+            # MUMPS uses at np=1. Mirrors the multifloats branch above.
+            list(APPEND _archives quad_mpi_f quad_mpi)
         endif()
         add_dependencies(${tgt} ${_archives})
         # target_link_libraries (vs. target_link_options) places these

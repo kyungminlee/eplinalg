@@ -131,6 +131,44 @@ module_renames:
   # COMPUTE_GLOBAL_GAINS with a REAL(KIND=16) → DP casting wrapper.
   MUMPS_LR_STATS: MUMPS_LR_STATS_EP
 
+# The C bridge's Fortran-callable scaling/RHS/singular-value callbacks
+# are DEFINED in mumps_c.c (F_SYM_ARITH → dmumps_assign_colsca_ etc.),
+# which the Fortran migrator never scans, so the classifier can't pair
+# or rename them. But the migrated *.F CALL these callbacks by their
+# d/z-prefixed names — left untouched they resolve to the plain-double
+# bridge's symbols, leaking d/z into an extended-precision build and
+# colliding with the genuine dmumps_c/zmumps_c bridge. Force-rename the
+# call sites to the target prefix here; the bridge object is renamed to
+# match via mumps_c_types_extended.h (see cmake/CMakeLists.txt). {RPU}
+# = real prefix upper (E/Q/M ← upstream d), {CPU} = complex (Y/X/W ← z).
+extra_renames:
+  DMUMPS_ASSIGN_COLSCA:          "{RPU}MUMPS_ASSIGN_COLSCA"
+  DMUMPS_ASSIGN_COLSCA_LOC:      "{RPU}MUMPS_ASSIGN_COLSCA_LOC"
+  DMUMPS_ASSIGN_RHSINTR:         "{RPU}MUMPS_ASSIGN_RHSINTR"
+  DMUMPS_ASSIGN_ROWSCA:          "{RPU}MUMPS_ASSIGN_ROWSCA"
+  DMUMPS_ASSIGN_ROWSCA_LOC:      "{RPU}MUMPS_ASSIGN_ROWSCA_LOC"
+  DMUMPS_ASSIGN_SINGULAR_VALUES: "{RPU}MUMPS_ASSIGN_SINGULAR_VALUES"
+  DMUMPS_NULLIFY_C_COLSCA:       "{RPU}MUMPS_NULLIFY_C_COLSCA"
+  DMUMPS_NULLIFY_C_COLSCA_LOC:   "{RPU}MUMPS_NULLIFY_C_COLSCA_LOC"
+  DMUMPS_NULLIFY_C_RHSINTR:      "{RPU}MUMPS_NULLIFY_C_RHSINTR"
+  DMUMPS_NULLIFY_C_ROWSCA:       "{RPU}MUMPS_NULLIFY_C_ROWSCA"
+  DMUMPS_NULLIFY_C_ROWSCA_LOC:   "{RPU}MUMPS_NULLIFY_C_ROWSCA_LOC"
+  DMUMPS_NULLIFY_C_SING_VALUES:  "{RPU}MUMPS_NULLIFY_C_SING_VALUES"
+  DMUMPS_SET_TMP_PTR_C:          "{RPU}MUMPS_SET_TMP_PTR_C"
+  ZMUMPS_ASSIGN_COLSCA:          "{CPU}MUMPS_ASSIGN_COLSCA"
+  ZMUMPS_ASSIGN_COLSCA_LOC:      "{CPU}MUMPS_ASSIGN_COLSCA_LOC"
+  ZMUMPS_ASSIGN_RHSINTR:         "{CPU}MUMPS_ASSIGN_RHSINTR"
+  ZMUMPS_ASSIGN_ROWSCA:          "{CPU}MUMPS_ASSIGN_ROWSCA"
+  ZMUMPS_ASSIGN_ROWSCA_LOC:      "{CPU}MUMPS_ASSIGN_ROWSCA_LOC"
+  ZMUMPS_ASSIGN_SINGULAR_VALUES: "{CPU}MUMPS_ASSIGN_SINGULAR_VALUES"
+  ZMUMPS_NULLIFY_C_COLSCA:       "{CPU}MUMPS_NULLIFY_C_COLSCA"
+  ZMUMPS_NULLIFY_C_COLSCA_LOC:   "{CPU}MUMPS_NULLIFY_C_COLSCA_LOC"
+  ZMUMPS_NULLIFY_C_RHSINTR:      "{CPU}MUMPS_NULLIFY_C_RHSINTR"
+  ZMUMPS_NULLIFY_C_ROWSCA:       "{CPU}MUMPS_NULLIFY_C_ROWSCA"
+  ZMUMPS_NULLIFY_C_ROWSCA_LOC:   "{CPU}MUMPS_NULLIFY_C_ROWSCA_LOC"
+  ZMUMPS_NULLIFY_C_SING_VALUES:  "{CPU}MUMPS_NULLIFY_C_SING_VALUES"
+  ZMUMPS_SET_TMP_PTR_C:          "{CPU}MUMPS_SET_TMP_PTR_C"
+
 # Hand-written modules that cannot be produced by mechanical migration.
 # Applied per-target since the EP variants listed in each file depend
 # on which extended-precision kinds the target build enables.

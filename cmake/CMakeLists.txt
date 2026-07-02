@@ -254,6 +254,43 @@ if(NEEDS_MULTIFLOATS)
     endif()
 endif()
 
+# ── Quad MPI (conditional; kind16 REAL(KIND=16) / __float128) ─────────
+# Custom MPI reduce ops (MPI_QQ_SUM / QQ_AMX / QQ_AMN and the XX_*
+# complex analogues) registered on the *standard* MPI_REAL16 /
+# MPI_COMPLEX32 datatypes. Intel MPI's builtin MPI_SUM/MAX/MIN have no
+# 16-byte-real kernel and segfault on MPI_REDUCE at np>=2, so the
+# migrated kind16 MUMPS routes every reduction through these instead —
+# the quad analogue of the multifloats bridge, but plain C (no C++, no
+# FetchContent, no custom datatypes).
+if(NEEDS_QUAD_MPI)
+    # quad_mpi — C registration of the custom combine ops. fabsq lives
+    # in libquadmath.
+    if(EXISTS "${MF_HELPERS_DIR}/quad_mpi.c")
+        add_library(quad_mpi STATIC "${MF_HELPERS_DIR}/quad_mpi.c")
+        target_include_directories(quad_mpi PUBLIC
+            $<BUILD_INTERFACE:${MF_HELPERS_DIR}>)
+        # MPI::MPI_C is PRIVATE so consumers linking libmpiseq instead of
+        # the real MPI runtime (the _seq test variants) aren't forced to
+        # pull in the real MPI .so — mirrors multifloats_mpi's handling.
+        # (MPI_Op_c2f is a cast macro and MPI_Op_create is stubbed by
+        # libmpiseq, so quad_mpi links cleanly against mpiseq too.)
+        if(MPI_C_FOUND)
+            target_link_libraries(quad_mpi PRIVATE MPI::MPI_C)
+        endif()
+        target_link_libraries(quad_mpi PRIVATE quadmath)
+    endif()
+
+    # quad_mpi_f — Fortran shim exposing the C-side op handles to MUMPS
+    # (which issues MPI_REDUCE from Fortran with these tokens directly).
+    # Linking quad_mpi PUBLIC pulls the C runtime that defines the *_f
+    # globals into any target that depends on quad_mpi_f.
+    if(EXISTS "${MF_HELPERS_DIR}/quad_mpi_f.f90" AND TARGET quad_mpi)
+        add_library(quad_mpi_f STATIC "${MF_HELPERS_DIR}/quad_mpi_f.f90")
+        fortran_module_layout(quad_mpi_f)
+        target_link_libraries(quad_mpi_f PUBLIC quad_mpi)
+    endif()
+endif()
+
 # ── Helper functions ─────────────────────────────────────────────────
 
 # Build a stock, standard-precision archive (S/D/C/Z entry points) from
@@ -647,6 +684,9 @@ if(NOT BASELINE_BUILD)
     if(TARGET ${LIB_PREFIX}blacs AND NEEDS_MULTIFLOATS AND TARGET multifloats_mpi)
         target_link_libraries(${LIB_PREFIX}blacs PUBLIC multifloats_mpi)
     endif()
+    if(TARGET ${LIB_PREFIX}blacs AND NEEDS_QUAD_MPI AND TARGET quad_mpi)
+        target_link_libraries(${LIB_PREFIX}blacs PUBLIC quad_mpi)
+    endif()
     if(TARGET ${LIB_PREFIX}blacs AND TARGET blacs)
         target_link_libraries(${LIB_PREFIX}blacs PUBLIC blacs)
     endif()
@@ -937,6 +977,14 @@ if(NOT BASELINE_BUILD)
         # the C++ side that actually defines the handles is pulled in.
         if(NEEDS_MULTIFLOATS AND TARGET multifloats_mpi_f)
             target_link_libraries(${LIB_PREFIX}mumps PUBLIC multifloats_mpi_f)
+        endif()
+        # Quad (kind16): same story — the migrator rewrites the reduce-op
+        # tokens to MPI_QQ_SUM / MPI_XX_* on the standard MPI_REAL16 /
+        # MPI_COMPLEX32 datatypes and injects ``USE quad_mpi_f``. Link the
+        # shim so its .mod is on the include path and quad_mpi (which
+        # defines the handles) is pulled in transitively.
+        if(NEEDS_QUAD_MPI AND TARGET quad_mpi_f)
+            target_link_libraries(${LIB_PREFIX}mumps PUBLIC quad_mpi_f)
         endif()
     endif()
     if(TARGET mumps_common AND MPI_Fortran_FOUND)
@@ -1759,6 +1807,19 @@ if(NEEDS_MULTIFLOATS)
                 set(_mf_mpi_arg "MPI")
             endif()
             fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE eplinalg:: ${_mf_mpi_arg})
+            get_target_property(_fc_moddir ${_t} Fortran_MODULE_DIRECTORY)
+            if(_fc_moddir)
+                fortran_install_modules(${_t})
+            endif()
+        endif()
+    endforeach()
+endif()
+
+if(NEEDS_QUAD_MPI)
+    # quad_mpi / quad_mpi_f both link (or stand in for) MPI; tag them.
+    foreach(_t quad_mpi quad_mpi_f)
+        if(TARGET ${_t})
+            fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE eplinalg:: MPI)
             get_target_property(_fc_moddir ${_t} Fortran_MODULE_DIRECTORY)
             if(_fc_moddir)
                 fortran_install_modules(${_t})

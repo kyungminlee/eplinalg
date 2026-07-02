@@ -68,6 +68,14 @@ overrides:
       - BI_EmergencyBuff.c
       - BI_GetBuff.c
       - BI_Pack.c
+  # kind16 (__float128) needs only the lazy-init hook: BLACS stays plain
+  # C (no C++ malloc-cast overrides), and the hook registers the custom
+  # quad reduce ops via quad_mpi_init() the first time BLACS bootstraps
+  # MPI. See recipes/blacs/k16_overrides/blacs_pinfo_.c.
+  kind16:
+    src_dir: blacs/k16_overrides
+    files:
+      - blacs_pinfo_.c
 
 # Symmetric-patch CI escape hatch (Phase D). The D-half-only
 # user-MPI-op patch is a workaround triggered by the kind16
