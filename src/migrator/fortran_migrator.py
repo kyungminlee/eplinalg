@@ -82,154 +82,24 @@ from .fortran.keepkind import (  # noqa: F401  (re-export)
 
 
 # ---------------------------------------------------------------------------
-# Type declaration replacement
+# Orchestrators
+#
+# The per-concern rewrite passes now live in the ``fortran/`` subpackage and
+# are re-exported above; what remains here are the top-level drivers that
+# sequence them. Two design notes that outlived their original call sites:
+#
+# * An experimental ``_force_int_assignment`` pass (wrap the RHS of
+#   ``INT_VAR = ...`` with ``INT(...)`` when the RHS mentions a known
+#   float64x2 variable) was prototyped and removed: the heuristic ("any
+#   token in real_names") misclassifies a float64x2 variable *passed* to an
+#   integer-returning function (e.g. ``JP = J - 1 + IUAMAX(M-J+1, A(J,J), 1)``
+#   where A is float64x2 but IUAMAX returns INTEGER). Reliable handling needs
+#   semantic facts (the migrated return type) — Phase 1.5 work.
+# * Module public names (type names, constants, generics, operator generics)
+#   are loaded from the target YAML via TargetMode fields: module_type_names,
+#   module_constant_names, module_generic_names, module_public_names (their
+#   union), and module_operator_generics.
 # ---------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ---------------------------------------------------------------------------
-# Literal constant replacement
-# ---------------------------------------------------------------------------
-
-
-
-# ---------------------------------------------------------------------------
-# Intrinsic function replacement
-# ---------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Note: an experimental ``_force_int_assignment`` pass was prototyped
-# here that wraps the RHS of ``INT_VAR = ...`` with ``INT(...)`` when
-# the RHS mentions a known float64x2 variable. It was removed because
-# the heuristic ("any token in real_names") misclassifies the case
-# where a float64x2 variable is *passed* to an integer-returning
-# function (e.g. ``JP = J - 1 + IUAMAX(M-J+1, A(J,J), 1)`` where A is
-# float64x2 but IUAMAX returns INTEGER). Reliable handling needs
-# semantic facts (the migrated function's return type), which is
-# Phase 1.5 work.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Module public names (type names, constants, generics, operator generics)
-# are now loaded from the target YAML via TargetMode fields:
-#   target_mode.module_type_names
-#   target_mode.module_constant_names
-#   target_mode.module_generic_names
-#   target_mode.module_public_names  (union of the above three)
-#   target_mode.module_operator_generics
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: TargetMode,
@@ -301,16 +171,6 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
     source = _dedup_intrinsic_stmts(source, target_mode)
     source = specialize_use_module(source, target_mode, fixed_form=True)
     return source
-
-
-
-
-
-
-
-
-
-
 
 
 def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: TargetMode,
@@ -443,32 +303,6 @@ def target_filename(name: str, rename_map: dict[str, str],
             first = new_char if stem[0].isupper() else new_char.lower()
             return first + stem[1:] + ext
     return name
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _source_kind_from_filename(name: str) -> int | None:
