@@ -93,29 +93,44 @@ def replace_include_filenames(line: str, rename_map: dict[str, str]) -> str:
     return f'{m.group("lead")} {m.group("q")}{new_name}{m.group("q")}{m.group("tail")}'
 
 
-_RENAME_PATTERN_CACHE: dict[tuple[int, int], tuple[re.Pattern, dict[str, str]]] = {}
+# key: id(rename_map) -> (pattern, upper_map, source_dict). The source
+# dict is stored in the value so it stays alive for as long as its cache
+# entry does — this is what makes keying on id() safe (see below).
+_RENAME_PATTERN_CACHE: dict[int, tuple[re.Pattern, dict[str, str], dict[str, str]]] = {}
 
 
 def _get_rename_pattern(rename_map: dict[str, str]) -> tuple[re.Pattern, dict[str, str]]:
-    # Cache key is (id(rename_map), len(rename_map)). The migrator
-    # builds rename_map once per run and never mutates it, so id is
-    # stable for the run's duration. The length tiebreaker guards
-    # against the (vanishingly unlikely) case where a GC'd dict's id
-    # is reused for a same-content map; in practice the caller holds
-    # rename_map live, so this is belt-and-suspenders.
-    #
-    # The previous implementation re-built ``{k.upper() for k in
-    # rename_map.keys()}`` on every cache hit to verify the cache —
-    # that O(N) scan dominated for MUMPS (~6k renames × thousands of
-    # per-line calls per file).
-    key = (id(rename_map), len(rename_map))
+    # Cache key is id(rename_map). id() alone is NOT a safe key across
+    # different dicts: CPython reuses the address of a garbage-collected
+    # object, so a stale entry could be returned for an unrelated dict
+    # that happens to land at the same address. This is not hypothetical
+    # here — callers pass short-lived *per-file* ``file_rename_map``
+    # objects (built fresh in ``_migrate_with_flang`` for every source
+    # file), not just the one stable run-wide map. When such a dict was
+    # freed and its id reused for the next file's map (a same-length map
+    # collided under the old ``(id, len)`` key), the cache silently
+    # handed back the previous file's ``upper_map`` and the current
+    # file's own routine name was dropped from the rename — e.g. a file
+    # renamed to ``qgemv.f`` kept ``SUBROUTINE DGEMV`` in its body,
+    # exporting ``dgemv_`` and breaking the link. Two guards:
+    #   1. The value keeps a reference to the source dict, so a live
+    #      cache entry pins its id and no other live dict can reuse it.
+    #   2. On a hit we still verify identity (``is``); a mismatch forces
+    #      a recompute. Belt-and-suspenders against any future eviction.
+    key = id(rename_map)
     cached = _RENAME_PATTERN_CACHE.get(key)
-    if cached is not None:
-        return cached
+    if cached is not None and cached[2] is rename_map:
+        return cached[0], cached[1]
     upper_map = {k.upper(): v for k, v in rename_map.items()}
     names = sorted(upper_map.keys(), key=len, reverse=True)
     pattern = re.compile(r'\b(' + '|'.join(re.escape(n) for n in names) + r')\b', re.IGNORECASE) if names else re.compile(r'(?!x)x')
-    _RENAME_PATTERN_CACHE[key] = (pattern, upper_map)
+    # Bound memory: per-file maps accumulate one entry each over a full
+    # stage. Clear wholesale past a generous cap (entries are cheap to
+    # rebuild; the hot path is the stable run-wide map, re-cached on the
+    # next call).
+    if len(_RENAME_PATTERN_CACHE) > 4096:
+        _RENAME_PATTERN_CACHE.clear()
+    _RENAME_PATTERN_CACHE[key] = (pattern, upper_map, rename_map)
     return pattern, upper_map
 
 
