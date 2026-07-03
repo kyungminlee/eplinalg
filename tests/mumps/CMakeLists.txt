@@ -265,6 +265,14 @@ set_target_properties(mumps_test_common PROPERTIES
 target_include_directories(mumps_test_common PUBLIC
     $<BUILD_INTERFACE:${_mp_moddir}>
 )
+# prec_report.f90 does ``use mpi`` (to confine reporting to the host rank
+# under mpiexec -n N). It needs only mpi.mod at COMPILE time — the actual
+# MPI_COMM_RANK symbol is resolved when the test executable links, against
+# MPI::MPI_Fortran (plain variant) or libmpiseq (_seq variant). So pull the
+# MPI include path WITHOUT taking an MPI link dependency, which would drag
+# real MPI into the _seq executables and clash with mpiseq's stubs.
+target_include_directories(mumps_test_common PRIVATE
+    $<TARGET_PROPERTY:MPI::MPI_Fortran,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(mumps_test_common PUBLIC reflapack_quad)
 
 # ── Per-target wrapper module (kind16-only today) ────────────────────
@@ -318,9 +326,20 @@ endif()
 add_dependencies(mumps_test_target ${LIB_PREFIX}mumps)
 
 # ── Test executables ──────────────────────────────────────────────────
+# Rank count for the real-MPI test variant. Default 2 so ctest actually
+# exercises the distributed solve path (centralized-solution handling on
+# the host, distributed matrix assembly in the dist_input tests) instead
+# of only ever running single-rank. The drivers are host-guarded (directly
+# or via prec_report), so any np>=1 is correct. The _seq (libmpiseq)
+# variant is always single-rank and ignores this. NOTE: run the MPI suite
+# with OpenMPI oversubscribe/yield env on core-constrained hosts
+# (OMPI_MCA_rmaps_base_oversubscribe=1, OMPI_MCA_mpi_yield_when_idle=1).
+set(MUMPS_TEST_NPROCS 2 CACHE STRING
+    "MPI rank count for the real-MPI MUMPS test variant")
+
 function(_mumps_register_test name)
     add_test(NAME mumps_${name}
-             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${MUMPS_TEST_NPROCS}
                      ${MPIEXEC_PREFLAGS} $<TARGET_FILE:${name}>
                      ${MPIEXEC_POSTFLAGS}
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/precision_reports)

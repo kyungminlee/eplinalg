@@ -1,5 +1,6 @@
 module prec_report
     use prec_kinds, only: ep
+    use mpi
     implicit none
     private
     public :: report_init, report_case, report_finalize, report_check_status
@@ -8,17 +9,36 @@ module prec_report
     integer :: case_count = 0
     character(len=:), allocatable :: routine_save
     logical :: any_failure = .false.
+    ! MUMPS centralizes the solution on the host (rank 0); non-host ranks
+    ! never hold a checkable result. So all reporting — the JSON file I/O,
+    ! the per-case check, and the final error stop — is confined to the
+    ! host, decided once here from the MPI rank. This lets an otherwise
+    ! rank-agnostic driver run correctly under ``mpiexec -n N``: the
+    ! collective MUMPS calls stay on every rank while only rank 0 writes
+    ! the report and gates the exit status. At np=1 the host is the only
+    ! rank, so behaviour is identical to the single-rank path. Drivers
+    ! that already wrap their report_* calls in ``if (is_host)`` are
+    ! unaffected (they never enter these routines off-host).
+    logical :: is_host = .true.
 
 contains
 
     subroutine report_init(routine, target_name)
         character(len=*), intent(in) :: routine, target_name
         character(len=:), allocatable :: filename
-        integer :: ios
+        integer :: ios, ierr, myid
 
-        routine_save = trim(routine)
+        ! Every MUMPS driver calls MPI_INIT before report_init, so the
+        ! communicator is live here. (Under the libmpiseq _seq variant
+        ! MPI_COMM_RANK returns 0, so is_host stays .true..)
+        call MPI_COMM_RANK(MPI_COMM_WORLD, myid, ierr)
+        is_host = (myid == 0)
+
         any_failure = .false.
         case_count = 0
+        if (.not. is_host) return
+
+        routine_save = trim(routine)
         filename = trim(routine) // '.' // trim(target_name) // '.json'
 
         open(newunit=unit_save, file=filename, status='replace', &
@@ -41,6 +61,8 @@ contains
         character(len=5)  :: passbuf
         logical  :: passed
         real(ep) :: digits
+
+        if (.not. is_host) return
 
         if (max_rel > 0.0_ep) then
             digits = -log10(max_rel)
@@ -84,6 +106,7 @@ contains
         ! avoids skipping MPI cleanup on failure (the previous combined
         ! routine called `error stop 1` here, leaving MPI in a state
         ! that the runtime would print warnings about).
+        if (.not. is_host) return
         write(unit_save, '(a)') '  ]'
         write(unit_save, '(a)') '}'
         close(unit_save)
@@ -91,7 +114,7 @@ contains
     end subroutine report_finalize
 
     subroutine report_check_status()
-        if (any_failure) error stop 1
+        if (is_host .and. any_failure) error stop 1
     end subroutine report_check_status
 
 end module prec_report

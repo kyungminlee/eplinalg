@@ -12,7 +12,7 @@ program test_zmumps_icntl_io
     implicit none
 
     integer, parameter :: n = 16
-    integer            :: ierr, nz
+    integer            :: ierr, nz, myid
     integer, parameter :: scaling_modes(*) = [0, 1, 7, 77]
     integer            :: i, sc
     complex(ep), allocatable :: A(:,:), x_true(:), b(:)
@@ -24,6 +24,7 @@ program test_zmumps_icntl_io
     character(len=48)        :: label
 
     call MPI_INIT(ierr)
+    call MPI_COMM_RANK(MPI_COMM_WORLD, myid, ierr)
     call report_init('test_zmumps_icntl_io', target_name)
     call gen_dense_problem_z(n, A, x_true, b, seed = 26001)
     call dense_to_triplet_z (A, irn, jcn, A_trip, nz)
@@ -60,18 +61,46 @@ program test_zmumps_icntl_io
         write(*, '(a,i0)') 'ICNTL(21)=1 failed: INFOG(1)=', id%INFOG(1)
         error stop 1
     end if
+    ! Distributed solution (ICNTL(21)=1): each rank receives its own
+    ! INFO(23) components in SOL_loc, with the global row indices in
+    ! ISOL_loc; the union over ranks is the full solution. INFO(23) is
+    ! the documented local-slice size (the struct's NSOL_loc field is NOT
+    ! written by the solve). At np=1 the single rank owns all n
+    ! components. max_rel_err_vec_z is max|Δ|/max|x_true| with a global
+    ! denominator (x_true is full on every rank), so only the numerator —
+    ! the max over ranks of each rank's local max modulus difference —
+    ! needs a scalar MPI_MAX, reduced in double precision (see the
+    ! d-variant for the rationale).
     block
-        complex(ep) :: x_perm(n)
-        integer  :: idx
-        do idx = 1, n
-            x_perm(id%ISOL_loc(idx)) = t2q_c(id%SOL_loc(idx))
+        real(ep) :: local_num, denom
+        real(8)  :: loc8, glob8
+        integer  :: idx, gi
+        local_num = 0.0_ep
+        do idx = 1, id%INFO(23)
+            gi = id%ISOL_loc(idx)
+            local_num = max(local_num, &
+                            abs(t2q_c(id%SOL_loc(idx)) - x_true(gi)))
         end do
-        err = max_rel_err_vec_z(x_perm, x_true)
+        denom = maxval(abs(x_true))
+        loc8  = real(local_num, kind=8)
+        glob8 = 0.0d0
+        call MPI_Reduce(loc8, glob8, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+                        0, MPI_COMM_WORLD, ierr)
+        if (denom < tiny(1.0_ep)) then
+            err = real(glob8, kind=ep)
+        else
+            err = real(glob8, kind=ep) / denom
+        end if
     end block
     call report_case('icntl21=1', err, tol)
     deallocate(id%SOL_loc, id%ISOL_loc)
     call end_id(id)
 
+    ! Centralized sparse RHS is a HOST-ONLY input: the solve driver
+    ! rejects with INFO(1)=-22 any non-master rank whose RHS /
+    ! RHS_SPARSE / IRHS_SPARSE / IRHS_PTR are associated. Only the host
+    ! allocates them and the dense solution vector; slaves leave them
+    ! null. The matrix (IRN/JCN/A) stays centralized on every rank.
     call init_id(id)
     id%ICNTL(20) = 1
     id%N    = n
@@ -80,25 +109,29 @@ program test_zmumps_icntl_io
     allocate(id%JCN(nz));  id%JCN = jcn
     allocate(id%A(nz));    id%A   = q2t_c(A_trip)
     id%NRHS    = 1
-    id%LRHS    = n
-    id%NZ_RHS  = n
-    allocate(id%RHS_SPARSE(n));   id%RHS_SPARSE  = q2t_c(b)
-    allocate(id%IRHS_SPARSE(n))
-    allocate(id%IRHS_PTR(2))
-    do i = 1, n;  id%IRHS_SPARSE(i) = i;  end do
-    id%IRHS_PTR(1) = 1
-    id%IRHS_PTR(2) = n + 1
-    allocate(id%RHS(n));  id%RHS = q2t_c(cmplx(0.0_ep, 0.0_ep, kind=ep))
+    if (myid == 0) then
+        id%LRHS    = n
+        id%NZ_RHS  = n
+        allocate(id%RHS_SPARSE(n));   id%RHS_SPARSE  = q2t_c(b)
+        allocate(id%IRHS_SPARSE(n))
+        allocate(id%IRHS_PTR(2))
+        do i = 1, n;  id%IRHS_SPARSE(i) = i;  end do
+        id%IRHS_PTR(1) = 1
+        id%IRHS_PTR(2) = n + 1
+        allocate(id%RHS(n));  id%RHS = q2t_c(cmplx(0.0_ep, 0.0_ep, kind=ep))
+    end if
     id%JOB = 6
     call target_xmumps(id)
     if (id%INFOG(1) < 0) then
         write(*, '(a,i0)') 'ICNTL(20)=1 failed: INFOG(1)=', id%INFOG(1)
         error stop 1
     end if
-    allocate(x_solve(n));  x_solve = t2q_c(id%RHS)
-    err = max_rel_err_vec_z(x_solve, x_true)
+    if (myid == 0) then
+        allocate(x_solve(n));  x_solve = t2q_c(id%RHS)
+        err = max_rel_err_vec_z(x_solve, x_true)
+        deallocate(id%RHS_SPARSE, id%IRHS_SPARSE, id%IRHS_PTR, x_solve)
+    end if
     call report_case('icntl20=1', err, tol)
-    deallocate(id%RHS_SPARSE, id%IRHS_SPARSE, id%IRHS_PTR, x_solve)
     call end_id(id)
 
     deallocate(A, x_true, b, irn, jcn, A_trip)
