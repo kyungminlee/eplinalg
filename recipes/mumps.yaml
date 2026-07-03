@@ -106,7 +106,11 @@ copy_files:
   - MUMPS_MEMORY_MOD
   # MUMPS_LR_STATS holds DP flop/memory counters shared across
   # arithmetics. Callers keep DP via keep-kind manifest; keep this
-  # module verbatim to preserve the DP interface.
+  # module verbatim to preserve the DP interface. Its one caller that
+  # passed a working-precision value (COMPUTE_GLOBAL_GAINS with
+  # id%RINFOG(3)) is handled by call_arg_casts below — the upstream
+  # s/c drivers already dble()-cast it; we restore that cast so the
+  # verbatim DP routine is called directly (no bridge, no rename).
   - LR_STATS
   # MUMPS_LOAD tracks DP work/memory balancing counters across ranks.
   # Callers keep DP for load increments (INC_LOAD etc.); keep verbatim.
@@ -122,14 +126,54 @@ copy_files:
   # MUMPS_LR_COMMON: integer-only constants / size helpers. No FP.
   - LR_COMMON
 
+  # --- Arithmetic-independent common modules (Task 13) ---------------
+  # These 10 modules define unprefixed MUMPS_* symbols the migrator was
+  # bundling into every ${LIB_PREFIX}mumps archive. They carry no
+  # working-precision interface, so migrating them only over-promoted
+  # internal fixed doubles (cost/flop counters) — which made the kind16
+  # and kind10 copies *semantically diverge* despite identical symbol
+  # names, blocking a single all-precision binary. Pinned verbatim so
+  # they are byte-identical across targets and can live once in the
+  # shared common archive. Audit: workspace task 13, 03-copy-files-audit.
+  # (copy_files matches uppercased filename basenames, not module names.)
+  - ANA_OMP_M                    # MUMPS_ANA_OMP_M: all-integer interface; ARITH is a runtime CHARACTER(1); DP is OMP cost-model scratch
+  - ANA_BLK_M                    # MUMPS_ANA_BLK_M: COL_LMATRIX_T/LMATRIX_T/COMPACT_GRAPH_T are integer/pointer only
+  - FAC_ASM_BUILD_SORT_INDEX_M   # MUMPS_BUILD_SORT_INDEX_M: integer sort/index; float dep only via MUMPS_TPS_M
+  - FAC_ASM_BUILD_SORT_INDEX_ELT_M  # MUMPS_BUILD_SORT_INDEX_ELT_M: same; USE MUMPS_TPS_M
+  - FAC_DESCBAND_DATA_M          # MUMPS_FAC_DESCBAND_DATA_M: DESCBAND_STRUC_T = integer + integer pointer
+  - FAC_MAPROW_DATA_M            # MUMPS_FAC_MAPROW_DATA_M: MAPROW_STRUC_T = integer + integer pointers
+  - FRONT_DATA_MGT_M             # MUMPS_FRONT_DATA_MGT_M: FDM_STRUC_T = integer + integer pointers
+  - MUMPS_INTR_TYPES_COMMON      # MUMPS_INTR_TYPES: MUMPS_ROOT_STRUC all INTEGER/LOGICAL (WP root data lives in the prefixed ?MUMPS_ROOT_STRUC)
+  - SOL_OMP_COMMON_M             # MUMPS_SOL_L0OMP_M: no float/type declarations; two integer subs on K400
+  # MUMPS_TPS_M's MUMPS_TPS_T is integer except DOUBLE PRECISION ::
+  # OPASSW, OPELIW — declared DOUBLE PRECISION in every s-file too, so
+  # they are genuine flop counters, not working precision. Keeping the
+  # type verbatim also un-diverges the two MUMPS_BUILD_SORT_INDEX*
+  # modules that USE it (their layout depended on TPS_T's size).
+  - OMP_TPS_COMMON_M             # MUMPS_TPS_M
+
 # Redirect ``USE MUMPS_MEMORY_MOD`` in migrated callers to the
 # hand-written EP module that provides Q/X reallocators. The upstream
 # module is kept verbatim via copy_files above.
 module_renames:
   MUMPS_MEMORY_MOD: MUMPS_MEMORY_MOD_EP
-  # MUMPS_LR_STATS keeps DP accumulators; bridge shadows
-  # COMPUTE_GLOBAL_GAINS with a REAL(KIND=16) → DP casting wrapper.
-  MUMPS_LR_STATS: MUMPS_LR_STATS_EP
+
+# Restore call-site DP down-casts the upstream s/c drivers perform but
+# the canonical d/z drivers omit. COMPUTE_GLOBAL_GAINS (in the verbatim
+# MUMPS_LR_STATS, copy_files above) takes a DOUBLE PRECISION FLOP_NUMBER.
+# The d/z drivers pass id%RINFOG(3) raw because RINFOG is DOUBLE there;
+# after migration RINFOG is the target working precision, so the raw arg
+# no longer matches the DP dummy. The s/c drivers already wrap it in
+# dble() (sfac_driver.F:3673 / cfac_driver.F:3674, shielded by the
+# keep-kind manifest); we inject the same cast into the d/z output. This
+# retires the former per-target mumps_lr_stats_ep bridge and lets the one
+# COMPUTE_GLOBAL_GAINS live once in the shared common archive. Applied
+# post-migration so the injected dble() is not re-promoted. ``id%RINFOG(3)``
+# occurs exactly once in each driver (the call site), so the literal
+# rewrite is surgical.
+call_arg_casts:
+  - {file: dfac_driver.F, find: "id%RINFOG(3)", wrap: dble}
+  - {file: zfac_driver.F, find: "id%RINFOG(3)", wrap: dble}
 
 # The C bridge's Fortran-callable scaling/RHS/singular-value callbacks
 # are DEFINED in mumps_c.c (F_SYM_ARITH → dmumps_assign_colsca_ etc.),
@@ -177,17 +221,14 @@ overrides:
     src_dir: mumps
     files:
       - mumps_memory_mod_ep.F
-      - mumps_lr_stats_ep.F
   kind10:
     src_dir: mumps/kind10
     files:
       - mumps_memory_mod_ep.F
-      - mumps_lr_stats_ep.F
   multifloats:
     src_dir: mumps/multifloats
     files:
       - mumps_memory_mod_ep.F
-      - mumps_lr_stats_ep.F
 
 # Per-line keep-kind manifest for DOUBLE PRECISION declarations in
 # paired s*/d* and c*/z* files that must not be promoted. Generated by

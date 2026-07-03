@@ -48,6 +48,29 @@ def _apply_module_renames(
     return text
 
 
+def _apply_call_arg_casts(
+    text: str,
+    casts: list[tuple[str, str]],
+) -> str:
+    """Wrap literal call-argument expressions in a cast, post-migration.
+
+    Each ``(find, wrap)`` rewrites every occurrence of the literal
+    ``find`` to ``wrap(find)``. Runs after the intrinsic rewriter (so
+    the injected ``dble(...)`` is not itself promoted to
+    ``REAL(..., KIND=N)``) and only on migrated output — copy_files
+    verbatim sources are never touched. Idempotent guard: a ``find``
+    already immediately preceded by ``wrap(`` is left alone so a
+    re-run does not double-wrap. See
+    :attr:`RecipeConfig.call_arg_casts`.
+    """
+    for find, wrap in casts:
+        already = f'{wrap}({find}'
+        if already in text:
+            continue
+        text = text.replace(find, f'{wrap}({find})')
+    return text
+
+
 def _filter_expected_divergences(report: list[dict],
                                   config: RecipeConfig) -> list[dict]:
     """Drop entries whose canonical stem is whitelisted as expected.
@@ -811,6 +834,9 @@ def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
             continue
         out_name, migrated = result
         migrated = _apply_module_renames(migrated, module_rename_pairs)
+        casts = config.call_arg_casts.get(src_path.name)
+        if casts:
+            migrated = _apply_call_arg_casts(migrated, casts)
         normalized = _canonicalize_for_compare(
             _strip_fortran_comments(migrated, src_path.suffix)
         )
@@ -968,7 +994,11 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
                 if res is None:
                     continue
                 _, migrated = res
-                texts[p] = _apply_module_renames(migrated, module_rename_pairs)
+                migrated = _apply_module_renames(migrated, module_rename_pairs)
+                casts = config.call_arg_casts.get(p.name)
+                if casts:
+                    migrated = _apply_call_arg_casts(migrated, casts)
+                texts[p] = migrated
             except Exception as exc:
                 print(f'  warning: migration crashed on {p.name}: '
                       f'{type(exc).__name__}: {exc}', file=sys.stderr)
