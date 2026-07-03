@@ -36,6 +36,13 @@ project: [epblas-parallel](../../epblas-parallel/). Migrator-side, the public
 the overlay-equipped composite (`epblas-parallel::eblas` and friends)
 ships from the epblas-parallel package.
 
+## Solver API notes
+
+Documented (but easily-missed) upstream API requirements — not bugs — that the
+migrated archives honour exactly as Netlib does.
+
+- [mumps-implicit-constraints.md](mumps-implicit-constraints.md) — MUMPS input/output conventions that only surface at `np ≥ 2` (host-only sparse RHS, distributed-solution `INFO(23)` slice)
+
 ## Test suites
 
 - [`../tests/README.md`](../tests/README.md) — map of every test family (overlay-vs-migrated and migrated-vs-Netlib schemes)
