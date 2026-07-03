@@ -49,7 +49,7 @@ C
         RETURN
       ENDIF
       CALL MUMPS_ICOPY_64TO32(IPE8(1), NCMP+1, IPE)
-      CALL METIS_NODEWND(NCMP, IPE, IW(1),FRERE(1),
+      CALL METIS_MUMPS_NODEWND(NCMP, IPE, IW(1),FRERE(1),
      &           NUMFLAG, OPTIONS_METIS,
      &           IKEEP2(1), IKEEP1(1) )
       RETURN
@@ -81,7 +81,7 @@ C
         RETURN
       ENDIF
       CALL MUMPS_ICOPY_64TO32(IPE8(1), NCMP+1, IPE)
-      CALL METIS_NODEND(NCMP, IPE, IW(1),
+      CALL METIS_MUMPS_NODEND(NCMP, IPE, IW(1),
      &           NUMFLAG, OPTIONS_METIS,
      &           IKEEP2(1), IKEEP1(1) )
       DEALLOCATE(IPE)
@@ -115,7 +115,7 @@ C
         RETURN
       ENDIF
       CALL MUMPS_ICOPY_64TO32(IPE8(1), NCMP+1, IPE)
-      CALL METIS_NODEND( NCMP, IPE, IW(1), FRERE(1),
+      CALL METIS_MUMPS_NODEND( NCMP, IPE, IW(1), FRERE(1),
      & OPTIONS_METIS, IKEEP2(1), IKEEP1(1))
       DEALLOCATE(IPE)
       RETURN
@@ -140,7 +140,7 @@ C
      &                                         IKEEP18, IKEEP28
       INTEGER :: allocok
       IF (KEEP10.EQ.1) THEN
-       CALL METIS_NODEWND(NCMP, IPE8(1), IW(1),FRERE,
+       CALL METIS_MUMPS_NODEWND(NCMP, IPE8(1), IW(1),FRERE,
      &           NUMFLAG, OPTIONS_METIS,
      &           IKEEP2(1), IKEEP1(1) )
       ELSE
@@ -176,11 +176,11 @@ C
        ENDIF
        CALL MUMPS_ICOPY_32TO64    (FRERE, NCMP        , FRERE8)
        IF (INPLACE64_GRAPH_COPY)  THEN
-         CALL METIS_NODEWND(NCMP, IPE8(1), IW(1),FRERE8,
+         CALL METIS_MUMPS_NODEWND(NCMP, IPE8(1), IW(1),FRERE8,
      &           NUMFLAG, OPTIONS_METIS,
      &           IKEEP28(1), IKEEP18(1) )
        ELSE
-         CALL METIS_NODEWND(NCMP, IPE8(1), IW8,FRERE8,
+         CALL METIS_MUMPS_NODEWND(NCMP, IPE8(1), IW8,FRERE8,
      &           NUMFLAG, OPTIONS_METIS,
      &           IKEEP28(1), IKEEP18(1) )
        ENDIF
@@ -213,7 +213,7 @@ C
      &                                         IKEEP18, IKEEP28
       INTEGER :: allocok
       IF (KEEP10.EQ.1) THEN
-       CALL METIS_NODEND(NCMP, IPE8(1), IW(1),
+       CALL METIS_MUMPS_NODEND(NCMP, IPE8(1), IW(1),
      &           NUMFLAG, OPTIONS_METIS,
      &           IKEEP2(1), IKEEP1(1) )
       ELSE
@@ -243,11 +243,11 @@ C
             RETURN
         ENDIF
         IF (INPLACE64_GRAPH_COPY)  THEN
-          CALL METIS_NODEND(NCMP, IPE8(1), IW(1),
+          CALL METIS_MUMPS_NODEND(NCMP, IPE8(1), IW(1),
      &              NUMFLAG, OPTIONS_METIS,
      &              IKEEP28, IKEEP18 )
         ELSE
-          CALL METIS_NODEND(NCMP, IPE8(1), IW8,
+          CALL METIS_MUMPS_NODEND(NCMP, IPE8(1), IW8,
      &             NUMFLAG, OPTIONS_METIS,
      &             IKEEP28, IKEEP18 )
         ENDIF
@@ -287,7 +287,7 @@ C
      &                                         OPTIONS_METIS8
       INTEGER :: allocok
       IF (KEEP10.EQ.1) THEN
-       CALL METIS_NODEND( NCMP, IPE8(1), IW(1), FRERE(1),
+       CALL METIS_MUMPS_NODEND( NCMP, IPE8(1), IW(1), FRERE(1),
      &      OPTIONS_METIS, IKEEP2(1), IKEEP1(1) )
       ELSE
         IF (INPLACE64_GRAPH_COPY)  THEN
@@ -322,10 +322,10 @@ C
         CALL MUMPS_ICOPY_32TO64    (OPTIONS_METIS, LOPTIONS_METIS,
      &                                 OPTIONS_METIS8)
         IF (INPLACE64_GRAPH_COPY) THEN
-          CALL METIS_NODEND( int(NCMP,8), IPE8(1), IW(1), FRERE8,
+          CALL METIS_MUMPS_NODEND( int(NCMP,8), IPE8(1), IW(1), FRERE8,
      &                       OPTIONS_METIS8, IKEEP28, IKEEP18 )
         ELSE
-          CALL METIS_NODEND( int(NCMP,8), IPE8(1), IW8, FRERE8,
+          CALL METIS_MUMPS_NODEND( int(NCMP,8), IPE8(1), IW8, FRERE8,
      &                       OPTIONS_METIS8, IKEEP28, IKEEP18 )
         ENDIF
         CALL MUMPS_ICOPY_64TO32(IKEEP18, NCMP, IKEEP1(1))

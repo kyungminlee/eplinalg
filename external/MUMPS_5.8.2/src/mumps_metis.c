@@ -98,7 +98,7 @@ idx t *order, idx t *sizes, MPI Comm *comm
 /* Provide prototype by hand. This is because we are not sure
  * at compilation/preprocessing time whether we use a 32-bit
  * or a 64-bit metis */
-void METIS_PartGraphKway(int *, MUMPS_INT *, MUMPS_INT *, MUMPS_INT *, MUMPS_INT *, int *, int *, int *, int *, int *, MUMPS_INT *);
+void METIS_MUMPS_PartGraphKway(int *, MUMPS_INT *, MUMPS_INT *, MUMPS_INT *, MUMPS_INT *, int *, int *, int *, int *, int *, MUMPS_INT *);
 #else
 /* Prototype properly defined in metis.h
  * One can rely on IDXTYPEWIDTH to know at compilation/preprocessing
@@ -123,8 +123,8 @@ MUMPS_METIS_KWAY(MUMPS_INT *n,     MUMPS_INT *iptr,
   wgtflag    = 0;
   /* Use 1-based fortran numbering */
   numflag    = 1;
-/* void METIS_PartGraphKway(int *, idxtype *, idxtype *, idxtype *, idxtype *, int *, int *, int *, int *, int *, idxtype *); */
-  METIS_PartGraphKway(n, iptr, jcn,
+/* void METIS_MUMPS_PartGraphKway(int *, idxtype *, idxtype *, idxtype *, idxtype *, int *, int *, int *, int *, int *, idxtype *); */
+  METIS_MUMPS_PartGraphKway(n, iptr, jcn,
                       NULL, NULL, &wgtflag,
                       &numflag, k,
                       options, &edgecut,
@@ -133,11 +133,11 @@ MUMPS_METIS_KWAY(MUMPS_INT *n,     MUMPS_INT *iptr,
   int ierr;
 #  if (IDXTYPEWIDTH == 32)
   MUMPS_INT ncon, edgecut, options[METIS_NOPTIONS];
-  ierr=METIS_SetDefaultOptions(options);
+  ierr=METIS_MUMPS_SetDefaultOptions(options);
   /* Use 1-based fortran numbering */
   options[METIS_OPTION_NUMBERING] = 1;
   ncon        = 1;
-  ierr = METIS_PartGraphKway(n, &ncon, iptr, jcn,
+  ierr = METIS_MUMPS_PartGraphKway(n, &ncon, iptr, jcn,
                              NULL, NULL, NULL,
                              k, NULL, NULL, options,
                              &edgecut, part);
@@ -168,8 +168,8 @@ MUMPS_METIS_KWAY_AB(MUMPS_INT *n,     MUMPS_INT *iptr,
   wgtflag    = 0;
   /* Use 1-based fortran numbering */
   numflag    = 1;
-/* void METIS_PartGraphKway(int *, idxtype *, idxtype *, idxtype *, idxtype *, int *, int *, int *, int *, int *, idxtype *); */
-  METIS_PartGraphKway(n, iptr, jcn,
+/* void METIS_MUMPS_PartGraphKway(int *, idxtype *, idxtype *, idxtype *, idxtype *, int *, int *, int *, int *, int *, idxtype *); */
+  METIS_MUMPS_PartGraphKway(n, iptr, jcn,
                       vwgt, NULL, &wgtflag,
                       &numflag, k,
                       options, &edgecut,
@@ -178,11 +178,11 @@ MUMPS_METIS_KWAY_AB(MUMPS_INT *n,     MUMPS_INT *iptr,
   int ierr;
 #  if (IDXTYPEWIDTH == 32)
   MUMPS_INT ncon, edgecut, options[METIS_NOPTIONS];
-  ierr=METIS_SetDefaultOptions(options);
+  ierr=METIS_MUMPS_SetDefaultOptions(options);
   /* Use 1-based fortran numbering */
   options[METIS_OPTION_NUMBERING] = 1;
   ncon        = 1;
-  ierr = METIS_PartGraphKway(n, &ncon, iptr, jcn,
+  ierr = METIS_MUMPS_PartGraphKway(n, &ncon, iptr, jcn,
                              vwgt, NULL, NULL,
                              k, NULL, NULL, options,
                              &edgecut, part);

@@ -456,6 +456,19 @@ set(STAGED_LIBRARIES {staged_list})
         # single build serves every migrated arithmetic.
         ('_mumps_pord_src',         'MUMPS_5.8.2/PORD/lib'),
         ('_mumps_pord_include',     'MUMPS_5.8.2/PORD/include'),
+        # METIS 5.1.0 nested-dissection / k-way ordering — vendored under
+        # external/metis-5.1.0 with every public API symbol privately
+        # namespaced (METIS_<X> → METIS_MUMPS_<X>, internal libmetis__ →
+        # libmetis_MUMPS_) so this copy can never clash with a system
+        # METIS at link time; the MUMPS caller sites were renamed to
+        # match. Staging GKlib + libmetis sources and the public header
+        # lets cmake build ``libmetis`` and define ``-Dmetis`` so
+        # ICNTL(7)=5 works; without it the mumps_metis*.c compile as inert
+        # stubs. Integer-graph only, so a single 32-bit-idx build serves
+        # every migrated arithmetic.
+        ('_mumps_metis_gklib',      'metis-5.1.0/GKlib'),
+        ('_mumps_metis_lib',        'metis-5.1.0/libmetis'),
+        ('_mumps_metis_include',    'metis-5.1.0/include'),
     ]
     for dst_name, rel_src in _std_dirs:
         src = proj_root / 'external' / rel_src
@@ -604,6 +617,9 @@ def _stage_baseline(args, target_name: str):
         ('_mumps_upstream_include', 'MUMPS_5.8.2/include',             None),
         ('_mumps_pord_src',       'MUMPS_5.8.2/PORD/lib',              None),
         ('_mumps_pord_include',   'MUMPS_5.8.2/PORD/include',          None),
+        ('_mumps_metis_gklib',    'metis-5.1.0/GKlib',                 None),
+        ('_mumps_metis_lib',      'metis-5.1.0/libmetis',              None),
+        ('_mumps_metis_include',  'metis-5.1.0/include',               None),
     ]
     for dst_name, rel_src, recipe_name in _std_dirs:
         _stage_dst(dst_name, _staged_or_external(rel_src, recipe_name))

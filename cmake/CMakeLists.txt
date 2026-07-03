@@ -994,6 +994,75 @@ if(NOT BASELINE_BUILD)
                        "(no _mumps_pord_src) — ICNTL(7)=4 will be inactive")
     endif()
 
+    # ── METIS ordering library (privately namespaced) ───────────────
+    # METIS 5.1.0, vendored under external/metis-5.1.0 and staged into
+    # _mumps_metis_{gklib,lib,include}. Every public API symbol was
+    # renamed METIS_<X> → METIS_MUMPS_<X> (and internal libmetis__ →
+    # libmetis_MUMPS_) so this private copy can never clash at link time
+    # with a system METIS the final application might also pull in; the
+    # matching MUMPS caller sites in _mumps_upstream_src were renamed too.
+    # Building ``libmetis`` here and defining ``-Dmetis`` on the MUMPS C
+    # runtime + Fortran analysis routines activates the ICNTL(7)=5
+    # ordering; without the define mumps_metis*.c compile as inert stubs
+    # (bodies guarded by ``#if defined(metis)``) and the Fortran never
+    # references METIS. METIS permutes the INTEGER adjacency graph — it
+    # never touches FP values — so a single 32-bit-idx build
+    # (IDXTYPEWIDTH=32) links into every migrated arithmetic and the
+    # genuine double MUMPS alike.
+    set(_mumps_metis_gklib ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_metis_gklib)
+    set(_mumps_metis_lib   ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_metis_lib)
+    set(_mumps_metis_inc   ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_metis_include)
+    set(MUMPS_HAVE_METIS FALSE)
+    if(IS_DIRECTORY ${_mumps_metis_gklib} AND IS_DIRECTORY ${_mumps_metis_lib}
+            AND IS_DIRECTORY ${_mumps_metis_inc})
+        file(GLOB _metis_c CONFIGURE_DEPENDS
+            ${_mumps_metis_gklib}/*.c ${_mumps_metis_lib}/*.c)
+        if(_metis_c)
+            add_library(metis STATIC ${_metis_c})
+            # GKlib.h / metis.h / rename.h / defs.h … are angle-bracket
+            # includes resolved from all three staged dirs; PUBLIC so the
+            # public metis.h also reaches mumps_metis*.c once the runtime
+            # links metis.
+            target_include_directories(metis PUBLIC
+                $<BUILD_INTERFACE:${_mumps_metis_inc}>
+                $<BUILD_INTERFACE:${_mumps_metis_gklib}>
+                $<BUILD_INTERFACE:${_mumps_metis_lib}>)
+            # Width macros: 32-bit idx / real — the header default and the
+            # width mumps_metis.c's ``IDXTYPEWIDTH == 32`` path expects.
+            # NDEBUG* match the upstream (non-ASSERT) GKlib build; the
+            # platform/feature macros mirror GKlib/GKlibSystem.cmake.
+            target_compile_definitions(metis PRIVATE
+                IDXTYPEWIDTH=32 REALTYPEWIDTH=32
+                NDEBUG NDEBUG2 _FILE_OFFSET_BITS=64)
+            if(UNIX AND NOT APPLE)
+                target_compile_definitions(metis PRIVATE LINUX)
+            endif()
+            include(CheckIncludeFile)
+            include(CheckFunctionExists)
+            check_include_file(execinfo.h _METIS_HAVE_EXECINFO_H)
+            if(_METIS_HAVE_EXECINFO_H)
+                target_compile_definitions(metis PRIVATE HAVE_EXECINFO_H)
+            endif()
+            check_function_exists(getline _METIS_HAVE_GETLINE)
+            if(_METIS_HAVE_GETLINE)
+                target_compile_definitions(metis PRIVATE HAVE_GETLINE)
+            endif()
+            set_target_properties(metis PROPERTIES
+                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+            # GKlib is warning-noisy by design (upstream builds it with a
+            # long -Wno-* list); quiet it rather than drown the log.
+            if(NOT MSVC)
+                target_compile_options(metis PRIVATE -w -fno-strict-aliasing)
+            endif()
+            set(MUMPS_HAVE_METIS TRUE)
+            message(STATUS "MUMPS: METIS ordering enabled (ICNTL(7)=5)")
+        endif()
+    endif()
+    if(NOT MUMPS_HAVE_METIS)
+        message(STATUS "MUMPS: METIS ordering unavailable "
+                       "(no _mumps_metis_lib) — ICNTL(7)=5 will be inactive")
+    endif()
+
     if(TARGET ${LIB_PREFIX}mumps)
         foreach(_dep ${LIB_PREFIX}scalapack ${LIB_PREFIX}lapack ${LIB_PREFIX}blas)
             if(TARGET ${_dep})
@@ -1027,6 +1096,15 @@ if(NOT BASELINE_BUILD)
         if(MUMPS_HAVE_PORD)
             target_compile_definitions(${LIB_PREFIX}mumps PRIVATE pord)
         endif()
+        # -Dmetis reaches the migrated analysis Fortran (ana_set_ordering.F,
+        # ana_orderings_wrappers_m.F, [ey|qx|mw]ana_aux.F) so the METIS
+        # nested-dissection call path (MUMPS_METIS_NODEND* → the namespaced
+        # METIS_MUMPS_NODEND, resolved from mumps_c_runtime's mumps_metis.c)
+        # compiles; without it those branches drop to the "ordering
+        # unavailable" error.
+        if(MUMPS_HAVE_METIS)
+            target_compile_definitions(${LIB_PREFIX}mumps PRIVATE metis)
+        endif()
     endif()
     if(TARGET mumps_common AND MPI_Fortran_FOUND)
         target_link_libraries(mumps_common PRIVATE MPI::MPI_Fortran)
@@ -1036,6 +1114,12 @@ if(NOT BASELINE_BUILD)
     # the same define.
     if(TARGET mumps_common AND MUMPS_HAVE_PORD)
         target_compile_definitions(mumps_common PRIVATE pord)
+    endif()
+    # Same for METIS: ana_set_ordering.F / ana_orderings_wrappers_m.F /
+    # tools_common.F / mumps_print_defined.F gate their METIS branches on
+    # the -Dmetis define too.
+    if(TARGET mumps_common AND MUMPS_HAVE_METIS)
+        target_compile_definitions(mumps_common PRIVATE metis)
     endif()
 
     # ── MUMPS C-side bridge ─────────────────────────────────────────
@@ -1170,6 +1254,17 @@ if(NOT BASELINE_BUILD)
             target_include_directories(mumps_c_runtime PRIVATE
                 $<BUILD_INTERFACE:${_mumps_pord_inc}>)
             target_link_libraries(mumps_c_runtime PUBLIC pord)
+        endif()
+        # METIS: define -Dmetis so mumps_metis.c / mumps_metis64.c /
+        # mumps_metis_int.c compile their real bodies (they #include the
+        # namespaced <metis.h> and forward to METIS_MUMPS_*), add the
+        # public METIS include dir, and link libmetis. PUBLIC so metis is
+        # pulled through the RESCAN umbrellas into the final link.
+        if(MUMPS_HAVE_METIS)
+            target_compile_definitions(mumps_c_runtime PRIVATE metis)
+            target_include_directories(mumps_c_runtime PRIVATE
+                $<BUILD_INTERFACE:${_mumps_metis_inc}>)
+            target_link_libraries(mumps_c_runtime PUBLIC metis)
         endif()
         target_compile_options(mumps_c_runtime PRIVATE
             -include mumps_c_types_extended.h)
@@ -1369,6 +1464,14 @@ if(NOT BASELINE_BUILD)
                 if(MUMPS_HAVE_PORD)
                     target_compile_definitions(${_g} PRIVATE
                         $<$<COMPILE_LANGUAGE:Fortran>:pord>)
+                endif()
+                # -Dmetis for the genuine analysis Fortran ([dz]ana_aux.F,
+                # ana_set_ordering.F, …); the METIS_MUMPS_* entry points
+                # resolve from the shared mumps_c_runtime, which links
+                # libmetis.
+                if(MUMPS_HAVE_METIS)
+                    target_compile_definitions(${_g} PRIVATE
+                        $<$<COMPILE_LANGUAGE:Fortran>:metis>)
                 endif()
                 # Pristine upstream compiles within column limits, but
                 # relieve line length anyway to match the migrated macro
@@ -1793,6 +1896,13 @@ function(_install_library_pair lib_name)
         # need it on the link line to resolve PORD's SPACE_ordering et al.
         if(TARGET pord)
             install(TARGETS pord EXPORT ${_export})
+        endif()
+        # METIS ordering archive — PUBLIC-linked by mumps_c_runtime, so it
+        # must join the same export. Like pord, a leaf C archive with a
+        # BUILD_INTERFACE-only include dir, so a plain install(TARGETS)
+        # suffices; consumers need it to resolve METIS_MUMPS_NodeND et al.
+        if(TARGET metis)
+            install(TARGETS metis EXPORT ${_export})
         endif()
         # Shared C runtime — PUBLIC-linked by the migrated bridge (and
         # the genuine bridges below), so it must join the export.

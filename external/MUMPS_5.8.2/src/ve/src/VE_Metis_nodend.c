@@ -67,10 +67,10 @@ int VE_Metis_nodend( int * nvtxs , int * xadj , int * adjncy , int * vwgt,  int 
    *  -----------------------------------------------------------------------
    */
   
-  symid = vhcall_find(handle, "METIS_NodeND");
+  symid = vhcall_find(handle, "METIS_MUMPS_NodeND");
   if ( symid == -1 ) {
     perror("vhcall_find");
-    fprintf( stdout , "%s @ %d failed : can't find symbol METIS_NodeND\n" , basename(__FILE__) , __LINE__ );
+    fprintf( stdout , "%s @ %d failed : can't find symbol METIS_MUMPS_NodeND\n" , basename(__FILE__) , __LINE__ );
     fflush( stdout );
     (void) mumps_abort();
   }

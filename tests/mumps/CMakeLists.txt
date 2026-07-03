@@ -213,6 +213,22 @@ if(TARGET pord)
     target_link_libraries(mumps_c_bridge PUBLIC pord)
 endif()
 
+# METIS ordering (ICNTL(7)=5). Same story as PORD: the bridge recompiles
+# mumps_metis.c / mumps_metis64.c / mumps_metis_int.c, whose bodies are
+# guarded by ``#if defined(metis)`` and forward to the privately-namespaced
+# METIS_MUMPS_* symbols. Without -Dmetis here those objects are empty and the
+# migrated ana_orderings_wrappers_m.F references them with no definition on
+# the test link line. Mirror the shipped mumps_c_runtime wiring: define metis,
+# expose the METIS public header, and link libmetis so METIS_MUMPS_NodeND et
+# al. resolve. Gated on the metis target so the tree still builds when METIS
+# wasn't staged.
+if(TARGET metis)
+    target_compile_definitions(mumps_c_bridge PRIVATE metis)
+    target_include_directories(mumps_c_bridge PRIVATE
+        $<TARGET_PROPERTY:metis,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_link_libraries(mumps_c_bridge PUBLIC metis)
+endif()
+
 # ── Common helper modules ────────────────────────────────────────────
 add_library(mumps_test_common STATIC
     common/prec_kinds.f90

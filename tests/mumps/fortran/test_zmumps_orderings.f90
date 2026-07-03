@@ -12,7 +12,7 @@ program test_zmumps_orderings
     implicit none
 
     integer, parameter :: nx = 8, ny = 8
-    integer, parameter :: orderings(*) = [0, 2, 4, 6, 7]
+    integer, parameter :: orderings(*) = [0, 2, 4, 5, 6, 7]
     integer            :: n, ierr, i, nz, ord
     complex(ep), allocatable :: x_true(:), b(:), x_solve(:)
     integer,     allocatable :: irn(:), jcn(:)
