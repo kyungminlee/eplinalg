@@ -37,8 +37,12 @@ program test_zmumps_jobs
     call report_case('combined-vs-truth', err, tol)
     err = max_rel_err_vec_z(x_phased, x_true)
     call report_case('phased-vs-truth', err, tol)
+    ! The two solve paths order operations identically on native real kinds
+    ! (bit-for-bit), but extended-precision (multifloats) arithmetic can
+    ! accumulate differently and diverge by a few ULP. Gate on the same
+    ! tolerance as the truth comparisons, not on bit-equality.
     err = max_rel_err_vec_z(x_phased, x_combined)
-    call report_case('phased-vs-combined', err, 0.0_ep)
+    call report_case('phased-vs-combined', err, tol)
 
     deallocate(A, x_true, b, irn, jcn, A_trip, x_combined, x_phased)
     call report_finalize()
