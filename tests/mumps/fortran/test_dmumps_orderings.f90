@@ -1,6 +1,7 @@
 ! ICNTL(7) ordering coverage for DMUMPS:
 !   0 — AMD (approximate minimum degree)
 !   2 — AMF (approximate minimum fill)
+!   3 — Scotch (nested dissection; vendored + privately namespaced)
 !   4 — PORD (nested dissection; ships in-tree with MUMPS)
 !   5 — METIS (nested dissection; vendored + privately namespaced)
 !   6 — QAMD (with extra quasi-dense rows)
@@ -10,8 +11,7 @@
 ! analysis phase; they alter the elimination tree and thus the exact
 ! floating-point order of the factorization, but should produce the
 ! same numeric solution to within a fairly tight tolerance against
-! the quad-precision ground truth. Ordering 3 (Scotch) requires an
-! external library not yet linked in this build.
+! the quad-precision ground truth.
 !
 ! The problem is a SPARSE 2D-Laplacian SPD system (not the dense
 ! generators the other tests use): nested-dissection orderings such as
@@ -30,7 +30,7 @@ program test_dmumps_orderings
     implicit none
 
     integer, parameter :: nx = 8, ny = 8
-    integer, parameter :: orderings(*) = [0, 2, 4, 5, 6, 7]
+    integer, parameter :: orderings(*) = [0, 2, 3, 4, 5, 6, 7]
     integer            :: n, ierr, i, nz, ord
     real(ep), allocatable :: x_true(:), b(:), x_solve(:)
     integer,  allocatable :: irn(:), jcn(:)

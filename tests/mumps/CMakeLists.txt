@@ -229,6 +229,28 @@ if(TARGET metis)
     target_link_libraries(mumps_c_bridge PUBLIC metis)
 endif()
 
+# Scotch ordering (ICNTL(7)=3). Same story again: the bridge recompiles
+# mumps_scotch.c / mumps_scotch64.c / mumps_scotch_int.c, whose bodies are
+# guarded by ``#if defined(scotch)`` and call bare SCOTCH_* / esmumps names.
+# Without -Dscotch here those objects are empty and ana_orderings_wrappers_m.F
+# references them with no definition. Mirror the shipped mumps_c_runtime
+# wiring: define scotch, expose the Scotch include dir, force-include
+# scotch_rename_mumps.h so the bare caller names bind to the _mumps-suffixed
+# archive symbols, and link scotch/esmumps/scotcherr. Gated on the scotch
+# target so the tree still builds when Scotch wasn't staged.
+set(_MUMPS_SCOTCH_INC ${PROJECT_SOURCE_DIR}/_mumps_scotch_include)
+if(TARGET scotch)
+    target_compile_definitions(mumps_c_bridge PRIVATE scotch)
+    target_include_directories(mumps_c_bridge PRIVATE
+        $<TARGET_PROPERTY:scotch,INTERFACE_INCLUDE_DIRECTORIES>)
+    # SHELL: keeps -include + path together so CMake doesn't dedup it
+    # against the -include mumps_c_types_extended.h added above (which
+    # would collapse both -include tokens and orphan the second header).
+    target_compile_options(mumps_c_bridge PRIVATE
+        "SHELL:-include ${_MUMPS_SCOTCH_INC}/scotch_rename_mumps.h")
+    target_link_libraries(mumps_c_bridge PUBLIC esmumps scotch scotcherr)
+endif()
+
 # ── Common helper modules ────────────────────────────────────────────
 add_library(mumps_test_common STATIC
     common/prec_kinds.f90

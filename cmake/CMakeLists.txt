@@ -1063,6 +1063,135 @@ if(NOT BASELINE_BUILD)
                        "(no _mumps_metis_lib) — ICNTL(7)=5 will be inactive")
     endif()
 
+    # ── Scotch ordering library (privately namespaced) ──────────────
+    # Scotch 7.0.4, vendored under external/scotch-7.0.4 and staged into
+    # _mumps_scotch_{libsrc,esmumps,include}. The archives are compiled
+    # with -DSCOTCH_NAME_SUFFIX=_mumps so every public SCOTCH_* and
+    # internal _SCOTCH* symbol carries a _mumps suffix — this private copy
+    # can never clash at link time with a system Scotch the final
+    # application might pull in. The bison/flex parser (parser_yy.c,
+    # parser_ll.c, parser_ly.h) and the public headers (scotch.h,
+    # scotchf.h) are pre-generated and vendored, so the eplinalg build
+    # gains no bison/flex dependency. Building ``scotch`` (+ ``scotcherr``,
+    # ``esmumps`` the MUMPS adapter) here and defining ``-Dscotch`` on the
+    # MUMPS C runtime turns on the ICNTL(7)=3 sequential ordering; without
+    # the define mumps_scotch*.c compile as inert stubs (bodies guarded by
+    # ``#if defined(scotch)``) and the Fortran never references Scotch.
+    # Scotch permutes the INTEGER adjacency graph — precision-agnostic, so
+    # a single build serves every migrated arithmetic. PT-Scotch stays off
+    # (sequential ICNTL(7)=3 only). The MUMPS caller sites reference bare
+    # SCOTCH_* names; scotch_rename_mumps.h (force-included on the C
+    # runtime and the test bridge) maps them onto the suffixed symbols.
+    set(_mumps_scotch_libsrc ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_scotch_libsrc)
+    set(_mumps_scotch_esmsrc ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_scotch_esmumps)
+    set(_mumps_scotch_inc    ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_scotch_include)
+    set(MUMPS_HAVE_SCOTCH FALSE)
+    if(IS_DIRECTORY ${_mumps_scotch_libsrc} AND IS_DIRECTORY ${_mumps_scotch_esmsrc}
+            AND IS_DIRECTORY ${_mumps_scotch_inc}
+            AND EXISTS ${_mumps_scotch_inc}/scotch_sources.cmake)
+        # Authoritative compile lists (basenames): PT-Scotch/distributed
+        # .c live in the tree for textual #include but are not compiled.
+        include(${_mumps_scotch_inc}/scotch_sources.cmake)
+        set(_scotch_lib_c "")
+        foreach(_f ${SCOTCH_LIBSCOTCH_SOURCES})
+            list(APPEND _scotch_lib_c ${_mumps_scotch_libsrc}/${_f})
+        endforeach()
+        set(_scotch_err_c "")
+        foreach(_f ${SCOTCH_SCOTCHERR_SOURCES})
+            list(APPEND _scotch_err_c ${_mumps_scotch_libsrc}/${_f})
+        endforeach()
+        set(_scotch_esm_c "")
+        foreach(_f ${SCOTCH_ESMUMPS_SOURCES})
+            list(APPEND _scotch_esm_c ${_mumps_scotch_esmsrc}/${_f})
+        endforeach()
+        if(_scotch_lib_c AND _scotch_esm_c)
+            # Exact define set the upstream Scotch CMake applies, plus the
+            # namespacing suffix. -Drestrict=__restrict quiets the C99
+            # keyword; COMMON_RANDOM_FIXED_SEED makes orderings reproducible.
+            set(_scotch_defs
+                COMMON_RANDOM_FIXED_SEED
+                SCOTCH_VERSION_NUM=7 SCOTCH_RELEASE_NUM=0 SCOTCH_PATCHLEVEL_NUM=4
+                SCOTCH_RENAME SCOTCH_NAME_SUFFIX=_mumps
+                restrict=__restrict NDEBUG)
+
+            add_library(scotch STATIC ${_scotch_lib_c})
+            target_include_directories(scotch PUBLIC
+                $<BUILD_INTERFACE:${_mumps_scotch_inc}>
+                $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
+            target_compile_definitions(scotch PRIVATE ${_scotch_defs})
+            set_target_properties(scotch PROPERTIES
+                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+
+            add_library(scotcherr STATIC ${_scotch_err_c})
+            target_include_directories(scotcherr PUBLIC
+                $<BUILD_INTERFACE:${_mumps_scotch_inc}>
+                $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
+            target_compile_definitions(scotcherr PRIVATE ${_scotch_defs})
+            set_target_properties(scotcherr PROPERTIES
+                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+
+            add_library(esmumps STATIC ${_scotch_esm_c})
+            target_include_directories(esmumps PUBLIC
+                $<BUILD_INTERFACE:${_mumps_scotch_inc}>)
+            target_include_directories(esmumps PRIVATE
+                $<BUILD_INTERFACE:${_mumps_scotch_esmsrc}>
+                $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
+            target_compile_definitions(esmumps PRIVATE ${_scotch_defs})
+            set_target_properties(esmumps PROPERTIES
+                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+            # esmumps.c / order_scotch_graph.c / … include the *public*
+            # scotch.h (bare prototypes) and call bare SCOTCH_* — its own
+            # esmumps/module.h does NOT carry the public rename list (only
+            # libscotch/module.h does). Force-include scotch_rename_mumps.h
+            # so those bare calls bind to the _mumps-suffixed archive
+            # symbols, exactly as the MUMPS C callers do.
+            target_compile_options(esmumps PRIVATE
+                "SHELL:-include ${_mumps_scotch_inc}/scotch_rename_mumps.h")
+            target_link_libraries(esmumps PUBLIC scotch)
+
+            # Scotch is warning-noisy; quiet it rather than drown the log.
+            # It also leans on a "based array" idiom (`tab = ptr - baseval`,
+            # a pointer legally *before* the allocation, re-based on every
+            # access). Combined with the distro-default _FORTIFY_SOURCE and
+            # __builtin_dynamic_object_size at -O2/-O3, that negative-offset
+            # base defeats the compiler's object-size analysis and yields a
+            # FALSE "buffer overflow detected" abort in symbolFax's in-bounds
+            # memset (esmumps/symbol_fax.c:281). Upstream Scotch never sees
+            # this because its own Makefiles do not inject fortify; match that
+            # by turning it off for the vendored sources only (same "compile
+            # third-party code as-is" rationale as -w -fno-strict-aliasing).
+            if(NOT MSVC)
+                set(_scotch_cflags -w -fno-strict-aliasing
+                    -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0)
+                target_compile_options(scotch    PRIVATE ${_scotch_cflags})
+                target_compile_options(scotcherr PRIVATE ${_scotch_cflags})
+                target_compile_options(esmumps   PRIVATE ${_scotch_cflags})
+            endif()
+            # The C caller sites are remapped bare→_mumps by force-including
+            # scotch_rename_mumps.h. The Fortran caller (ana_orderings_
+            # wrappers_m.F / [dz]ana_aux_par.F) reaches Scotch through the
+            # scotchf.h interface and cannot force-include a C header, so
+            # rename the 6 sequential Fortran entry points it actually calls
+            # via CPP defines (the .F are preprocessed). CONTEXT*/DGRAPH*
+            # bindings it also names are PT-Scotch/absent in this sequential
+            # build and stay in guarded-out branches. -ffixed-line-length-none
+            # (already set) absorbs the +6-char expansion in fixed form.
+            set(_scotch_f_renames
+                SCOTCHFGRAPHINIT=SCOTCHFGRAPHINIT_mumps
+                SCOTCHFGRAPHBUILD=SCOTCHFGRAPHBUILD_mumps
+                SCOTCHFGRAPHEXIT=SCOTCHFGRAPHEXIT_mumps
+                SCOTCHFGRAPHPART=SCOTCHFGRAPHPART_mumps
+                SCOTCHFSTRATINIT=SCOTCHFSTRATINIT_mumps
+                SCOTCHFSTRATEXIT=SCOTCHFSTRATEXIT_mumps)
+            set(MUMPS_HAVE_SCOTCH TRUE)
+            message(STATUS "MUMPS: Scotch ordering enabled (ICNTL(7)=3)")
+        endif()
+    endif()
+    if(NOT MUMPS_HAVE_SCOTCH)
+        message(STATUS "MUMPS: Scotch ordering unavailable "
+                       "(no _mumps_scotch_libsrc) — ICNTL(7)=3 will be inactive")
+    endif()
+
     if(TARGET ${LIB_PREFIX}mumps)
         foreach(_dep ${LIB_PREFIX}scalapack ${LIB_PREFIX}lapack ${LIB_PREFIX}blas)
             if(TARGET ${_dep})
@@ -1105,6 +1234,19 @@ if(NOT BASELINE_BUILD)
         if(MUMPS_HAVE_METIS)
             target_compile_definitions(${LIB_PREFIX}mumps PRIVATE metis)
         endif()
+        # -Dscotch reaches the migrated analysis Fortran (ana_set_ordering.F,
+        # ana_orderings_wrappers_m.F, [ey|qx|mw]ana_aux.F) so the Scotch
+        # ordering call path (MUMPS_SCOTCH* → the namespaced SCOTCH_*_mumps,
+        # resolved from mumps_c_runtime's mumps_scotch.c) compiles; without
+        # it those branches drop to the "ordering unavailable" error.
+        if(MUMPS_HAVE_SCOTCH)
+            target_compile_definitions(${LIB_PREFIX}mumps PRIVATE scotch
+                $<$<COMPILE_LANGUAGE:Fortran>:${_scotch_f_renames}>)
+            # [ey|qx|mw]ana_aux_par.F INCLUDE 'scotchf.h' (the Fortran
+            # Scotch header) under -Dscotch — expose the Scotch include dir.
+            target_include_directories(${LIB_PREFIX}mumps PRIVATE
+                $<BUILD_INTERFACE:${_mumps_scotch_inc}>)
+        endif()
     endif()
     if(TARGET mumps_common AND MPI_Fortran_FOUND)
         target_link_libraries(mumps_common PRIVATE MPI::MPI_Fortran)
@@ -1120,6 +1262,16 @@ if(NOT BASELINE_BUILD)
     # the -Dmetis define too.
     if(TARGET mumps_common AND MUMPS_HAVE_METIS)
         target_compile_definitions(mumps_common PRIVATE metis)
+    endif()
+    # Same for Scotch: ana_set_ordering.F / ana_orderings_wrappers_m.F /
+    # tools_common.F / mumps_print_defined.F gate their Scotch branches on
+    # the -Dscotch define too.
+    if(TARGET mumps_common AND MUMPS_HAVE_SCOTCH)
+        target_compile_definitions(mumps_common PRIVATE scotch
+            $<$<COMPILE_LANGUAGE:Fortran>:${_scotch_f_renames}>)
+        # ana_orderings_wrappers_m.F INCLUDE 'scotchf.h' under -Dscotch.
+        target_include_directories(mumps_common PRIVATE
+            $<BUILD_INTERFACE:${_mumps_scotch_inc}>)
     endif()
 
     # ── MUMPS C-side bridge ─────────────────────────────────────────
@@ -1265,6 +1417,26 @@ if(NOT BASELINE_BUILD)
             target_include_directories(mumps_c_runtime PRIVATE
                 $<BUILD_INTERFACE:${_mumps_metis_inc}>)
             target_link_libraries(mumps_c_runtime PUBLIC metis)
+        endif()
+        # Scotch: define -Dscotch so mumps_scotch.c / mumps_scotch64.c /
+        # mumps_scotch_int.c compile their real bodies, add the Scotch
+        # include dir for <scotch.h>, and link scotch + esmumps. The caller
+        # sites reference *bare* SCOTCH_* names (scotch.h ships bare
+        # prototypes — the _mumps suffix lives only in Scotch-internal
+        # module.h), so force-include scotch_rename_mumps.h to remap them
+        # onto the suffixed archive symbols. PUBLIC libs so scotch/esmumps
+        # are pulled through the RESCAN umbrellas into the final link.
+        if(MUMPS_HAVE_SCOTCH)
+            target_compile_definitions(mumps_c_runtime PRIVATE scotch)
+            target_include_directories(mumps_c_runtime PRIVATE
+                $<BUILD_INTERFACE:${_mumps_scotch_inc}>)
+            # SHELL: keeps the -include + path as one group; without it
+            # CMake dedups this against the later -include
+            # mumps_c_types_extended.h, collapsing the two -include tokens
+            # and turning the second header into a stray input file.
+            target_compile_options(mumps_c_runtime PRIVATE
+                "SHELL:-include ${_mumps_scotch_inc}/scotch_rename_mumps.h")
+            target_link_libraries(mumps_c_runtime PUBLIC esmumps scotch scotcherr)
         endif()
         target_compile_options(mumps_c_runtime PRIVATE
             -include mumps_c_types_extended.h)
@@ -1472,6 +1644,19 @@ if(NOT BASELINE_BUILD)
                 if(MUMPS_HAVE_METIS)
                     target_compile_definitions(${_g} PRIVATE
                         $<$<COMPILE_LANGUAGE:Fortran>:metis>)
+                endif()
+                # -Dscotch for the genuine analysis Fortran ([dz]ana_aux.F,
+                # ana_set_ordering.F, …); the SCOTCH_*_mumps entry points
+                # resolve from the shared mumps_c_runtime, which links
+                # scotch/esmumps.
+                if(MUMPS_HAVE_SCOTCH)
+                    target_compile_definitions(${_g} PRIVATE
+                        $<$<COMPILE_LANGUAGE:Fortran>:scotch>
+                        $<$<COMPILE_LANGUAGE:Fortran>:${_scotch_f_renames}>)
+                    # [dz]ana_aux_par.F / ana_orderings_wrappers_m.F
+                    # INCLUDE 'scotchf.h' under -Dscotch.
+                    target_include_directories(${_g} PRIVATE
+                        $<BUILD_INTERFACE:${_mumps_scotch_inc}>)
                 endif()
                 # Pristine upstream compiles within column limits, but
                 # relieve line length anyway to match the migrated macro
@@ -1903,6 +2088,13 @@ function(_install_library_pair lib_name)
         # suffices; consumers need it to resolve METIS_MUMPS_NodeND et al.
         if(TARGET metis)
             install(TARGETS metis EXPORT ${_export})
+        endif()
+        # Scotch ordering archives — PUBLIC-linked by mumps_c_runtime
+        # (esmumps + scotch + scotcherr), so they must join the same
+        # export. Leaf C archives with BUILD_INTERFACE-only include dirs;
+        # consumers need them to resolve SCOTCH_*_mumps / esmumps.
+        if(TARGET scotch)
+            install(TARGETS scotch scotcherr esmumps EXPORT ${_export})
         endif()
         # Shared C runtime — PUBLIC-linked by the migrated bridge (and
         # the genuine bridges below), so it must join the export.

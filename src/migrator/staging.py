@@ -469,6 +469,21 @@ set(STAGED_LIBRARIES {staged_list})
         ('_mumps_metis_gklib',      'metis-5.1.0/GKlib'),
         ('_mumps_metis_lib',        'metis-5.1.0/libmetis'),
         ('_mumps_metis_include',    'metis-5.1.0/include'),
+        # Scotch 7.0.4 sequential ordering (ICNTL(7)=3) — vendored under
+        # external/scotch-7.0.4, built with -DSCOTCH_NAME_SUFFIX=_mumps so
+        # every public SCOTCH_* and internal _SCOTCH* symbol carries a
+        # _mumps suffix and this copy can never clash with a system Scotch
+        # at link time; the MUMPS caller sites resolve to the suffixed
+        # names through scotch_rename_mumps.h. The bison/flex parser and
+        # scotch.h/scotchf.h are pre-generated and vendored, so the build
+        # needs no bison/flex. Staging libscotch + esmumps sources and the
+        # generated headers lets cmake build ``scotch``/``scotcherr``/
+        # ``esmumps`` and define ``-Dscotch`` so ICNTL(7)=3 works; without
+        # it the mumps_scotch*.c compile as inert stubs. Integer-graph
+        # only, so a single build serves every migrated arithmetic.
+        ('_mumps_scotch_libsrc',    'scotch-7.0.4/libscotch'),
+        ('_mumps_scotch_esmumps',   'scotch-7.0.4/esmumps'),
+        ('_mumps_scotch_include',   'scotch-7.0.4/include'),
     ]
     for dst_name, rel_src in _std_dirs:
         src = proj_root / 'external' / rel_src
@@ -620,6 +635,9 @@ def _stage_baseline(args, target_name: str):
         ('_mumps_metis_gklib',    'metis-5.1.0/GKlib',                 None),
         ('_mumps_metis_lib',      'metis-5.1.0/libmetis',              None),
         ('_mumps_metis_include',  'metis-5.1.0/include',               None),
+        ('_mumps_scotch_libsrc',  'scotch-7.0.4/libscotch',            None),
+        ('_mumps_scotch_esmumps', 'scotch-7.0.4/esmumps',              None),
+        ('_mumps_scotch_include', 'scotch-7.0.4/include',              None),
     ]
     for dst_name, rel_src, recipe_name in _std_dirs:
         _stage_dst(dst_name, _staged_or_external(rel_src, recipe_name))

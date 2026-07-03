@@ -1,0 +1,162 @@
+/* scotch_rename_mumps.h -- caller-side remap for the privately namespaced
+** Scotch build.  The vendored libscotch/libesmumps are compiled with
+** -DSCOTCH_NAME_SUFFIX=_mumps, so every public SCOTCH_* entry point carries
+** a _mumps suffix (and internals a _SCOTCH*_mumps suffix) and can never
+** clash with a system Scotch at link time.  The public scotch.h ships bare
+** prototypes, so MUMPS caller sites (mumps_scotch*.c) reference the bare
+** names.  Force-including this header (via the build's -include flag) maps
+** those bare names onto the suffixed symbols actually present in the
+** archives.  Support entry points that Scotch's SCOTCH_NAME_SUFFIX leaves
+** un-suffixed (the context/arch/mem family) are deliberately NOT listed --
+** they resolve bare, exactly as defined.  Generated from the built
+** libscotch.a; do not edit by hand.
+*/
+#ifndef SCOTCH_RENAME_MUMPS_H
+#define SCOTCH_RENAME_MUMPS_H
+#define SCOTCH_archAlloc SCOTCH_archAlloc_mumps
+#define SCOTCH_archBuild0 SCOTCH_archBuild0_mumps
+#define SCOTCH_archBuild2 SCOTCH_archBuild2_mumps
+#define SCOTCH_archBuild SCOTCH_archBuild_mumps
+#define SCOTCH_archCmplt SCOTCH_archCmplt_mumps
+#define SCOTCH_archCmpltw SCOTCH_archCmpltw_mumps
+#define SCOTCH_archDomAlloc SCOTCH_archDomAlloc_mumps
+#define SCOTCH_archDomSizeof SCOTCH_archDomSizeof_mumps
+#define SCOTCH_archExit SCOTCH_archExit_mumps
+#define SCOTCH_archHcub SCOTCH_archHcub_mumps
+#define SCOTCH_archInit SCOTCH_archInit_mumps
+#define SCOTCH_archLoad SCOTCH_archLoad_mumps
+#define SCOTCH_archLtleaf SCOTCH_archLtleaf_mumps
+#define SCOTCH_archMesh2 SCOTCH_archMesh2_mumps
+#define SCOTCH_archMesh3 SCOTCH_archMesh3_mumps
+#define SCOTCH_archMeshX SCOTCH_archMeshX_mumps
+#define SCOTCH_archName SCOTCH_archName_mumps
+#define SCOTCH_archSave SCOTCH_archSave_mumps
+#define SCOTCH_archSize SCOTCH_archSize_mumps
+#define SCOTCH_archSizeof SCOTCH_archSizeof_mumps
+#define SCOTCH_archSub SCOTCH_archSub_mumps
+#define SCOTCH_archTleaf SCOTCH_archTleaf_mumps
+#define SCOTCH_archTorus2 SCOTCH_archTorus2_mumps
+#define SCOTCH_archTorus3 SCOTCH_archTorus3_mumps
+#define SCOTCH_archTorusX SCOTCH_archTorusX_mumps
+#define SCOTCH_archVar SCOTCH_archVar_mumps
+#define SCOTCH_archVcmplt SCOTCH_archVcmplt_mumps
+#define SCOTCH_archVhcub SCOTCH_archVhcub_mumps
+#define SCOTCH_geomAlloc SCOTCH_geomAlloc_mumps
+#define SCOTCH_geomData SCOTCH_geomData_mumps
+#define SCOTCH_geomExit SCOTCH_geomExit_mumps
+#define SCOTCH_geomInit SCOTCH_geomInit_mumps
+#define SCOTCH_geomSizeof SCOTCH_geomSizeof_mumps
+#define SCOTCH_graphAlloc SCOTCH_graphAlloc_mumps
+#define SCOTCH_graphBase SCOTCH_graphBase_mumps
+#define SCOTCH_graphBuild SCOTCH_graphBuild_mumps
+#define SCOTCH_graphCheck SCOTCH_graphCheck_mumps
+#define SCOTCH_graphCoarsenBuild SCOTCH_graphCoarsenBuild_mumps
+#define SCOTCH_graphCoarsenMatch SCOTCH_graphCoarsenMatch_mumps
+#define SCOTCH_graphCoarsen SCOTCH_graphCoarsen_mumps
+#define SCOTCH_graphColor SCOTCH_graphColor_mumps
+#define SCOTCH_graphData SCOTCH_graphData_mumps
+#define SCOTCH_graphDiamPV SCOTCH_graphDiamPV_mumps
+#define SCOTCH_graphExit SCOTCH_graphExit_mumps
+#define SCOTCH_graphFree SCOTCH_graphFree_mumps
+#define SCOTCH_graphGeomLoadChac SCOTCH_graphGeomLoadChac_mumps
+#define SCOTCH_graphGeomLoadHabo SCOTCH_graphGeomLoadHabo_mumps
+#define SCOTCH_graphGeomLoadMmkt SCOTCH_graphGeomLoadMmkt_mumps
+#define SCOTCH_graphGeomLoadScot SCOTCH_graphGeomLoadScot_mumps
+#define SCOTCH_graphGeomSaveChac SCOTCH_graphGeomSaveChac_mumps
+#define SCOTCH_graphGeomSaveMmkt SCOTCH_graphGeomSaveMmkt_mumps
+#define SCOTCH_graphGeomSaveScot SCOTCH_graphGeomSaveScot_mumps
+#define SCOTCH_graphInduceList SCOTCH_graphInduceList_mumps
+#define SCOTCH_graphInducePart SCOTCH_graphInducePart_mumps
+#define SCOTCH_graphInit SCOTCH_graphInit_mumps
+#define SCOTCH_graphLoad SCOTCH_graphLoad_mumps
+#define SCOTCH_graphMapCompute SCOTCH_graphMapCompute_mumps
+#define SCOTCH_graphMapExit SCOTCH_graphMapExit_mumps
+#define SCOTCH_graphMapFixedCompute SCOTCH_graphMapFixedCompute_mumps
+#define SCOTCH_graphMapFixed SCOTCH_graphMapFixed_mumps
+#define SCOTCH_graphMapInit SCOTCH_graphMapInit_mumps
+#define SCOTCH_graphMapLoad SCOTCH_graphMapLoad_mumps
+#define SCOTCH_graphMap SCOTCH_graphMap_mumps
+#define SCOTCH_graphMapSave SCOTCH_graphMapSave_mumps
+#define SCOTCH_graphMapView SCOTCH_graphMapView_mumps
+#define SCOTCH_graphMapViewRaw SCOTCH_graphMapViewRaw_mumps
+#define SCOTCH_graphOrderCheck SCOTCH_graphOrderCheck_mumps
+#define SCOTCH_graphOrderComputeList SCOTCH_graphOrderComputeList_mumps
+#define SCOTCH_graphOrderCompute SCOTCH_graphOrderCompute_mumps
+#define SCOTCH_graphOrderExit SCOTCH_graphOrderExit_mumps
+#define SCOTCH_graphOrderInit SCOTCH_graphOrderInit_mumps
+#define SCOTCH_graphOrderList SCOTCH_graphOrderList_mumps
+#define SCOTCH_graphOrderLoad SCOTCH_graphOrderLoad_mumps
+#define SCOTCH_graphOrder SCOTCH_graphOrder_mumps
+#define SCOTCH_graphOrderSaveMap SCOTCH_graphOrderSaveMap_mumps
+#define SCOTCH_graphOrderSave SCOTCH_graphOrderSave_mumps
+#define SCOTCH_graphOrderSaveTree SCOTCH_graphOrderSaveTree_mumps
+#define SCOTCH_graphPartFixed SCOTCH_graphPartFixed_mumps
+#define SCOTCH_graphPart SCOTCH_graphPart_mumps
+#define SCOTCH_graphPartOvl SCOTCH_graphPartOvl_mumps
+#define SCOTCH_graphRemapCompute SCOTCH_graphRemapCompute_mumps
+#define SCOTCH_graphRemapFixedCompute SCOTCH_graphRemapFixedCompute_mumps
+#define SCOTCH_graphRemapFixed SCOTCH_graphRemapFixed_mumps
+#define SCOTCH_graphRemap SCOTCH_graphRemap_mumps
+#define SCOTCH_graphRemapView SCOTCH_graphRemapView_mumps
+#define SCOTCH_graphRemapViewRaw SCOTCH_graphRemapViewRaw_mumps
+#define SCOTCH_graphRepartFixed SCOTCH_graphRepartFixed_mumps
+#define SCOTCH_graphRepart SCOTCH_graphRepart_mumps
+#define SCOTCH_graphSave SCOTCH_graphSave_mumps
+#define SCOTCH_graphSizeof SCOTCH_graphSizeof_mumps
+#define SCOTCH_graphStat SCOTCH_graphStat_mumps
+#define SCOTCH_graphTabLoad SCOTCH_graphTabLoad_mumps
+#define SCOTCH_mapAlloc SCOTCH_mapAlloc_mumps
+#define SCOTCH_mapSizeof SCOTCH_mapSizeof_mumps
+#define SCOTCH_meshAlloc SCOTCH_meshAlloc_mumps
+#define SCOTCH_meshBuild SCOTCH_meshBuild_mumps
+#define SCOTCH_meshCheck SCOTCH_meshCheck_mumps
+#define SCOTCH_meshData SCOTCH_meshData_mumps
+#define SCOTCH_meshExit SCOTCH_meshExit_mumps
+#define SCOTCH_meshGeomLoadHabo SCOTCH_meshGeomLoadHabo_mumps
+#define SCOTCH_meshGeomLoadScot SCOTCH_meshGeomLoadScot_mumps
+#define SCOTCH_meshGeomSaveScot SCOTCH_meshGeomSaveScot_mumps
+#define SCOTCH_meshGraphDual SCOTCH_meshGraphDual_mumps
+#define SCOTCH_meshGraph SCOTCH_meshGraph_mumps
+#define SCOTCH_meshInit SCOTCH_meshInit_mumps
+#define SCOTCH_meshLoad SCOTCH_meshLoad_mumps
+#define SCOTCH_meshOrderCheck SCOTCH_meshOrderCheck_mumps
+#define SCOTCH_meshOrderComputeList SCOTCH_meshOrderComputeList_mumps
+#define SCOTCH_meshOrderCompute SCOTCH_meshOrderCompute_mumps
+#define SCOTCH_meshOrderExit SCOTCH_meshOrderExit_mumps
+#define SCOTCH_meshOrderInit SCOTCH_meshOrderInit_mumps
+#define SCOTCH_meshOrderList SCOTCH_meshOrderList_mumps
+#define SCOTCH_meshOrder SCOTCH_meshOrder_mumps
+#define SCOTCH_meshOrderSaveMap SCOTCH_meshOrderSaveMap_mumps
+#define SCOTCH_meshOrderSave SCOTCH_meshOrderSave_mumps
+#define SCOTCH_meshOrderSaveTree SCOTCH_meshOrderSaveTree_mumps
+#define SCOTCH_meshSave SCOTCH_meshSave_mumps
+#define SCOTCH_meshSize SCOTCH_meshSize_mumps
+#define SCOTCH_meshSizeof SCOTCH_meshSizeof_mumps
+#define SCOTCH_meshStat SCOTCH_meshStat_mumps
+#define SCOTCH_numSizeof SCOTCH_numSizeof_mumps
+#define SCOTCH_orderAlloc SCOTCH_orderAlloc_mumps
+#define SCOTCH_orderSizeof SCOTCH_orderSizeof_mumps
+#define SCOTCH_randomLoad SCOTCH_randomLoad_mumps
+#define SCOTCH_randomProc SCOTCH_randomProc_mumps
+#define SCOTCH_randomReset SCOTCH_randomReset_mumps
+#define SCOTCH_randomSave SCOTCH_randomSave_mumps
+#define SCOTCH_randomSeed SCOTCH_randomSeed_mumps
+#define SCOTCH_stratAlloc SCOTCH_stratAlloc_mumps
+#define SCOTCH_stratArchBuild SCOTCH_stratArchBuild_mumps
+#define SCOTCH_stratExit SCOTCH_stratExit_mumps
+#define SCOTCH_stratFree SCOTCH_stratFree_mumps
+#define SCOTCH_stratGraphBipart SCOTCH_stratGraphBipart_mumps
+#define SCOTCH_stratGraphClusterBuild SCOTCH_stratGraphClusterBuild_mumps
+#define SCOTCH_stratGraphMapBuild SCOTCH_stratGraphMapBuild_mumps
+#define SCOTCH_stratGraphMap SCOTCH_stratGraphMap_mumps
+#define SCOTCH_stratGraphOrderBuild SCOTCH_stratGraphOrderBuild_mumps
+#define SCOTCH_stratGraphOrder SCOTCH_stratGraphOrder_mumps
+#define SCOTCH_stratGraphPartOvlBuild SCOTCH_stratGraphPartOvlBuild_mumps
+#define SCOTCH_stratGraphPartOvl SCOTCH_stratGraphPartOvl_mumps
+#define SCOTCH_stratInit SCOTCH_stratInit_mumps
+#define SCOTCH_stratMeshOrderBuild SCOTCH_stratMeshOrderBuild_mumps
+#define SCOTCH_stratMeshOrder SCOTCH_stratMeshOrder_mumps
+#define SCOTCH_stratSave SCOTCH_stratSave_mumps
+#define SCOTCH_stratSizeof SCOTCH_stratSizeof_mumps
+#define SCOTCH_version SCOTCH_version_mumps
+#endif /* SCOTCH_RENAME_MUMPS_H */
