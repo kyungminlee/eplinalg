@@ -74,7 +74,7 @@ from .fortran.complex_rw import (  # noqa: F401  (re-export)
     _wrap_bare_complex_literals, _unwrap_redundant_constructors, _unwrap_ctor_re,
 )
 from .fortran.mpi import (  # noqa: F401  (re-export)
-    _MPI_DOUBLE_COMPLEX_RE, _MPI_DOUBLE_PRECISION_RE, _MPI_COMPLEX_RE, _MPI_REAL_RE, _INCLUDE_PREFIXED_H_RE, _MPI_REDUCE_CALL_RE, _MPI_OP_RE, _STANDARD_MPI_HANDLES, _rewrite_prefixed_includes, _rewrite_mpi_datatypes, _rewrite_mpi_sum, _custom_mpi_tokens, insert_use_multifloats_mpi_f,
+    _MPI_DOUBLE_COMPLEX_RE, _MPI_DOUBLE_PRECISION_RE, _MPI_COMPLEX_RE, _MPI_REAL_RE, _INCLUDE_PREFIXED_H_RE, _MPI_REDUCE_HEAD_RE, _sub_mpi_reduce_calls, _MPI_OP_RE, _STANDARD_MPI_HANDLES, _rewrite_prefixed_includes, _rewrite_mpi_datatypes, _rewrite_mpi_sum, _custom_mpi_tokens, insert_use_multifloats_mpi_f,
 )
 from .fortran.keepkind import (  # noqa: F401  (re-export)
     _KK_SENTINEL, _KK_DBLE_SENTINEL, _KK_DCMPLX_SENTINEL, _apply_keep_kind_sentinel, _restore_keep_kind_sentinel, _strip_roundup_lwork,

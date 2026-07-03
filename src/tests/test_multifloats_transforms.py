@@ -831,6 +831,28 @@ def test_rewrite_mpi_max_real_call_site():
     assert 'MPI_MAX' not in out
 
 
+def test_rewrite_mpi_reduce_nested_paren_argument():
+    """The op must be rewritten even when a reduce argument nests
+    parentheses two levels deep — e.g. ``WRKRC(1_8+int(M,8))``, the
+    COLSCA reduce in ``*fac_scalings_simScaleAbs.F``. A fixed-depth
+    regex for the argument list failed to match such a call at all,
+    silently leaving a stock ``MPI_MAX`` on a wide datatype (undefined
+    for the target op) and corrupting distributed scaling into NaN. The
+    balanced-paren scan must capture it. Guards both real (kind16) and
+    complex arithmetic paths."""
+    k16 = load_target('kind16')
+    src = (
+        "      CALL MPI_REDUCE(COLSCA, WRKRC(1_8+int(M,8)), N,\n"
+        "     &     MPI_DOUBLE_PRECISION,\n"
+        "     &     MPI_MAX, 0,\n"
+        "     &     COMM, IERROR)\n"
+    )
+    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, k16), k16)
+    assert 'MPI_REAL16' in out
+    assert 'MPI_QQ_AMX' in out
+    assert 'MPI_MAX' not in out
+
+
 def test_rewrite_mpi_min_complex_call_site():
     mf = load_target('multifloats')
     src = (

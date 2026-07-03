@@ -92,11 +92,57 @@ def _rewrite_mpi_datatypes(source: str, target_mode: TargetMode) -> str:
 # typed calls are left alone by construction. For KIND targets the
 # c_mpi_(sum|max|min)_* fields expand to 'MPI_(SUM|MAX|MIN)' or are
 # unset, and the pass is a no-op.
-_MPI_REDUCE_CALL_RE = re.compile(
-    r'\bMPI_(?:I?ALL)?REDUCE(?:_SCATTER)?\b\s*'
-    r'\((?:[^()]|\([^()]*\))*\)',
+#
+# The call's argument list is delimited by a *balanced-parenthesis scan*
+# (`_sub_mpi_reduce_calls`) rather than a regex. A fixed-depth regex such
+# as ``\((?:[^()]|\([^()]*\))*\)`` only tolerates one level of nested
+# parens; a real argument like ``WRKRC(1_8+int(M,8))`` (the COLSCA
+# reduce in ``*fac_scalings_simScaleAbs.F``) nests two levels, so the
+# regex failed to match that call *at all* and silently left its
+# ``MPI_MAX`` unconverted — producing a stock ``MPI_MAX`` on a quad
+# datatype, which OpenMPI does not define, corrupting the distributed
+# column scaling into NaN and yielding a false "singular matrix". A
+# balanced scan is depth-agnostic and immune to that class of bug.
+_MPI_REDUCE_HEAD_RE = re.compile(
+    r'\bMPI_(?:I?ALL)?REDUCE(?:_SCATTER)?\b\s*\(',
     re.IGNORECASE,
 )
+
+
+def _sub_mpi_reduce_calls(source: str, rewrite) -> str:
+    """Apply ``rewrite`` to each complete ``MPI_*REDUCE*(...)`` call.
+
+    Mirrors ``re.sub(pattern, rewrite, source)`` but delimits the call's
+    argument list with a balanced-parenthesis scan so arguments nested to
+    any depth are captured. ``rewrite`` receives the full call text
+    (name through the matching close paren) and returns its replacement.
+    """
+    out: list[str] = []
+    pos = 0
+    for m in _MPI_REDUCE_HEAD_RE.finditer(source):
+        if m.start() < pos:
+            continue  # inside a call we already consumed
+        # Scan from the opening '(' (last char of the match) to its
+        # balanced close, tracking nesting depth.
+        depth = 0
+        i = m.end() - 1
+        n = len(source)
+        while i < n:
+            ch = source[i]
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        if depth != 0:
+            continue  # unbalanced (truncated file); leave untouched
+        out.append(source[pos:m.start()])
+        out.append(rewrite(source[m.start():i + 1]))
+        pos = i + 1
+    out.append(source[pos:])
+    return ''.join(out)
 
 
 _MPI_OP_RE = {
@@ -122,8 +168,7 @@ def _rewrite_mpi_sum(source: str, target_mode: TargetMode) -> str:
     if not rules:
         return source
 
-    def rewrite(m: re.Match) -> str:
-        call = m.group(0)
+    def rewrite(call: str) -> str:
         is_complex = bool(complex_tok) and complex_tok in call
         is_real = bool(real_tok) and real_tok in call
         if not (is_complex or is_real):
@@ -135,7 +180,7 @@ def _rewrite_mpi_sum(source: str, target_mode: TargetMode) -> str:
                 call = pat.sub(r, call)
         return call
 
-    return _MPI_REDUCE_CALL_RE.sub(rewrite, source)
+    return _sub_mpi_reduce_calls(source, rewrite)
 
 
 # Predefined MPI handle names that mpif.h / the MPI module already
