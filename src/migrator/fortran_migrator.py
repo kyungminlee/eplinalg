@@ -64,6 +64,9 @@ from .fortran.decls import (  # noqa: F401  (re-export)
 from .fortran.fixedform import (  # noqa: F401  (re-export)
     reformat_fixed_line, _strip_inline_comment, _segment_fixed_form_statements,
 )
+from .fortran.logical_lines import (  # noqa: F401  (re-export)
+    segment_free_form, reformat_free_line,
+)
 from .fortran.renames import (  # noqa: F401  (re-export)
     _ROUTINE_NAME_TOK_RE, _get_rename_pattern, replace_routine_names, _INCLUDE_RE, _RENAME_PATTERN_CACHE, replace_include_filenames, _XERBLA_STR_RE, replace_xerbla_strings, _known_constants_pattern, _all_known_constant_renames, _DECL_KEYWORD_RE, replace_known_constants,
 )
@@ -332,6 +335,39 @@ def _source_kind_from_filename(name: str) -> int | None:
     return 4 if letter in ('s', 'c') else 8
 
 
+def _apply_local_passes(source: str, passes, *, fixed_form: bool) -> str:
+    """Run ``passes`` over each statement's joined logical line so a pattern
+    the source split across continuations is matched as one string, but
+    re-emit statements the passes leave unchanged as their *original* physical
+    lines. This gives the join regime's matching power without the diff churn
+    of reflowing every multi-line statement in the file — a whole-file
+    join -> re-wrap round-trip reformats ~386/436 MUMPS files cosmetically,
+    this touches only the statements a pass rewrote. A pass returning ``''``
+    drops the statement (e.g. an emptied INTRINSIC)."""
+    physical = source.splitlines(keepends=True)
+    segs = (_segment_fixed_form_statements(physical) if fixed_form
+            else segment_free_form(physical))
+    reflow = reformat_fixed_line if fixed_form else reformat_free_line
+    out: list[str] = []
+    for kind, lines, terms, joined in segs:
+        if kind != 'code':
+            for line, term in zip(lines, terms):
+                out.append(line + term)
+            continue
+        new = joined
+        for p in passes:
+            new = p(new)
+        if new == joined:
+            for line, term in zip(lines, terms):
+                out.append(line + term)
+        elif new == '':
+            continue
+        else:
+            term = terms[0] if terms else '\n'
+            out.append(reflow(new) + term)
+    return ''.join(out)
+
+
 def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mode: TargetMode, parser: str | None = None, parser_cmd: str | None = None, keep_kind_lines: frozenset[int] | None = None) -> tuple[str, str] | None:
     ext, source = src_path.suffix.lower(), src_path.read_text(errors='replace')
     facts = None
@@ -357,8 +393,24 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
     if keep_kind_lines:
         migrated = _restore_keep_kind_sentinel(migrated)
 
-    migrated = _rewrite_mpi_datatypes(migrated, target_mode)
-    migrated = _rewrite_mpi_sum(migrated, target_mode)
+    # The MPI datatype/reduce-op rewrites match patterns that can span
+    # continuation lines (an MPI_REDUCE call, its op and datatype args), so run
+    # them through the continuation-collapsed, verbatim-preserving regime:
+    # each statement is matched as one joined logical line, but statements the
+    # passes don't touch keep their original physical formatting. Previously
+    # each pass re-walked continuations itself and periodically missed cases
+    # (e.g. an MPI_REDUCE op whose argument nested two paren levels).
+    fixed_form = ext in ('.f', '.for', '.h')
+    migrated = _apply_local_passes(
+        migrated,
+        [lambda s: _rewrite_mpi_datatypes(s, target_mode),
+         lambda s: _rewrite_mpi_sum(s, target_mode)],
+        fixed_form=fixed_form,
+    )
+    # The remaining post-passes insert a whole USE line / rewrite single
+    # (never-continued) include lines / strip a LWORK round-up — none match
+    # across continuations, so they stay as whole-file passes. insert_use must
+    # run after _rewrite_mpi_sum (it keys off the MPI_QQ_* ops that pass emits).
     migrated = insert_use_multifloats_mpi_f(migrated, target_mode)
     migrated = _rewrite_prefixed_includes(migrated, target_mode)
     migrated = _strip_roundup_lwork(migrated, target_mode)
@@ -403,25 +455,24 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
 
     def clean_intrinsic(m):
         indent, sep, funcs_str, newline = m.group(1), m.group(2), m.group(3), m.group(4)
-        # Skip continuation lines: trailing ``,`` means more on the next
-        # physical line, and stripping a name on this line could leave
-        # the continuation joined into a fused token (e.g.
-        # ``MAXEXPONENT,\n     $MINEXPONENT`` → ``MAXEXPONENTMINEXPONENT``).
-        # The full-list case is rare enough that conservative single-line
-        # handling captures the asymmetry we care about (S/C vs D/Z
-        # halves differ in the REAL/CMPLX type-conversion entries, which
-        # are always on the first line) without touching multi-line
-        # declarations.
-        if funcs_str.rstrip().endswith(','):
-            return m.group(0)
         kept = [f.strip() for f in funcs_str.split(',')
                 if f.strip() and f.strip().upper() not in strip_set]
         return f"{indent}INTRINSIC{sep}{', '.join(kept)}{newline}" if kept else ""
 
-    migrated = re.sub(
-        r'(?im)^([ \t]*)INTRINSIC(\s*::\s*|\s+)([A-Za-z0-9_,\s]+?)(\r?\n|$)',
-        clean_intrinsic, migrated,
-    )
+    def clean_intrinsic_line(s: str) -> str:
+        # Runs on a single joined logical line, so a multi-line INTRINSIC list
+        # (previously punted on to avoid fusing ``MAXEXPONENT,\n$MINEXPONENT``
+        # into one token) is now cleaned as a whole. Returns ``''`` when the
+        # kept list is empty so the statement is dropped.
+        return re.sub(
+            r'(?im)^([ \t]*)INTRINSIC(\s*::\s*|\s+)([A-Za-z0-9_,\s]+?)(\r?\n|$)',
+            clean_intrinsic, s,
+        )
+
+    # Runs in the verbatim-preserving joined regime: multi-line INTRINSIC
+    # lists are collapsed before the strip, statements it doesn't alter keep
+    # their original physical formatting, and re-wrapping happens once here.
+    migrated = _apply_local_passes(migrated, [clean_intrinsic_line], fixed_form=fixed_form)
     return out_name, migrated
 
 

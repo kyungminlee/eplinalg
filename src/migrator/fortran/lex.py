@@ -323,6 +323,33 @@ def _iter_outside_strings(text: str):
         i += 1
 
 
+def _ends_in_string(text: str) -> bool:
+    """True if a character-literal is still open at the end of ``text``.
+
+    Recognizes both ``'`` and ``"`` delimiters and the Fortran
+    doubled-quote escape. Used to decide whether a continuation join sits
+    inside a string literal (join tight, no inserted blank) or at a token
+    boundary (a blank stands in for the break).
+    """
+    in_string = False
+    quote = ''
+    n = len(text)
+    i = 0
+    while i < n:
+        ch = text[i]
+        if in_string:
+            if ch == quote:
+                if i + 1 < n and text[i + 1] == quote:
+                    i += 2
+                    continue
+                in_string = False
+        elif ch in ("'", '"'):
+            in_string = True
+            quote = ch
+        i += 1
+    return in_string
+
+
 def _find_inline_bang(text: str) -> int:
     """Return the index of the first inline ``!`` comment marker in
     ``text``, or ``len(text)`` if none. Quote-aware (doubled-quote

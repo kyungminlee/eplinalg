@@ -4,7 +4,9 @@ Re-splits migrated fixed-form lines that overflow column 72 and segments
 fixed-form statements at their continuation boundaries. Extracted verbatim
 from ``fortran_migrator.py``.
 """
-from .lex import _build_split_mask, _find_inline_bang, is_comment_line
+from .lex import (
+    _build_split_mask, _ends_in_string, _find_inline_bang, is_comment_line,
+)
 
 
 def reformat_fixed_line(line: str, cont_char: str = '+') -> str:
@@ -133,7 +135,18 @@ def _segment_fixed_form_statements(
                 # ``reformat_fixed_line`` re-splits the joined string.
                 # On the first continuation, this also strips any inline
                 # comment from the head line.
-                joined = _strip_inline_comment(joined) + ' ' + ntext[6:]
+                head_code = _strip_inline_comment(joined)
+                # A character literal split across the continuation must be
+                # joined *tight*: in fixed form the string content is the
+                # head's text followed directly by the continuation's
+                # column-7+ text, with no blank between them. Inserting the
+                # token-boundary space here would corrupt the literal (e.g.
+                # a WRITE message gaining a doubled space). Outside a string
+                # the space is the harmless stand-in for the line break.
+                if _ends_in_string(head_code):
+                    joined = head_code + ntext[6:]
+                else:
+                    joined = head_code + ' ' + ntext[6:]
                 j += 1
             else:
                 break
