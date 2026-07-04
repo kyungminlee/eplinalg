@@ -761,7 +761,7 @@ endif()
 #
 # Genuine and migrated collide on the unprefixed Fortran commons, so the
 # genuine link group is a DISJOINT archive set from the migrated one:
-# dmumps_c/zmumps_c + dmumps/zmumps + dzmumps_common + the MPI-matched
+# dmumps_c/zmumps_c + dmumps/zmumps + mumps_common + the MPI-matched
 # in-tree parallel stack (cmake/CMakeLists.txt's _genuine_parallel_stack:
 # bundled ScaLAPACK/PBLAS/BLACS/LAPACK/BLAS built against the chosen MPI).
 # The circular static refs among those archives are resolved by the same
@@ -774,7 +774,7 @@ if(TARGET dmumps_c AND TARGET zmumps_c AND TARGET dmumps AND TARGET zmumps
     # "" variant: genuine bridges + solvers + common + full parallel stack.
     set(_genuine_group
         dmumps_c zmumps_c mumps_c_runtime
-        dmumps zmumps dzmumps_common)
+        dmumps zmumps mumps_common)
     foreach(_p scalapack scalapack_common pblas pblas_common pbblas
                ptzblas ptzblas_common blacs blacs_common
                lapack lapack_common blas)
@@ -786,7 +786,7 @@ if(TARGET dmumps_c AND TARGET zmumps_c AND TARGET dmumps AND TARGET zmumps
     # keep the std double LAPACK + BLAS the genuine solvers call.
     set(_genuine_group_seq
         dmumps_c zmumps_c mumps_c_runtime
-        dmumps zmumps dzmumps_common)
+        dmumps zmumps mumps_common)
     foreach(_p lapack blas)
         if(TARGET ${_p})
             list(APPEND _genuine_group_seq ${_p})
@@ -868,6 +868,57 @@ if(TARGET dmumps_c AND TARGET zmumps_c AND TARGET dmumps AND TARGET zmumps
                     "$<LINK_GROUP:RESCAN,${_genuine_group}>")
             endif()
             _mumps_apply_link_variant(${tgt} "${variant}" FALSE)
+            _mumps_register_test_variant(${tgt} "${variant}")
+        endforeach()
+    endif()
+
+    # ── genuine ALL-precision C-bridge solve test (s + c + d + z) ─────
+    # The user-requested "link all precision libs into one executable
+    # which tests them all": libsmumps / libcmumps / libdmumps /
+    # libzmumps coexist in a single program because they share the one
+    # unpromoted mumps_common (what retiring dzmumps_common unlocked) and
+    # export distinct {s,c,d,z}mumps_c entry points. Extends the genuine
+    # link group with the single-precision solver + bridge archives; the
+    # migrated e/y stack stays out (its bridge clashes on dmumps_* C
+    # helpers — see the file header). Guarded on all four genuine bridges
+    # so it only appears in the genuine-enabled build.
+    set(_genuine_scdz_src
+        ${CMAKE_CURRENT_SOURCE_DIR}/c/genuine/test_genuine_scdz_solve.c)
+    if(TARGET smumps_c AND TARGET cmumps_c AND TARGET smumps AND TARGET cmumps
+            AND EXISTS ${_genuine_scdz_src})
+        # smumps_c/cmumps_c bridges + smumps/cmumps solvers prepended to
+        # the genuine d/z groups; the shared common + parallel stack are
+        # already listed there.
+        set(_genuine_scdz_group     smumps_c cmumps_c smumps cmumps ${_genuine_group})
+        set(_genuine_scdz_group_seq smumps_c cmumps_c smumps cmumps ${_genuine_group_seq})
+        foreach(_vkey IN LISTS _mumps_test_variants)
+            if(_vkey STREQUAL "plain")
+                set(variant "")
+            else()
+                set(variant "${_vkey}")
+            endif()
+            set(tgt test_genuine_scdz_solve${variant})
+            add_executable(${tgt} ${_genuine_scdz_src})
+            set_target_properties(${tgt} PROPERTIES LINKER_LANGUAGE Fortran)
+            target_link_options(${tgt} PRIVATE -fno-lto)
+            target_include_directories(${tgt} PRIVATE ${_MUMPS_C_INC})
+            if(variant STREQUAL "_seq")
+                add_dependencies(${tgt} ${_genuine_scdz_group_seq} mpiseq)
+                target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
+                foreach(_arc IN LISTS _genuine_scdz_group_seq)
+                    target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
+                endforeach()
+                target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:mpiseq>)
+                target_link_libraries(${tgt} PRIVATE "-Wl,--end-group")
+                foreach(_arc IN LISTS _genuine_scdz_group_seq mpiseq)
+                    target_include_directories(${tgt} PRIVATE
+                        $<TARGET_PROPERTY:${_arc},INTERFACE_INCLUDE_DIRECTORIES>)
+                endforeach()
+            else()
+                target_link_libraries(${tgt} PRIVATE
+                    "$<LINK_GROUP:RESCAN,${_genuine_scdz_group}>")
+            endif()
+            _mumps_apply_link_variant(${tgt} "${variant}" TRUE)
             _mumps_register_test_variant(${tgt} "${variant}")
         endforeach()
     endif()

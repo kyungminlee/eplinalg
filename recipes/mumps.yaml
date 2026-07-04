@@ -152,6 +152,34 @@ copy_files:
   # modules that USE it (their layout depended on TPS_T's size).
   - OMP_TPS_COMMON_M             # MUMPS_TPS_M
 
+  # --- Complete the genuine 36-file common (Task 17) ------------------
+  # Full unification: the migrated ``mumps_common`` becomes the *entire*
+  # upstream shared common so genuine s/c/d/z and the extended prefixes
+  # (e/y, q/x, m/w) all link one common — retiring the parallel genuine
+  # ``dzmumps_common`` target. Upstream compiles these 36 files once into
+  # libmumps_common and links them into libsmumps/libdmumps/libcmumps/
+  # libzmumps alike, so by construction none takes an arithmetic-specific
+  # argument; extended precision is just one more working precision served
+  # by the same objects. These 11 were the last still classified as
+  # precision by the file-stem heuristic; each was scanned and carries no
+  # working-precision interface. Audit: workspace task 17,
+  # 02-common-unification-verdict. (Matches uppercased basenames.)
+  - ANA_AMDMF          # AMD/AMF ordering: only float is THRESM, a local INTEGER-derived threshold
+  - ANA_BLK            # block analysis: NBBLOCK-style integer counts; USE only MUMPS_ANA_BLK_M/MUMPS_TOOLS_COMMON_M (both common)
+  - ANA_SET_ORDERING   # integer-only ordering selection
+  - MUMPS_L0_OMP_M     # MUMPS_L0OMP_M: integer L0-OMP thread/tree bookkeeping, no float decls
+  - MUMPS_MPITOOMP_M   # integer MPI-rank-to-OMP-thread mapping, no float decls
+  - MUMPS_OOC_COMMON   # OOC control flags/units, all INTEGER/LOGICAL (WP OOC buffers live in the arith solvers)
+  - MUMPS_PIVNUL_MOD   # null-pivot index bookkeeping, all INTEGER (WP thresholds live in the arith solvers)
+  - MUMPS_PRINT_DEFINED  # INTEGER/LOGICAL diagnostic print flags
+  # mumps_type2_blocking's only reals are single-precision REAL cost
+  # heuristics (Wmaster, block costs). REAL FUNCTION MUMPS_BLOC2_COUT is
+  # self-contained (no external caller expects a promoted return); the
+  # type2 subroutines arith solvers call take integer control-array args.
+  - MUMPS_TYPE2_BLOCKING
+  - SOL_COMMON         # integer solve index/mapping helpers (unprefixed common; formerly excluded from the s*.F glob)
+  - SOL_DS_COMMON_M    # integer distributed-solution solve helper
+
 # Redirect ``USE MUMPS_MEMORY_MOD`` in migrated callers to the
 # hand-written EP module that provides Q/X reallocators. The upstream
 # module is kept verbatim via copy_files above.

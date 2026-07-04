@@ -386,10 +386,16 @@ set(STAGED_LIBRARIES {staged_list})
     # Same recipe for LAPACK: vendored Netlib SRC/ promoted to quad
     # precision gives tests/lapack/reflapack/ a KIND=16 reference to
     # compare the migrated qlapack/elapack/ddlapack against. The
-    # INSTALL/ directory provides dlamch.f / droundup_lwork.f, which
-    # LAPACK SRC routines call but which aren't in SRC/ itself — copy
-    # them into _reflapack_src/ alongside the SRC contents so a single
-    # glob compiles the full reference.
+    # INSTALL/ directory provides {s,d}lamch.f / {s,d}roundup_lwork.f,
+    # which LAPACK SRC routines call but which aren't in SRC/ itself —
+    # copy them into _reflapack_src/ alongside the SRC contents so a
+    # single glob compiles the full reference. Both the single- and
+    # double-precision variants are needed: the genuine standard ``lapack``
+    # archive carries every arithmetic (the genuine single-precision
+    # solvers smumps/cmumps call slamch_ / sroundup_lwork_, the double
+    # ones dlamch_ / droundup_lwork_). These verbatim upstream files are
+    # unpromoted here — only the migrated LAPACK archive elides
+    # roundup_lwork via _strip_roundup_lwork; the standard one keeps it.
     netlib_lapack_src = proj_root / 'external' / 'lapack-3.12.1' / 'SRC'
     if netlib_lapack_src.is_dir():
         reflapack_dst = staging_dir / '_reflapack_src'
@@ -397,7 +403,8 @@ set(STAGED_LIBRARIES {staged_list})
             shutil.rmtree(reflapack_dst)
         shutil.copytree(netlib_lapack_src, reflapack_dst)
         install_src = proj_root / 'external' / 'lapack-3.12.1' / 'INSTALL'
-        for fname in ('dlamch.f', 'droundup_lwork.f'):
+        for fname in ('slamch.f', 'dlamch.f',
+                      'sroundup_lwork.f', 'droundup_lwork.f'):
             src = install_src / fname
             if src.is_file():
                 shutil.copy2(src, reflapack_dst / fname)
