@@ -216,7 +216,9 @@ sections:
    helpers (`LSAME`, `XERBLA`, `IEEECK`, etc.) that don't carry a
    precision letter.
 5. Per-library wiring: BLAS, XBLAS, BLACS, LAPACK, PTZBLAS, PBBLAS,
-   PBLAS, ScaLAPACK, scalapack_c, MUMPS.
+   PBLAS, ScaLAPACK (its `scalapack_c` C-side clones are compiled as
+   OBJECT libraries and folded into the ScaLAPACK archive, not built
+   as a standalone library), MUMPS.
 6. **libmpiseq** — sequential MPI stub built from MUMPS 5.8.2's
    `libseq/`. Provides `mpi_init_`, `mpi_send_`, `blacs_pinfo_`,
    etc. so single-rank tests can link cleanly without a real MPI.

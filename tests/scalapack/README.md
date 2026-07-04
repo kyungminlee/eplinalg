@@ -154,10 +154,10 @@ surfaced during that work and are worth keeping written down:
    `NoChange` switch to pick a name-mangling convention; without an
    explicit `target_compile_definitions(... PRIVATE Add_)` the symbols
    come out as `pqgemr2d` (no trailing underscore) and gfortran can't
-   resolve them. Wired in `cmake/CMakeLists.txt` for the
-   `${LIB_PREFIX}scalapack_c` target.
+   resolve them. Wired in `cmake/CMakeLists.txt` on the C OBJECT libs
+   that fold into the `${LIB_PREFIX}scalapack` archive.
 
-6. **Multifloats `scalapack_c` is in.** REDIST/SRC originally shipped
+6. **Multifloats scalapack C clones are in.** REDIST/SRC originally shipped
    K&R-style function definitions that didn't survive C-as-C++
    compilation. They've all been ANSI-fied in place
    (`external/scalapack-2.2.3/REDIST/SRC/p*gemr*.c`, `p*trmr*.c`),

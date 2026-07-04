@@ -136,13 +136,9 @@ else()
         ${LIB_PREFIX}lapack
         ${LIB_PREFIX}blas
     )
-    # qscalapack's Fortran routines call qlamov_/pqgemr2d_ etc. that
-    # live in qscalapack_c — used to be pulled in via qscalapack's
-    # INTERFACE_LINK_LIBRARIES, but that cycle was broken to fix
-    # find_package, so list it explicitly here.
-    if(TARGET ${LIB_PREFIX}scalapack_c)
-        target_link_libraries(scalapack_test_target PUBLIC ${LIB_PREFIX}scalapack_c)
-    endif()
+    # qscalapack's Fortran routines call qlamov_/pqgemr2d_ etc.; those C
+    # helpers are now folded into ${LIB_PREFIX}scalapack itself, so no
+    # separate qscalapack_c link is needed.
     foreach(_dep ${LIB_PREFIX}ptzblas ${LIB_PREFIX}pbblas)
         if(TARGET ${_dep})
             target_link_libraries(scalapack_test_target PUBLIC ${_dep})
@@ -174,9 +170,6 @@ function(add_scalapack_precision_test test_src)
             scalapack pblas ptzblas pbblas
             lapack blas blacs
             reflapack_quad refblas_quad)
-        if(TARGET scalapack_c)
-            list(APPEND _sp_cycle scalapack_c)
-        endif()
     else()
         set(_sp_cycle
             scalapack_test_target scalapack_test_common
@@ -185,12 +178,10 @@ function(add_scalapack_precision_test test_src)
             ${LIB_PREFIX}lapack   ${LIB_PREFIX}blas
             ${LIB_PREFIX}blacs
             reflapack_quad refblas_quad)
-        # scalapack_c carries the dlamov-family wrappers (qlamov_, xlamov_)
-        # and the REDIST entry points (pqgemr2d_, pxgemr2d_) that
-        # ${LIB_PREFIX}scalapack's Fortran routines call.
-        if(TARGET ${LIB_PREFIX}scalapack_c)
-            list(APPEND _sp_cycle ${LIB_PREFIX}scalapack_c)
-        endif()
+        # The dlamov-family wrappers (qlamov_, xlamov_) and REDIST entry
+        # points (pqgemr2d_, pxgemr2d_) that ${LIB_PREFIX}scalapack's
+        # Fortran routines call are now folded into ${LIB_PREFIX}scalapack
+        # itself — no separate qscalapack_c archive to add.
         # qxblas is a PUBLIC dep of qlapack (cmake/CMakeLists.txt:600) for
         # the iterative-refinement extra-precision routines. It pulls qblas,
         # which is already in the cycle — must include qxblas explicitly so
@@ -200,7 +191,7 @@ function(add_scalapack_precision_test test_src)
             list(APPEND _sp_cycle ${LIB_PREFIX}xblas)
         endif()
     endif()
-    foreach(_common blas_common blacs_common ptzblas_common pblas_common lapack_common scalapack_common scalapack_c_common)
+    foreach(_common blas_common blacs_common ptzblas_common pblas_common lapack_common scalapack_common)
         if(TARGET ${_common})
             list(APPEND _sp_cycle ${_common})
         endif()

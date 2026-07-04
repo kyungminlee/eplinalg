@@ -9,7 +9,7 @@
  *   - the genuine double complex bridge  zmumps_c
  * The migrated pair are bundled into ${LIB_PREFIX}mumps_c; the genuine pair are
  * separate libdmumps_c / libzmumps_c. Both share the arithmetic-independent C
- * runtime factored into libmumps_c_runtime (mumps_common.c, mumps_addr.c, IO,
+ * runtime folded into libmumps_common (mumps_common.c, mumps_addr.c, IO,
  * thread, numa, ... — none of which carry an arithmetic or width macro).
  *
  * This single translation unit references all four so the linker must resolve
@@ -17,8 +17,8 @@
  * LINK check: with the runtime shared, no two archives may define the same
  * runtime symbol. The build wires this source TWICE — once per coherent family:
  *
- *   genuine  : libdmumps_c + libzmumps_c + libmumps_c_runtime
- *   migrated : ${LIB_PREFIX}mumps_c      + libmumps_c_runtime
+ *   genuine  : libdmumps_c + libzmumps_c + libmumps_common
+ *   migrated : ${LIB_PREFIX}mumps_c      + libmumps_common
  *
  * Each family must link with NO "multiple definition" diagnostic. Before the
  * runtime was factored out, both bridges bundled their own copy and the genuine
