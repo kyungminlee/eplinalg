@@ -213,8 +213,13 @@ patches:
 #    XERBLA / XERBLA_ARRAY) — these come from the standard-precision
 #    archive ``lapack`` (built from the same Netlib sources without
 #    -freal-8-real-16) which the migrated archive PUBLIC-links. The
-#    extended-precision-only helpers (LA_CONSTANTS_EP / LA_XISNAN_EP)
-#    DO ride in the migrated archive — they have no standard sibling.
+#    extended-precision-only helpers (LA_CONSTANTS_{EY,QX} /
+#    LA_XISNAN_{EY,QX}) DO ride in the migrated archive — they have no
+#    standard sibling. Each is single-precision (one target's E/Y, Q/X
+#    or M/W block) and is routed into the PREFIXED precision archive
+#    (libelapack / libqlapack), not the shared lapack_common — see
+#    staging.py. multifloats' M/W pair ships as separate helper libs
+#    from recipes/lapack/mf_helpers/ (built into libmlapack).
 skip_files:
   - ZCGESV
   - DSGESV
@@ -242,17 +247,22 @@ skip_files:
   - XERBLA
   - XERBLA_ARRAY
 
-# Multi-precision utility modules — copy unchanged. Note that
-# LA_CONSTANTS and LA_XISNAN are also in skip_files above (the std-
-# precision originals do not ride into the migrated archive); only the
-# _EP and _MF siblings are actually emitted here. Listing the
-# precision-independent stems anyway documents intent and is harmless
-# (skip_files runs first).
+# Per-target precision helper modules. LA_CONSTANTS and LA_XISNAN are in
+# skip_files above (the std-precision originals do not ride into the
+# migrated archive); only the target-specific siblings are emitted:
+#   kind10 → LA_CONSTANTS_EY / LA_XISNAN_EY   (E/Y, 80-bit)
+#   kind16 → LA_CONSTANTS_QX / LA_XISNAN_QX   (Q/X, __float128)
+#   multifloats → LA_CONSTANTS_MW / LA_XISNAN_MW (M/W, double-double,
+#                 shipped as separate libs from mf_helpers/)
+# staging.py stages only the target's own pair (foreign-suffix siblings
+# are excluded) and routes it to the PREFIXED precision archive.
 copy_files:
-  - LA_CONSTANTS_EP
-  - LA_CONSTANTS_MF
-  - LA_XISNAN_EP
-  - LA_XISNAN_MF
+  - LA_CONSTANTS_EY
+  - LA_CONSTANTS_QX
+  - LA_CONSTANTS_MW
+  - LA_XISNAN_EY
+  - LA_XISNAN_QX
+  - LA_XISNAN_MW
 
 # Reroute every ILAENV / ILAENV2STAGE / IPARAM2STAGE call site in
 # migrated source to the *_EP variants shipped from

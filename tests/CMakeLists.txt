@@ -29,6 +29,21 @@ function(add_fypp_source out_var shim_path body_dir)
     set(${out_var} ${_out} PARENT_SCOPE)
 endfunction()
 
+# Disable the free-form line-length limit for the whole test tree (this
+# directory and every add_subdirectory below it). Test sources are free
+# form (.f90) and some legitimately run past column 132 — ASCII argument
+# tables (e.g. blas/level3/test_zgemmtr.f90) that hard-error when the cut
+# lands inside a character constant, and UTF-8 box-drawing comments whose
+# bytes overflow 132 and get silently truncated. The migrated libraries
+# get the analogous fixed-form treatment in cmake/CMakeLists.txt; this is
+# the free-form counterpart, scoped to tests so library binaries are
+# untouched. Intel free form is unbounded by default, so no flag needed.
+if(FORTRAN_COMPILER_FAMILY STREQUAL "gfortran"
+   OR FORTRAN_COMPILER_FAMILY STREQUAL "flang")
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:Fortran>:-ffree-line-length-none>)
+endif()
+
 # Per-target conversion library shared by every framework's test wrappers.
 add_subdirectory(common)
 

@@ -28,9 +28,6 @@
 #define MUMPS_C       TARGET_REAL_MUMPS_C
 #define MUMPS_STRUC_C TARGET_REAL_STRUC_C
 
-#ifdef TEST_TARGET_MULTIFLOATS
-extern void multifloats_mpi_init(void);
-#endif
 
 /* Same JSON report layout as prec_report.f90 produces, hand-rolled
  * here so the C test side doesn't need to call back into Fortran. */
@@ -101,10 +98,18 @@ int main(int argc, char **argv)
     test_real  x_true[4] = { TR_LIT(1.0), TR_LIT(-2.0), TR_LIT(3.0), TR_LIT(-4.0) };
     test_real  rhs[4];
 
+    int myid, is_host;
     MPI_Init(&argc, &argv);
-#ifdef TEST_TARGET_MULTIFLOATS
-    multifloats_mpi_init();
-#endif
+    test_target_mpi_init();
+    /* Centralized-input MUMPS: the assembled matrix and RHS are supplied
+     * on the host only, and the centralized solution comes back in id.rhs
+     * on the host only. So matrix population, the solution check and the
+     * JSON report are host-guarded; the MUMPS calls stay collective on
+     * every rank. At np=1 the host is the only rank, so this is identical
+     * to the single-rank path ctest exercises. Mirrors the rank-aware
+     * Fortran driver test_dmumps_basic.f90. */
+    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+    is_host = (myid == 0);
 
     /* Fill A (4x4): diagonal entries large, off-diagonals small.
      * Layout matches dense_to_triplet (column-major flatten). */
@@ -131,7 +136,7 @@ int main(int argc, char **argv)
         }
     }
 
-    report_init_c("test_dmumps_c_basic", TEST_TARGET_NAME);
+    if (is_host) report_init_c("test_dmumps_c_basic", TEST_TARGET_NAME);
 
     /* ── Init ─────────────────────────────────────────────────────── */
     id.par = 1;
@@ -150,23 +155,29 @@ int main(int argc, char **argv)
     id.icntl[2] = -1;  /* global info */
     id.icntl[3] =  0;  /* print level */
 
-    /* ── Problem data ────────────────────────────────────────────── */
-    id.n    = n;
-    id.nnz  = (MUMPS_INT8) (n * n);
-    id.irn  = irn;
-    id.jcn  = jcn;
+    /* ── Problem data (centralized input: host only) ─────────────── */
 #ifdef TEST_TARGET_MULTIFLOATS
     /* Bridge expects mumps_float64x2*; the test data lives in plain
-     * double.  Widen at the boundary, narrow back after the solve. */
+     * double.  Widen at the boundary, narrow back after the solve.
+     * Declared at function scope so the buffers outlive the host guard
+     * and stay valid across the JOB=6 solve. */
     mumps_float64x2 a_bridge[16], rhs_bridge[4];
-    for (int i = 0; i < n * n; i++) a_bridge[i]   = tr_widen(a_vals[i]);
-    for (int i = 0; i < n;     i++) rhs_bridge[i] = tr_widen(rhs[i]);
-    id.a    = a_bridge;
-    id.rhs  = rhs_bridge;
-#else
-    id.a    = a_vals;
-    id.rhs  = rhs;
 #endif
+    if (is_host) {
+        id.n    = n;
+        id.nnz  = (MUMPS_INT8) (n * n);
+        id.irn  = irn;
+        id.jcn  = jcn;
+#ifdef TEST_TARGET_MULTIFLOATS
+        for (int i = 0; i < n * n; i++) a_bridge[i]   = tr_widen(a_vals[i]);
+        for (int i = 0; i < n;     i++) rhs_bridge[i] = tr_widen(rhs[i]);
+        id.a    = a_bridge;
+        id.rhs  = rhs_bridge;
+#else
+        id.a    = a_vals;
+        id.rhs  = rhs;
+#endif
+    }
 
     /* ── Solve ───────────────────────────────────────────────────── */
     id.job = 6;
@@ -177,12 +188,11 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* On exit, rhs[] holds the centralized solution on the host. */
+    if (is_host) {
 #ifdef TEST_TARGET_MULTIFLOATS
-    for (int i = 0; i < n; i++) rhs[i] = tr_narrow(rhs_bridge[i]);
+        for (int i = 0; i < n; i++) rhs[i] = tr_narrow(rhs_bridge[i]);
 #endif
-
-    /* On exit, rhs[] holds the solution. */
-    {
         test_real max_rel = TR_LIT(0.0), denom = TR_LIT(0.0);
         int i;
         for (i = 0; i < n; i++) {
@@ -203,7 +213,7 @@ int main(int argc, char **argv)
     id.job = -2;
     MUMPS_C(&id);
 
-    report_finalize_c();
+    if (is_host) report_finalize_c();
     MPI_Finalize();
-    return report_status_c() ? 1 : 0;
+    return is_host ? (report_status_c() ? 1 : 0) : 0;
 }

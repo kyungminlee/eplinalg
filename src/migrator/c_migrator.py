@@ -591,8 +591,6 @@ def _apply_c_type_subs(text: str, template_vars: dict[str, str],
         # Local declaration lines for cost-estimate locals. Match the
         # leading 'double' keyword on a line that mentions one of the
         # known cost-estimate names somewhere on the same line.
-        def _protect_decl(m):
-            return decl_marker + m.group(2)
         text = re.sub(
             r'(?m)^(\s*)double(\s+[^;\n]*\b(?:'
             + _PBLAS_COST_LOCAL
@@ -1258,7 +1256,7 @@ def _patch_pblas_header(pblas_path: Path,
              f'typedef struct {{ {real_type} re, im; }} {complex_type};\n')
 
     text = pblas_path.read_text(errors='replace')
-    if real_type in text and f'typedef' in text.split(real_type)[0]:
+    if real_type in text and 'typedef' in text.split(real_type)[0]:
         return  # already patched
     # Insert just before the first "typedef struct" line
     marker = 'typedef struct'
@@ -1347,11 +1345,11 @@ void BI_{rp}vmcopy(Int m, Int n, {real_type} *A, Int lda, {real_type} *buff);
     text = text.replace(zvmcopy_line, zvmcopy_line + '\n' + macro_block)
 
     # Insert name mangling defines in NOCHANGE section (after zgamn2d)
-    nochange_marker = f'#define zgamn2d_   zgamn2d\n'
+    nochange_marker = '#define zgamn2d_   zgamn2d\n'
     text = text.replace(nochange_marker, nochange_marker + nochange_block)
 
     # Insert name mangling defines in UPCASE section (after ZGAMN2D)
-    upcase_marker = f'#define zgamn2d_   ZGAMN2D\n'
+    upcase_marker = '#define zgamn2d_   ZGAMN2D\n'
     text = text.replace(upcase_marker, upcase_marker + upcase_block)
 
     bdef_path.write_text(text)

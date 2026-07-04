@@ -20,6 +20,8 @@ module test_data_mumps
     public :: dense_to_triplet_z
     public :: dense_to_sym_triplet
     public :: dense_to_sym_triplet_z
+    public :: gen_sparse_spd_problem
+    public :: gen_sparse_hpd_problem_z
 
     ! Fortran reproducible-pseudo-random based on a seed array.
     integer, parameter :: rng_seed_size = 33
@@ -152,6 +154,131 @@ contains
         b = matmul(A, x_true)
         deallocate(r, rx)
     end subroutine gen_general_sym_problem
+
+    ! Sparse SPD problem in MUMPS triplet form: the 2D 5-point Laplacian
+    ! on an nx-by-ny grid (n = nx*ny). Unlike the dense generators, this
+    ! yields a genuinely SPARSE adjacency graph with real vertex
+    ! separators — the structure that nested-dissection orderings (PORD,
+    ! METIS, Scotch; ICNTL(7)=4/5/3) require. Fed a complete/dense graph
+    ! those orderings abort ("no valid number of stages in multisector").
+    !
+    ! Each node couples to its N/S/E/W grid neighbours with -1; the
+    ! diagonal is (degree + 1), so A is symmetric, strictly diagonally
+    ! dominant and hence SPD and well-conditioned. The full matrix (both
+    ! (i,j) and (j,i)) is emitted so it can be sent with SYM=0. x_true is
+    ! random and b = A*x_true is formed by sparse mat-vec, so the caller
+    ! has an exact reference solution without any dense factorization.
+    subroutine gen_sparse_spd_problem(nx, ny, n, x_true, b, &
+                                      irn, jcn, A_trip, nz, seed)
+        integer,  intent(in)               :: nx, ny, seed
+        integer,  intent(out)              :: n, nz
+        real(ep), allocatable, intent(out) :: x_true(:), b(:), A_trip(:)
+        integer,  allocatable, intent(out) :: irn(:), jcn(:)
+        real(ep), allocatable              :: rx(:)
+        integer :: ix, iy, node, deg, k, cap
+        integer :: nbr(4), nnbr, m
+
+        n = nx * ny
+        ! Upper bound on nonzeros: n diagonal + 2 per grid edge.
+        cap = n + 2 * ((nx - 1) * ny + nx * (ny - 1))
+        allocate(irn(cap), jcn(cap), A_trip(cap))
+        allocate(x_true(n), b(n), rx(n))
+
+        call seed_rng(seed)
+        call random_number(rx); x_true = 2.0_ep * rx - 1.0_ep
+
+        k = 0
+        do iy = 1, ny
+            do ix = 1, nx
+                node = (iy - 1) * nx + ix
+                ! Collect in-grid neighbours (4-connectivity).
+                nnbr = 0
+                if (ix > 1)  then; nnbr = nnbr + 1; nbr(nnbr) = node - 1;  end if
+                if (ix < nx) then; nnbr = nnbr + 1; nbr(nnbr) = node + 1;  end if
+                if (iy > 1)  then; nnbr = nnbr + 1; nbr(nnbr) = node - nx; end if
+                if (iy < ny) then; nnbr = nnbr + 1; nbr(nnbr) = node + nx; end if
+                deg = nnbr
+                ! Diagonal: degree + 1  -> strict diagonal dominance.
+                k = k + 1
+                irn(k) = node; jcn(k) = node
+                A_trip(k) = real(deg, ep) + 1.0_ep
+                ! Off-diagonals: -1 to each neighbour.
+                do m = 1, nnbr
+                    k = k + 1
+                    irn(k) = node; jcn(k) = nbr(m)
+                    A_trip(k) = -1.0_ep
+                end do
+            end do
+        end do
+        nz = k
+
+        ! b = A * x_true by sparse mat-vec over the triplets.
+        b = 0.0_ep
+        do k = 1, nz
+            b(irn(k)) = b(irn(k)) + A_trip(k) * x_true(jcn(k))
+        end do
+        deallocate(rx)
+    end subroutine gen_sparse_spd_problem
+
+    ! Complex Hermitian-positive-definite counterpart of
+    ! gen_sparse_spd_problem: the same 2D grid graph, but each edge
+    ! carries a genuinely complex coupling c on (p,q) and conj(c) on
+    ! (q,p) so A is Hermitian; the real (deg+1) diagonal keeps it
+    ! strictly diagonally dominant and hence HPD. Emits the full matrix
+    ! (SYM=0). x_true is complex-random and b = A*x_true exactly.
+    subroutine gen_sparse_hpd_problem_z(nx, ny, n, x_true, b, &
+                                        irn, jcn, A_trip, nz, seed)
+        integer,     intent(in)               :: nx, ny, seed
+        integer,     intent(out)              :: n, nz
+        complex(ep), allocatable, intent(out) :: x_true(:), b(:), A_trip(:)
+        integer,     allocatable, intent(out) :: irn(:), jcn(:)
+        real(ep),    allocatable              :: xr(:), xi(:)
+        complex(ep), parameter :: cpl = (-1.0_ep, 0.25_ep)  ! edge coupling
+        integer :: ix, iy, node, deg, k, cap
+        integer :: nbr(4), nnbr, m
+
+        n = nx * ny
+        cap = n + 2 * ((nx - 1) * ny + nx * (ny - 1))
+        allocate(irn(cap), jcn(cap), A_trip(cap))
+        allocate(x_true(n), b(n), xr(n), xi(n))
+
+        call seed_rng(seed)
+        call random_number(xr); call random_number(xi)
+        x_true = cmplx(2.0_ep * xr - 1.0_ep, 2.0_ep * xi - 1.0_ep, kind=ep)
+
+        k = 0
+        do iy = 1, ny
+            do ix = 1, nx
+                node = (iy - 1) * nx + ix
+                nnbr = 0
+                if (ix > 1)  then; nnbr = nnbr + 1; nbr(nnbr) = node - 1;  end if
+                if (ix < nx) then; nnbr = nnbr + 1; nbr(nnbr) = node + 1;  end if
+                if (iy > 1)  then; nnbr = nnbr + 1; nbr(nnbr) = node - nx; end if
+                if (iy < ny) then; nnbr = nnbr + 1; nbr(nnbr) = node + nx; end if
+                deg = nnbr
+                k = k + 1
+                irn(k) = node; jcn(k) = node
+                A_trip(k) = cmplx(real(deg, ep) + 1.0_ep, 0.0_ep, kind=ep)
+                do m = 1, nnbr
+                    k = k + 1
+                    irn(k) = node; jcn(k) = nbr(m)
+                    ! Hermitian: c on the (lower->higher) edge, conj(c) back.
+                    if (node < nbr(m)) then
+                        A_trip(k) = cpl
+                    else
+                        A_trip(k) = conjg(cpl)
+                    end if
+                end do
+            end do
+        end do
+        nz = k
+
+        b = (0.0_ep, 0.0_ep)
+        do k = 1, nz
+            b(irn(k)) = b(irn(k)) + A_trip(k) * x_true(jcn(k))
+        end do
+        deallocate(xr, xi)
+    end subroutine gen_sparse_hpd_problem_z
 
     ! Convert a dense real matrix to MUMPS triplet (IRN/JCN/A_trip).
     ! Every nonzero entry is included; n^2 entries total (small n only).

@@ -13,17 +13,14 @@ literals:
 intrinsics:
   mode: add_kind
 
-prefixes:
+prefixes:  # only the R (real) and C (complex) families are remapped
   R: E
   C: Y
-  I: I
-  L: L
-  S: S
 
 module: null
 known_constants: {}
 la_constants_map: {}
-la_constants_suffix: _EP
+la_constants_suffix: _EY
 
 c_interop:
   real_type: EREAL

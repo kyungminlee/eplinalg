@@ -23,9 +23,6 @@
 #define MUMPS_C       TARGET_COMPLEX_MUMPS_C
 #define MUMPS_STRUC_C TARGET_COMPLEX_STRUC_C
 
-#ifdef TEST_TARGET_MULTIFLOATS
-extern void multifloats_mpi_init(void);
-#endif
 
 static FILE *gJson = NULL;
 static int gAnyFail = 0, gCaseCount = 0;
@@ -111,10 +108,15 @@ int main(int argc, char **argv)
     MUMPS_INT     irn[N*N], jcn[N*N];
     test_complex  a_vals[N*N], rhs[N];
 
+    int myid, is_host;
     MPI_Init(&argc, &argv);
-#ifdef TEST_TARGET_MULTIFLOATS
-    multifloats_mpi_init();
-#endif
+    test_target_mpi_init();
+    /* Centralized-input MUMPS: matrix + RHS on the host only, centralized
+     * solution returned in id.rhs on the host only. Matrix population, the
+     * solution check and the JSON report are host-guarded; MUMPS calls stay
+     * collective. Mirrors test_dmumps_basic.f90. */
+    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+    is_host = (myid == 0);
     {
         int i, j, k = 0;
         for (j = 0; j < N; j++)
@@ -132,7 +134,7 @@ int main(int argc, char **argv)
         }
     }
 
-    report_init_c("test_zmumps_c_basic", TEST_TARGET_NAME);
+    if (is_host) report_init_c("test_zmumps_c_basic", TEST_TARGET_NAME);
 
     id.par = 1;
     id.sym = 0;
@@ -143,22 +145,27 @@ int main(int argc, char **argv)
 
     id.icntl[0] = -1; id.icntl[1] = -1; id.icntl[2] = -1; id.icntl[3] = 0;
 
-    id.n   = N;
-    id.nnz = (MUMPS_INT8) (N * N);
-    id.irn = irn;
-    id.jcn = jcn;
 #ifdef TEST_TARGET_MULTIFLOATS
     /* Bridge expects mumps_complex64x2*; widen test_complex (plain
-     * doubles) at the boundary and narrow back after the solve. */
+     * doubles) at the boundary and narrow back after the solve.
+     * Declared at function scope so the buffers outlive the host guard. */
     mumps_complex64x2 a_bridge[N*N], rhs_bridge[N];
-    for (int k = 0; k < N*N; k++) a_bridge[k]   = tc_widen(a_vals[k]);
-    for (int k = 0; k < N;   k++) rhs_bridge[k] = tc_widen(rhs[k]);
-    id.a   = a_bridge;
-    id.rhs = rhs_bridge;
-#else
-    id.a   = a_vals;
-    id.rhs = rhs;
 #endif
+    if (is_host) {
+        id.n   = N;
+        id.nnz = (MUMPS_INT8) (N * N);
+        id.irn = irn;
+        id.jcn = jcn;
+#ifdef TEST_TARGET_MULTIFLOATS
+        for (int k = 0; k < N*N; k++) a_bridge[k]   = tc_widen(a_vals[k]);
+        for (int k = 0; k < N;   k++) rhs_bridge[k] = tc_widen(rhs[k]);
+        id.a   = a_bridge;
+        id.rhs = rhs_bridge;
+#else
+        id.a   = a_vals;
+        id.rhs = rhs;
+#endif
+    }
 
     id.job = 6;
     MUMPS_C(&id);
@@ -167,11 +174,11 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* On exit, rhs[] holds the centralized solution on the host. */
+    if (is_host) {
 #ifdef TEST_TARGET_MULTIFLOATS
-    for (int k = 0; k < N; k++) rhs[k] = tc_narrow(rhs_bridge[k]);
+        for (int k = 0; k < N; k++) rhs[k] = tc_narrow(rhs_bridge[k]);
 #endif
-
-    {
         test_real max_rel = TR_LIT(0.0), denom = TR_LIT(0.0);
         int i;
         for (i = 0; i < N; i++) {
@@ -191,7 +198,7 @@ int main(int argc, char **argv)
     id.job = -2;
     MUMPS_C(&id);
 
-    report_finalize_c();
+    if (is_host) report_finalize_c();
     MPI_Finalize();
-    return report_status_c() ? 1 : 0;
+    return is_host ? (report_status_c() ? 1 : 0) : 0;
 }

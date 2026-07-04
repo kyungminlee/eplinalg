@@ -8,7 +8,7 @@
 
 !
 ! -----------------------------------------------------------------------
-! Interface to C metis_setdefaultoptions
+! Interface to C metis_mumps_setdefaultoptions
 ! -----------------------------------------------------------------------
 !
 
@@ -24,7 +24,7 @@ INTEGER FUNCTION VE_FMETIS_SETDEFAULTOPTIONS( OPTIONS )
     END FUNCTION VE_METIS_SETDEFAULTOPTIONS
   END INTERFACE
 
-  WRITE(6,'(A)')'-----------------> Performing VH call of METIS_SETDEFAULTOPTIONS'
+  WRITE(6,'(A)')'-----------------> Performing VH call of METIS_MUMPS_SETDEFAULTOPTIONS'
   IERR(1) =  VE_METIS_SETDEFAULTOPTIONS( OPTIONS )
 
   VE_FMETIS_SETDEFAULTOPTIONS = IERR(1)
@@ -33,7 +33,7 @@ END FUNCTION VE_FMETIS_SETDEFAULTOPTIONS
 
 !
 ! -----------------------------------------------------------------------
-! Interface to C metis_nodend
+! Interface to C metis_mumps_nodend
 ! -----------------------------------------------------------------------
 !
 
@@ -55,7 +55,7 @@ FUNCTION VE_FMETIS_NODEND( NVTXS , XADJ , ADJNCY , VWGT , OPTIONS , PERM , IPERM
     END FUNCTION VE_METIS_NODEND
   END INTERFACE
 
-  WRITE(6,'(A)')'-----------------> Performing VH call of METIS_NODEND'
+  WRITE(6,'(A)')'-----------------> Performing VH call of METIS_MUMPS_NODEND'
   IERR(1) = VE_METIS_NODEND( NVTXS , XADJ , ADJNCY , VWGT , OPTIONS , PERM , IPERM )
 
   VE_FMETIS_NODEND = IERR(1)

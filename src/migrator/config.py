@@ -26,7 +26,7 @@ _KNOWN_RECIPE_KEYS: frozenset[str] = frozenset({
     'copy_all_originals', 'patches',
     'depends', 'extra_symbol_dirs',
     'extra_migrate_files', 'extra_c_dirs', 'extra_fortran_dirs',
-    'keep_kind_manifest',
+    'keep_kind_manifest', 'call_arg_casts',
     'c_return_types', 'c_type_aliases', 'c_pointer_cast_aliases',
     'header_patches', 'overrides',
     'expected_divergences', 'defer_all_divergences',
@@ -164,6 +164,18 @@ class RecipeConfig:
     # the upstream (un-migrated) entry points keep their original
     # symbol names and link cleanly alongside the renamed clones.
     extra_renames: dict[str, str] = field(default_factory=dict)
+    # Post-migration call-site cast injections, applied to migrated
+    # Fortran output only (after intrinsic rewriting, so the injected
+    # cast is not itself promoted). Keyed by source filename; each value
+    # is a list of ``(find, wrap)`` pairs that rewrite every occurrence
+    # of the literal ``find`` in that file's migrated text to
+    # ``wrap(find)``. Used by MUMPS to restore the ``dble()`` down-cast
+    # the upstream s/c drivers perform at the COMPUTE_GLOBAL_GAINS call
+    # site but the canonical d/z drivers omit (RINFOG is DOUBLE there,
+    # working precision after migration) — letting MUMPS_LR_STATS stay
+    # verbatim and retiring the per-target mumps_lr_stats_ep bridge.
+    call_arg_casts: dict[str, list[tuple[str, str]]] = field(
+        default_factory=dict)
     # Convergence-report whitelist. Each stem (uppercased, no extension)
     # names the canonical (D/Z) member of a co-family pair whose
     # divergence is expected — typically because the two upstream halves
@@ -198,6 +210,24 @@ class RecipeConfig:
     # (skipped by symmetric check), but the separate field communicates
     # intent so reviewers don't waste time hunting for missing siblings.
     one_sided_cleanup: list[str] = field(default_factory=list)
+
+
+def _parse_call_arg_casts(
+        raw: object) -> dict[str, list[tuple[str, str]]]:
+    """Normalize the ``call_arg_casts:`` recipe field.
+
+    Accepts a list of ``{file, find, wrap}`` mappings and groups them by
+    source filename into ``{filename: [(find, wrap), ...]}``. Each entry
+    rewrites the literal ``find`` to ``wrap(find)`` in that file's
+    migrated output (see :attr:`RecipeConfig.call_arg_casts`).
+    """
+    out: dict[str, list[tuple[str, str]]] = {}
+    for entry in (raw or []):
+        fname = str(entry['file'])
+        find = str(entry['find'])
+        wrap = str(entry['wrap'])
+        out.setdefault(fname, []).append((find, wrap))
+    return out
 
 
 def load_recipe(recipe_path: Path,
@@ -313,6 +343,7 @@ def load_recipe(recipe_path: Path,
             str(k).upper(): str(v)
             for k, v in (data.get('extra_renames') or {}).items()
         },
+        call_arg_casts=_parse_call_arg_casts(data.get('call_arg_casts')),
         expected_divergences={
             str(s).upper() for s in (data.get('expected_divergences') or [])
         },

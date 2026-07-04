@@ -13,12 +13,9 @@ literals:
 intrinsics:
   mode: wrap_constructor
 
-prefixes:
+prefixes:  # only the R (real) and C (complex) families are remapped
   R: M
   C: W
-  I: I
-  L: L
-  S: S
 
 module:
   name: multifloats
@@ -149,7 +146,7 @@ la_constants_map:
   ssml: DD_SSML
   sbig: DD_SBIG
 
-la_constants_suffix: _MF
+la_constants_suffix: _MW
 
 c_interop:
   # Upstream multifloats v0.4.0 C names (no _t suffix; complex POD with
@@ -170,6 +167,11 @@ c_interop:
   mpi_max_complex: MPI_ZZ_AMX
   mpi_min_real: MPI_DD_AMN
   mpi_min_complex: MPI_ZZ_AMN
+  # Fortran module (bind-c) that surfaces the custom datatype + op
+  # handles above to migrated MUMPS. Was formerly hardcoded in the
+  # migrator; now target-driven so KIND targets (kind16 -> quad_mpi_f)
+  # can supply their own support module the same way.
+  mpi_module: multifloats_mpi_f
   needs_mpi_check: false
   header_mode: include
   header: multifloats_bridge.h

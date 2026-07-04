@@ -121,7 +121,7 @@ C     set to default options
 #else
 C     Useful size is 40  
 C     This sets the default values
-      CALL METIS_SETDEFAULTOPTIONS(id%METIS_OPTIONS)
+      CALL METIS_MUMPS_SETDEFAULTOPTIONS(id%METIS_OPTIONS)
       CALL MUMPS_METIS_OPTION_NUMBERING(I)
 C     The value of I corresponds to "METIS_OPTION_NUMBERING", which tells
 C     METIS to use Fortran numbering. METIS_OPTION_NUMBERING is defined

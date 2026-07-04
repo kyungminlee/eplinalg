@@ -4,17 +4,17 @@ program test_zmumps_orderings
     use prec_kinds,            only: ep
     use prec_report,           only: report_init, report_case, report_finalize, report_check_status
     use compare,               only: max_rel_err_vec_z
-    use test_data_mumps,       only: gen_dense_problem_z, dense_to_triplet_z
+    use test_data_mumps,       only: gen_sparse_hpd_problem_z
     use target_mumps,          only: target_name, target_eps, &
                                      zmumps_struc, target_xmumps, &
                                      q2t_c, t2q_c
     use mpi
     implicit none
 
-    integer, parameter :: n = 24
-    integer, parameter :: orderings(*) = [0, 2, 6, 7]
-    integer            :: ierr, i, nz, ord
-    complex(ep), allocatable :: A(:,:), x_true(:), b(:), x_solve(:)
+    integer, parameter :: nx = 8, ny = 8
+    integer, parameter :: orderings(*) = [0, 2, 3, 4, 5, 6, 7]
+    integer            :: n, ierr, i, nz, ord
+    complex(ep), allocatable :: x_true(:), b(:), x_solve(:)
     integer,     allocatable :: irn(:), jcn(:)
     complex(ep), allocatable :: A_trip(:)
     type(zmumps_struc)       :: id
@@ -24,8 +24,8 @@ program test_zmumps_orderings
     call MPI_INIT(ierr)
     call report_init('test_zmumps_orderings', target_name)
 
-    call gen_dense_problem_z(n, A, x_true, b, seed = 24001)
-    call dense_to_triplet_z (A, irn, jcn, A_trip, nz)
+    call gen_sparse_hpd_problem_z(nx, ny, n, x_true, b, irn, jcn, A_trip, nz, &
+                                  seed = 24001)
     tol = 16.0_ep * real(n, ep)**3 * target_eps
 
     do i = 1, size(orderings)
@@ -62,7 +62,7 @@ program test_zmumps_orderings
         call target_xmumps(id)
     end do
 
-    deallocate(A, x_true, b, irn, jcn, A_trip)
+    deallocate(x_true, b, irn, jcn, A_trip)
     call report_finalize()
     call MPI_FINALIZE(ierr)
     call report_check_status()

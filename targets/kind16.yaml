@@ -13,25 +13,40 @@ literals:
 intrinsics:
   mode: add_kind
 
-prefixes:
+prefixes:  # only the R (real) and C (complex) families are remapped
   R: Q
   C: X
-  I: I
-  L: L
-  S: S
 
 module: null
 known_constants: {}
 la_constants_map: {}
-la_constants_suffix: _EP
+la_constants_suffix: _QX
 
 c_interop:
   real_type: QREAL
   complex_type: QCOMPLEX
   c_real_type: __float128
+  # The datatypes stay the standard MPI_REAL16 / MPI_COMPLEX32 (both are
+  # 16-/32-byte predefined handles that mpif.h declares and every MPI
+  # transports correctly for point-to-point + bcast). What is NOT safe
+  # is a *reduction* on them: Intel MPI 2021's builtin MPI_SUM / MPI_MAX
+  # / MPI_MIN have no 16-byte-real kernel and segfault the moment MUMPS
+  # issues MPI_REDUCE(..., MPI_REAL16, MPI_SUM, ...) at np >= 2 (same
+  # defect the BLACS B01 user-op patch works around one layer down).
+  # So we keep the datatypes but route the reduction ops through custom
+  # MPI_Op_create handles registered by quad_mpi_init() and surfaced to
+  # Fortran via the ``quad_mpi_f`` module — mirroring how multifloats
+  # uses MPI_DD_SUM / MPI_DD_AMX. The migrator rewrites MPI_SUM / MPI_MAX
+  # / MPI_MIN to these only inside reduce calls that carry the quad
+  # datatype, so integer reductions (MPI_INTEGER8, ...) are untouched.
   mpi_real: MPI_REAL16
   mpi_complex: MPI_COMPLEX32
-  mpi_sum_real: MPI_SUM
-  mpi_sum_complex: MPI_SUM
+  mpi_sum_real: MPI_QQ_SUM
+  mpi_sum_complex: MPI_XX_SUM
+  mpi_max_real: MPI_QQ_AMX
+  mpi_max_complex: MPI_XX_AMX
+  mpi_min_real: MPI_QQ_AMN
+  mpi_min_complex: MPI_XX_AMN
+  mpi_module: quad_mpi_f
   needs_mpi_check: true
   header_mode: typedef

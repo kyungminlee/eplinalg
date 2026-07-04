@@ -297,8 +297,7 @@ eplinalg/
 │   ├── output/              # procedures.md, convergence.md, kind16-divergences.md
 │   ├── upstream-bugs/       # Tracked upstream bugs (lapack / scalapack / mumps)
 │   └── archive/             # Historical surveys and timestamped reports
-├── scripts/             # Manual helpers (compile_*.sh, sweep tools)
-├── tools/               # Build artifacts (gen_procedures.py)
+├── scripts/             # Manual helpers (compile_*.sh, sweep tools, gen_procedures.py)
 ├── pyproject.toml       # uv-managed; runtime: pyyaml, tqdm; dev: fypp, pytest
 └── README.md
 ```

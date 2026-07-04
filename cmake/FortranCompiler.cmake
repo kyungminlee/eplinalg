@@ -308,8 +308,18 @@ function(fortran_install_library target)
   set(_targets_file "${ARG_EXPORT}-${_full_tag}.cmake")
 
   # Tag the library output filename by compiler + (optionally) MPI.
+  # Migrated precision libraries carry a MIGRATED_OUTPUT_BASE property
+  # holding a content-driven archive base (e.g. ``eylapack`` for a target
+  # named ``elapack``); use it as the filename stem so the emitted archive
+  # reflects what it contains (both E and Y families → libeylapack.a),
+  # while the CMake target name and exported symbols stay on LIB_PREFIX.
+  # Non-migrated targets have no such property and keep their target name.
+  get_target_property(_out_base ${target} MIGRATED_OUTPUT_BASE)
+  if(NOT _out_base)
+    set(_out_base "${target}")
+  endif()
   set_target_properties(${target} PROPERTIES
-    OUTPUT_NAME "${target}-${_full_tag}"
+    OUTPUT_NAME "${_out_base}-${_full_tag}"
   )
 
   # Add target to the export set
@@ -407,7 +417,7 @@ endif()
   # packages that the precision archive PUBLIC-links and that are each
   # installed as their own Config. Examples: the standard-precision
   # archive `eplinalg::blas` (package `eplinalgStdBlas`), and for
-  # multifloats targets the `la_constants_mf` / `la_xisnan_mf` helper
+  # multifloats targets the `la_constants_mw` / `la_xisnan_mw` helper
   # archives. The per-precision Config auto-loads them so consumers only
   # need to find_package(qblas) / find_package(mblas).
   set(_deps_block "")

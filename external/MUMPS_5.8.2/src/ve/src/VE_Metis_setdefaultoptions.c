@@ -67,9 +67,9 @@ int VE_Metis_setdefaultoptions( int * options ) {
    *  -----------------------------------------------------------------------
    */
   
-  symid = vhcall_find(handle, "METIS_SetDefaultOptions");
+  symid = vhcall_find(handle, "METIS_MUMPS_SetDefaultOptions");
   if ( symid == -1 ) {
-    fprintf( stdout , "%s @ %d failed : can't find symbol METIS_SetDefaultOptions\n" , basename(__FILE__) , __LINE__ );
+    fprintf( stdout , "%s @ %d failed : can't find symbol METIS_MUMPS_SetDefaultOptions\n" , basename(__FILE__) , __LINE__ );
     perror("vhcall_find");
     fflush( stdout );
     (void) mumps_abort();

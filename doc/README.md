@@ -14,7 +14,7 @@ User- and contributor-facing reference for the migration tool itself.
 
 Catalogues describing what the migration pipeline emits.
 
-- [procedures.md](output/procedures.md) — auto-generated routine cross-reference (Netlib → kind10/kind16/multifloats), produced by `tools/gen_procedures.py`
+- [procedures.md](output/procedures.md) — auto-generated routine cross-reference (Netlib → kind10/kind16/multifloats), produced by `scripts/gen_procedures.py`
 - [convergence.md](output/convergence.md) — what "convergence" means and how it's measured
 - [kind16-divergences.md](output/kind16-divergences.md) — per-routine KIND=16 divergence analysis
 
@@ -35,6 +35,13 @@ project: [epblas-parallel](../../epblas-parallel/). Migrator-side, the public
 `${LIB_PREFIX}blas` target is now the plain serial migrated archive;
 the overlay-equipped composite (`epblas-parallel::eblas` and friends)
 ships from the epblas-parallel package.
+
+## Solver API notes
+
+Documented (but easily-missed) upstream API requirements — not bugs — that the
+migrated archives honour exactly as Netlib does.
+
+- [mumps-implicit-constraints.md](mumps-implicit-constraints.md) — MUMPS input/output conventions that only surface at `np ≥ 2` (host-only sparse RHS, distributed-solution `INFO(23)` slice)
 
 ## Test suites
 

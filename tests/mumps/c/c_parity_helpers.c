@@ -25,7 +25,12 @@ int c_real_mumps_solve(int *n_in, MUMPS_INT8 *nnz_in,
                        DMUMPS_REAL *a_vals, DMUMPS_REAL *rhs)
 {
     TARGET_REAL_STRUC_C id = {0};
-    int code;
+    int code, myid;
+
+    /* Centralized input: the assembled matrix and RHS are supplied on the
+     * host only; the centralized solution comes back in rhs on the host
+     * only. MUMPS calls stay collective on every rank. */
+    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
 
     id.par = 1;
     id.sym = 0;
@@ -36,12 +41,14 @@ int c_real_mumps_solve(int *n_in, MUMPS_INT8 *nnz_in,
 
     id.icntl[0] = -1; id.icntl[1] = -1; id.icntl[2] = -1; id.icntl[3] = 0;
 
-    id.n   = *n_in;
-    id.nnz = *nnz_in;
-    id.irn = irn;
-    id.jcn = jcn;
-    id.a   = a_vals;
-    id.rhs = rhs;
+    if (myid == 0) {
+        id.n   = *n_in;
+        id.nnz = *nnz_in;
+        id.irn = irn;
+        id.jcn = jcn;
+        id.a   = a_vals;
+        id.rhs = rhs;
+    }
     id.job = 6;
     TARGET_REAL_MUMPS_C(&id);
     code = id.infog[0];
@@ -57,7 +64,11 @@ int c_complex_mumps_solve(int *n_in, MUMPS_INT8 *nnz_in,
                           mumps_double_complex *rhs)
 {
     TARGET_COMPLEX_STRUC_C id = {0};
-    int code;
+    int code, myid;
+
+    /* Centralized input: matrix + RHS on the host only; centralized
+     * solution returned in rhs on the host only. Calls stay collective. */
+    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
 
     id.par = 1;
     id.sym = 0;
@@ -68,12 +79,14 @@ int c_complex_mumps_solve(int *n_in, MUMPS_INT8 *nnz_in,
 
     id.icntl[0] = -1; id.icntl[1] = -1; id.icntl[2] = -1; id.icntl[3] = 0;
 
-    id.n   = *n_in;
-    id.nnz = *nnz_in;
-    id.irn = irn;
-    id.jcn = jcn;
-    id.a   = a_vals;
-    id.rhs = rhs;
+    if (myid == 0) {
+        id.n   = *n_in;
+        id.nnz = *nnz_in;
+        id.irn = irn;
+        id.jcn = jcn;
+        id.a   = a_vals;
+        id.rhs = rhs;
+    }
     id.job = 6;
     TARGET_COMPLEX_MUMPS_C(&id);
     code = id.infog[0];
