@@ -694,8 +694,8 @@ endforeach()
 
 # --- C bridge coexistence link checks --------------------------------
 # A release emits FOUR ?mumps_c entry points: the migrated real/complex
-# pair bundled in ${LIB_PREFIX}mumps_c (e/y, q/x or m/w — always the
-# upstream d/z lineages) and the genuine double dmumps_c / zmumps_c.
+# pair folded into ${LIB_PREFIX}mumps (e/y, q/x or m/w — always the
+# upstream d/z lineages) and the genuine double pair folded into dzmumps.
 # All share the arithmetic-independent libmumps_c_runtime.
 #
 # test_mumps_c_coexist.c names all four and is force-linked (whole
@@ -716,33 +716,34 @@ set(_coexist_defs
 
 # genuine double pair — the capability the shared runtime unlocks
 # (standard upstream "use dmumps_c and zmumps_c in one program").
-if(TARGET dzmumps_c AND TARGET mumps_c_runtime)
+if(TARGET dzmumps AND TARGET mumps_c_runtime)
     add_executable(test_mumps_c_coexist_genuine EXCLUDE_FROM_ALL ${_coexist_src})
     target_compile_definitions(test_mumps_c_coexist_genuine PRIVATE ${_coexist_defs})
     target_link_options(test_mumps_c_coexist_genuine PRIVATE
         -Wl,--whole-archive
-        $<TARGET_FILE:dzmumps_c> $<TARGET_FILE:mumps_c_runtime>
+        $<TARGET_FILE:dzmumps> $<TARGET_FILE:mumps_c_runtime>
         -Wl,--no-whole-archive
         -Wl,--unresolved-symbols=ignore-all
         -fno-lto)
-    add_dependencies(test_mumps_c_coexist_genuine dzmumps_c mumps_c_runtime)
+    add_dependencies(test_mumps_c_coexist_genuine dzmumps mumps_c_runtime)
     add_test(NAME mumps_c_coexist_genuine
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
                 --target test_mumps_c_coexist_genuine --config $<CONFIG>)
 endif()
 
-# migrated pair — already shipped; guards the ${LIB_PREFIX}mumps_c bridge
-# (both e/y-lineage objects) against a future runtime-duplication regression.
-if(TARGET ${LIB_PREFIX}mumps_c AND TARGET mumps_c_runtime)
+# migrated pair — already shipped; guards the ${LIB_PREFIX}mumps bridge
+# (both e/y-lineage objects, now folded in) against a future
+# runtime-duplication regression.
+if(TARGET ${LIB_PREFIX}mumps AND TARGET mumps_c_runtime)
     add_executable(test_mumps_c_coexist_migrated EXCLUDE_FROM_ALL ${_coexist_src})
     target_compile_definitions(test_mumps_c_coexist_migrated PRIVATE ${_coexist_defs})
     target_link_options(test_mumps_c_coexist_migrated PRIVATE
         -Wl,--whole-archive
-        $<TARGET_FILE:${LIB_PREFIX}mumps_c> $<TARGET_FILE:mumps_c_runtime>
+        $<TARGET_FILE:${LIB_PREFIX}mumps> $<TARGET_FILE:mumps_c_runtime>
         -Wl,--no-whole-archive
         -Wl,--unresolved-symbols=ignore-all
         -fno-lto)
-    add_dependencies(test_mumps_c_coexist_migrated ${LIB_PREFIX}mumps_c mumps_c_runtime)
+    add_dependencies(test_mumps_c_coexist_migrated ${LIB_PREFIX}mumps mumps_c_runtime)
     add_test(NAME mumps_c_coexist_migrated
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
                 --target test_mumps_c_coexist_migrated --config $<CONFIG>)
@@ -761,7 +762,7 @@ endif()
 #
 # Genuine and migrated collide on the unprefixed Fortran commons, so the
 # genuine link group is a DISJOINT archive set from the migrated one:
-# dzmumps_c + dzmumps + mumps_common + the MPI-matched
+# dzmumps (with its folded-in C bridge) + mumps_common + the MPI-matched
 # in-tree parallel stack (cmake/CMakeLists.txt's _genuine_parallel_stack:
 # bundled ScaLAPACK/PBLAS/BLACS/LAPACK/BLAS built against the chosen MPI).
 # The circular static refs among those archives are resolved by the same
@@ -769,11 +770,11 @@ endif()
 # whole parallel stack for libmpiseq, which natively supplies the
 # DOUBLE / PD* BLACS + ScaLAPACK stubs the genuine solvers call.
 set(_genuine_solve_src ${CMAKE_CURRENT_SOURCE_DIR}/c/genuine/test_genuine_dz_solve.c)
-if(TARGET dzmumps_c AND TARGET dzmumps
+if(TARGET dzmumps
         AND TARGET mumps_c_runtime AND EXISTS ${_genuine_solve_src})
-    # "" variant: genuine bridges + solvers + common + full parallel stack.
+    # "" variant: genuine solvers (bridge folded in) + common + full parallel stack.
     set(_genuine_group
-        dzmumps_c mumps_c_runtime
+        mumps_c_runtime
         dzmumps mumps_common)
     foreach(_p scalapack scalapack_common pblas pblas_common pbblas
                ptzblas ptzblas_common blacs blacs_common
@@ -785,7 +786,7 @@ if(TARGET dzmumps_c AND TARGET dzmumps
     # _seq variant: libmpiseq replaces ScaLAPACK/PBLAS/BLACS entirely;
     # keep the std double LAPACK + BLAS the genuine solvers call.
     set(_genuine_group_seq
-        dzmumps_c mumps_c_runtime
+        mumps_c_runtime
         dzmumps mumps_common)
     foreach(_p lapack blas)
         if(TARGET ${_p})
@@ -884,12 +885,12 @@ if(TARGET dzmumps_c AND TARGET dzmumps
     # so it only appears in the genuine-enabled build.
     set(_genuine_scdz_src
         ${CMAKE_CURRENT_SOURCE_DIR}/c/genuine/test_genuine_scdz_solve.c)
-    if(TARGET scmumps_c AND TARGET scmumps
+    if(TARGET scmumps
             AND EXISTS ${_genuine_scdz_src})
-        # scmumps_c bridge + scmumps solver prepended to the genuine d/z
+        # scmumps solver (bridge folded in) prepended to the genuine d/z
         # groups; the shared common + parallel stack are already listed there.
-        set(_genuine_scdz_group     scmumps_c scmumps ${_genuine_group})
-        set(_genuine_scdz_group_seq scmumps_c scmumps ${_genuine_group_seq})
+        set(_genuine_scdz_group     scmumps ${_genuine_group})
+        set(_genuine_scdz_group_seq scmumps ${_genuine_group_seq})
         foreach(_vkey IN LISTS _mumps_test_variants)
             if(_vkey STREQUAL "plain")
                 set(variant "")

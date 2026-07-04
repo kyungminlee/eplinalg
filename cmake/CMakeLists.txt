@@ -1462,41 +1462,38 @@ if(NOT BASELINE_BUILD)
                 $<LINK_ONLY:MPI::MPI_C>)
         endif()
 
-        # ── Migrated (extended-precision) C bridge archive ──────────
-        # Just the two per-arithmetic bridge objects; the shared runtime
-        # is linked, not bundled, so it isn't duplicated against the
-        # genuine bridge in a combined link.
-        add_library(${LIB_PREFIX}mumps_c STATIC
+        # ── Fold the migrated C bridge INTO the Fortran archive ─────
+        # The two per-arithmetic bridge objects are compiled INTO
+        # ${LIB_PREFIX}mumps, so libeymumps.a carries both the e/y Fortran
+        # solvers and their C entry points (${LIB_PREFIX}mumps_c() /
+        # ${LIB_PREFIX_COMPLEX}mumps_c()) — no separate libeymumps_c.a.
+        # The shared runtime is still LINKED, not bundled, so it isn't
+        # duplicated against the genuine bridge in a combined link. The
+        # bridge↔solver reference (qmumps_c → qmumps_f77_) is now internal
+        # to the one archive; only the solver↔runtime cycle remains, which
+        # the ${LIB_PREFIX}mumps_full RESCAN below still resolves.
+        target_sources(${LIB_PREFIX}mumps PRIVATE
             $<TARGET_OBJECTS:${LIB_PREFIX}mumps_c_obj>
             $<TARGET_OBJECTS:${LIB_PREFIX_COMPLEX}mumps_c_obj>)
-        # Bundles both the real (${LIB_PREFIX}) and complex
-        # (${LIB_PREFIX_COMPLEX}) bridge objects, so the archive file takes
-        # the combined content prefix (e.g. libeymumps_c.a). Target name and
-        # symbols stay on LIB_PREFIX; only the emitted .a is renamed.
-        set_target_properties(${LIB_PREFIX}mumps_c PROPERTIES
-            MIGRATED_OUTPUT_BASE "${LIB_PREFIX}${LIB_PREFIX_COMPLEX}mumps_c")
-        target_include_directories(${LIB_PREFIX}mumps_c
+        target_include_directories(${LIB_PREFIX}mumps
             PUBLIC
                 $<BUILD_INTERFACE:${_mumps_c_bridge_inc_target}>
                 $<BUILD_INTERFACE:${_mumps_c_bridge_inc_shared}>
                 $<BUILD_INTERFACE:${_mumps_c_inc}>
                 $<BUILD_INTERFACE:${_mumps_c_src}>
                 $<INSTALL_INTERFACE:include/mumps>)
-        target_link_libraries(${LIB_PREFIX}mumps_c PUBLIC mumps_c_runtime)
+        target_link_libraries(${LIB_PREFIX}mumps PUBLIC mumps_c_runtime)
         if(MPI_C_FOUND)
-            target_link_libraries(${LIB_PREFIX}mumps_c PRIVATE MPI::MPI_C)
-            target_link_libraries(${LIB_PREFIX}mumps_c INTERFACE
+            target_link_libraries(${LIB_PREFIX}mumps PRIVATE MPI::MPI_C)
+            target_link_libraries(${LIB_PREFIX}mumps INTERFACE
                 $<LINK_ONLY:MPI::MPI_C>)
         endif()
-        # Link against the migrated Fortran archive at consumer time —
-        # qmumps_c's bridge symbols call qmumps_f77_ etc.
-        target_link_libraries(${LIB_PREFIX}mumps_c PUBLIC ${LIB_PREFIX}mumps)
 
-        # Umbrella INTERFACE target. The qmumps Fortran archive and
-        # the qmumps_c bridge are mutually recursive at link time:
-        # qmumps.a references mumps_size_c_ (in mumps_c_runtime's
-        # mumps_addr.c) and qmumps_c.a references qmumps_f77_ (in
-        # qmumps.a). A plain left-to-right scan misses one or the
+        # Umbrella INTERFACE target. The qmumps archive (Fortran solvers
+        # + the folded-in C bridge) and mumps_c_runtime are mutually
+        # recursive at link time: qmumps.a references mumps_size_c_ (in
+        # mumps_c_runtime's mumps_addr.c) and the runtime is scanned back
+        # against qmumps.a. A plain left-to-right scan misses one or the
         # other. The ``${LIB_PREFIX}mumps_full`` target wraps the
         # archives in a ``LINK_GROUP:RESCAN`` so ld --start-group /
         # --end-group resolves the cycle automatically. Consumers
@@ -1508,8 +1505,8 @@ if(NOT BASELINE_BUILD)
         # runtime was factored out of the bridge archive.
         add_library(${LIB_PREFIX}mumps_full INTERFACE)
         # Propagate include directories (mumps_full is a meta-target;
-        # by itself it has no headers, so pull them from qmumps_c
-        # which carries the per-target include path).
+        # by itself it has no headers, so pull them from qmumps
+        # which now carries the per-target bridge include path).
         target_include_directories(${LIB_PREFIX}mumps_full INTERFACE
             $<INSTALL_INTERFACE:include/mumps>)
         # ``install(EXPORT)`` rewrites bare target names to
@@ -1520,7 +1517,7 @@ if(NOT BASELINE_BUILD)
         # serialized Targets file points at valid imported targets at
         # consumer time.
         target_link_libraries(${LIB_PREFIX}mumps_full INTERFACE
-            "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::${LIB_PREFIX}mumps,${PROJECT_NAME}::${LIB_PREFIX}mumps_c,${PROJECT_NAME}::mumps_c_runtime>")
+            "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::${LIB_PREFIX}mumps,${PROJECT_NAME}::mumps_c_runtime>")
 
         # ══ Genuine double-precision MUMPS (additive) ═══════════════
         # Build real libdmumps / libzmumps + a plain-``double`` dmumps_c
@@ -1756,51 +1753,52 @@ if(NOT BASELINE_BUILD)
             target_compile_definitions(cmumps_c_obj PRIVATE
                 MUMPS_ARITH=MUMPS_ARITH_c Add_)
 
-            # Combined per-family bridge archives: both native-precision
-            # entry points (dmumps_c()+zmumps_c(), smumps_c()+cmumps_c())
-            # in one .a, matching the combined solver archives above and
-            # the extended ${LIB_PREFIX}mumps_c (which bundles its two
-            # bridge objects likewise).
-            add_library(dzmumps_c STATIC
+            # Fold the per-family C bridge objects INTO the solver
+            # archives: libdzmumps.a carries both the d/z Fortran solvers
+            # and their C entry points (dmumps_c()+zmumps_c()), libscmumps.a
+            # the s/c pair — no separate libdzmumps_c.a / libscmumps_c.a,
+            # matching the folded extended ${LIB_PREFIX}mumps. The shared
+            # runtime is still LINKED, not bundled. The bridge↔solver
+            # reference is now internal to the archive; the solver↔runtime
+            # cycle is resolved by the *_full RESCAN below.
+            target_sources(dzmumps PRIVATE
                 $<TARGET_OBJECTS:dmumps_c_obj> $<TARGET_OBJECTS:zmumps_c_obj>)
-            add_library(scmumps_c STATIC
+            target_sources(scmumps PRIVATE
                 $<TARGET_OBJECTS:smumps_c_obj> $<TARGET_OBJECTS:cmumps_c_obj>)
-            foreach(_b dzmumps_c scmumps_c)
-                target_include_directories(${_b}
+            foreach(_g dzmumps scmumps)
+                target_include_directories(${_g}
                     PUBLIC
                         $<BUILD_INTERFACE:${_mumps_c_inc}>
                         $<BUILD_INTERFACE:${_mumps_c_src}>
                         $<INSTALL_INTERFACE:include/mumps>)
-                target_link_libraries(${_b} PUBLIC mumps_c_runtime)
+                target_link_libraries(${_g} PUBLIC mumps_c_runtime)
                 if(MPI_C_FOUND)
-                    target_link_libraries(${_b} PRIVATE MPI::MPI_C)
-                    target_link_libraries(${_b} INTERFACE
+                    target_link_libraries(${_g} PRIVATE MPI::MPI_C)
+                    target_link_libraries(${_g} INTERFACE
                         $<LINK_ONLY:MPI::MPI_C>)
                 endif()
             endforeach()
-            target_link_libraries(dzmumps_c PUBLIC dzmumps)
-            target_link_libraries(scmumps_c PUBLIC scmumps)
 
-            # Umbrella INTERFACE targets — same Fortran↔C archive cycle
-            # as ${LIB_PREFIX}mumps_full; RESCAN over the (combined) solver,
-            # the (combined) bridge, the shared runtime, and mumps_common.
+            # Umbrella INTERFACE targets — same solver↔runtime archive cycle
+            # as ${LIB_PREFIX}mumps_full; RESCAN over the (combined) solver
+            # with its folded-in bridge, the shared runtime, and mumps_common.
             add_library(dzmumps_full INTERFACE)
             target_include_directories(dzmumps_full INTERFACE
                 $<INSTALL_INTERFACE:include/mumps>)
             target_link_libraries(dzmumps_full INTERFACE
-                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::dzmumps,${PROJECT_NAME}::dzmumps_c,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
+                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::dzmumps,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
             add_library(scmumps_full INTERFACE)
             target_include_directories(scmumps_full INTERFACE
                 $<INSTALL_INTERFACE:include/mumps>)
             target_link_libraries(scmumps_full INTERFACE
-                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::scmumps,${PROJECT_NAME}::scmumps_c,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
+                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::scmumps,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
 
             if(_have_bundled_parallel)
                 message(STATUS
-                    "MUMPS: genuine single+double enabled (libdzmumps + libscmumps + dzmumps_c/scmumps_c; MPI-matched in-tree ScaLAPACK stack)")
+                    "MUMPS: genuine single+double enabled (libdzmumps + libscmumps; MPI-matched in-tree ScaLAPACK stack)")
             else()
                 message(STATUS
-                    "MUMPS: genuine single+double enabled (libdzmumps + libscmumps + dzmumps_c/scmumps_c; system ScaLAPACK=${_scalapack_lib})")
+                    "MUMPS: genuine single+double enabled (libdzmumps + libscmumps; system ScaLAPACK=${_scalapack_lib})")
             endif()
         else()
             message(STATUS
@@ -2113,12 +2111,14 @@ function(_install_library_pair lib_name)
         fortran_install_modules(${_precision_target})
     endif()
 
-    # MUMPS-special: bundle the C-side bridge (${LIB_PREFIX}mumps_c)
-    # and the umbrella INTERFACE (${LIB_PREFIX}mumps_full) into the
-    # same export so ``find_package(qmumps)`` brings the Fortran
-    # archive, the C-callable entry-points (qmumps_c, xmumps_c),
-    # and the umbrella that wraps them in a LINK_GROUP:RESCAN.
-    if("${lib_name}" STREQUAL "mumps" AND TARGET ${LIB_PREFIX}mumps_c)
+    # MUMPS-special: the C-side bridge is now folded into
+    # ${LIB_PREFIX}mumps (installed via the generic path above), so the
+    # export just needs the shared runtime + ordering leaves it PUBLIC-
+    # links and the umbrella INTERFACE (${LIB_PREFIX}mumps_full) that wraps
+    # solver + runtime in a LINK_GROUP:RESCAN. ``find_package(qmumps)`` then
+    # brings the Fortran archive, its folded C entry points (qmumps_c,
+    # xmumps_c) and the umbrella.
+    if("${lib_name}" STREQUAL "mumps" AND TARGET mumps_c_runtime)
         # PORD ordering archive — PUBLIC-linked by mumps_c_runtime, so
         # it must join the same export (CMake rejects an exported target
         # that requires a non-exported one). A leaf C archive: no Fortran
@@ -2142,21 +2142,22 @@ function(_install_library_pair lib_name)
         if(TARGET scotch)
             install(TARGETS scotch scotcherr esmumps EXPORT ${_export})
         endif()
-        # Shared C runtime — PUBLIC-linked by the migrated bridge (and
-        # the genuine bridges below), so it must join the export.
+        # Shared C runtime — PUBLIC-linked by the migrated solver (which
+        # now carries the bridge) and the genuine solvers below, so it must
+        # join the export.
         if(TARGET mumps_c_runtime)
             fortran_install_library(mumps_c_runtime EXPORT ${_export} NAMESPACE eplinalg:: MPI)
         endif()
-        fortran_install_library(${LIB_PREFIX}mumps_c EXPORT ${_export} NAMESPACE eplinalg:: MPI)
         install(TARGETS ${LIB_PREFIX}mumps_full
             EXPORT ${_export})
 
-        # Genuine double-precision solvers + bridges (additive; present
-        # only when the system BLAS/LAPACK/ScaLAPACK deps were found).
+        # Genuine single+double solvers (additive; present only when the
+        # system BLAS/LAPACK/ScaLAPACK deps were found). Each now carries
+        # its folded-in C bridge, so there are no separate *_c archives.
         # dzmumps_common is retired — the genuine solvers link the shared
         # migrated ``mumps_common`` (installed via the library-pair path
         # below), so it is not listed here.
-        foreach(_g dzmumps scmumps dzmumps_c scmumps_c)
+        foreach(_g dzmumps scmumps)
             if(TARGET ${_g})
                 fortran_install_library(${_g} EXPORT ${_export} NAMESPACE eplinalg:: MPI)
                 get_target_property(_g_moddir ${_g} Fortran_MODULE_DIRECTORY)
