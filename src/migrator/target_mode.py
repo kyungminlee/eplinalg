@@ -32,7 +32,7 @@ class TargetMode:
     module_name: Optional[str]         # None for KIND, 'multifloats' for MF
     known_constants: dict[str, str]    # {'ZERO': 'MF_ZERO', ...}
     la_constants_map: dict[str, str]   # la_constants rename map
-    la_constants_suffix: str           # '_MF' or '_EP'
+    la_constants_suffix: str           # '_EY' (kind10), '_QX' (kind16), '_MW' (multifloats)
 
     # Module public names (for building USE...ONLY clauses)
     module_type_names: frozenset[str] = field(default_factory=frozenset)

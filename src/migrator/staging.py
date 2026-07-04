@@ -143,6 +143,26 @@ def cmd_stage(args):
         classification = classify_symbols(symbols)
         independent = classification.independent
 
+        # Files that the precision-rename map RENAMES are precision-
+        # specific by construction — they were given a precision prefix
+        # (e.g. ``disnan.f`` → ``qisnan.f``, family ``#RISNAN``, d→q).
+        # Their renamed stem can COINCIDE with a name the classifier
+        # marked ``independent``: the split ``la_xisnan_ey.F90`` /
+        # ``la_xisnan_qx.F90`` modules define procedures ``EISNAN`` /
+        # ``QISNAN`` / ``ELAISNAN`` / ``QLAISNAN``, which land in
+        # ``independent`` because Q/E/X/Y are not S/D/C/Z.
+        # Without this guard the migrated plain-F77 isnan externals
+        # (``qisnan_``/``eisnan_`` — whose bodies differ per target) get
+        # mis-filed into the shared ``lapack_common`` archive and then
+        # collide across targets in a combined release tree (same
+        # filename, different content). A rename target is never a
+        # legitimate common member, so route it to PRECISION regardless
+        # of the polluted independent set.
+        rename_targets = {
+            t.upper()
+            for t in classification.build_rename_map(target_mode).values()
+        }
+
         # Pick up precision-independent Fortran helpers staged via
         # ``copy_files`` (e.g. PBLAS/SRC/pilaenv.f) when the recipe is C —
         # CMake's ``add_library(… STATIC …)`` handles mixed C + Fortran
@@ -151,27 +171,51 @@ def cmd_stage(args):
         # so they land in COMMON_SOURCES below.
         files = _collect_source_files(src_dir, config.language)
 
-        # MF helper modules are built as separate targets; exclude from manifests.
-        _mf_helpers = {'la_constants_mf', 'la_xisnan_mf'}
-        # la_constants_ep provides extended/quad precision constants —
-        # not needed by multifloats target, and may fail on compilers
-        # that don't support REAL(KIND=16).
-        if target_mode.module_name is not None:
-            _mf_helpers.update({'la_constants_ep', 'la_xisnan_ep'})
+        # Per-target LA_CONSTANTS / LA_XISNAN precision helpers. Each
+        # extended target owns exactly one prefix-pair module —
+        #   kind10 → *_ey   kind16 → *_qx   multifloats → *_mw
+        # (suffix taken from the target's ``la_constants_suffix``). Only
+        # the target's own pair belongs in this staging tree; the other
+        # targets' pairs, which sit in the shared LAPACK SRC dir, are
+        # excluded. multifloats' *_mw pair is not in SRC at all — it
+        # ships as separate helper libraries from
+        # recipes/lapack/mf_helpers/ (staged below) — so this exclusion
+        # is also what keeps the *_ey/*_qx SRC files out of a
+        # multifloats build (formerly the ``module_name is not None``
+        # special-case for the shared *_ep pair).
+        _la_suffixes = ('_ey', '_qx', '_mw')
+        _own_suffix = target_mode.la_constants_suffix.lower()
+        _la_own = {f'la_constants{_own_suffix}', f'la_xisnan{_own_suffix}'}
+        _la_foreign = {
+            f'la_{base}{s}'
+            for base in ('constants', 'xisnan')
+            for s in _la_suffixes
+            if s != _own_suffix
+        }
 
         common_files, precision_files = [], []
         for f in files:
-            if f.stem in _mf_helpers:
+            if f.stem in _la_foreign:
                 continue
             rel = f'src/{f.name}'
+            stem = f.stem.upper()
+            # The target's own LA_CONSTANTS/LA_XISNAN pair is single-
+            # precision (only this target's E/Y or Q/X block), so it is
+            # precision-specific: route it to PRECISION so it lands in
+            # the prefixed archive (libelapack / libqlapack), never the
+            # shared lapack_common. A precision-rename target (e.g. the
+            # migrated qisnan.f, whose renamed stem may collide with an
+            # ``independent`` module-procedure name) is likewise
+            # precision-specific by construction — see ``rename_targets``.
+            if f.stem in _la_own or stem in rename_targets:
+                precision_files.append(rel)
             # ``copy_files`` entries are precision-independent by
             # contract (the file is staged verbatim, no prefix rename).
             # The symbol scanner may never have visited them — e.g. a
             # Fortran ``copy_files`` entry in a C recipe — so they
             # won't appear in ``independent``. Treat them as common
             # explicitly.
-            if (f.stem.upper() in independent
-                    or f.stem.upper() in config.copy_files):
+            elif stem in independent or stem in config.copy_files:
                 common_files.append(rel)
             else:
                 precision_files.append(rel)
@@ -267,7 +311,7 @@ set({lib_name}_LANGUAGE {config.language})
     helpers_dst = staging_dir / '_helpers'
     if needs_mf:
         helpers_dst.mkdir(exist_ok=True)
-        for name in ['la_constants_mf.f90', 'la_xisnan_mf.f90']:
+        for name in ['la_constants_mw.f90', 'la_xisnan_mw.f90']:
             src = helpers_src / name
             if src.exists():
                 shutil.copy2(src, helpers_dst / name)

@@ -20,7 +20,7 @@ prefixes:  # only the R (real) and C (complex) families are remapped
 module: null
 known_constants: {}
 la_constants_map: {}
-la_constants_suffix: _EP
+la_constants_suffix: _QX
 
 c_interop:
   real_type: QREAL

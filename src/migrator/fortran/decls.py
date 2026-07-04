@@ -282,7 +282,7 @@ def strip_known_constants_from_decls(
     (e.g. ``'ZERO' -> 'MF_ZERO'``). Callers feed this map to
     :func:`replace_known_constants` so that **only** the names that
     were actually filtered get rewritten in the body — names imported
-    via ``USE LA_CONSTANTS_MF, ONLY: zero=>dzero`` are left intact
+    via ``USE LA_CONSTANTS_MW, ONLY: zero=>dzero`` are left intact
     because they were never in a local declaration.
     """
     if target_mode.is_kind_based:

@@ -407,7 +407,7 @@ endif()
   # packages that the precision archive PUBLIC-links and that are each
   # installed as their own Config. Examples: the standard-precision
   # archive `eplinalg::blas` (package `eplinalgStdBlas`), and for
-  # multifloats targets the `la_constants_mf` / `la_xisnan_mf` helper
+  # multifloats targets the `la_constants_mw` / `la_xisnan_mw` helper
   # archives. The per-precision Config auto-loads them so consumers only
   # need to find_package(qblas) / find_package(mblas).
   set(_deps_block "")

@@ -476,7 +476,7 @@ def test_rewrite_la_constants_use_pattern_b(mf):
         end
     ''')
     out = rewrite_la_constants_use(src, mf)
-    assert 'LA_CONSTANTS_MF' in out
+    assert 'LA_CONSTANTS_MW' in out
     # wp=>dp removed, but local aliases preserved with DD-prefixed RHS
     assert 'wp=>dp' not in out
     assert f'zero=>{_RP}zero' in out
@@ -694,7 +694,7 @@ def test_canonicalize_for_compare_normalizes_type_decl():
 
 def test_end_to_end_free_form_pattern_b(mf):
     out = migrate_free_form(SYNTHETIC_LAPACK_FREE_FORM, {}, mf)
-    assert 'LA_CONSTANTS_MF' in out
+    assert 'LA_CONSTANTS_MW' in out
     assert 'wp=>dp' not in out
     # Local aliases preserved (lowercase) with DD-prefixed RHS
     assert f'zero=>{_RP}zero' in out

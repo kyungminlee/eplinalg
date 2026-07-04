@@ -155,7 +155,7 @@ def _is_free_form_comment(line: str) -> bool:
 #         not migratable; the migrator also drops them.
 # lapack: cross-precision routines (``dsgesv`` / ``zcposv`` / …) and
 #         the migrator-introduced extended-precision helpers
-#         (``la_constants_ep`` / ``la_xisnan_mf`` / …) — those are
+#         (``la_constants_ey`` / ``la_xisnan_qx`` / …) — those are
 #         migrated content, not upstream content, and don't belong
 #         in the standard archive.
 _REF_EXCLUDE_STEMS: dict[str, set[str]] = {
@@ -163,8 +163,8 @@ _REF_EXCLUDE_STEMS: dict[str, set[str]] = {
     'lapack': {
         'dsgesv', 'zcgesv', 'dsposv', 'zcposv', 'dsgels', 'zcgels',
         'dlag2s', 'slag2d', 'zlag2c', 'clag2z', 'dlat2s', 'zlat2c',
-        'la_constants_ep', 'la_constants_mf',
-        'la_xisnan_ep', 'la_xisnan_mf',
+        'la_constants_ey', 'la_constants_qx', 'la_constants_mw',
+        'la_xisnan_ey', 'la_xisnan_qx', 'la_xisnan_mw',
     },
 }
 

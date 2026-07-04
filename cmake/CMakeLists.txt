@@ -205,18 +205,18 @@ if(NEEDS_MULTIFLOATS)
             ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
     endif()
 
-    # la_constants_mf helper module (needs Fortran multifloats module)
-    if(EXISTS "${MF_HELPERS_DIR}/la_constants_mf.f90")
-        add_library(la_constants_mf STATIC "${MF_HELPERS_DIR}/la_constants_mf.f90")
-        fortran_module_layout(la_constants_mf)
-        target_link_libraries(la_constants_mf PUBLIC $<BUILD_INTERFACE:multifloatsf>)
+    # la_constants_mw helper module (needs Fortran multifloats module)
+    if(EXISTS "${MF_HELPERS_DIR}/la_constants_mw.f90")
+        add_library(la_constants_mw STATIC "${MF_HELPERS_DIR}/la_constants_mw.f90")
+        fortran_module_layout(la_constants_mw)
+        target_link_libraries(la_constants_mw PUBLIC $<BUILD_INTERFACE:multifloatsf>)
     endif()
 
-    # la_xisnan_mf helper module (needs Fortran multifloats module)
-    if(EXISTS "${MF_HELPERS_DIR}/la_xisnan_mf.f90")
-        add_library(la_xisnan_mf STATIC "${MF_HELPERS_DIR}/la_xisnan_mf.f90")
-        fortran_module_layout(la_xisnan_mf)
-        target_link_libraries(la_xisnan_mf PUBLIC $<BUILD_INTERFACE:multifloatsf>)
+    # la_xisnan_mw helper module (needs Fortran multifloats module)
+    if(EXISTS "${MF_HELPERS_DIR}/la_xisnan_mw.f90")
+        add_library(la_xisnan_mw STATIC "${MF_HELPERS_DIR}/la_xisnan_mw.f90")
+        fortran_module_layout(la_xisnan_mw)
+        target_link_libraries(la_xisnan_mw PUBLIC $<BUILD_INTERFACE:multifloatsf>)
     endif()
 
     # multifloats_mpi — C++ MPI handle registration + bridge header
@@ -445,11 +445,11 @@ function(add_migrated_fortran_library lib_name)
     if(NEEDS_MULTIFLOATS)
         target_link_libraries(${_precision_target} PUBLIC
             $<BUILD_INTERFACE:multifloatsf>)
-        if(TARGET la_constants_mf)
-            target_link_libraries(${_precision_target} PUBLIC la_constants_mf)
+        if(TARGET la_constants_mw)
+            target_link_libraries(${_precision_target} PUBLIC la_constants_mw)
         endif()
-        if(TARGET la_xisnan_mf)
-            target_link_libraries(${_precision_target} PUBLIC la_xisnan_mf)
+        if(TARGET la_xisnan_mw)
+            target_link_libraries(${_precision_target} PUBLIC la_xisnan_mw)
         endif()
     endif()
 endfunction()
@@ -701,12 +701,12 @@ endif()
 # promote under -freal-8-real-16, but the whole point of the standard
 # archive is to NOT promote, so these are simply left out for parity
 # with the migrated archive's skip list. Extended-precision-only
-# helper modules (la_constants_ep / la_xisnan_ep / la_constants_mf /
-# la_xisnan_mf) are excluded — they only make sense in the migrated
-# archive since they reference quad / multifloats kinds.
+# helper modules (la_constants_{ey,qx,mw} / la_xisnan_{ey,qx,mw}) are
+# excluded — they only make sense in the migrated archive since they
+# reference extended / quad / multifloats kinds.
 add_standard_fortran_library(lapack
     ${CMAKE_CURRENT_SOURCE_DIR}/_reflapack_src
-    EXCLUDE_REGEX "/(dsgesv|zcgesv|dsposv|zcposv|dsgels|zcgels|dlag2s|slag2d|zlag2c|clag2z|dlat2s|zlat2c|la_constants_ep|la_constants_mf|la_xisnan_ep|la_xisnan_mf)\\.([fF]|[fF]90)$")
+    EXCLUDE_REGEX "/(dsgesv|zcgesv|dsposv|zcposv|dsgels|zcgels|dlag2s|slag2d|zlag2c|clag2z|dlat2s|zlat2c|la_constants_ey|la_constants_qx|la_constants_mw|la_xisnan_ey|la_xisnan_qx|la_xisnan_mw)\\.([fF]|[fF]90)$")
 if(TARGET lapack AND TARGET blas)
     target_link_libraries(lapack PUBLIC blas)
 endif()
@@ -732,11 +732,15 @@ if(NOT BASELINE_BUILD)
     if(TARGET ${LIB_PREFIX}lapack AND TARGET ${LIB_PREFIX}xblas)
         target_link_libraries(${LIB_PREFIX}lapack PUBLIC ${LIB_PREFIX}xblas)
     endif()
-    # The migrated lapack_common archive holds the extended-precision-only
-    # helpers (la_constants_ep, la_xisnan_ep) which ``USE`` the standard
-    # la_constants / la_xisnan modules supplied by the std ``lapack``
-    # archive. The link is needed so gfortran resolves ``la_xisnan.mod``
-    # during compilation, not just at final link time.
+    # The per-target precision helpers (la_constants_{ey,qx},
+    # la_xisnan_{ey,qx}) now ride in the PREFIXED ${LIB_PREFIX}lapack
+    # archive (routed there by staging.py), not the shared lapack_common.
+    # They ``USE`` the standard la_constants / la_xisnan modules supplied
+    # by the std ``lapack`` archive; the ${LIB_PREFIX}lapack -> lapack
+    # PUBLIC link above already resolves ``la_xisnan.mod`` at compile
+    # time. The lapack_common -> lapack link below is now defensive — it
+    # only fires if some other precision-independent member keeps a
+    # lapack_common archive alive.
     if(TARGET lapack_common AND TARGET lapack)
         target_link_libraries(lapack_common PUBLIC lapack)
     endif()
@@ -2061,14 +2065,14 @@ function(_install_library_pair lib_name)
     endif()
 
     # NEEDS_MULTIFLOATS precision targets also PUBLIC-link the
-    # la_constants_mf / la_xisnan_mf helper archives (see ~line 403),
+    # la_constants_mw / la_xisnan_mw helper archives (see ~line 403),
     # each installed as its own Config package (EXPORT ${_t}Targets,
     # ~line 1439). Like eplinalgStdBlas they are transparent deps, so
     # consumers only need find_package(mblas) — without these the
     # generated Config references undefined imported targets and sets
     # mblas_FOUND = FALSE.
     if(NEEDS_MULTIFLOATS)
-        foreach(_mf_helper la_constants_mf la_xisnan_mf)
+        foreach(_mf_helper la_constants_mw la_xisnan_mw)
             if(TARGET ${_mf_helper})
                 list(APPEND _precision_deps ${_mf_helper})
             endif()
@@ -2202,7 +2206,7 @@ if(NEEDS_MULTIFLOATS)
     # multifloats defines its own install rules; only install local helpers.
     # multifloats_mpi(_f) link MPI; tag them accordingly.
     set(_mf_mpi_helpers multifloats_mpi multifloats_mpi_f)
-    foreach(_t la_constants_mf la_xisnan_mf multifloats_mpi multifloats_mpi_f)
+    foreach(_t la_constants_mw la_xisnan_mw multifloats_mpi multifloats_mpi_f)
         if(TARGET ${_t})
             set(_mf_mpi_arg "")
             if("${_t}" IN_LIST _mf_mpi_helpers)

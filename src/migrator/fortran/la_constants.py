@@ -37,11 +37,12 @@ def rewrite_la_constants_use(source: str, target_mode: TargetMode) -> str:
     """Rewrite ``USE LA_CONSTANTS`` clauses for the chosen target.
 
     KIND mode (extended precision): the LAPACK la_constants module is
-    cloned to ``LA_CONSTANTS_EP`` by the migrator, so we just rename
-    the module reference and rename each constant to its EP-prefixed
-    equivalent (E*/Y*/Q*/X*).
+    cloned to a per-target module (``LA_CONSTANTS_EY`` for KIND=10,
+    ``LA_CONSTANTS_QX`` for KIND=16) named via ``la_constants_suffix``,
+    so we just rename the module reference and rename each constant to
+    its prefixed equivalent (E*/Y* or Q*/X*).
 
-    Multifloats mode: there is no ``la_constants_mf`` module — instead,
+    Multifloats mode: there is no ``la_constants_mw`` module — instead,
     we rewrite the import to point at the real ``multifloats`` module
     and rename each LAPACK constant (``dzero``, ``dsafmin``, ...) to its
     multifloats equivalent (``MF_ZERO``, ``MF_SAFMIN``, ...). The
@@ -118,9 +119,9 @@ def _la_constants_rename_map(target_mode: TargetMode) -> dict[str, str]:
     etc. to the equivalent names exported by the target la_constants
     auxiliary module:
 
-      KIND=10  → ``ezero``, ``ysafmin`` (la_constants_ep)
-      KIND=16  → ``qzero``, ``xsafmin`` (la_constants_ep)
-      multifloats → ``ddzero``, ``zzsafmin`` (la_constants_mf)
+      KIND=10  → ``ezero``, ``ysafmin`` (la_constants_ey)
+      KIND=16  → ``qzero``, ``xsafmin`` (la_constants_qx)
+      multifloats → ``ddzero``, ``zzsafmin`` (la_constants_mw)
 
     Only the prefixed names are mapped — the LHS aliases ``zero``,
     ``half`` etc. are intentionally left untouched so the body of the

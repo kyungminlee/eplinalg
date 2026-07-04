@@ -146,7 +146,7 @@ la_constants_map:
   ssml: DD_SSML
   sbig: DD_SBIG
 
-la_constants_suffix: _MF
+la_constants_suffix: _MW
 
 c_interop:
   # Upstream multifloats v0.4.0 C names (no _t suffix; complex POD with

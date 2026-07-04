@@ -170,7 +170,7 @@ def replace_known_constants(
     ``renames`` is the per-file set of names that were removed from a
     local declaration by :func:`strip_known_constants_from_decls`. They
     are exactly the names that need module-import substitution. Names
-    bound via a ``USE LA_CONSTANTS_MF, ONLY: zero=>dzero`` alias are
+    bound via a ``USE LA_CONSTANTS_MW, ONLY: zero=>dzero`` alias are
     NOT in this set and therefore are not touched here.
 
     When ``renames`` is ``None`` the function falls back to the union

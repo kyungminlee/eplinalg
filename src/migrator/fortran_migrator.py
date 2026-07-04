@@ -193,7 +193,7 @@ def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: Targ
         # they are local variables computed at runtime, not PARAMETERs.
         # The mapping mirrors la_constants_map but with explicit
         # multifloats target names for free-form Pattern A files (those
-        # use ``USE multifloats`` directly, not ``USE LA_CONSTANTS_MF``).
+        # use ``USE multifloats`` directly, not ``USE LA_CONSTANTS_MW``).
         nuke_renames = {
             'zero': 'DD_ZERO', 'one': 'DD_ONE', 'czero': 'DD_ZERO',
             'safmin': 'DD_SAFMIN', 'safmax': 'DD_SAFMAX',

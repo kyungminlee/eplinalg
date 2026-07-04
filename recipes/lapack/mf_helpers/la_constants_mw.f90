@@ -1,4 +1,4 @@
-!> \brief \b LA_CONSTANTS_MF defines scaling constants for the multifloats
+!> \brief \b LA_CONSTANTS_MW defines scaling constants for the multifloats
 !> double-double (real64x2) precision, complementing LA_CONSTANTS.
 !
 !  =========== DOCUMENTATION ===========
@@ -23,7 +23,7 @@
 !  T/V prefixes had local-name shadows in latrs / latbs / latps and
 !  pXlahqr / pXlaqr1 that required per-file overrides.)
 !
-module LA_CONSTANTS_MF
+module LA_CONSTANTS_MW
    use multifloats, only: real64x2, cmplx64x2, &
                           DD_ZERO, DD_HALF, DD_ONE, DD_TWO, DD_EIGHT, &
                           DD_SAFMIN, DD_SAFMAX, &
@@ -105,4 +105,4 @@ module LA_CONSTANTS_MF
       real(radix(0.0_dp), dp)**(-ceiling( &
          (maxexponent(0.0_dp) + digits(0.0_dp) - 1) * 0.5_dp)), 0.0_dp])
 
-end module LA_CONSTANTS_MF
+end module LA_CONSTANTS_MW
