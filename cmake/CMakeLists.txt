@@ -1626,19 +1626,26 @@ if(NOT BASELINE_BUILD)
             # of their .mod set. The genuine solvers link it below, exactly
             # as the extended ${LIB_PREFIX}mumps does.
 
-            # ── genuine real / complex solvers (s c d z) ─────────────
-            # ${ARITH}mumps_gpu.c is the sole C in each solver archive
-            # (the Fortran calls its ${s,d,c,z}mumps_gpu_return symbol).
-            add_library(dmumps STATIC ${_dmumps_F} ${_mumps_c_src}/dmumps_gpu.c)
-            fortran_module_layout(dmumps)
-            add_library(zmumps STATIC ${_zmumps_F} ${_mumps_c_src}/zmumps_gpu.c)
-            fortran_module_layout(zmumps)
-            add_library(smumps STATIC ${_smumps_F} ${_mumps_c_src}/smumps_gpu.c)
-            fortran_module_layout(smumps)
-            add_library(cmumps STATIC ${_cmumps_F} ${_mumps_c_src}/cmumps_gpu.c)
-            fortran_module_layout(cmumps)
+            # ── genuine solvers, combined by real+complex family ─────
+            # Mirrors the extended one-archive layout (libeymumps.a holds
+            # both the e-real and y-complex solvers): the genuine double
+            # real (d) and complex (z) sources compile into ONE archive
+            # libdzmumps.a, and the single real (s) + complex (c) into
+            # libscmumps.a. Upstream module namespaces are arith-prefixed
+            # (DMUMPS_*/ZMUMPS_*, SMUMPS_*/CMUMPS_*) with zero overlap, so
+            # a family's two arithmetics coexist in one target cleanly.
+            # ${ARITH}mumps_gpu.c is the sole C per arithmetic (the Fortran
+            # calls its ${s,d,c,z}mumps_gpu_return symbol).
+            add_library(dzmumps STATIC
+                ${_dmumps_F} ${_mumps_c_src}/dmumps_gpu.c
+                ${_zmumps_F} ${_mumps_c_src}/zmumps_gpu.c)
+            fortran_module_layout(dzmumps)
+            add_library(scmumps STATIC
+                ${_smumps_F} ${_mumps_c_src}/smumps_gpu.c
+                ${_cmumps_F} ${_mumps_c_src}/cmumps_gpu.c)
+            fortran_module_layout(scmumps)
 
-            foreach(_g dmumps zmumps smumps cmumps)
+            foreach(_g dzmumps scmumps)
                 # _mumps_c_bridge_inc_shared carries mumps_int_def.h,
                 # which the gpu-stub C pulls in via mumps_c_types.h.
                 target_include_directories(${_g} PRIVATE
@@ -1701,10 +1708,10 @@ if(NOT BASELINE_BUILD)
             # list their own BLAS/LAPACK/ScaLAPACK on the link line,
             # matching standard MUMPS practice and the repo convention
             # that no cross-package find_dependency is emitted. (The
-            # dmumps_full/zmumps_full umbrellas below RESCAN only the
+            # dzmumps_full/scmumps_full umbrellas below RESCAN only the
             # solver + bridge + runtime + common, never the parallel
             # stack, so this stays a pure build-time dependency.)
-            foreach(_s dmumps zmumps smumps cmumps)
+            foreach(_s dzmumps scmumps)
                 target_link_libraries(${_s} PUBLIC mumps_common)
                 if(_have_bundled_parallel)
                     # MPI-matched in-tree stack. The circular refs between
@@ -1749,11 +1756,16 @@ if(NOT BASELINE_BUILD)
             target_compile_definitions(cmumps_c_obj PRIVATE
                 MUMPS_ARITH=MUMPS_ARITH_c Add_)
 
-            add_library(dmumps_c STATIC $<TARGET_OBJECTS:dmumps_c_obj>)
-            add_library(zmumps_c STATIC $<TARGET_OBJECTS:zmumps_c_obj>)
-            add_library(smumps_c STATIC $<TARGET_OBJECTS:smumps_c_obj>)
-            add_library(cmumps_c STATIC $<TARGET_OBJECTS:cmumps_c_obj>)
-            foreach(_b dmumps_c zmumps_c smumps_c cmumps_c)
+            # Combined per-family bridge archives: both native-precision
+            # entry points (dmumps_c()+zmumps_c(), smumps_c()+cmumps_c())
+            # in one .a, matching the combined solver archives above and
+            # the extended ${LIB_PREFIX}mumps_c (which bundles its two
+            # bridge objects likewise).
+            add_library(dzmumps_c STATIC
+                $<TARGET_OBJECTS:dmumps_c_obj> $<TARGET_OBJECTS:zmumps_c_obj>)
+            add_library(scmumps_c STATIC
+                $<TARGET_OBJECTS:smumps_c_obj> $<TARGET_OBJECTS:cmumps_c_obj>)
+            foreach(_b dzmumps_c scmumps_c)
                 target_include_directories(${_b}
                     PUBLIC
                         $<BUILD_INTERFACE:${_mumps_c_inc}>
@@ -1766,41 +1778,29 @@ if(NOT BASELINE_BUILD)
                         $<LINK_ONLY:MPI::MPI_C>)
                 endif()
             endforeach()
-            target_link_libraries(dmumps_c PUBLIC dmumps)
-            target_link_libraries(zmumps_c PUBLIC zmumps)
-            target_link_libraries(smumps_c PUBLIC smumps)
-            target_link_libraries(cmumps_c PUBLIC cmumps)
+            target_link_libraries(dzmumps_c PUBLIC dzmumps)
+            target_link_libraries(scmumps_c PUBLIC scmumps)
 
             # Umbrella INTERFACE targets — same Fortran↔C archive cycle
-            # as ${LIB_PREFIX}mumps_full; RESCAN over the solver, the
-            # bridge, the shared runtime, and the shared mumps_common.
-            add_library(dmumps_full INTERFACE)
-            target_include_directories(dmumps_full INTERFACE
+            # as ${LIB_PREFIX}mumps_full; RESCAN over the (combined) solver,
+            # the (combined) bridge, the shared runtime, and mumps_common.
+            add_library(dzmumps_full INTERFACE)
+            target_include_directories(dzmumps_full INTERFACE
                 $<INSTALL_INTERFACE:include/mumps>)
-            target_link_libraries(dmumps_full INTERFACE
-                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::dmumps,${PROJECT_NAME}::dmumps_c,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
-            add_library(zmumps_full INTERFACE)
-            target_include_directories(zmumps_full INTERFACE
+            target_link_libraries(dzmumps_full INTERFACE
+                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::dzmumps,${PROJECT_NAME}::dzmumps_c,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
+            add_library(scmumps_full INTERFACE)
+            target_include_directories(scmumps_full INTERFACE
                 $<INSTALL_INTERFACE:include/mumps>)
-            target_link_libraries(zmumps_full INTERFACE
-                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::zmumps,${PROJECT_NAME}::zmumps_c,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
-            add_library(smumps_full INTERFACE)
-            target_include_directories(smumps_full INTERFACE
-                $<INSTALL_INTERFACE:include/mumps>)
-            target_link_libraries(smumps_full INTERFACE
-                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::smumps,${PROJECT_NAME}::smumps_c,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
-            add_library(cmumps_full INTERFACE)
-            target_include_directories(cmumps_full INTERFACE
-                $<INSTALL_INTERFACE:include/mumps>)
-            target_link_libraries(cmumps_full INTERFACE
-                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::cmumps,${PROJECT_NAME}::cmumps_c,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
+            target_link_libraries(scmumps_full INTERFACE
+                "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::scmumps,${PROJECT_NAME}::scmumps_c,${PROJECT_NAME}::mumps_c_runtime,${PROJECT_NAME}::mumps_common>")
 
             if(_have_bundled_parallel)
                 message(STATUS
-                    "MUMPS: genuine single+double enabled (lib{s,d,c,z}mumps + {s,d,c,z}mumps_c; MPI-matched in-tree ScaLAPACK stack)")
+                    "MUMPS: genuine single+double enabled (libdzmumps + libscmumps + dzmumps_c/scmumps_c; MPI-matched in-tree ScaLAPACK stack)")
             else()
                 message(STATUS
-                    "MUMPS: genuine single+double enabled (lib{s,d,c,z}mumps + {s,d,c,z}mumps_c; system ScaLAPACK=${_scalapack_lib})")
+                    "MUMPS: genuine single+double enabled (libdzmumps + libscmumps + dzmumps_c/scmumps_c; system ScaLAPACK=${_scalapack_lib})")
             endif()
         else()
             message(STATUS
@@ -2156,7 +2156,7 @@ function(_install_library_pair lib_name)
         # dzmumps_common is retired — the genuine solvers link the shared
         # migrated ``mumps_common`` (installed via the library-pair path
         # below), so it is not listed here.
-        foreach(_g dmumps zmumps smumps cmumps dmumps_c zmumps_c smumps_c cmumps_c)
+        foreach(_g dzmumps scmumps dzmumps_c scmumps_c)
             if(TARGET ${_g})
                 fortran_install_library(${_g} EXPORT ${_export} NAMESPACE eplinalg:: MPI)
                 get_target_property(_g_moddir ${_g} Fortran_MODULE_DIRECTORY)
@@ -2165,7 +2165,7 @@ function(_install_library_pair lib_name)
                 endif()
             endif()
         endforeach()
-        foreach(_gf dmumps_full zmumps_full smumps_full cmumps_full)
+        foreach(_gf dzmumps_full scmumps_full)
             if(TARGET ${_gf})
                 install(TARGETS ${_gf} EXPORT ${_export})
             endif()

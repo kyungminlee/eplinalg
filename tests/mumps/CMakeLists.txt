@@ -716,16 +716,16 @@ set(_coexist_defs
 
 # genuine double pair — the capability the shared runtime unlocks
 # (standard upstream "use dmumps_c and zmumps_c in one program").
-if(TARGET dmumps_c AND TARGET zmumps_c AND TARGET mumps_c_runtime)
+if(TARGET dzmumps_c AND TARGET mumps_c_runtime)
     add_executable(test_mumps_c_coexist_genuine EXCLUDE_FROM_ALL ${_coexist_src})
     target_compile_definitions(test_mumps_c_coexist_genuine PRIVATE ${_coexist_defs})
     target_link_options(test_mumps_c_coexist_genuine PRIVATE
         -Wl,--whole-archive
-        $<TARGET_FILE:dmumps_c> $<TARGET_FILE:zmumps_c> $<TARGET_FILE:mumps_c_runtime>
+        $<TARGET_FILE:dzmumps_c> $<TARGET_FILE:mumps_c_runtime>
         -Wl,--no-whole-archive
         -Wl,--unresolved-symbols=ignore-all
         -fno-lto)
-    add_dependencies(test_mumps_c_coexist_genuine dmumps_c zmumps_c mumps_c_runtime)
+    add_dependencies(test_mumps_c_coexist_genuine dzmumps_c mumps_c_runtime)
     add_test(NAME mumps_c_coexist_genuine
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
                 --target test_mumps_c_coexist_genuine --config $<CONFIG>)
@@ -761,7 +761,7 @@ endif()
 #
 # Genuine and migrated collide on the unprefixed Fortran commons, so the
 # genuine link group is a DISJOINT archive set from the migrated one:
-# dmumps_c/zmumps_c + dmumps/zmumps + mumps_common + the MPI-matched
+# dzmumps_c + dzmumps + mumps_common + the MPI-matched
 # in-tree parallel stack (cmake/CMakeLists.txt's _genuine_parallel_stack:
 # bundled ScaLAPACK/PBLAS/BLACS/LAPACK/BLAS built against the chosen MPI).
 # The circular static refs among those archives are resolved by the same
@@ -769,12 +769,12 @@ endif()
 # whole parallel stack for libmpiseq, which natively supplies the
 # DOUBLE / PD* BLACS + ScaLAPACK stubs the genuine solvers call.
 set(_genuine_solve_src ${CMAKE_CURRENT_SOURCE_DIR}/c/genuine/test_genuine_dz_solve.c)
-if(TARGET dmumps_c AND TARGET zmumps_c AND TARGET dmumps AND TARGET zmumps
+if(TARGET dzmumps_c AND TARGET dzmumps
         AND TARGET mumps_c_runtime AND EXISTS ${_genuine_solve_src})
     # "" variant: genuine bridges + solvers + common + full parallel stack.
     set(_genuine_group
-        dmumps_c zmumps_c mumps_c_runtime
-        dmumps zmumps mumps_common)
+        dzmumps_c mumps_c_runtime
+        dzmumps mumps_common)
     foreach(_p scalapack scalapack_common pblas pblas_common pbblas
                ptzblas ptzblas_common blacs blacs_common
                lapack lapack_common blas)
@@ -785,8 +785,8 @@ if(TARGET dmumps_c AND TARGET zmumps_c AND TARGET dmumps AND TARGET zmumps
     # _seq variant: libmpiseq replaces ScaLAPACK/PBLAS/BLACS entirely;
     # keep the std double LAPACK + BLAS the genuine solvers call.
     set(_genuine_group_seq
-        dmumps_c zmumps_c mumps_c_runtime
-        dmumps zmumps mumps_common)
+        dzmumps_c mumps_c_runtime
+        dzmumps mumps_common)
     foreach(_p lapack blas)
         if(TARGET ${_p})
             list(APPEND _genuine_group_seq ${_p})
@@ -884,13 +884,12 @@ if(TARGET dmumps_c AND TARGET zmumps_c AND TARGET dmumps AND TARGET zmumps
     # so it only appears in the genuine-enabled build.
     set(_genuine_scdz_src
         ${CMAKE_CURRENT_SOURCE_DIR}/c/genuine/test_genuine_scdz_solve.c)
-    if(TARGET smumps_c AND TARGET cmumps_c AND TARGET smumps AND TARGET cmumps
+    if(TARGET scmumps_c AND TARGET scmumps
             AND EXISTS ${_genuine_scdz_src})
-        # smumps_c/cmumps_c bridges + smumps/cmumps solvers prepended to
-        # the genuine d/z groups; the shared common + parallel stack are
-        # already listed there.
-        set(_genuine_scdz_group     smumps_c cmumps_c smumps cmumps ${_genuine_group})
-        set(_genuine_scdz_group_seq smumps_c cmumps_c smumps cmumps ${_genuine_group_seq})
+        # scmumps_c bridge + scmumps solver prepended to the genuine d/z
+        # groups; the shared common + parallel stack are already listed there.
+        set(_genuine_scdz_group     scmumps_c scmumps ${_genuine_group})
+        set(_genuine_scdz_group_seq scmumps_c scmumps ${_genuine_group_seq})
         foreach(_vkey IN LISTS _mumps_test_variants)
             if(_vkey STREQUAL "plain")
                 set(variant "")
