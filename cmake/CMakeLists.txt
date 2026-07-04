@@ -408,6 +408,14 @@ function(add_migrated_fortran_library lib_name)
         target_link_libraries(${_precision_target} PUBLIC ${_common_target})
     endif()
 
+    # Content-driven archive filename. The CMake target keeps LIB_PREFIX
+    # (so exported symbols and inter-target references are unchanged), but
+    # the emitted ``.a`` is renamed to reflect what it actually holds:
+    # E/Y families → ey, Q/X → qx, M/W → mw (see ${lib_name}_ARCHIVE_PREFIX
+    # in the staged manifest). fortran_install_library reads this property.
+    set_target_properties(${_precision_target} PROPERTIES
+        MIGRATED_OUTPUT_BASE "${${lib_name}_ARCHIVE_PREFIX}${lib_name}")
+
     # The migrator can lengthen tokens (e.g. MPI_DOUBLE_COMPLEX →
     # MPI_C_LONG_DOUBLE_COMPLEX for kind10), pushing fixed-form ``.F``
     # lines past column 72 and free-form ``.f90`` lines past column 132.
@@ -502,6 +510,10 @@ function(add_migrated_c_library lib_name)
         target_link_libraries(${_precision_target} PRIVATE MPI::MPI_C)
         target_link_libraries(${_precision_target} INTERFACE $<LINK_ONLY:MPI::MPI_C>)
     endif()
+
+    # Content-driven archive filename (see add_migrated_fortran_library).
+    set_target_properties(${_precision_target} PROPERTIES
+        MIGRATED_OUTPUT_BASE "${${lib_name}_ARCHIVE_PREFIX}${lib_name}")
 
     # Dual-interface compile: files listed in
     # ``${lib_name}_DUAL_INTERFACE_SOURCES`` are already compiled once
@@ -1457,6 +1469,12 @@ if(NOT BASELINE_BUILD)
         add_library(${LIB_PREFIX}mumps_c STATIC
             $<TARGET_OBJECTS:${LIB_PREFIX}mumps_c_obj>
             $<TARGET_OBJECTS:${LIB_PREFIX_COMPLEX}mumps_c_obj>)
+        # Bundles both the real (${LIB_PREFIX}) and complex
+        # (${LIB_PREFIX_COMPLEX}) bridge objects, so the archive file takes
+        # the combined content prefix (e.g. libeymumps_c.a). Target name and
+        # symbols stay on LIB_PREFIX; only the emitted .a is renamed.
+        set_target_properties(${LIB_PREFIX}mumps_c PROPERTIES
+            MIGRATED_OUTPUT_BASE "${LIB_PREFIX}${LIB_PREFIX_COMPLEX}mumps_c")
         target_include_directories(${LIB_PREFIX}mumps_c
             PUBLIC
                 $<BUILD_INTERFACE:${_mumps_c_bridge_inc_target}>

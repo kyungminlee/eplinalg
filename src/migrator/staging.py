@@ -109,6 +109,13 @@ def cmd_stage(args):
     else:
         libraries = list(LIBRARY_ORDER)
 
+    # The real / complex family letters (e/y, q/x, m/w). Used both to
+    # build the per-library archive-filename prefix below and to stamp
+    # LIB_PREFIX / LIB_PREFIX_COMPLEX into target_config.cmake.
+    pmap = target_mode.prefix_map
+    lib_prefix = pmap['R'].lower()
+    lib_prefix_complex = pmap['C'].lower()
+
     staged = []
     for lib_name, recipe_file in libraries:
         recipe_path = recipes_dir / recipe_file
@@ -241,6 +248,26 @@ def cmd_stage(args):
                 if _DUAL_ENTRY_C_RE.search(text):
                     dual_files.append(f'src/{f.name}')
 
+        # Content-driven archive-filename prefix. The classifier's family
+        # slots carry an 'R' (real) / 'C' (complex) type tag; the emitted
+        # archive is named after what it actually contains, independent of
+        # any filename convention:
+        #   real families only    → e / q / m
+        #   complex families only → y / x / w
+        #   both                  → ey / qx / mw   (e.g. libeylapack.a)
+        #   neither (precision-independent, e.g. scalapack_tools) → no prefix
+        # This is the archive FILE name only; the CMake target name and the
+        # exported linker symbols stay on LIB_PREFIX, so nothing links-breaks.
+        _tags = {
+            slot.type_tag
+            for fam in classification.families
+            for slot in fam.slots
+        }
+        archive_prefix = (
+            (lib_prefix if 'R' in _tags else '')
+            + (lib_prefix_complex if 'C' in _tags else '')
+        )
+
         # Write manifest.cmake
         common_list = '\n    '.join(common_files) if common_files else ''
         precision_list = '\n    '.join(precision_files) if precision_files else ''
@@ -259,6 +286,8 @@ set({lib_name}_DUAL_INTERFACE_SOURCES
 )
 
 set({lib_name}_LANGUAGE {config.language})
+
+set({lib_name}_ARCHIVE_PREFIX {archive_prefix})
 """
         (lib_dir / 'manifest.cmake').write_text(manifest)
         print(f'  Manifest: {len(common_files)} common, '
@@ -266,9 +295,6 @@ set({lib_name}_LANGUAGE {config.language})
         staged.append(lib_name)
 
     # Copy MF helper modules into staging so it's self-contained
-    pmap = target_mode.prefix_map
-    lib_prefix = pmap['R'].lower()
-    lib_prefix_complex = pmap['C'].lower()
     needs_mf = target_mode.module_name is not None
     # kind16 (REAL(KIND=16) / __float128) keeps the *standard* MPI datatypes
     # (MPI_REAL16 / MPI_COMPLEX32) but routes every reduction through custom
