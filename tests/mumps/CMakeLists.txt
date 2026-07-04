@@ -783,12 +783,32 @@ if(TARGET dzmumps
             list(APPEND _genuine_group ${_p})
         endif()
     endforeach()
+    # Ordering archives (ICNTL(7)=4 pord, =5 metis, =3 scotch). mumps_c_runtime
+    # PUBLIC-links these, but its transitive interface is NOT pulled *into* the
+    # LINK_GROUP RESCAN below, so the ordering symbols the group members reference
+    # (mumps_pord.c's SPACE_ordering/firstPostorder, mumps_metis.c's
+    # metis_mumps_*, mumps_scotch.c's SCOTCH_*_mumps, and the Fortran
+    # ana_orderings_wrappers_m / d/z ini_driver callers) would be undefined at
+    # link. Name them explicitly inside the group, gated on the target so the
+    # tree still builds when a given ordering wasn't staged.
+    foreach(_p pord metis esmumps scotch scotcherr)
+        if(TARGET ${_p})
+            list(APPEND _genuine_group ${_p})
+        endif()
+    endforeach()
     # _seq variant: libmpiseq replaces ScaLAPACK/PBLAS/BLACS entirely;
     # keep the std double LAPACK + BLAS the genuine solvers call.
     set(_genuine_group_seq
         mumps_c_runtime
         dzmumps mumps_common)
     foreach(_p lapack blas)
+        if(TARGET ${_p})
+            list(APPEND _genuine_group_seq ${_p})
+        endif()
+    endforeach()
+    # Same ordering archives for the sequential stack (mumps_c_runtime is present
+    # in both variants and references them identically).
+    foreach(_p pord metis esmumps scotch scotcherr)
         if(TARGET ${_p})
             list(APPEND _genuine_group_seq ${_p})
         endif()
