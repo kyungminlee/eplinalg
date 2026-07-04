@@ -202,8 +202,8 @@ target_link_libraries(mumps_c_bridge PRIVATE MPI::MPI_C)
 # MUMPS_PORDF / MUMPS_PORDF_WND bodies are guarded by ``#if defined(pord)``.
 # Without -Dpord here the bridge object is empty, and the migrated
 # ana_orderings_wrappers_m.F (in mumps_common) references mumps_pordf_ with
-# no definition on the test link line. Mirror the shipped mumps_c_runtime
-# wiring: define pord, expose the PORD headers, and link libpord so
+# no definition on the test link line. Mirror the shipped mumps_common
+# (folded C runtime) wiring: define pord, expose the PORD headers, and link libpord so
 # SPACE_ordering et al. resolve in the final test executables. Gated on the
 # pord target so the tree still builds when PORD wasn't staged.
 if(TARGET pord)
@@ -218,7 +218,7 @@ endif()
 # guarded by ``#if defined(metis)`` and forward to the privately-namespaced
 # METIS_MUMPS_* symbols. Without -Dmetis here those objects are empty and the
 # migrated ana_orderings_wrappers_m.F references them with no definition on
-# the test link line. Mirror the shipped mumps_c_runtime wiring: define metis,
+# the test link line. Mirror the shipped mumps_common (folded C runtime) wiring: define metis,
 # expose the METIS public header, and link libmetis so METIS_MUMPS_NodeND et
 # al. resolve. Gated on the metis target so the tree still builds when METIS
 # wasn't staged.
@@ -233,8 +233,8 @@ endif()
 # mumps_scotch.c / mumps_scotch64.c / mumps_scotch_int.c, whose bodies are
 # guarded by ``#if defined(scotch)`` and call bare SCOTCH_* / esmumps names.
 # Without -Dscotch here those objects are empty and ana_orderings_wrappers_m.F
-# references them with no definition. Mirror the shipped mumps_c_runtime
-# wiring: define scotch, expose the Scotch include dir, force-include
+# references them with no definition. Mirror the shipped mumps_common
+# (folded C runtime) wiring: define scotch, expose the Scotch include dir, force-include
 # scotch_rename_mumps.h so the bare caller names bind to the _mumps-suffixed
 # archive symbols, and link scotch/esmumps/scotcherr. Gated on the scotch
 # target so the tree still builds when Scotch wasn't staged.
@@ -387,11 +387,11 @@ endif()
 # solver + bridge + common members reference their symbols (eini/yini_driver.F's
 # metis_mumps_*, ana_orderings_wrappers_m's scotchf*_mumps_/metis_mumps_nodend_,
 # mumps_metis.c's METIS_MUMPS_*, mumps_pord.c's SPACE_ordering/firstPostorder,
-# mumps_scotch.c's SCOTCH_*_mumps), yet mumps_c_bridge/mumps_c_runtime only
+# mumps_scotch.c's SCOTCH_*_mumps), yet mumps_c_bridge/mumps_common only
 # PUBLIC-link them — and PUBLIC propagation lands them OUTSIDE the per-test
 # LINK_GROUP, where the LINK_GROUP genex drops them. They are NOT named as
-# LINK_GROUP targets here: emumps PUBLIC-links mumps_c_runtime which PUBLIC-links
-# pord/metis/scotch, so pulling them into the group closes a group<->runtime
+# LINK_GROUP targets here: emumps PUBLIC-links mumps_common which PUBLIC-links
+# pord/metis/scotch, so pulling them into the group closes a group<->common
 # target-graph cycle. Instead they are appended AFTER the group as raw archive
 # files (see _mumps_attach_link_group); collect the target list here, gated on
 # their targets, ordered esmumps->scotch->scotcherr for the intra-Scotch chain.
@@ -621,8 +621,8 @@ function(_mumps_attach_link_group tgt variant want_c)
         # mumps/scalapack group — so trailing placement resolves the ordering
         # symbols the group members left undefined (ld carries the unresolved
         # set forward). Raw $<TARGET_FILE:> + add_dependencies keeps them out of
-        # the target link graph, so the emumps->mumps_c_runtime->pord PUBLIC
-        # chain does NOT form a group<->runtime cycle (which naming them as
+        # the target link graph, so the emumps->mumps_common->pord PUBLIC
+        # chain does NOT form a group<->common cycle (which naming them as
         # LINK_GROUP targets would). Their own --start-group covers the
         # esmumps->scotch->scotcherr intra-Scotch cross-references.
         if(_mumps_ordering_archives)
@@ -739,7 +739,8 @@ endforeach()
 # A release emits FOUR ?mumps_c entry points: the migrated real/complex
 # pair folded into ${LIB_PREFIX}mumps (e/y, q/x or m/w — always the
 # upstream d/z lineages) and the genuine double pair folded into dzmumps.
-# All share the arithmetic-independent libmumps_c_runtime.
+# All share the arithmetic-independent C runtime, now folded into
+# libmumps_common.
 #
 # test_mumps_c_coexist.c names all four and is force-linked (whole
 # archive) against each COHERENT family; each MUST link with no
@@ -759,16 +760,16 @@ set(_coexist_defs
 
 # genuine double pair — the capability the shared runtime unlocks
 # (standard upstream "use dmumps_c and zmumps_c in one program").
-if(TARGET dzmumps AND TARGET mumps_c_runtime)
+if(TARGET dzmumps AND TARGET mumps_common)
     add_executable(test_mumps_c_coexist_genuine EXCLUDE_FROM_ALL ${_coexist_src})
     target_compile_definitions(test_mumps_c_coexist_genuine PRIVATE ${_coexist_defs})
     target_link_options(test_mumps_c_coexist_genuine PRIVATE
         -Wl,--whole-archive
-        $<TARGET_FILE:dzmumps> $<TARGET_FILE:mumps_c_runtime>
+        $<TARGET_FILE:dzmumps> $<TARGET_FILE:mumps_common>
         -Wl,--no-whole-archive
         -Wl,--unresolved-symbols=ignore-all
         -fno-lto)
-    add_dependencies(test_mumps_c_coexist_genuine dzmumps mumps_c_runtime)
+    add_dependencies(test_mumps_c_coexist_genuine dzmumps mumps_common)
     add_test(NAME mumps_c_coexist_genuine
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
                 --target test_mumps_c_coexist_genuine --config $<CONFIG>)
@@ -777,16 +778,16 @@ endif()
 # migrated pair — already shipped; guards the ${LIB_PREFIX}mumps bridge
 # (both e/y-lineage objects, now folded in) against a future
 # runtime-duplication regression.
-if(TARGET ${LIB_PREFIX}mumps AND TARGET mumps_c_runtime)
+if(TARGET ${LIB_PREFIX}mumps AND TARGET mumps_common)
     add_executable(test_mumps_c_coexist_migrated EXCLUDE_FROM_ALL ${_coexist_src})
     target_compile_definitions(test_mumps_c_coexist_migrated PRIVATE ${_coexist_defs})
     target_link_options(test_mumps_c_coexist_migrated PRIVATE
         -Wl,--whole-archive
-        $<TARGET_FILE:${LIB_PREFIX}mumps> $<TARGET_FILE:mumps_c_runtime>
+        $<TARGET_FILE:${LIB_PREFIX}mumps> $<TARGET_FILE:mumps_common>
         -Wl,--no-whole-archive
         -Wl,--unresolved-symbols=ignore-all
         -fno-lto)
-    add_dependencies(test_mumps_c_coexist_migrated ${LIB_PREFIX}mumps mumps_c_runtime)
+    add_dependencies(test_mumps_c_coexist_migrated ${LIB_PREFIX}mumps mumps_common)
     add_test(NAME mumps_c_coexist_migrated
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
                 --target test_mumps_c_coexist_migrated --config $<CONFIG>)
@@ -805,19 +806,20 @@ endif()
 #
 # Genuine and migrated collide on the unprefixed Fortran commons, so the
 # genuine link group is a DISJOINT archive set from the migrated one:
-# dzmumps (with its folded-in C bridge) + mumps_common + the MPI-matched
-# in-tree parallel stack (cmake/CMakeLists.txt's _genuine_parallel_stack:
-# bundled ScaLAPACK/PBLAS/BLACS/LAPACK/BLAS built against the chosen MPI).
-# The circular static refs among those archives are resolved by the same
+# dzmumps (with its folded-in C bridge) + mumps_common (Fortran common +
+# the folded-in shared C runtime) + the MPI-matched in-tree parallel stack
+# (cmake/CMakeLists.txt's _genuine_parallel_stack: bundled
+# ScaLAPACK/PBLAS/BLACS/LAPACK/BLAS built against the chosen MPI). The
+# circular static refs among those archives are resolved by the same
 # LINK_GROUP RESCAN the migrated tests use. The _seq variant swaps the
 # whole parallel stack for libmpiseq, which natively supplies the
 # DOUBLE / PD* BLACS + ScaLAPACK stubs the genuine solvers call.
 set(_genuine_solve_src ${CMAKE_CURRENT_SOURCE_DIR}/c/genuine/test_genuine_dz_solve.c)
 if(TARGET dzmumps
-        AND TARGET mumps_c_runtime AND EXISTS ${_genuine_solve_src})
-    # "" variant: genuine solvers (bridge folded in) + common + full parallel stack.
+        AND TARGET mumps_common AND EXISTS ${_genuine_solve_src})
+    # "" variant: genuine solvers (bridge folded in) + common (with the
+    # folded-in C runtime) + full parallel stack.
     set(_genuine_group
-        mumps_c_runtime
         dzmumps mumps_common)
     foreach(_p scalapack scalapack_common pblas pblas_common pbblas
                ptzblas ptzblas_common blacs blacs_common
@@ -826,7 +828,7 @@ if(TARGET dzmumps
             list(APPEND _genuine_group ${_p})
         endif()
     endforeach()
-    # Ordering archives (ICNTL(7)=4 pord, =5 metis, =3 scotch). mumps_c_runtime
+    # Ordering archives (ICNTL(7)=4 pord, =5 metis, =3 scotch). mumps_common
     # PUBLIC-links these, but its transitive interface is NOT pulled *into* the
     # LINK_GROUP RESCAN below, so the ordering symbols the group members reference
     # (mumps_pord.c's SPACE_ordering/firstPostorder, mumps_metis.c's
@@ -842,14 +844,13 @@ if(TARGET dzmumps
     # _seq variant: libmpiseq replaces ScaLAPACK/PBLAS/BLACS entirely;
     # keep the std double LAPACK + BLAS the genuine solvers call.
     set(_genuine_group_seq
-        mumps_c_runtime
         dzmumps mumps_common)
     foreach(_p lapack blas)
         if(TARGET ${_p})
             list(APPEND _genuine_group_seq ${_p})
         endif()
     endforeach()
-    # Same ordering archives for the sequential stack (mumps_c_runtime is present
+    # Same ordering archives for the sequential stack (mumps_common is present
     # in both variants and references them identically).
     foreach(_p pord metis esmumps scotch scotcherr)
         if(TARGET ${_p})
@@ -899,7 +900,7 @@ if(TARGET dzmumps
     # bridge only reaches libdmumps/libzmumps through the dmumps_f77_
     # shim, so the Fortran calling convention and derived-type layout are
     # covered ONLY here. Reuses the same disjoint genuine link groups
-    # (the solver needs mumps_c_runtime for its C ordering/IO symbols);
+    # (the solver needs mumps_common for its C ordering/IO symbols);
     # want_c is FALSE — a pure Fortran executable, no C bridge object.
     set(_genuine_solve_f_src
         ${CMAKE_CURRENT_SOURCE_DIR}/fortran/genuine/test_genuine_dz_solve_f.F90)
