@@ -383,6 +383,24 @@ set(_mumps_link_group_archives
 if(TARGET ${LIB_PREFIX}xblas)
     list(APPEND _mumps_link_group_archives ${LIB_PREFIX}xblas)
 endif()
+# Ordering archives (ICNTL(7)=4 pord, =5 metis, =3 scotch). The migrated
+# solver + bridge + common members reference their symbols (eini/yini_driver.F's
+# metis_mumps_*, ana_orderings_wrappers_m's scotchf*_mumps_/metis_mumps_nodend_,
+# mumps_metis.c's METIS_MUMPS_*, mumps_pord.c's SPACE_ordering/firstPostorder,
+# mumps_scotch.c's SCOTCH_*_mumps), yet mumps_c_bridge/mumps_c_runtime only
+# PUBLIC-link them — and PUBLIC propagation lands them OUTSIDE the per-test
+# LINK_GROUP, where the LINK_GROUP genex drops them. They are NOT named as
+# LINK_GROUP targets here: emumps PUBLIC-links mumps_c_runtime which PUBLIC-links
+# pord/metis/scotch, so pulling them into the group closes a group<->runtime
+# target-graph cycle. Instead they are appended AFTER the group as raw archive
+# files (see _mumps_attach_link_group); collect the target list here, gated on
+# their targets, ordered esmumps->scotch->scotcherr for the intra-Scotch chain.
+set(_mumps_ordering_archives "")
+foreach(_p pord metis esmumps scotch scotcherr)
+    if(TARGET ${_p})
+        list(APPEND _mumps_ordering_archives ${_p})
+    endif()
+endforeach()
 
 # libmpiseq is a complete drop-in for MPI + BLACS + PBLAS + ScaLAPACK
 # (single-rank only). The ``_seq`` link variant therefore replaces ALL
@@ -509,6 +527,14 @@ function(_mumps_attach_link_group tgt variant want_c)
                 list(APPEND _archives ${_std})
             endif()
         endforeach()
+        # Ordering archives (pord/metis/scotch) — the migrated solver + bridge
+        # + common members reference their symbols (see _mumps_link_group_archives
+        # note); include them in the --start-group block, gated on their targets.
+        foreach(_ord pord metis esmumps scotch scotcherr)
+            if(TARGET ${_ord})
+                list(APPEND _archives ${_ord})
+            endif()
+        endforeach()
         if(TARGET ${LIB_PREFIX}xblas)
             list(APPEND _archives ${LIB_PREFIX}xblas)
         endif()
@@ -590,6 +616,23 @@ function(_mumps_attach_link_group tgt variant want_c)
         target_link_libraries(${tgt} PRIVATE
             "$<LINK_GROUP:RESCAN,${_archives}>"
         )
+        # Ordering archives (pord/metis/scotch) appended AFTER the group as raw
+        # files. They are leaf libraries — nothing in them calls back into the
+        # mumps/scalapack group — so trailing placement resolves the ordering
+        # symbols the group members left undefined (ld carries the unresolved
+        # set forward). Raw $<TARGET_FILE:> + add_dependencies keeps them out of
+        # the target link graph, so the emumps->mumps_c_runtime->pord PUBLIC
+        # chain does NOT form a group<->runtime cycle (which naming them as
+        # LINK_GROUP targets would). Their own --start-group covers the
+        # esmumps->scotch->scotcherr intra-Scotch cross-references.
+        if(_mumps_ordering_archives)
+            add_dependencies(${tgt} ${_mumps_ordering_archives})
+            target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
+            foreach(_ord IN LISTS _mumps_ordering_archives)
+                target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_ord}>)
+            endforeach()
+            target_link_libraries(${tgt} PRIVATE "-Wl,--end-group")
+        endif()
     endif()
 endfunction()
 
