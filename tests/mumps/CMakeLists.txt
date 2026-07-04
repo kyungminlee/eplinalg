@@ -361,7 +361,6 @@ set(_mumps_link_group_archives
     # cycle inside the RESCAN.
     mumps_common
     ${LIB_PREFIX}scalapack
-    ${LIB_PREFIX}scalapack_c
     ${LIB_PREFIX}pblas
     ${LIB_PREFIX}pbblas
     ${LIB_PREFIX}ptzblas

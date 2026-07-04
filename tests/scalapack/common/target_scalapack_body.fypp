@@ -4431,7 +4431,7 @@ contains
 
     ! C-side IEEE sign-bit helpers used by pdstebz fast-path. Migrated
     ! ${R}$lasnbt / ${R}$laiectb / ${R}$laiectl / ${R}$lachkieee live in
-    ! the migrated scalapack_c archive (after override for kind10/kind16/
+    ! the migrated scalapack archive's folded C clones (after override for kind10/kind16/
     ! multifloats — the auto-clones bit-twiddle on the wrong layout for
     ! long-double / __float128 / float64x2). Wrappers expose them via
     ! the target_* dispatch namespace so test_pdlaiect can verify the

@@ -24,10 +24,11 @@ ctest --test-dir /tmp/stg-q/build -R '^mumps_' --output-on-failure
 Swap `--target kind16` for `kind10` or `multifloats` to run the same
 suite on the other targets — no other flags change.
 
-If you restrict the staging via `--libraries`, the mumps tests need
-`scalapack_c` in the list (it ships the precision-promoted C clones
-`*lamov_` / `p*gemr2d_` that the test executables link against).
-Concretely:
+If you restrict the staging via `--libraries`, the mumps tests still
+need `scalapack_c` in the list — it supplies the precision-promoted C
+clones `*lamov_` / `p*gemr2d_`, which are now folded into the
+`scalapack` archive (no separate `scalapack_c` library is built, but
+its sources must still be staged for the fold). Concretely:
 
 ```bash
 uv run python -m migrator stage /tmp/stg-q --target kind16 \

@@ -85,7 +85,7 @@ if(REFQUAD_RENAME_SCRIPT)
     # those references because the migrated link cycle expects them
     # under their original names.
     set(_refquad_excludes)
-    foreach(_c blas_common lapack_common scalapack_common scalapack_c_common
+    foreach(_c blas_common lapack_common scalapack_common
                pblas_common pbblas_common ptzblas_common blacs_common
                mumps_common xblas_common)
         if(TARGET ${_c})
