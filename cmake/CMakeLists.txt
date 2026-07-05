@@ -219,38 +219,15 @@ if(NEEDS_MULTIFLOATS)
         target_link_libraries(la_xisnan_mw PUBLIC $<BUILD_INTERFACE:multifloatsf>)
     endif()
 
-    # multifloats_mpi — C++ MPI handle registration + bridge header
-    if(EXISTS "${MF_HELPERS_DIR}/multifloats_mpi.cpp" AND MPI_CXX_FOUND)
-        add_library(multifloats_mpi STATIC "${MF_HELPERS_DIR}/multifloats_mpi.cpp")
-        target_include_directories(multifloats_mpi PUBLIC
-            $<BUILD_INTERFACE:${MF_HELPERS_DIR}>)
-        # MPI::MPI_CXX is PRIVATE so consumers (mblacs, mlapack PUBLIC
-        # chain, mumps test exes) aren't forced to link libmpicxx.so.
-        # Each consumer that wants the real-MPI runtime adds MPI::* on
-        # its own — keeps the libmpiseq link path (which substitutes
-        # mpiseq for ALL of MPI/BLACS/PBLAS/scalapack) clean.
-        target_link_libraries(multifloats_mpi
-            PRIVATE MPI::MPI_CXX
-            PUBLIC  multifloats)
-        target_compile_features(multifloats_mpi PRIVATE cxx_std_17)
-    elseif(EXISTS "${MF_HELPERS_DIR}/multifloats_bridge.h")
-        # No MPI — still provide the bridge header via an interface target
-        add_library(multifloats_mpi INTERFACE)
-        target_include_directories(multifloats_mpi INTERFACE
-            $<BUILD_INTERFACE:${MF_HELPERS_DIR}>)
-    endif()
-
-    # multifloats_mpi_f — Fortran module exposing the C-side MPI_FLOAT64X2
-    # / MPI_DD_SUM / etc. handles to Fortran callers (MUMPS calls MPI
-    # from Fortran directly with these tokens; without the module they
-    # have no IMPLICIT type at compile time). Linking into multifloats_mpi
-    # ensures the C++ runtime that defines mf_mpi_*_f globals is pulled
-    # in transitively whenever a target depends on multifloats_mpi_f.
-    if(EXISTS "${MF_HELPERS_DIR}/multifloats_mpi_f.f90" AND TARGET multifloats_mpi)
-        add_library(multifloats_mpi_f STATIC
-            "${MF_HELPERS_DIR}/multifloats_mpi_f.f90")
-        fortran_module_layout(multifloats_mpi_f)
-        target_link_libraries(multifloats_mpi_f PUBLIC multifloats_mpi)
+    # multifloats_mpi / multifloats_mpi_f — first-party MPI bridge for the
+    # real64x2 arithmetic, now a standalone library under runtime/. Its own
+    # CMakeLists.txt defines both targets (STATIC when MPI_CXX_FOUND, else an
+    # INTERFACE header-only target) exactly as the inline block used to; it
+    # relies on this parent scope having already found MPI and created the
+    # `multifloats` target. staging.py copies runtime/multifloats-mpi/ into
+    # the staged tree, so the relative path resolves there.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/runtime/multifloats-mpi/CMakeLists.txt")
+        add_subdirectory(runtime/multifloats-mpi)
     endif()
 endif()
 
@@ -263,31 +240,13 @@ endif()
 # the quad analogue of the multifloats bridge, but plain C (no C++, no
 # FetchContent, no custom datatypes).
 if(NEEDS_QUAD_MPI)
-    # quad_mpi — C registration of the custom combine ops. fabsq lives
-    # in libquadmath.
-    if(EXISTS "${MF_HELPERS_DIR}/quad_mpi.c")
-        add_library(quad_mpi STATIC "${MF_HELPERS_DIR}/quad_mpi.c")
-        target_include_directories(quad_mpi PUBLIC
-            $<BUILD_INTERFACE:${MF_HELPERS_DIR}>)
-        # MPI::MPI_C is PRIVATE so consumers linking libmpiseq instead of
-        # the real MPI runtime (the _seq test variants) aren't forced to
-        # pull in the real MPI .so — mirrors multifloats_mpi's handling.
-        # (MPI_Op_c2f is a cast macro and MPI_Op_create is stubbed by
-        # libmpiseq, so quad_mpi links cleanly against mpiseq too.)
-        if(MPI_C_FOUND)
-            target_link_libraries(quad_mpi PRIVATE MPI::MPI_C)
-        endif()
-        target_link_libraries(quad_mpi PRIVATE quadmath)
-    endif()
-
-    # quad_mpi_f — Fortran shim exposing the C-side op handles to MUMPS
-    # (which issues MPI_REDUCE from Fortran with these tokens directly).
-    # Linking quad_mpi PUBLIC pulls the C runtime that defines the *_f
-    # globals into any target that depends on quad_mpi_f.
-    if(EXISTS "${MF_HELPERS_DIR}/quad_mpi_f.f90" AND TARGET quad_mpi)
-        add_library(quad_mpi_f STATIC "${MF_HELPERS_DIR}/quad_mpi_f.f90")
-        fortran_module_layout(quad_mpi_f)
-        target_link_libraries(quad_mpi_f PUBLIC quad_mpi)
+    # quad_mpi / quad_mpi_f — first-party MPI bridge for the kind16
+    # (__float128) arithmetic, now a standalone library under runtime/. Its
+    # own CMakeLists.txt defines both targets exactly as the inline block
+    # used to. staging.py copies runtime/quad-mpi/ into the staged tree, so
+    # the relative path resolves there.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/runtime/quad-mpi/CMakeLists.txt")
+        add_subdirectory(runtime/quad-mpi)
     endif()
 endif()
 
