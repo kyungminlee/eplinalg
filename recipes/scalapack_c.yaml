@@ -66,6 +66,66 @@ c_type_aliases:
     to: 'C{RP}gelacpy'
   - from: [Czgelacpy]
     to: 'C{CP}gelacpy'
+  # Trapezoidal (tr) REDIST family — same macro-hidden helpers as the ge
+  # family above, in pXtrmr2.c / pXtrmr.c. The real clone comes from the
+  # double template ``d`` (dtr*), matching the ge side.
+  - from: [dtrscanD0]
+    to: '{RP}trscanD0'
+  - from: [dtrdispmat]
+    to: '{RP}trdispmat'
+  - from: [dtrsetmemory]
+    to: '{RP}trsetmemory'
+  - from: [dtrfreememory]
+    to: '{RP}trfreememory'
+  - from: [dtrscan_intervals]
+    to: '{RP}trscan_intervals'
+  - from: [Cdtrlacpy]
+    to: 'C{RP}trlacpy'
+  # The complex REDIST clones (both ge and tr) come from the single-complex
+  # template ``c`` (cge*/ctr*), NOT the double-complex ``z`` — so the z-prefix
+  # aliases above never fire for REDIST; these c-prefix ones are the live path.
+  - from: [cgescanD0]
+    to: '{CP}gescanD0'
+  - from: [cgedispmat]
+    to: '{CP}gedispmat'
+  - from: [cgesetmemory]
+    to: '{CP}gesetmemory'
+  - from: [cgefreememory]
+    to: '{CP}gefreememory'
+  - from: [cgescan_intervals]
+    to: '{CP}gescan_intervals'
+  - from: [Ccgelacpy]
+    to: 'C{CP}gelacpy'
+  - from: [ctrscanD0]
+    to: '{CP}trscanD0'
+  - from: [ctrdispmat]
+    to: '{CP}trdispmat'
+  - from: [ctrsetmemory]
+    to: '{CP}trsetmemory'
+  - from: [ctrfreememory]
+    to: '{CP}trfreememory'
+  - from: [ctrscan_intervals]
+    to: '{CP}trscan_intervals'
+  - from: [Cctrlacpy]
+    to: 'C{CP}trlacpy'
+
+# Integer / grid-topology REDIST + TOOLS C files carry no floating-point
+# arithmetic — they redistribute integer matrices (pigemr2d/pitrmr2d), do grid
+# reshaping and buffer bookkeeping, so their symbols are byte-identical to
+# MKL's. Fold them (by file stem) into scalapack_common, the drop-when-MKL
+# archive, so the migrated libscalapack_c stops re-defining what MKL provides.
+# Matched by STEM, uppercased: pgemraux (pgcd/ppcm/localindice/…), reshape
+# (Creshape/reshape_/mr2d_malloc), SL_gridreshape (sl_gridreshape*), getpbbuf,
+# and the integer redist driver/worker pairs pigemr/pigemr2 + pitrmr/pitrmr2.
+force_common:
+  - pgemraux
+  - reshape
+  - SL_gridreshape
+  - getpbbuf
+  - pigemr
+  - pigemr2
+  - pitrmr
+  - pitrmr2
 
 # copy_all_originals removed: the upstream S/D/C/Z entry points
 # (pdgemr2d_, pztrmr2d_, pdlaiectb_, ...) and precision-independent
