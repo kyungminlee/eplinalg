@@ -1092,8 +1092,21 @@ endif()
 # ${LIB_PREFIX}pbblas — it now transitively pulls scalapack_common for
 # these symbols instead of the old tools archive, without dragging in
 # the full ${LIB_PREFIX}scalapack.
+#
+# Wrapped in $<BUILD_INTERFACE:> so the dependency serves the in-tree
+# tests but is NOT written into install(EXPORT). scalapack_common lives
+# in a DIFFERENT package (escalapack's export, per _install_library_pair)
+# than epbblas (pbblas' export); leaking it into epbblas'
+# INTERFACE_LINK_LIBRARIES makes find_package(epbblas) reference an
+# imported target defined only by find_package(escalapack) — and a
+# consumer that finds epbblas first then trips epbblas_FOUND = FALSE.
+# Keeping it build-only matches the repo convention (no cross-package
+# find_dependency; consumers list every archive on their own link line,
+# resolving NUMROC/ICEIL/ILCM from MKL or from eplinalg::scalapack_common
+# via find_package(escalapack)) — identical to how the MUMPS parallel
+# stack is BUILD_INTERFACE-wrapped out of the solver exports.
 if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}pbblas AND TARGET scalapack_common)
-    target_link_libraries(${LIB_PREFIX}pbblas PUBLIC scalapack_common)
+    target_link_libraries(${LIB_PREFIX}pbblas PUBLIC $<BUILD_INTERFACE:scalapack_common>)
 endif()
 
 # 9. MUMPS (depends on LAPACK, BLAS, ScaLAPACK; needs MPI Fortran).
