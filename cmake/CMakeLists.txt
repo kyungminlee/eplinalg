@@ -1339,6 +1339,128 @@ if(NOT BASELINE_BUILD)
                        "(no _mumps_scotch_libsrc) — ICNTL(7)=3 will be inactive")
     endif()
 
+    # ── PT-Scotch (distributed parallel analysis) ───────────────────
+    # The 131-file distributed increment (dgraph*/bdgraph*/vdgraph*/
+    # hdgraph*/kdgraph*/dorder*/dmapping*/library_dgraph*/library_context_
+    # dgraph*, from SCOTCH_LIBPTSCOTCH_SOURCES). Compiled WITH
+    # -DSCOTCH_PTSCOTCH (which chains module.h → COMMON_MPI → <mpi.h>) and
+    # the SAME -DSCOTCH_NAME_SUFFIX=_mumps rename as sequential Scotch, so
+    # the archive is a disjoint increment that references the sequential
+    # symbols by their _mumps names and resolves them from libscotch_mumps
+    # at link (upstream's -lptscotch -lscotch model). It is genuinely
+    # MPI-tied, so it is gated on MPI and installs -${MPI_TAG}-tagged
+    # (_MPI_DEPENDENT_LIBS below); the libseq column keeps it off. Turning
+    # this on plus -Dptscotch on the MUMPS runtime activates the
+    # ICNTL(28)=2 + ICNTL(29)=1 distributed-analysis path, complementing
+    # the sequential ICNTL(7)=3 Scotch that libscotch already serves.
+    #
+    # ptscotch.h / ptscotchf.h are pre-generated & vendored in the include
+    # dir (like scotch.h/scotchf.h): dummysizes computes the opaque-struct
+    # dims, and those dims are provably MPI-ABI-independent — Dgraph embeds
+    # an MPI_Comm by value (8 bytes on OpenMPI, 4 on MPICH/Intel-MPI), but
+    # the struct is 8-byte aligned (it holds pointers), so sizeof is always
+    # a multiple of 8 and the ≤4-byte delta rounds back up. Verified: the
+    # OpenMPI- and Intel-MPI-generated headers are byte-identical.
+    set(MUMPS_HAVE_PTSCOTCH FALSE)
+    if(MUMPS_HAVE_SCOTCH AND MPI_C_FOUND AND MPI_Fortran_FOUND
+            AND SCOTCH_LIBPTSCOTCH_SOURCES)
+        set(_ptscotch_lib_c "")
+        foreach(_f ${SCOTCH_LIBPTSCOTCH_SOURCES})
+            list(APPEND _ptscotch_lib_c ${_mumps_scotch_libsrc}/${_f})
+        endforeach()
+        # Sequential defines + the distributed flag. The suffix MUST stay
+        # _mumps (not _mumps_pt) — see increment rationale above.
+        set(_ptscotch_defs ${_scotch_defs} SCOTCH_PTSCOTCH)
+
+        # Filename carries the MPI tag (unlike the shared, untagged
+        # sequential libscotch_mumps.a): OpenMPI and Intel-MPI copies are
+        # different binaries and must coexist in one lib/ — same discipline
+        # as libdmumps-${MPI_TAG}.a. Falls back to plain _mumps if MPI_TAG
+        # is empty (unknown vendor). Baked in here rather than via
+        # fortran_install_library, which would drop the _mumps stem and add
+        # the compiler tag.
+        set(_ptscotch_out ptscotch_mumps)
+        set(_ptscotcherr_out ptscotcherr_mumps)
+        if(MPI_TAG)
+            set(_ptscotch_out ptscotch_mumps-${MPI_TAG})
+            set(_ptscotcherr_out ptscotcherr_mumps-${MPI_TAG})
+        endif()
+
+        add_library(ptscotch STATIC ${_ptscotch_lib_c})
+        target_include_directories(ptscotch PUBLIC
+            $<BUILD_INTERFACE:${_mumps_scotch_inc}>
+            $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
+        target_compile_definitions(ptscotch PRIVATE ${_ptscotch_defs})
+        # The distributed increment references the sequential SCOTCH_*_mumps
+        # symbols (and the parallel error handler) but does not define them.
+        # Declaring the dependency PUBLIC makes CMake emit ptscotch BEFORE
+        # scotch/scotcherr on every consumer's static link line (GNU ld is
+        # single-pass), so those forward references resolve — mirroring
+        # upstream's -lptscotch -lscotch order. ptscotcherr (forward-declared;
+        # defined just below) carries the distributed error symbols. Every
+        # consumer then only has to link ptscotch; the rest follow transitively
+        # in the correct order and dedup against any explicit scotch entry.
+        target_link_libraries(ptscotch PUBLIC ptscotcherr scotch scotcherr MPI::MPI_C)
+        set_target_properties(ptscotch PROPERTIES
+            C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
+            OUTPUT_NAME ${_ptscotch_out})
+
+        # library_error.c rebuilt under -DSCOTCH_PTSCOTCH — distinct object
+        # from the sequential scotcherr (that one has no MPI include).
+        add_library(ptscotcherr STATIC ${_scotch_err_c})
+        target_include_directories(ptscotcherr PUBLIC
+            $<BUILD_INTERFACE:${_mumps_scotch_inc}>
+            $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
+        target_compile_definitions(ptscotcherr PRIVATE ${_ptscotch_defs})
+        target_link_libraries(ptscotcherr PUBLIC MPI::MPI_C)
+        set_target_properties(ptscotcherr PROPERTIES
+            C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
+            OUTPUT_NAME ${_ptscotcherr_out})
+
+        # Same warning-quiet + based-array fortify mitigation as sequential
+        # Scotch (the distributed sources use the identical idiom).
+        if(NOT MSVC)
+            target_compile_options(ptscotch    PRIVATE ${_scotch_cflags})
+            target_compile_options(ptscotcherr PRIVATE ${_scotch_cflags})
+        endif()
+
+        # Distributed Fortran entry points MUMPS calls under -Dptscotch
+        # ([dscz]ana_aux_par.F, ana_orderings_wrappers_m.F). Same
+        # suffix-before-trailing-underscore convention as _scotch_f_renames.
+        # SCOTCHFSTRATINIT/EXIT are shared base symbols already remapped by
+        # _scotch_f_renames (applied together, since scotch is always on
+        # when ptscotch is), and DGRAPH init is done via the C shim
+        # (SCOTCH_dgraphInit), so neither appears here. The CONTEXT* set is
+        # included because dana_aux_par.F names them (some behind
+        # MUMPS_SCOTCHIMPORTOMPTHREADS, some — CONTEXTBINDDGRAPH — under a
+        # plain #if defined(ptscotch)); a rename for an unreferenced symbol
+        # is inert.
+        set(_scotch_pt_f_renames
+            SCOTCHFDGRAPHBUILD=SCOTCHFDGRAPHBUILD_mumps
+            SCOTCHFDGRAPHEXIT=SCOTCHFDGRAPHEXIT_mumps
+            SCOTCHFDGRAPHORDERINIT=SCOTCHFDGRAPHORDERINIT_mumps
+            SCOTCHFDGRAPHORDEREXIT=SCOTCHFDGRAPHORDEREXIT_mumps
+            SCOTCHFDGRAPHORDERCOMPUTE=SCOTCHFDGRAPHORDERCOMPUTE_mumps
+            SCOTCHFDGRAPHORDERGATHER=SCOTCHFDGRAPHORDERGATHER_mumps
+            SCOTCHFDGRAPHCORDERINIT=SCOTCHFDGRAPHCORDERINIT_mumps
+            SCOTCHFDGRAPHCORDEREXIT=SCOTCHFDGRAPHCORDEREXIT_mumps
+            SCOTCHFSTRATDGRAPHORDER=SCOTCHFSTRATDGRAPHORDER_mumps
+            SCOTCHFCONTEXTINIT=SCOTCHFCONTEXTINIT_mumps
+            SCOTCHFCONTEXTEXIT=SCOTCHFCONTEXTEXIT_mumps
+            SCOTCHFCONTEXTRANDOMCLONE=SCOTCHFCONTEXTRANDOMCLONE_mumps
+            SCOTCHFCONTEXTBINDDGRAPH=SCOTCHFCONTEXTBINDDGRAPH_mumps
+            SCOTCHFCONTEXTTHREADIMPORT1=SCOTCHFCONTEXTTHREADIMPORT1_mumps
+            SCOTCHFCONTEXTTHREADIMPORT2=SCOTCHFCONTEXTTHREADIMPORT2_mumps)
+
+        set(MUMPS_HAVE_PTSCOTCH TRUE)
+        message(STATUS "MUMPS: PT-Scotch parallel analysis enabled "
+                       "(ICNTL(28)=2, ICNTL(29)=1)")
+    endif()
+    if(NOT MUMPS_HAVE_PTSCOTCH)
+        message(STATUS "MUMPS: PT-Scotch parallel analysis unavailable "
+                       "(needs Scotch + MPI C/Fortran) — ICNTL(28)=2 inactive")
+    endif()
+
     if(TARGET ${LIB_PREFIX}mumps)
         foreach(_dep ${LIB_PREFIX}scalapack ${LIB_PREFIX}lapack ${LIB_PREFIX}blas)
             if(TARGET ${_dep})
@@ -1394,6 +1516,18 @@ if(NOT BASELINE_BUILD)
             target_include_directories(${LIB_PREFIX}mumps PRIVATE
                 $<BUILD_INTERFACE:${_mumps_scotch_inc}>)
         endif()
+        # -Dptscotch activates the distributed-analysis path in
+        # [dscz]ana_aux_par.F (MUMPS_PTSCOTCH_MIXEDto32/64 → SCOTCHFDGRAPH*),
+        # runtime-selected by ICNTL(28)=2/ICNTL(29)=1. The pt Fortran
+        # renames bind those bare SCOTCHFDGRAPH*/CONTEXT* calls to the
+        # _mumps-suffixed archive symbols (scotchf.h/ptscotchf.h share the
+        # already-added include dir). Link the distributed increment BEFORE
+        # the sequential library (upstream -lptscotch -lscotch order).
+        if(MUMPS_HAVE_PTSCOTCH)
+            target_compile_definitions(${LIB_PREFIX}mumps PRIVATE ptscotch
+                $<$<COMPILE_LANGUAGE:Fortran>:${_scotch_pt_f_renames}>)
+            target_link_libraries(${LIB_PREFIX}mumps PUBLIC ptscotch ptscotcherr)
+        endif()
     endif()
     if(TARGET mumps_common AND MPI_Fortran_FOUND)
         target_link_libraries(mumps_common PRIVATE MPI::MPI_Fortran)
@@ -1419,6 +1553,13 @@ if(NOT BASELINE_BUILD)
         # ana_orderings_wrappers_m.F INCLUDE 'scotchf.h' under -Dscotch.
         target_include_directories(mumps_common PRIVATE
             $<BUILD_INTERFACE:${_mumps_scotch_inc}>)
+    endif()
+    # ana_orderings_wrappers_m.F's CONTEXT*/DGRAPH* branches gate on the
+    # -Dptscotch define too (the C-side force-include is added where the
+    # scotch_rename_mumps.h one is, below).
+    if(TARGET mumps_common AND MUMPS_HAVE_PTSCOTCH)
+        target_compile_definitions(mumps_common PRIVATE ptscotch
+            $<$<COMPILE_LANGUAGE:Fortran>:${_scotch_pt_f_renames}>)
     endif()
 
     # ── MUMPS C-side bridge ─────────────────────────────────────────
@@ -1586,6 +1727,18 @@ if(NOT BASELINE_BUILD)
             target_compile_options(mumps_common PRIVATE
                 "SHELL:$<$<COMPILE_LANGUAGE:C>:-include ${_mumps_scotch_inc}/scotch_rename_mumps.h>")
             target_link_libraries(mumps_common PUBLIC esmumps scotch scotcherr)
+        endif()
+        # PT-Scotch C side: mumps_scotch.c's MUMPS_DGRAPHINIT shim calls
+        # bare SCOTCH_dgraphInit under -Dptscotch (the define is applied for
+        # both languages by the mumps_common ptscotch block above, mirroring
+        # -Dscotch), and includes ptscotch.h. Force-include the distributed
+        # rename companion (C-only) so that bare call binds to
+        # SCOTCH_dgraphInit_mumps. Link the distributed increment before the
+        # sequential library.
+        if(MUMPS_HAVE_PTSCOTCH)
+            target_compile_options(mumps_common PRIVATE
+                "SHELL:$<$<COMPILE_LANGUAGE:C>:-include ${_mumps_scotch_inc}/scotch_rename_pt_mumps.h>")
+            target_link_libraries(mumps_common PUBLIC ptscotch ptscotcherr)
         endif()
         if(MPI_C_FOUND)
             target_link_libraries(mumps_common PRIVATE MPI::MPI_C)
@@ -2064,7 +2217,11 @@ endif()
 
 # Libraries that link MPI (transitively or directly) — their installs
 # pick up an extra ``-${MPI_TAG}`` suffix so OpenMPI/MPICH/Intel-MPI
-# variants can coexist in the same install prefix.
+# variants can coexist in the same install prefix. (ptscotch/ptscotcherr
+# are also MPI-ABI-tied and carry -${MPI_TAG}, but they are plain-installed
+# alongside scotch in the mumps block below — where the tag is baked into
+# their OUTPUT_NAME at target creation — not through this list, which only
+# the _install_standard_archive / _install_library_pair paths consult.)
 set(_MPI_DEPENDENT_LIBS blacs pblas pbblas scalapack mumps)
 
 
@@ -2283,6 +2440,14 @@ function(_install_library_pair lib_name)
         # consumers need them to resolve SCOTCH_*_mumps / esmumps.
         if(TARGET scotch)
             install(TARGETS scotch scotcherr esmumps EXPORT ${_export})
+        endif()
+        # PT-Scotch distributed increment — PUBLIC-linked by mumps_common
+        # under -Dptscotch, so it joins the same export. MPI-tied leaf C
+        # archives (OUTPUT_NAME already carries -${MPI_TAG}); consumers need
+        # them on the link line before scotch to resolve SCOTCH_dgraph*_mumps
+        # / SCOTCHFDGRAPH*_mumps.
+        if(TARGET ptscotch)
+            install(TARGETS ptscotch ptscotcherr EXPORT ${_export})
         endif()
         install(TARGETS ${LIB_PREFIX}mumps_full
             EXPORT ${_export})

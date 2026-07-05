@@ -251,6 +251,25 @@ if(TARGET scotch)
     target_link_libraries(mumps_c_bridge PUBLIC esmumps scotch scotcherr)
 endif()
 
+# PT-Scotch parallel analysis (ICNTL(28)=2, ICNTL(29)=1). The bridge
+# recompiles mumps_scotch.c, whose MUMPS_DGRAPHINIT shim calls bare
+# SCOTCH_dgraphInit under ``#if defined(ptscotch)`` and includes
+# ptscotch.h. Mirror the shipped mumps_common wiring: define ptscotch,
+# force-include scotch_rename_pt_mumps.h so that bare distributed call
+# binds to the _mumps-suffixed archive symbol, and link the distributed
+# increment. ptscotch PUBLIC-depends on scotch/scotcherr, so CMake emits
+# it ahead of them on the static link line (single-pass ld). Gated on the
+# ptscotch target so the tree still builds when PT-Scotch wasn't staged
+# (libseq / no-MPI columns).
+if(TARGET ptscotch)
+    target_compile_definitions(mumps_c_bridge PRIVATE ptscotch)
+    target_include_directories(mumps_c_bridge PRIVATE
+        $<TARGET_PROPERTY:ptscotch,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_options(mumps_c_bridge PRIVATE
+        "SHELL:-include ${_MUMPS_SCOTCH_INC}/scotch_rename_pt_mumps.h")
+    target_link_libraries(mumps_c_bridge PUBLIC ptscotch ptscotcherr)
+endif()
+
 # ── Common helper modules ────────────────────────────────────────────
 add_library(mumps_test_common STATIC
     common/prec_kinds.f90
@@ -400,6 +419,15 @@ foreach(_p pord metis esmumps scotch scotcherr)
         list(APPEND _mumps_ordering_archives ${_p})
     endif()
 endforeach()
+# PT-Scotch (distributed, MPI-only) — the -Dptscotch mumps runtime references
+# the distributed increment's SCOTCH_dgraph*_mumps / SCOTCHFDGRAPH*_mumps
+# symbols. Appended to the same trailing --start-group as the sequential
+# ordering archives, so the ptscotch<->scotch cross-references resolve by
+# rescan regardless of position. Gated on the ptscotch target: absent in the
+# libseq / no-MPI columns, so those links stay sequential-Scotch-only.
+if(TARGET ptscotch)
+    list(APPEND _mumps_ordering_archives ptscotch ptscotcherr)
+endif()
 
 # libmpiseq is a complete drop-in for MPI + BLACS + PBLAS + ScaLAPACK
 # (single-rank only). The ``_seq`` link variant therefore replaces ALL
@@ -643,6 +671,13 @@ function(add_mumps_fortran_test test_src)
         else()
             set(variant "${_vkey}")
         endif()
+        # PT-Scotch (ICNTL(28)=2/ICNTL(29)=1) is distributed, real-MPI-only
+        # analysis: the libptscotch increment is absent from the libseq
+        # column, so the *_ptscotch_analysis drivers cannot link (let alone
+        # run) under the ``_seq`` (libmpiseq) variant. Build them plain-only.
+        if(variant STREQUAL "_seq" AND name MATCHES "ptscotch")
+            continue()
+        endif()
         set(tgt ${name}${variant})
         add_executable(${tgt} ${test_src})
         _mumps_attach_link_group(${tgt} "${variant}" FALSE)
@@ -840,6 +875,13 @@ if(TARGET dzmumps
             list(APPEND _genuine_group ${_p})
         endif()
     endforeach()
+    # PT-Scotch increment for the genuine (MKL d/z) stack: dzmumps is built
+    # with -Dptscotch too (cmake/CMakeLists.txt), so it references the
+    # distributed SCOTCH_dgraph*_mumps / SCOTCHFDGRAPH*_mumps symbols. MPI-only
+    # → plain variant only; gated on the target so libseq stays sequential.
+    if(TARGET ptscotch)
+        list(APPEND _genuine_group ptscotch ptscotcherr)
+    endif()
     # _seq variant: libmpiseq replaces ScaLAPACK/PBLAS/BLACS entirely;
     # keep the std double LAPACK + BLAS the genuine solvers call.
     set(_genuine_group_seq
