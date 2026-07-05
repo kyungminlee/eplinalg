@@ -36,6 +36,16 @@
 #include "dmumps_c.h"
 #include "zmumps_c.h"
 
+/* Extended kind10 arithmetics (long double). Unlike the genuine four, these
+ * come from eplinalg's migrated MUMPS stack — but the migrator fully prefix-
+ * renames them (emumps_c/ymumps_c, ey-prefixed ScaLAPACK/LAPACK/BLAS) and they
+ * share the same arith-agnostic mumps_common, so they carry ZERO symbols that
+ * collide with the genuine s/c/d/z and link into this same binary. e = real
+ * long double, y = complex long double. Their typedefs (mumps_long_double,
+ * mumps_long_double_complex) are guarded, so co-including both is safe. */
+#include "emumps_c.h"
+#include "ymumps_c.h"
+
 #include "mmio_min.h"
 
 /* MUMPS job constants and the "no output" ICNTL settings. */
@@ -126,10 +136,15 @@ GEN_REAL(solve_d, DMUMPS_STRUC_C, dmumps_c, double)
 GEN_CPLX(solve_c, CMUMPS_STRUC_C, cmumps_c, mumps_complex,        float)
 GEN_CPLX(solve_z, ZMUMPS_STRUC_C, zmumps_c, mumps_double_complex, double)
 
+/* Extended kind10 (long double) — same macros, wider scalar type. */
+GEN_REAL(solve_e, EMUMPS_STRUC_C, emumps_c, long double)
+GEN_CPLX(solve_y, YMUMPS_STRUC_C, ymumps_c, mumps_long_double_complex, long double)
+
 static void usage(const char *prog) {
     fprintf(stderr,
-        "usage: %s -t <s|c|d|z> [-v] <matrix.mtx> <rhs.mtx> <solution.mtx>\n"
-        "  -t  arithmetic: s/d = single/double real, c/z = single/double complex\n"
+        "usage: %s -t <s|c|d|z|e|y> [-v] <matrix.mtx> <rhs.mtx> <solution.mtx>\n"
+        "  -t  arithmetic: s/d = single/double real, c/z = single/double complex,\n"
+        "                  e/y = extended long-double real/complex (kind10)\n"
         "  -v  leave MUMPS diagnostics on (default: silent)\n", prog);
 }
 
@@ -151,12 +166,12 @@ int main(int argc, char **argv)
             MPI_Finalize(); return 2;
         }
     }
-    if (np != 3 || (type != 's' && type != 'c' && type != 'd' && type != 'z')) {
+    if (np != 3 || !strchr("scdzey", type) || type == 0) {
         if (is_host) usage(argv[0]);
         MPI_Finalize(); return 2;
     }
     const char *mpath = paths[0], *bpath = paths[1], *xpath = paths[2];
-    int is_cplx = (type == 'c' || type == 'z');
+    int is_cplx = (type == 'c' || type == 'z' || type == 'y');
 
     /* ── host reads + validates; broadcast an error flag + sym ────────*/
     MM A, b; memset(&A, 0, sizeof A); memset(&b, 0, sizeof b);
@@ -192,6 +207,8 @@ int main(int argc, char **argv)
         case 'd': infog = solve_d(&A, &b, is_host, sym, verbose, xr, xi); break;
         case 'c': infog = solve_c(&A, &b, is_host, sym, verbose, xr, xi); break;
         case 'z': infog = solve_z(&A, &b, is_host, sym, verbose, xr, xi); break;
+        case 'e': infog = solve_e(&A, &b, is_host, sym, verbose, xr, xi); break;
+        case 'y': infog = solve_y(&A, &b, is_host, sym, verbose, xr, xi); break;
     }
 
     int rc = 0;

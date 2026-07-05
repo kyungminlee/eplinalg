@@ -11,12 +11,16 @@ solves `A x = b` with MUMPS, and writes the solution. Precision is selected by a
 type prefix, and it runs under MPI.
 
 ```
-mmsolve -t <s|c|d|z> [-v] <matrix.mtx> <rhs.mtx> <solution.mtx>
+mmsolve -t <s|c|d|z|e|y> [-v] <matrix.mtx> <rhs.mtx> <solution.mtx>
 
-  -t   arithmetic:  s = single real   c = single complex
-                    d = double real   z = double complex
+  -t   arithmetic:  s = single real         c = single complex
+                    d = double real         z = double complex
+                    e = long-double real    y = long-double complex
   -v   leave MUMPS diagnostics on (default: silent)
 ```
+
+The genuine `s c d z` and the extended long-double `e y` **all live in this one
+binary** — see "How ten arithmetics share one binary" below.
 
 - **matrix** — Matrix Market `coordinate` (sparse), `real` or `complex`,
   `general` or `symmetric`. A `symmetric` matrix stores only its lower triangle
@@ -30,31 +34,46 @@ MPI uses MUMPS' centralized-input model: rank 0 reads the files and owns the
 assembled matrix, RHS, and solution; every rank participates in the collective
 factor/solve. Run with `mpirun -n N ./mmsolve …`.
 
-### Why only s/c/d/z (and why MKL)
+### How six arithmetics share one binary (and why MKL)
 
-MUMPS ships four "genuine" arithmetics — `s c d z` — and those four **coexist in
-one binary** (they share the single `mumps_common` runtime and expose distinct
-`?mumps_c` entry points). Intel MKL provides a ScaLAPACK/BLACS/PBLAS backend for
-exactly those four, so MKL is a drop-in parallel backend for the genuine family.
+MUMPS ships four "genuine" arithmetics — `s c d z` — that coexist in one binary:
+they share the single `mumps_common` runtime and expose distinct `?mumps_c` entry
+points. Intel MKL provides a ScaLAPACK/BLACS/PBLAS backend for exactly those four,
+so MKL is a drop-in parallel backend for the genuine family.
 
-eplinalg's *extended* precisions (`e y` kind10, `q x` kind16, `m w` multifloat)
-each come from a migrated MUMPS stack that re-emits the same `dmumps_*`/`zmumps_*`
-symbols as the genuine bridge. Consequently:
+eplinalg's *extended* long-double precisions (`e y`, kind10) add two more `?mumps_c`
+entry points on the same shared runtime, backed by the in-tree migrated long-double
+ScaLAPACK/LAPACK/BLAS (MKL has no long double). This binary links **both** — the
+genuine `s c d z` on MKL and the extended `e y` on the in-tree stack — so a single
+`mmsolve` covers all six. The seam that makes this safe is symbol layering:
 
-- A migrated pair (e.g. `e y`) coexists internally, but **not** with the genuine
-  family and **not** with another migrated pair — they collide on those symbols.
-- ⇒ **One executable per family, minimum.** A single binary cannot cover all ten
-  types, and MKL — which only provides s/c/d/z — cannot serve the extended
-  families at all; those require the in-tree migrated ScaLAPACK/LAPACK/BLAS.
+- **Genuine typed** routines (`pdgetrf_`, `pzpotrf_`, …) → **MKL**.
+- **Type-agnostic plumbing** (`blacs_gridinit_`, `descinit_`, `numroc_`,
+  `Cblacs_gridinfo`) → **MKL** as well. There is exactly *one* copy of each in the
+  process, and both the program and MKL's own `pdgetrf` internals use it.
+- **Long-double typed** routines (`pegetrf_`, `pypotrf_`, `Cegamx2d`, …) → the
+  in-tree e/y archives, which MKL cannot provide.
 
-This example targets the genuine `s/c/d/z` family on MKL. An extended-family
-build from the same sources (linking `eplinalg::<fam>mumps_full` + the in-tree
-`eplinalg::<fam>scalapack` instead of MKL) is a straightforward follow-on.
+This works because MKL's `libmkl_blacs_openmpi_lp64` is the netlib **reference**
+BLACS recompiled — it exports the same `BI_*` context internals — so the in-tree
+long-double reference routines share MKL's exact BLACS context representation. No
+ABI clash, and no `-Wl,--allow-multiple-definition`.
+
+The one non-obvious requirement is **link order**: MKL must appear *ahead* of the
+in-tree archives so it wins the genuine + type-agnostic symbols (the in-tree
+reference ScaLAPACK also *defines* `pdgetrf_`, so if it came first it would
+capture them). The extended `q x` (kind16) and `m w` (multifloat) families are
+not included here — each is a separate migrated stack that re-emits the same
+`?mumps_*` symbols and would collide; adding them needs the same MKL-first
+layering against their own in-tree archives.
 
 ### Building
 
 You need: an installed eplinalg release (its `${LIB_PREFIX}mumps` package, which
-bundles the genuine `dzmumps`/`scmumps` solvers), Intel MKL, and MPI.
+bundles the genuine `dzmumps`/`scmumps` solvers *and* the extended `emumps`
+long-double solver, plus the e/y long-double ScaLAPACK/BLAS closure it pulls),
+Intel MKL, and MPI. The consumer `find_package`s that whole closure — see the
+comments at the top of `mmsolve/CMakeLists.txt`.
 
 ```sh
 cmake -S examples/mmsolve -B build/mmsolve \
@@ -90,13 +109,16 @@ complex-symmetric system (solution `[1+i, 2−i, −1+2i]`):
 cd examples/mmsolve
 mpirun -n 2 ../../build/mmsolve/mmsolve -t d data/A_real.mtx data/b_real.mtx x.mtx
 mpirun -n 4 ../../build/mmsolve/mmsolve -t z data/A_cplx.mtx data/b_cplx.mtx xz.mtx
+# extended long-double (e/y) run through the same binary:
+mpirun -n 2 ../../build/mmsolve/mmsolve -t e data/A_real.mtx data/b_real.mtx xe.mtx
+mpirun -n 2 ../../build/mmsolve/mmsolve -t y data/A_cplx.mtx data/b_cplx.mtx xy.mtx
 ```
 
 ### Files
 
 | file | role |
 |------|------|
-| `mmsolve.c`    | arg parsing, MPI orchestration, per-type MUMPS solve (macro-generated for s/c/d/z) |
+| `mmsolve.c`    | arg parsing, MPI orchestration, per-type MUMPS solve (macro-generated for s/c/d/z/e/y) |
 | `mmio_min.h/.c`| minimal self-contained Matrix Market reader/writer (no external mmio dependency) |
 | `CMakeLists.txt` | standalone consumer project |
 | `data/`        | small real + complex test systems with known solutions |
