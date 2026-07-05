@@ -59,8 +59,10 @@ LIBRARY_ORDER = [
     ('blacs',       'blacs.yaml'),
     ('lapack',      'lapack.yaml'),
     ('ptzblas',     'ptzblas.yaml'),
-    # NUMROC / ICEIL / ILCM. Hoisted out of scalapack so that pbblas
-    # downstreams (which don't link libqscalapack) can still reach them.
+    # Leaf symbol-provider for NUMROC / ICEIL / ILCM: kept so pbblas.yaml
+    # keeps its cycle-free numroc symbol context. Its migrated output is
+    # no longer built — the three helpers are folded into scalapack_common
+    # (migrated by scalapack.yaml). Still staged (harmless, unused manifest).
     ('scalapack_tools', 'scalapack_tools.yaml'),
     ('pbblas',      'pbblas.yaml'),
     ('pblas',       'pblas.yaml'),
@@ -206,6 +208,22 @@ def cmd_stage(args):
                 continue
             rel = f'src/{f.name}'
             stem = f.stem.upper()
+            # ``force_common`` is the explicit recipe override that pins a
+            # stem to the family-independent ``_common`` archive no matter
+            # what the symbol scanner decided. It takes priority over every
+            # other route (including the PRECISION defaults below) so a
+            # recipe author can rescue files the scanner mis-assigned to a
+            # non-target family — e.g. the integer BLACS entry points and
+            # the type-agnostic driver, which are family-independent (one
+            # copy serves e/y, q/x, m/w) and must not leak into the
+            # prefixed ``eyblacs`` archive. See ``recipes/blacs.yaml``.
+            # Match with OR without the trailing Fortran-underscore so a
+            # recipe can list the logical name (``igamx2d``) exactly as
+            # ``skip_files`` does (the C migrator strips it — see
+            # c_migrator.py), keeping the two levers' conventions aligned.
+            stem_nodeco = stem[:-1] if stem.endswith('_') else stem
+            if stem in config.force_common or stem_nodeco in config.force_common:
+                common_files.append(rel)
             # The target's own LA_CONSTANTS/LA_XISNAN pair is single-
             # precision (only this target's E/Y or Q/X block), so it is
             # precision-specific: route it to PRECISION so it lands in
@@ -214,7 +232,7 @@ def cmd_stage(args):
             # migrated qisnan.f, whose renamed stem may collide with an
             # ``independent`` module-procedure name) is likewise
             # precision-specific by construction — see ``rename_targets``.
-            if f.stem in _la_own or stem in rename_targets:
+            elif f.stem in _la_own or stem in rename_targets:
                 precision_files.append(rel)
             # ``copy_files`` entries are precision-independent by
             # contract (the file is staged verbatim, no prefix rename).
