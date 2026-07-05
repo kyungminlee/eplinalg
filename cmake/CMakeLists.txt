@@ -163,6 +163,43 @@ else()
         "preset to enable them.")
 endif()
 
+# ── Sequential (libmpiseq) release tagging ───────────────────────────
+# A "seq" deliverable ships the MUMPS stack linked against the in-tree
+# libmpiseq stub rather than a real MPI. Its MPI-dependent archives must
+# not collide with the real-MPI (``-${MPI_TAG}``) archives in a shared
+# install prefix, so when MUMPS_LIBSEQ_RELEASE is ON those libraries are
+# stamped with the flavor tag ``seq`` in place of the detected MPI_TAG.
+# PT-Scotch is a distributed (real-MPI) ordering and is forced OFF in
+# this column (see the MUMPS_HAVE_PTSCOTCH gate).
+#
+# libmpiseq's stubs are Intel-MPI-ABI-specific (see the gate above), so a
+# seq release is only well-formed on an Intel-MPI toolchain; requesting it
+# elsewhere is a hard error rather than a silent non-seq build.
+option(MUMPS_LIBSEQ_RELEASE
+    "Build the sequential libmpiseq release: tag MPI-dependent archives '-seq' \
+instead of '-${MPI_TAG}', force PT-Scotch off, and install libmpiseq."
+    OFF)
+if(MUMPS_LIBSEQ_RELEASE AND NOT MPISEQ_IS_INTEL_MPI)
+    message(FATAL_ERROR
+        "MUMPS_LIBSEQ_RELEASE requires an Intel-MPI toolchain (libmpiseq's "
+        "stub ABI). Configure with the linux-impi preset, or leave the option "
+        "OFF for a real-MPI (-${MPI_TAG}) build.")
+endif()
+
+# MPI_LIB_TAG — the flavor tag stamped onto MPI-dependent library
+# filenames and export files. Normally the detected MPI flavor; ``seq``
+# for the libmpiseq release. Deliberately distinct from the raw MPI_TAG,
+# which must keep reporting the true MPI flavor for the mpiseq gate above
+# and external-ScaLAPACK resolution below.
+if(MUMPS_LIBSEQ_RELEASE)
+    set(MPI_LIB_TAG "seq")
+else()
+    set(MPI_LIB_TAG "${MPI_TAG}")
+endif()
+if(MPI_LIB_TAG AND NOT "${MPI_LIB_TAG}" STREQUAL "${MPI_TAG}")
+    message(STATUS "MPI library tag: ${MPI_LIB_TAG} (overriding ${MPI_TAG})")
+endif()
+
 # ── Multifloats (conditional) ────────────────────────────────────────
 if(NEEDS_MULTIFLOATS)
     find_program(FYPP_EXECUTABLE fypp REQUIRED)
@@ -1361,9 +1398,13 @@ if(NOT BASELINE_BUILD)
     # the struct is 8-byte aligned (it holds pointers), so sizeof is always
     # a multiple of 8 and the ≤4-byte delta rounds back up. Verified: the
     # OpenMPI- and Intel-MPI-generated headers are byte-identical.
+    # PT-Scotch is a distributed (real-MPI) ordering; the libmpiseq (seq)
+    # release links no real MPI, so it is forced off there — matching the
+    # "libseq column keeps PT-Scotch off" rule and keeping mumps_common's
+    # -Dptscotch out of a link line that has no ptscotch archive.
     set(MUMPS_HAVE_PTSCOTCH FALSE)
     if(MUMPS_HAVE_SCOTCH AND MPI_C_FOUND AND MPI_Fortran_FOUND
-            AND SCOTCH_LIBPTSCOTCH_SOURCES)
+            AND SCOTCH_LIBPTSCOTCH_SOURCES AND NOT MUMPS_LIBSEQ_RELEASE)
         set(_ptscotch_lib_c "")
         foreach(_f ${SCOTCH_LIBPTSCOTCH_SOURCES})
             list(APPEND _ptscotch_lib_c ${_mumps_scotch_libsrc}/${_f})
@@ -1381,9 +1422,9 @@ if(NOT BASELINE_BUILD)
         # the compiler tag.
         set(_ptscotch_out ptscotch_mumps)
         set(_ptscotcherr_out ptscotcherr_mumps)
-        if(MPI_TAG)
-            set(_ptscotch_out ptscotch_mumps-${MPI_TAG})
-            set(_ptscotcherr_out ptscotcherr_mumps-${MPI_TAG})
+        if(MPI_LIB_TAG)
+            set(_ptscotch_out ptscotch_mumps-${MPI_LIB_TAG})
+            set(_ptscotcherr_out ptscotcherr_mumps-${MPI_LIB_TAG})
         endif()
 
         add_library(ptscotch STATIC ${_ptscotch_lib_c})
@@ -1457,8 +1498,13 @@ if(NOT BASELINE_BUILD)
                        "(ICNTL(28)=2, ICNTL(29)=1)")
     endif()
     if(NOT MUMPS_HAVE_PTSCOTCH)
-        message(STATUS "MUMPS: PT-Scotch parallel analysis unavailable "
-                       "(needs Scotch + MPI C/Fortran) — ICNTL(28)=2 inactive")
+        if(MUMPS_LIBSEQ_RELEASE)
+            message(STATUS "MUMPS: PT-Scotch off — libmpiseq (seq) release "
+                           "links no real MPI; ICNTL(28)=2 inactive")
+        else()
+            message(STATUS "MUMPS: PT-Scotch parallel analysis unavailable "
+                           "(needs Scotch + MPI C/Fortran) — ICNTL(28)=2 inactive")
+        endif()
     endif()
 
     if(TARGET ${LIB_PREFIX}mumps)
@@ -2208,6 +2254,21 @@ if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_mpiseq_src AND MPISEQ_IS_INTEL_MPI)
         LIBSEQ_INT=int
         LIBSEQ_INT8=int64_t)
     fortran_module_layout(mpiseq)
+
+    # The libmpiseq (seq) release ships libmpiseq so consumers of the
+    # ``-seq``-tagged MUMPS archives have a sequential MPI stub to link.
+    # No flavor tag: there is only ever one mpiseq (no real-MPI twin to
+    # collide with), so it installs as libmpiseq-${FORTRAN_COMPILER_TAG}.a.
+    # Guarded by the option, so the default in-tree-test-only build of
+    # mpiseq is unchanged.
+    if(MUMPS_LIBSEQ_RELEASE)
+        fortran_install_library(mpiseq
+            EXPORT mpiseqTargets NAMESPACE eplinalg::)
+        get_target_property(_mpiseq_moddir mpiseq Fortran_MODULE_DIRECTORY)
+        if(_mpiseq_moddir)
+            fortran_install_modules(mpiseq)
+        endif()
+    endif()
 endif()
 
 # ── Install ──────────────────────────────────────────────────────────

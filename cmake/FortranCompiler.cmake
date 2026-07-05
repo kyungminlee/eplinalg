@@ -263,13 +263,15 @@ endfunction()
 # Installs the library with a compiler-version-tagged filename (for ABI),
 # while the export/config system uses the mod compat tag to find modules.
 #
-# When ``MPI`` is passed, the install ALSO tags the output with
-# ``${MPI_TAG}`` (e.g. ``intelmpi-2021.18`` / ``openmpi-5.0`` /
-# ``mpich-4.2``) so MPI-dependent libraries built against different
-# implementations can coexist in the same install prefix. ``MPI_TAG``
-# must be set by the caller (the top-level CMakeLists detects it from
-# mpi.h's vendor macros). When ``MPI_TAG`` is unset, the MPI option is
-# a no-op — the build falls back to compiler-only tagging.
+# When ``MPI`` is passed, the install ALSO tags the output with a flavor
+# tag (e.g. ``intelmpi-2021.18`` / ``openmpi-5.0`` / ``mpich-4.2`` / the
+# ``seq`` libmpiseq release) so MPI-dependent libraries built against
+# different implementations can coexist in the same install prefix. The
+# flavor comes from ``MPI_LIB_TAG`` when the caller defines it (letting a
+# libmpiseq release override it to ``seq``), otherwise from the raw
+# ``MPI_TAG`` the top-level CMakeLists detects from mpi.h's vendor macros.
+# When neither is set, the MPI option is a no-op — the build falls back to
+# compiler-only tagging.
 #
 # Note: This function generates a <ProjectName>Config.cmake. If your project
 # has multiple Fortran library targets, add them all to a single EXPORT set
@@ -292,11 +294,17 @@ function(fortran_install_library target)
   endif()
 
   # Assemble the install tag. Compiler-version always; MPI flavor
-  # appended for MPI-dependent libs when MPI_TAG is known.
+  # appended for MPI-dependent libs when a flavor tag is known.
+  # Prefer ``MPI_LIB_TAG`` (which a caller may override, e.g. to ``seq``
+  # for the libmpiseq release) and fall back to the raw ``MPI_TAG``.
+  set(_flavor_tag "${MPI_TAG}")
+  if(DEFINED MPI_LIB_TAG)
+    set(_flavor_tag "${MPI_LIB_TAG}")
+  endif()
   set(_full_tag "${FORTRAN_COMPILER_TAG}")
   set(_is_mpi_lib FALSE)
-  if(ARG_MPI AND MPI_TAG)
-    set(_full_tag "${FORTRAN_COMPILER_TAG}-${MPI_TAG}")
+  if(ARG_MPI AND _flavor_tag)
+    set(_full_tag "${FORTRAN_COMPILER_TAG}-${_flavor_tag}")
     set(_is_mpi_lib TRUE)
   endif()
 
