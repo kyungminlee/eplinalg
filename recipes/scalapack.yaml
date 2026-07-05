@@ -7,7 +7,7 @@ depends:
   - lapack.yaml         # transitively includes BLAS
   - blacs.yaml          # BLACS comm routines (SGEBR2D/DGEBR2D, etc.)
   - pblas.yaml          # ScaLAPACK routines call PBLAS entry points directly
-  - scalapack_tools.yaml  # NUMROC / ICEIL / ILCM (shared with PBBLAS)
+  - scalapack_tools.yaml  # leaf symbol-provider (NUMROC/ICEIL/ILCM context for PBBLAS)
 
 # Additional source dirs to scan for symbols (not migrated, just for renaming)
 # Scans both Fortran and C files, plus subdirectories.
@@ -22,8 +22,8 @@ extra_symbol_dirs:
 # (with its embedded DCOMBSSQ), SL_init (sl_gridreshape_), the
 # {s,c,d,z}{matadd,latcpy} families, and the integer-family piXXX
 # helpers. The precision-independent integer helpers numroc_ / iceil_
-# / ilcm_ live in scalapack_tools.yaml (hoisted out so PBBLAS can link
-# them without dragging libqscalapack — see depends above). Every
+# / ilcm_ are migrated here too (folded into scalapack_common via
+# force_common — see the extra_migrate_files note below). Every
 # other symbol a ScaLAPACK routine calls into from TOOLS is sourced
 # from here. The zzdotc.f/zzdotu.f pair is owned by PTZBLAS (migrated
 # via ptzblas.yaml) and is deliberately excluded so the final link
@@ -58,9 +58,19 @@ extra_migrate_files:
   - external/scalapack-2.2.3/TOOLS/dscasum.f
   - external/scalapack-2.2.3/TOOLS/dscnrm2.f
   - external/scalapack-2.2.3/TOOLS/dsnrm2.f
-  # NUMROC / ICEIL / ILCM are migrated by recipes/scalapack_tools.yaml
-  # (see depends above) so PBBLAS can reach them at link time without
-  # depending on libqscalapack.
+  # NUMROC / ICEIL / ILCM — precision-independent integer helpers.
+  # Migrated here (into scalapack_common via force_common below) rather
+  # than in a standalone ${LIB_PREFIX}scalapack_tools archive: that
+  # per-family archive duplicated these three MKL-provided symbols and
+  # made them a mandatory dep of ${LIB_PREFIX}pbblas, so under
+  # extended-MKL they collided with MKL's numroc_/iceil_/ilcm_. Folding
+  # them into the drop-when-MKL scalapack_common removes that overlap
+  # (same profile as blacs_common). scalapack_tools.yaml is retained
+  # only as a leaf symbol-provider so pbblas.yaml keeps its cycle-free
+  # numroc symbol context; its migrated output is no longer built.
+  - external/scalapack-2.2.3/TOOLS/iceil.f
+  - external/scalapack-2.2.3/TOOLS/ilcm.f
+  - external/scalapack-2.2.3/TOOLS/numroc.f
   - external/scalapack-2.2.3/TOOLS/ilacpy.f
   - external/scalapack-2.2.3/TOOLS/indxg2l.f
   - external/scalapack-2.2.3/TOOLS/indxg2p.f
@@ -141,6 +151,69 @@ skip_files:
   # to duplicate symbols.
   - PJLAENV
   - PILAENVX
+  # Genuine-double mixed-precision TOOLS helpers (dddot_, dsnrm2_,
+  # dsasum_, dscasum_, dscnrm2_). The extended (e/q/m) routines never
+  # call these — verified dead in the migrated archive (defined,
+  # referenced_by=0) — and MKL + the plain ``libscalapack`` both provide
+  # them. Migrating a copy into the prefixed archive would multiply-
+  # define against MKL in the extended-MKL link (the disjointness this
+  # task enforces; see recipes/blacs.yaml for the sibling BLACS split).
+  - DDDOT
+  - DSNRM2
+  - DSASUM
+  - DSCASUM
+  - DSCNRM2
+
+# Family-independent TOOLS routines pinned to ``libscalapack_common``.
+# These are the descriptor / index / grid-init / timer / integer-family
+# helpers that carry no floating type (descinit_, indxg2l_, chk1mat_,
+# sl_init_, the pi* integer accessors, ilacpy_, ...). The symbol scanner
+# leaves them in PRECISION, so a copy leaks into every prefixed archive
+# (libescalapack / libqscalapack / ...) and collides with the identical
+# routine MKL's ScaLAPACK provides in the extended-MKL link. One copy in
+# the shared ``scalapack_common`` serves e/y, q/x and m/w; the consumer
+# drops ``scalapack_common`` when MKL supplies that layer and links it in
+# the noMKL columns (same drop-when-MKL profile as ``blacs_common``).
+# Match is on file stem (uppercased); listed without the trailing ``_``.
+force_common:
+  # descriptor / conversion / validation
+  - chk1mat
+  # pchkxmat.f defines PCHK1MAT_, PCHK2MAT_ and GLOBCHK_ (one file, three
+  # entry points) — match the file stem, not the symbol names.
+  - pchkxmat
+  - desc_convert
+  - descinit
+  - descset
+  - npreroc
+  # precision-independent integer helpers (folded in from scalapack_tools)
+  - iceil
+  - ilcm
+  - numroc
+  # index arithmetic
+  - indxg2l
+  - indxg2p
+  - indxl2g
+  - infog1l
+  - infog2l
+  # grid-init + timers (SL_init.f, sltimer.f)
+  - SL_init
+  - slboot
+  - slcombine
+  - sldisable
+  - slenable
+  - slinquire
+  - sltimer
+  # integer-family PBLAS-level accessors (pi* — no floating type)
+  - ilacpy
+  - pichekpad
+  - picol2row
+  - pielget
+  - pielset
+  - pielset2
+  - pifillpad
+  - pilaprnt
+  - pirow2col
+  - pitreecomb
 
 # Override D/Z-first canonical selection for pairs whose D/Z half
 # needs to win convergence against a sibling that doesn't carry the

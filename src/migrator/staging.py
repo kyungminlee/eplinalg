@@ -59,8 +59,10 @@ LIBRARY_ORDER = [
     ('blacs',       'blacs.yaml'),
     ('lapack',      'lapack.yaml'),
     ('ptzblas',     'ptzblas.yaml'),
-    # NUMROC / ICEIL / ILCM. Hoisted out of scalapack so that pbblas
-    # downstreams (which don't link libqscalapack) can still reach them.
+    # Leaf symbol-provider for NUMROC / ICEIL / ILCM: kept so pbblas.yaml
+    # keeps its cycle-free numroc symbol context. Its migrated output is
+    # no longer built — the three helpers are folded into scalapack_common
+    # (migrated by scalapack.yaml). Still staged (harmless, unused manifest).
     ('scalapack_tools', 'scalapack_tools.yaml'),
     ('pbblas',      'pbblas.yaml'),
     ('pblas',       'pblas.yaml'),
@@ -206,6 +208,22 @@ def cmd_stage(args):
                 continue
             rel = f'src/{f.name}'
             stem = f.stem.upper()
+            # ``force_common`` is the explicit recipe override that pins a
+            # stem to the family-independent ``_common`` archive no matter
+            # what the symbol scanner decided. It takes priority over every
+            # other route (including the PRECISION defaults below) so a
+            # recipe author can rescue files the scanner mis-assigned to a
+            # non-target family — e.g. the integer BLACS entry points and
+            # the type-agnostic driver, which are family-independent (one
+            # copy serves e/y, q/x, m/w) and must not leak into the
+            # prefixed ``eyblacs`` archive. See ``recipes/blacs.yaml``.
+            # Match with OR without the trailing Fortran-underscore so a
+            # recipe can list the logical name (``igamx2d``) exactly as
+            # ``skip_files`` does (the C migrator strips it — see
+            # c_migrator.py), keeping the two levers' conventions aligned.
+            stem_nodeco = stem[:-1] if stem.endswith('_') else stem
+            if stem in config.force_common or stem_nodeco in config.force_common:
+                common_files.append(rel)
             # The target's own LA_CONSTANTS/LA_XISNAN pair is single-
             # precision (only this target's E/Y or Q/X block), so it is
             # precision-specific: route it to PRECISION so it lands in
@@ -214,7 +232,7 @@ def cmd_stage(args):
             # migrated qisnan.f, whose renamed stem may collide with an
             # ``independent`` module-procedure name) is likewise
             # precision-specific by construction — see ``rename_targets``.
-            if f.stem in _la_own or stem in rename_targets:
+            elif f.stem in _la_own or stem in rename_targets:
                 precision_files.append(rel)
             # ``copy_files`` entries are precision-independent by
             # contract (the file is staged verbatim, no prefix rename).
@@ -341,58 +359,31 @@ set({lib_name}_ARCHIVE_PREFIX {archive_prefix})
             src = helpers_src / name
             if src.exists():
                 shutil.copy2(src, helpers_dst / name)
-        # Copy multifloats bridge files (C++ bridge header + MPI registration)
-        mf_local = proj_root / 'external' / 'multifloats-mpi'
-        bridge_h = mf_local / 'multifloats_bridge.h'
-        mpi_cpp = mf_local / 'multifloats_mpi.cpp'
-        if bridge_h.exists():
-            shutil.copy2(bridge_h, helpers_dst / bridge_h.name)
-            # Skip the C++ MPI bindings (mpicxx.h). Without this guard,
-            # any migrated source compiled as C++ that transitively
-            # pulls in <mpi.h> through the bridge gets thousands of
-            # template declarations from mpicxx.h. Those templates
-            # cannot live inside the ``extern "C" { … }`` wrap that
-            # the c_migrator post-pass injects around .c bodies, so
-            # link of scalapack_c (whose REDIST sources include
-            # redist.h → multifloats_bridge.h → mpi.h) fails. Setting
-            # MPICH_SKIP_MPICXX / OMPI_SKIP_MPICXX before the include
-            # is the documented way to compile MPI clients without
-            # the C++ bindings.
-            staged_bridge = helpers_dst / bridge_h.name
-            text = staged_bridge.read_text()
-            text = text.replace(
-                '#include <mpi.h>',
-                '#define MPICH_SKIP_MPICXX 1\n'
-                '#define OMPI_SKIP_MPICXX 1\n'
-                '#include <mpi.h>',
-                1,
-            )
-            staged_bridge.write_text(text)
-        if mpi_cpp.exists():
-            shutil.copy2(mpi_cpp, helpers_dst / mpi_cpp.name)
-        # multifloats_mpi_f.f90: Fortran module exposing the C-side
-        # MPI_FLOAT64X2 / MPI_DD_SUM / etc. handles via bind(c). MUMPS
-        # and any other library that calls MPI from Fortran directly
-        # USEs this module so the rewritten ``MPI_FLOAT64X2`` token is
-        # a known integer at compile time. (BLACS/PBLAS go through C
-        # and use the extern "C" handles from the bridge header
-        # instead.)
-        mpi_f90 = mf_local / 'multifloats_mpi_f.f90'
-        if mpi_f90.exists():
-            shutil.copy2(mpi_f90, helpers_dst / mpi_f90.name)
+        # Copy the first-party multifloats-mpi bridge library wholesale.
+        # It is a standalone library under runtime/ with its own
+        # CMakeLists.txt (add_subdirectory'd from cmake/CMakeLists.txt);
+        # staging just plants the whole directory so the relative
+        # add_subdirectory(runtime/multifloats-mpi) resolves in the staged
+        # tree. The MPICH_SKIP_MPICXX / OMPI_SKIP_MPICXX guard that used to
+        # be spliced in here is now baked into multifloats_bridge.h itself.
+        mf_local = proj_root / 'runtime' / 'multifloats-mpi'
+        if mf_local.is_dir():
+            mf_dst = staging_dir / 'runtime' / 'multifloats-mpi'
+            if mf_dst.exists():
+                shutil.rmtree(mf_dst)
+            shutil.copytree(mf_local, mf_dst)
 
     if needs_quad_mpi:
-        helpers_dst.mkdir(exist_ok=True)
-        # quad_mpi.c (custom MPI reduce ops on the standard MPI_REAL16 /
-        # MPI_COMPLEX32) and quad_mpi_f.f90 (Fortran shim exposing the op
-        # handles to MUMPS). Shares the same _helpers/ landing spot and
-        # MF_HELPERS_DIR pointer as the multifloats bridge -- the two are
-        # mutually exclusive per target, so there is no collision.
-        quad_local = proj_root / 'external' / 'quad-mpi'
-        for name in ['quad_mpi.c', 'quad_mpi_f.f90']:
-            src = quad_local / name
-            if src.exists():
-                shutil.copy2(src, helpers_dst / name)
+        # Copy the first-party quad-mpi bridge library wholesale (custom
+        # MPI reduce ops on the standard MPI_REAL16 / MPI_COMPLEX32). Like
+        # multifloats-mpi it is a standalone library under runtime/ with
+        # its own CMakeLists.txt, add_subdirectory'd from the parent build.
+        quad_local = proj_root / 'runtime' / 'quad-mpi'
+        if quad_local.is_dir():
+            quad_dst = staging_dir / 'runtime' / 'quad-mpi'
+            if quad_dst.exists():
+                shutil.rmtree(quad_dst)
+            shutil.copytree(quad_local, quad_dst)
 
     target_config = f"""\
 # Generated by: python -m migrator stage --target {target_mode.name}

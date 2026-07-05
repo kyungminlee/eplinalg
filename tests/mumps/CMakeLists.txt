@@ -559,7 +559,7 @@ function(_mumps_attach_link_group tgt variant want_c)
             # surfaces at runtime if hit.
             list(APPEND _archives
                 multifloats_mpi_f multifloats_mpi
-                la_constants_mf la_xisnan_mf
+                la_constants_mw la_xisnan_mw
                 multifloatsf multifloats)
         endif()
         if(NEEDS_QUAD_MPI)

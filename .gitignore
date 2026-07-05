@@ -27,6 +27,10 @@ work/
 output/
 _build/
 _lib/
+# Session scratch (temporary scripts / downloads, not source) and the
+# self-contained workspace/ handoff dir (its own nested git repo).
+scratchpad/
+workspace/
 *.o
 *.mod
 # Committed kind10 stage snapshot was removed from tracking — it is

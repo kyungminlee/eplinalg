@@ -39,28 +39,17 @@ def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
         c_mf_deps = ''
         if target_mode.module_name is not None:
             _root = project_root or Path.cwd()
-            mf_local = _root / 'external' / 'multifloats-mpi'
+            mf_local = _root / 'runtime' / 'multifloats-mpi'
             bridge_h_src = mf_local / 'multifloats_bridge.h'
             if bridge_h_src.is_file():
                 helpers_dst = output_dir / '_helpers'
                 helpers_dst.mkdir(exist_ok=True)
                 staged = helpers_dst / bridge_h_src.name
+                # The MPICH_SKIP_MPICXX / OMPI_SKIP_MPICXX guard that used
+                # to be spliced in here (so scalapack_c's C-as-C++ build
+                # doesn't drag mpicxx.h templates into the migrator's
+                # ``extern "C" { … }`` wrap) is now baked into the header.
                 shutil.copy2(bridge_h_src, staged)
-                # Guard the bridge header's `#include <mpi.h>` against
-                # the C++ MPI bindings — without it, scalapack_c's
-                # C-as-C++ build pulls thousands of mpicxx.h templates
-                # into the migrator-injected ``extern "C" { … }`` wrap
-                # and fails to link. Same patch cmd_stage applies.
-                text = staged.read_text()
-                if 'MPICH_SKIP_MPICXX' not in text:
-                    text = text.replace(
-                        '#include <mpi.h>',
-                        '#define MPICH_SKIP_MPICXX 1\n'
-                        '#define OMPI_SKIP_MPICXX 1\n'
-                        '#include <mpi.h>',
-                        1,
-                    )
-                    staged.write_text(text)
             c_mf_link = """
 # multifloats: FetchContent (or local via -DMULTIFLOATS_DIR) so the
 # migrated sources can link against ``libmultifloats.a`` (C++) and
@@ -202,7 +191,7 @@ endif()
                 _helpers_default = str((_root / 'external' / 'lapack-3.12.1' / 'SRC').resolve())
             # multifloats-mpi extras: Fortran-side MPI handle module
             # used by MUMPS (``USE multifloats_mpi_f``).
-            _mf_mpi_dir = (_root / 'external' / 'multifloats-mpi').resolve()
+            _mf_mpi_dir = (_root / 'runtime' / 'multifloats-mpi').resolve()
             mf_link = f"""
 # Fetch the multifloats library from GitHub (default) or use a local
 # checkout via -DMULTIFLOATS_DIR=/path/to/multifloats. We add the

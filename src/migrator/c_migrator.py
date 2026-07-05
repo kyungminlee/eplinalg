@@ -289,6 +289,7 @@ def migrate_c_directory(src_dir: Path, output_dir: Path,
     else:
         result = _migrate_blacs_c_directory(
             src_dir, output_dir, target_mode, copy_originals,
+            skip_files=skip_files,
         )
     if overrides:
         applied = _apply_overrides(output_dir, overrides)
@@ -1146,11 +1147,21 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
 
 
 def _migrate_blacs_c_directory(src_dir: Path, output_dir: Path,
-                                 target_mode: TargetMode, copy_originals: bool) -> dict:
+                                 target_mode: TargetMode, copy_originals: bool,
+                                 skip_files: set[str] | None = None) -> dict:
     """BLACS-specific C migration (original behavior).
 
     Reads from ``src_dir`` (the staged source tree, already patched).
+
+    ``skip_files`` (uppercased logical stems, no trailing Fortran
+    underscore) are dropped from the migrated output — used to remove the
+    genuine S/C entry points (``sgesd2d_``, ``BI_cvvsum``, …) that the
+    plain ``blacs`` standard archive and MKL already provide, so the
+    migrated archive stays strictly extended-precision. Skipped stems
+    are also never used as clone sources (they are S/C, not the D/Z the
+    clone loops read), so dropping them cannot disturb the e/y clones.
     """
+    _skip = skip_files or set()
     template_vars = _build_sub_vars(target_mode)
     rp = template_vars['RP']
     cp = template_vars['CP']
@@ -1178,6 +1189,13 @@ def _migrate_blacs_c_directory(src_dir: Path, output_dir: Path,
 
     for f in sources:
         ext = f.suffix.lower()
+        # ``skip_files`` drops genuine S/C sources from the migrated
+        # output entirely (headers are never precision-specific, so they
+        # are exempt). Match on the underscore-stripped, uppercased stem
+        # to align with the recipe's logical-name convention.
+        stem_upper = (f.stem[:-1] if f.stem.endswith('_') else f.stem).upper()
+        if ext == '.c' and stem_upper in _skip:
+            continue
         if ext == '.h':
             shutil.copy2(f, output_dir / f.name)
         elif ext == '.c':

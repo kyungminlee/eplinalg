@@ -3,15 +3,113 @@ language: c
 source_dir: external/scalapack-2.2.3/BLACS/SRC
 extensions: [.c, .h]
 
-# The upstream S/D/C/Z entry points (dgesd2d_, sgebr2d_, igsum2d_, ...)
-# and precision-independent helpers (BI_BlacsErr, BI_GetBuff,
-# blacs_setup_, ...) live in the standard-precision archive ``blacs``
-# built directly from external/scalapack-2.2.3/BLACS/SRC/. The migrated
-# archive ``${LIB_PREFIX}blacs`` ships only the Q/X/E/Y/M/W clones
-# (qgesd2d_, xgebr2d_, BI_qgemm, ...) and PUBLIC-links the standard
-# archive so consumers resolve both symbol families through one link.
+# The prefixed archive ``${LIB_PREFIX}blacs`` (e.g. libeyblacs) must
+# contain ONLY its own floating type's routines (the Q/X/E/Y/M/W clones:
+# qgesd2d_, xgebr2d_, egamx2d_, Cegamx2d, ...), so its symbols and MKL's
+# reference-BLACS are strictly disjoint (no --allow-multiple-definition,
+# link order irrelevant). Everything else is pushed elsewhere:
+#
+#   * Integer BLACS (igamx2d_, Cigamx2d, ...) is family-independent — one
+#     copy serves e/y, q/x, m/w — so it goes to the shared ``blacs_common``
+#     via ``force_common`` (below), NOT into the prefixed archive.
+#   * The type-agnostic driver the symbol scanner failed to tag as
+#     independent (blacs_init_, sys2blacs_, BI_GetBuff, k*id_, ...) also
+#     goes to ``blacs_common`` via ``force_common``.
+#   * Genuine S/C entry points (sgesd2d_, cgebr2d_, BI_s*, BI_c*, ...) are
+#     DROPPED from the migrated output via ``skip_files`` — MKL provides
+#     them with MKL, and the plain ``blacs`` standard archive (built
+#     directly from BLACS/SRC/) provides them without MKL. Keeping a copy
+#     here (or in blacs_common) would multiply-define against those.
+#
+# ``force_common`` and ``skip_files`` match on file stem (uppercased, no
+# extension); the C-callable ``C*`` variants ride the same source file
+# through the dual-interface compile, so they follow automatically.
 
-skip_files: []
+# Genuine S/C — dropped (MKL / plain ``blacs`` own them).
+# Names are the logical stem WITHOUT the trailing Fortran underscore
+# (the C migrator strips it before matching — see c_migrator.py).
+skip_files:
+  # single-real entry points
+  - sgamn2d
+  - sgamx2d
+  - sgebr2d
+  - sgebs2d
+  - sgerv2d
+  - sgesd2d
+  - sgsum2d
+  - strbr2d
+  - strbs2d
+  - strrv2d
+  - strsd2d
+  # single-complex entry points
+  - cgamn2d
+  - cgamx2d
+  - cgebr2d
+  - cgebs2d
+  - cgerv2d
+  - cgesd2d
+  - cgsum2d
+  - ctrbr2d
+  - ctrbs2d
+  - ctrrv2d
+  - ctrsd2d
+  # single-real BI internals (MPI reduce ops + copy/reduce kernels)
+  - BI_sMPI_amn
+  - BI_sMPI_amn2
+  - BI_sMPI_amx
+  - BI_sMPI_amx2
+  - BI_sMPI_sum
+  - BI_smvcopy
+  - BI_svmcopy
+  - BI_svvamn
+  - BI_svvamn2
+  - BI_svvamx
+  - BI_svvamx2
+  - BI_svvsum
+  # single-complex BI internals
+  - BI_cMPI_amn
+  - BI_cMPI_amn2
+  - BI_cMPI_amx
+  - BI_cMPI_amx2
+  - BI_cMPI_sum
+  - BI_cvvamn
+  - BI_cvvamn2
+  - BI_cvvamx
+  - BI_cvvamx2
+  - BI_cvvsum
+
+# Family-independent routines pinned to ``blacs_common`` (see header).
+force_common:
+  # integer BLACS entry points (one copy serves every extended family)
+  - igamn2d
+  - igamx2d
+  - igebr2d
+  - igebs2d
+  - igerv2d
+  - igesd2d
+  - igsum2d
+  - itrbr2d
+  - itrbs2d
+  - itrrv2d
+  - itrsd2d
+  # type-agnostic driver the scanner left in PRECISION
+  - BI_GetBuff
+  - BI_GlobalVars
+  - BI_Pack
+  - BI_TransUserComm
+  - blacs2sys
+  - blacs_barr
+  - blacs_free
+  - blacs_grid
+  - blacs_info
+  - blacs_init
+  - blacs_map
+  - free_handle
+  - kbrid
+  - kbsid
+  - krecvid
+  - ksendid
+  - sys2blacs
 
 # Patches applied to staged sources before migration. The patched body
 # goes through the BLACS d→{q,e,m} / z→{x,y,w} clone pipeline so a single

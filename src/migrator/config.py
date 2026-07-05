@@ -21,7 +21,7 @@ except ImportError:
 _KNOWN_RECIPE_KEYS: frozenset[str] = frozenset({
     'library', 'language', 'source_dir', 'extensions',
     'symbols',
-    'skip_files', 'copy_files', 'prefer_source',
+    'skip_files', 'copy_files', 'force_common', 'prefer_source',
     'module_renames', 'extra_renames',
     'copy_all_originals', 'patches',
     'depends', 'extra_symbol_dirs',
@@ -44,6 +44,16 @@ class RecipeConfig:
     library_path: Path | None = None
     skip_files: set[str] = field(default_factory=set)
     copy_files: set[str] = field(default_factory=set)  # Copy unchanged (multi-precision utilities)
+    # Source stems (uppercase, no extension) forced into the ``_common``
+    # (family-independent) archive regardless of what the symbol scanner
+    # assigned them. Mirror of ``copy_files`` (which forces PRECISION):
+    # this forces COMMON. Used by BLACS to fold the integer BLACS entry
+    # points (``igamx2d_`` …, family-independent: one copy serves e/y,
+    # q/x, m/w) and the type-agnostic driver files the scanner failed to
+    # tag as independent (``blacs_init_``, ``sys2blacs_``, ``BI_GetBuff``,
+    # …) into ``blacs_common`` instead of leaking into the prefixed
+    # ``eyblacs`` archive. Takes priority over the PRECISION default.
+    force_common: set[str] = field(default_factory=set)
     # Source stems (uppercase, no extension) whose migrated output
     # should win as canonical, overriding the default D/Z-first
     # preference. Used to route around upstream bugs that live only
@@ -281,6 +291,7 @@ def load_recipe(recipe_path: Path,
 
     skip = set(s.upper() for s in data.get('skip_files', []))
     copy = set(s.upper() for s in data.get('copy_files', []))
+    force_common = set(s.upper() for s in data.get('force_common', []))
     prefer = set(s.upper() for s in data.get('prefer_source', []))
 
     # Resolve dependency recipe paths relative to the recipe directory
@@ -317,6 +328,7 @@ def load_recipe(recipe_path: Path,
         library_path=library_path,
         skip_files=skip,
         copy_files=copy,
+        force_common=force_common,
         prefer_source=prefer,
         copy_all_originals=data.get('copy_all_originals', False),
         patches=data.get('patches', []),

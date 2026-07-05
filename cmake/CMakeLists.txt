@@ -219,38 +219,15 @@ if(NEEDS_MULTIFLOATS)
         target_link_libraries(la_xisnan_mw PUBLIC $<BUILD_INTERFACE:multifloatsf>)
     endif()
 
-    # multifloats_mpi — C++ MPI handle registration + bridge header
-    if(EXISTS "${MF_HELPERS_DIR}/multifloats_mpi.cpp" AND MPI_CXX_FOUND)
-        add_library(multifloats_mpi STATIC "${MF_HELPERS_DIR}/multifloats_mpi.cpp")
-        target_include_directories(multifloats_mpi PUBLIC
-            $<BUILD_INTERFACE:${MF_HELPERS_DIR}>)
-        # MPI::MPI_CXX is PRIVATE so consumers (mblacs, mlapack PUBLIC
-        # chain, mumps test exes) aren't forced to link libmpicxx.so.
-        # Each consumer that wants the real-MPI runtime adds MPI::* on
-        # its own — keeps the libmpiseq link path (which substitutes
-        # mpiseq for ALL of MPI/BLACS/PBLAS/scalapack) clean.
-        target_link_libraries(multifloats_mpi
-            PRIVATE MPI::MPI_CXX
-            PUBLIC  multifloats)
-        target_compile_features(multifloats_mpi PRIVATE cxx_std_17)
-    elseif(EXISTS "${MF_HELPERS_DIR}/multifloats_bridge.h")
-        # No MPI — still provide the bridge header via an interface target
-        add_library(multifloats_mpi INTERFACE)
-        target_include_directories(multifloats_mpi INTERFACE
-            $<BUILD_INTERFACE:${MF_HELPERS_DIR}>)
-    endif()
-
-    # multifloats_mpi_f — Fortran module exposing the C-side MPI_FLOAT64X2
-    # / MPI_DD_SUM / etc. handles to Fortran callers (MUMPS calls MPI
-    # from Fortran directly with these tokens; without the module they
-    # have no IMPLICIT type at compile time). Linking into multifloats_mpi
-    # ensures the C++ runtime that defines mf_mpi_*_f globals is pulled
-    # in transitively whenever a target depends on multifloats_mpi_f.
-    if(EXISTS "${MF_HELPERS_DIR}/multifloats_mpi_f.f90" AND TARGET multifloats_mpi)
-        add_library(multifloats_mpi_f STATIC
-            "${MF_HELPERS_DIR}/multifloats_mpi_f.f90")
-        fortran_module_layout(multifloats_mpi_f)
-        target_link_libraries(multifloats_mpi_f PUBLIC multifloats_mpi)
+    # multifloats_mpi / multifloats_mpi_f — first-party MPI bridge for the
+    # real64x2 arithmetic, now a standalone library under runtime/. Its own
+    # CMakeLists.txt defines both targets (STATIC when MPI_CXX_FOUND, else an
+    # INTERFACE header-only target) exactly as the inline block used to; it
+    # relies on this parent scope having already found MPI and created the
+    # `multifloats` target. staging.py copies runtime/multifloats-mpi/ into
+    # the staged tree, so the relative path resolves there.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/runtime/multifloats-mpi/CMakeLists.txt")
+        add_subdirectory(runtime/multifloats-mpi)
     endif()
 endif()
 
@@ -263,31 +240,13 @@ endif()
 # the quad analogue of the multifloats bridge, but plain C (no C++, no
 # FetchContent, no custom datatypes).
 if(NEEDS_QUAD_MPI)
-    # quad_mpi — C registration of the custom combine ops. fabsq lives
-    # in libquadmath.
-    if(EXISTS "${MF_HELPERS_DIR}/quad_mpi.c")
-        add_library(quad_mpi STATIC "${MF_HELPERS_DIR}/quad_mpi.c")
-        target_include_directories(quad_mpi PUBLIC
-            $<BUILD_INTERFACE:${MF_HELPERS_DIR}>)
-        # MPI::MPI_C is PRIVATE so consumers linking libmpiseq instead of
-        # the real MPI runtime (the _seq test variants) aren't forced to
-        # pull in the real MPI .so — mirrors multifloats_mpi's handling.
-        # (MPI_Op_c2f is a cast macro and MPI_Op_create is stubbed by
-        # libmpiseq, so quad_mpi links cleanly against mpiseq too.)
-        if(MPI_C_FOUND)
-            target_link_libraries(quad_mpi PRIVATE MPI::MPI_C)
-        endif()
-        target_link_libraries(quad_mpi PRIVATE quadmath)
-    endif()
-
-    # quad_mpi_f — Fortran shim exposing the C-side op handles to MUMPS
-    # (which issues MPI_REDUCE from Fortran with these tokens directly).
-    # Linking quad_mpi PUBLIC pulls the C runtime that defines the *_f
-    # globals into any target that depends on quad_mpi_f.
-    if(EXISTS "${MF_HELPERS_DIR}/quad_mpi_f.f90" AND TARGET quad_mpi)
-        add_library(quad_mpi_f STATIC "${MF_HELPERS_DIR}/quad_mpi_f.f90")
-        fortran_module_layout(quad_mpi_f)
-        target_link_libraries(quad_mpi_f PUBLIC quad_mpi)
+    # quad_mpi / quad_mpi_f — first-party MPI bridge for the kind16
+    # (__float128) arithmetic, now a standalone library under runtime/. Its
+    # own CMakeLists.txt defines both targets exactly as the inline block
+    # used to. staging.py copies runtime/quad-mpi/ into the staged tree, so
+    # the relative path resolves there.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/runtime/quad-mpi/CMakeLists.txt")
+        add_subdirectory(runtime/quad-mpi)
     endif()
 endif()
 
@@ -462,6 +421,19 @@ function(add_migrated_fortran_library lib_name)
         if(TARGET la_xisnan_mw)
             target_link_libraries(${_precision_target} PUBLIC la_xisnan_mw)
         endif()
+        # The common archive can also hold family-independent sources that
+        # the multifloats migrator rewrites to ``USE multifloats`` (e.g.
+        # scalapack's PCHK1MAT/PCHK2MAT in pchkxmat.f rebind the generic
+        # mod/min/operators onto TYPE(real64x2)). Those objects need the
+        # multifloats module on their include path and a build-order
+        # dependency on it. The precision target links multifloatsf above,
+        # but that does not flow down to _common (precision links _common,
+        # not the reverse), so link it here too. BUILD_INTERFACE keeps it
+        # out of install(EXPORT), exactly as for the precision target.
+        if(TARGET ${_common_target})
+            target_link_libraries(${_common_target} PUBLIC
+                $<BUILD_INTERFACE:multifloatsf>)
+        endif()
     endif()
 endfunction()
 
@@ -525,17 +497,46 @@ function(add_migrated_c_library lib_name)
     # Fortran-callable entry points by default. Compile them a second
     # time as an OBJECT library with ``-DCallFromC`` so the C-callable
     # entry points (``Cblacs_*``, ``Cdgesd2d`` etc.) are also present
-    # in the final static archive. Empty ``_dual`` list is a no-op.
-    if(_dual)
-        set(_dual_target "${_precision_target}_c_api")
-        add_library(${_dual_target} OBJECT ${_dual})
+    # in the final static archive.
+    #
+    # The C-callable variant must land in the SAME archive as its
+    # Fortran-side counterpart, so a family-independent file (integer
+    # ``igamx2d_`` or the agnostic driver) contributes its ``Cigamx2d`` /
+    # ``Cblacs_*`` object to ``_common``, and only the e/y files
+    # contribute ``Cegamx2d`` / ``Cygamx2d`` to the prefixed archive.
+    # Otherwise the prefixed archive would re-acquire the integer /
+    # agnostic C symbols and stop being strictly single-family. Partition
+    # ``_dual`` by which regular-source list each file belongs to. Empty
+    # partitions are a no-op.
+    set(_dual_common "")
+    set(_dual_precision "")
+    foreach(f ${_dual})
+        if("${f}" IN_LIST _common)
+            list(APPEND _dual_common "${f}")
+        else()
+            list(APPEND _dual_precision "${f}")
+        endif()
+    endforeach()
+    foreach(_slot common precision)
+        if(_slot STREQUAL common)
+            set(_dsrc "${_dual_common}")
+            set(_dhost "${_common_target}")
+        else()
+            set(_dsrc "${_dual_precision}")
+            set(_dhost "${_precision_target}")
+        endif()
+        if(NOT _dsrc OR NOT TARGET ${_dhost})
+            continue()
+        endif()
+        set(_dual_target "${_dhost}_c_api")
+        add_library(${_dual_target} OBJECT ${_dsrc})
         target_compile_definitions(${_dual_target} PRIVATE CallFromC)
         target_include_directories(${_dual_target} PRIVATE $<BUILD_INTERFACE:${_dir}/src>)
         if(MPI_C_FOUND)
             target_link_libraries(${_dual_target} PRIVATE MPI::MPI_C)
         endif()
         if(C_AS_CXX)
-            set_source_files_properties(${_dual} PROPERTIES LANGUAGE CXX)
+            set_source_files_properties(${_dsrc} PROPERTIES LANGUAGE CXX)
             target_compile_features(${_dual_target} PRIVATE cxx_std_17)
             target_compile_options(${_dual_target} PRIVATE -fpermissive -Wno-write-strings)
             # Skip the C++ MPI bindings (mpicxx.h). They define template
@@ -553,9 +554,8 @@ function(add_migrated_c_library lib_name)
                 target_link_libraries(${_dual_target} PRIVATE multifloats_mpi)
             endif()
         endif()
-        target_sources(${_precision_target}
-                       PRIVATE $<TARGET_OBJECTS:${_dual_target}>)
-    endif()
+        target_sources(${_dhost} PRIVATE $<TARGET_OBJECTS:${_dual_target}>)
+    endforeach()
 
     # Multifloats: compile C as C++ for operator overloading support.
     # ``copy_files``-staged Fortran helpers (e.g. pblas/pilaenv.f) ride in
@@ -776,28 +776,22 @@ if(NOT BASELINE_BUILD)
     endif()
 endif()
 
-# 4b. ScaLAPACK tools (NUMROC / ICEIL / ILCM).
+# 4b. ScaLAPACK tools (NUMROC / ICEIL / ILCM) — FOLDED INTO scalapack_common.
 #
-# Three precision-independent integer helpers carved out of ScaLAPACK's
-# TOOLS/ tree into their own tiny library. PBBLAS' pb*tran / pb*trnv /
-# pb*trsrt / pb*trget / pb*trst1 reference NUMROC / ICEIL / ILCM, but
-# tests/pbblas links only ${LIB_PREFIX}pbblas / blacs / blas — no
-# scalapack — so the symbols had to come from somewhere reachable
-# without dragging in the full ScaLAPACK archive.
-#
-# No standard counterpart archive: the baseline ``scalapack`` archive
-# already absorbs TOOLS/*.f directly (see section 7), and tests/pbblas
-# self-skips on baseline (HAVE_REAL16 is required). The migrated
-# library carries the symbols for both ``${LIB_PREFIX}pbblas`` and
-# ``${LIB_PREFIX}scalapack`` (which both PUBLIC-link it below), with
-# the canonical un-prefixed Fortran ABI names (numroc_, iceil_, ilcm_)
-# since the symbols are precision-independent and pass the migrator
-# pipeline unrenamed.
-if(NOT BASELINE_BUILD)
-    add_migrated_fortran_library(scalapack_tools)
-endif()
+# These three precision-independent integer helpers used to form a
+# standalone ``${LIB_PREFIX}scalapack_tools`` archive, built once per
+# family with a prefix. That duplicated three symbols MKL also provides
+# and made them a mandatory dep of ``${LIB_PREFIX}pbblas``, so under
+# extended-MKL they multiply-defined against MKL's numroc_/iceil_/ilcm_
+# — the exact overlap Task 29 removes. They are now migrated by
+# scalapack.yaml into the family-independent ``scalapack_common`` (which
+# the consumer drops when MKL supplies that layer, same profile as
+# ``blacs_common``). PBBLAS reaches them by PUBLIC-linking
+# ``scalapack_common`` once it exists (wired after section 8, below).
+# The standard ``scalapack`` archive still absorbs TOOLS/*.f directly
+# via _scalapack_tools_src (see section 7) — unchanged.
 
-# 5. PBBLAS (depends on BLAS, BLACS, scalapack_tools).
+# 5. PBBLAS (depends on BLAS, BLACS; scalapack_common wired post-section-8).
 #
 # Standard archive ``pbblas`` is built from PBLAS/PBBLAS/. Pure Fortran;
 # no extra dependencies beyond BLAS+BLACS at link time.
@@ -806,11 +800,16 @@ add_standard_fortran_library(pbblas
 if(NOT BASELINE_BUILD)
     add_migrated_fortran_library(pbblas)
     if(TARGET ${LIB_PREFIX}pbblas)
-        foreach(_dep ${LIB_PREFIX}blas ${LIB_PREFIX}blacs ${LIB_PREFIX}scalapack_tools)
+        foreach(_dep ${LIB_PREFIX}blas ${LIB_PREFIX}blacs)
             if(TARGET ${_dep})
                 target_link_libraries(${LIB_PREFIX}pbblas PUBLIC ${_dep})
             endif()
         endforeach()
+        # NUMROC/ICEIL/ILCM now live in scalapack_common (folded in from
+        # the old scalapack_tools archive). scalapack_common is created
+        # later, in section 7's add_migrated_fortran_library(scalapack),
+        # so the PUBLIC link is wired after section 8 where the target
+        # exists — see the "PBBLAS → scalapack_common" block below.
     endif()
     if(TARGET ${LIB_PREFIX}pbblas AND TARGET pbblas)
         target_link_libraries(${LIB_PREFIX}pbblas PUBLIC pbblas)
@@ -884,8 +883,9 @@ endif()
 if(NOT BASELINE_BUILD)
     add_migrated_fortran_library(scalapack)
     if(TARGET ${LIB_PREFIX}scalapack)
-        foreach(_dep ${LIB_PREFIX}lapack ${LIB_PREFIX}blacs ${LIB_PREFIX}pblas
-                     ${LIB_PREFIX}scalapack_tools)
+        # scalapack_common (which now carries NUMROC/ICEIL/ILCM) is linked
+        # automatically by add_migrated_fortran_library(scalapack) above.
+        foreach(_dep ${LIB_PREFIX}lapack ${LIB_PREFIX}blacs ${LIB_PREFIX}pblas)
             if(TARGET ${_dep})
                 target_link_libraries(${LIB_PREFIX}scalapack PUBLIC ${_dep})
             endif()
@@ -1038,6 +1038,34 @@ if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}scalapack)
             endif()
         endif()
     endif()
+endif()
+
+# PBBLAS → scalapack_common (NUMROC / ICEIL / ILCM).
+#
+# pb*tran / pb*trnv / pb*trsrt / pb*trget / pb*trst1 in PBBLAS call
+# NUMROC / ICEIL / ILCM. Those three precision-independent helpers were
+# folded from the retired ${LIB_PREFIX}scalapack_tools archive into
+# scalapack_common (section 4b). scalapack_common is created in
+# section 7 (after PBBLAS, section 5), so the PUBLIC link is wired here
+# where the target is guaranteed to exist. tests/pbblas links only
+# ${LIB_PREFIX}pbblas — it now transitively pulls scalapack_common for
+# these symbols instead of the old tools archive, without dragging in
+# the full ${LIB_PREFIX}scalapack.
+#
+# Wrapped in $<BUILD_INTERFACE:> so the dependency serves the in-tree
+# tests but is NOT written into install(EXPORT). scalapack_common lives
+# in a DIFFERENT package (escalapack's export, per _install_library_pair)
+# than epbblas (pbblas' export); leaking it into epbblas'
+# INTERFACE_LINK_LIBRARIES makes find_package(epbblas) reference an
+# imported target defined only by find_package(escalapack) — and a
+# consumer that finds epbblas first then trips epbblas_FOUND = FALSE.
+# Keeping it build-only matches the repo convention (no cross-package
+# find_dependency; consumers list every archive on their own link line,
+# resolving NUMROC/ICEIL/ILCM from MKL or from eplinalg::scalapack_common
+# via find_package(escalapack)) — identical to how the MUMPS parallel
+# stack is BUILD_INTERFACE-wrapped out of the solver exports.
+if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}pbblas AND TARGET scalapack_common)
+    target_link_libraries(${LIB_PREFIX}pbblas PUBLIC $<BUILD_INTERFACE:scalapack_common>)
 endif()
 
 # 9. MUMPS (depends on LAPACK, BLAS, ScaLAPACK; needs MPI Fortran).

@@ -264,6 +264,22 @@ header_patches:
 copy_files:
   - PILAENV
 
+# Family-independent PBLAS helpers pinned to ``libpblas_common``. The
+# C buffer/allocation/topology helpers (PB_Cgetbuf, PB_Cmalloc, PB_Ctop)
+# and the integer copy (picopy_) carry no floating type — one copy serves
+# e/y, q/x, m/w. The symbol scanner leaves them in PRECISION, so a copy
+# leaks into every prefixed archive (libepblas / libqpblas / ...) and
+# collides with the identical routine MKL's ScaLAPACK provides in the
+# extended-MKL link. Pin them to the shared ``pblas_common``; the consumer
+# drops it under MKL and links it in the noMKL columns (same drop-when-MKL
+# profile as ``blacs_common``). Match is on file stem (uppercased); listed
+# without the trailing ``_`` (the classifier matches with or without it).
+force_common:
+  - PB_Cgetbuf
+  - PB_Cmalloc
+  - PB_Ctop
+  - picopy
+
 skip_files: []
 
 # Patches applied to staged sources before migration. Unified diffs

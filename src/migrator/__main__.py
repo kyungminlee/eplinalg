@@ -416,7 +416,12 @@ def cmd_build(args):
     for f in files:
         rel = f.relative_to(output_dir)
         stem = f.stem.upper()
-        if stem in config.copy_files:
+        # ``force_common`` pins a stem to the family-independent archive
+        # regardless of scanner assignment (mirror of ``copy_files``,
+        # which forces PRECISION). Highest priority. See config.py.
+        if stem in config.force_common:
+            common_files.append(str(rel))
+        elif stem in config.copy_files:
             precision_files.append(str(rel))
         elif stem in independent:
             common_files.append(str(rel))

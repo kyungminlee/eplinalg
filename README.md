@@ -146,7 +146,8 @@ for the sidecar conventions.
 | ScaLAPACK 2.2.3        | vendored under `external/scalapack-2.2.3/`  |
 | Intel MPI headers      | vendored under `external/impi-headers/` (compile-time only — link/run against Intel oneAPI MPI via the `linux-impi` preset; other MPIs are best-effort) |
 | multifloats            | fetched at CMake time from GitHub (`FetchContent`) |
-| `multifloats-mpi`      | `external/multifloats-mpi/` — MPI bridge (datatype + reduction ops) |
+| `multifloats-mpi`      | first-party `runtime/multifloats-mpi/` — MPI bridge for real64x2 (datatype + reduction ops) |
+| `quad-mpi`             | first-party `runtime/quad-mpi/` — MPI reduce ops for kind16 (`MPI_REAL16` / `MPI_COMPLEX32`) |
 
 To pin a specific multifloats release, pass
 `-DMULTIFLOATS_GIT_TAG=v0.2.3` to CMake. For an offline build, pass

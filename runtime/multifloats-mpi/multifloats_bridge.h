@@ -34,6 +34,17 @@
 #include <multifloats.h>
 #pragma pop_macro("Int")
 
+/* Skip the C++ MPI bindings (mpicxx.h). Without this guard, any migrated
+ * source compiled as C++ that transitively pulls in <mpi.h> through this
+ * bridge gets thousands of template declarations from mpicxx.h. Those
+ * templates cannot live inside the ``extern "C" { … }`` wrap that the
+ * c_migrator post-pass injects around .c bodies, so the link of
+ * scalapack_c (whose REDIST sources include redist.h ->
+ * multifloats_bridge.h -> mpi.h) fails. Defining MPICH_SKIP_MPICXX /
+ * OMPI_SKIP_MPICXX before the include is the documented way to compile
+ * MPI clients without the C++ bindings. */
+#define MPICH_SKIP_MPICXX 1
+#define OMPI_SKIP_MPICXX 1
 #include <mpi.h>
 
 /* ------------------------------------------------------------------ */
