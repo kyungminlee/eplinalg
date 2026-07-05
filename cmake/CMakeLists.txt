@@ -525,17 +525,46 @@ function(add_migrated_c_library lib_name)
     # Fortran-callable entry points by default. Compile them a second
     # time as an OBJECT library with ``-DCallFromC`` so the C-callable
     # entry points (``Cblacs_*``, ``Cdgesd2d`` etc.) are also present
-    # in the final static archive. Empty ``_dual`` list is a no-op.
-    if(_dual)
-        set(_dual_target "${_precision_target}_c_api")
-        add_library(${_dual_target} OBJECT ${_dual})
+    # in the final static archive.
+    #
+    # The C-callable variant must land in the SAME archive as its
+    # Fortran-side counterpart, so a family-independent file (integer
+    # ``igamx2d_`` or the agnostic driver) contributes its ``Cigamx2d`` /
+    # ``Cblacs_*`` object to ``_common``, and only the e/y files
+    # contribute ``Cegamx2d`` / ``Cygamx2d`` to the prefixed archive.
+    # Otherwise the prefixed archive would re-acquire the integer /
+    # agnostic C symbols and stop being strictly single-family. Partition
+    # ``_dual`` by which regular-source list each file belongs to. Empty
+    # partitions are a no-op.
+    set(_dual_common "")
+    set(_dual_precision "")
+    foreach(f ${_dual})
+        if("${f}" IN_LIST _common)
+            list(APPEND _dual_common "${f}")
+        else()
+            list(APPEND _dual_precision "${f}")
+        endif()
+    endforeach()
+    foreach(_slot common precision)
+        if(_slot STREQUAL common)
+            set(_dsrc "${_dual_common}")
+            set(_dhost "${_common_target}")
+        else()
+            set(_dsrc "${_dual_precision}")
+            set(_dhost "${_precision_target}")
+        endif()
+        if(NOT _dsrc OR NOT TARGET ${_dhost})
+            continue()
+        endif()
+        set(_dual_target "${_dhost}_c_api")
+        add_library(${_dual_target} OBJECT ${_dsrc})
         target_compile_definitions(${_dual_target} PRIVATE CallFromC)
         target_include_directories(${_dual_target} PRIVATE $<BUILD_INTERFACE:${_dir}/src>)
         if(MPI_C_FOUND)
             target_link_libraries(${_dual_target} PRIVATE MPI::MPI_C)
         endif()
         if(C_AS_CXX)
-            set_source_files_properties(${_dual} PROPERTIES LANGUAGE CXX)
+            set_source_files_properties(${_dsrc} PROPERTIES LANGUAGE CXX)
             target_compile_features(${_dual_target} PRIVATE cxx_std_17)
             target_compile_options(${_dual_target} PRIVATE -fpermissive -Wno-write-strings)
             # Skip the C++ MPI bindings (mpicxx.h). They define template
@@ -553,9 +582,8 @@ function(add_migrated_c_library lib_name)
                 target_link_libraries(${_dual_target} PRIVATE multifloats_mpi)
             endif()
         endif()
-        target_sources(${_precision_target}
-                       PRIVATE $<TARGET_OBJECTS:${_dual_target}>)
-    endif()
+        target_sources(${_dhost} PRIVATE $<TARGET_OBJECTS:${_dual_target}>)
+    endforeach()
 
     # Multifloats: compile C as C++ for operator overloading support.
     # ``copy_files``-staged Fortran helpers (e.g. pblas/pilaenv.f) ride in
@@ -776,28 +804,22 @@ if(NOT BASELINE_BUILD)
     endif()
 endif()
 
-# 4b. ScaLAPACK tools (NUMROC / ICEIL / ILCM).
+# 4b. ScaLAPACK tools (NUMROC / ICEIL / ILCM) — FOLDED INTO scalapack_common.
 #
-# Three precision-independent integer helpers carved out of ScaLAPACK's
-# TOOLS/ tree into their own tiny library. PBBLAS' pb*tran / pb*trnv /
-# pb*trsrt / pb*trget / pb*trst1 reference NUMROC / ICEIL / ILCM, but
-# tests/pbblas links only ${LIB_PREFIX}pbblas / blacs / blas — no
-# scalapack — so the symbols had to come from somewhere reachable
-# without dragging in the full ScaLAPACK archive.
-#
-# No standard counterpart archive: the baseline ``scalapack`` archive
-# already absorbs TOOLS/*.f directly (see section 7), and tests/pbblas
-# self-skips on baseline (HAVE_REAL16 is required). The migrated
-# library carries the symbols for both ``${LIB_PREFIX}pbblas`` and
-# ``${LIB_PREFIX}scalapack`` (which both PUBLIC-link it below), with
-# the canonical un-prefixed Fortran ABI names (numroc_, iceil_, ilcm_)
-# since the symbols are precision-independent and pass the migrator
-# pipeline unrenamed.
-if(NOT BASELINE_BUILD)
-    add_migrated_fortran_library(scalapack_tools)
-endif()
+# These three precision-independent integer helpers used to form a
+# standalone ``${LIB_PREFIX}scalapack_tools`` archive, built once per
+# family with a prefix. That duplicated three symbols MKL also provides
+# and made them a mandatory dep of ``${LIB_PREFIX}pbblas``, so under
+# extended-MKL they multiply-defined against MKL's numroc_/iceil_/ilcm_
+# — the exact overlap Task 29 removes. They are now migrated by
+# scalapack.yaml into the family-independent ``scalapack_common`` (which
+# the consumer drops when MKL supplies that layer, same profile as
+# ``blacs_common``). PBBLAS reaches them by PUBLIC-linking
+# ``scalapack_common`` once it exists (wired after section 8, below).
+# The standard ``scalapack`` archive still absorbs TOOLS/*.f directly
+# via _scalapack_tools_src (see section 7) — unchanged.
 
-# 5. PBBLAS (depends on BLAS, BLACS, scalapack_tools).
+# 5. PBBLAS (depends on BLAS, BLACS; scalapack_common wired post-section-8).
 #
 # Standard archive ``pbblas`` is built from PBLAS/PBBLAS/. Pure Fortran;
 # no extra dependencies beyond BLAS+BLACS at link time.
@@ -806,11 +828,16 @@ add_standard_fortran_library(pbblas
 if(NOT BASELINE_BUILD)
     add_migrated_fortran_library(pbblas)
     if(TARGET ${LIB_PREFIX}pbblas)
-        foreach(_dep ${LIB_PREFIX}blas ${LIB_PREFIX}blacs ${LIB_PREFIX}scalapack_tools)
+        foreach(_dep ${LIB_PREFIX}blas ${LIB_PREFIX}blacs)
             if(TARGET ${_dep})
                 target_link_libraries(${LIB_PREFIX}pbblas PUBLIC ${_dep})
             endif()
         endforeach()
+        # NUMROC/ICEIL/ILCM now live in scalapack_common (folded in from
+        # the old scalapack_tools archive). scalapack_common is created
+        # later, in section 7's add_migrated_fortran_library(scalapack),
+        # so the PUBLIC link is wired after section 8 where the target
+        # exists — see the "PBBLAS → scalapack_common" block below.
     endif()
     if(TARGET ${LIB_PREFIX}pbblas AND TARGET pbblas)
         target_link_libraries(${LIB_PREFIX}pbblas PUBLIC pbblas)
@@ -884,8 +911,9 @@ endif()
 if(NOT BASELINE_BUILD)
     add_migrated_fortran_library(scalapack)
     if(TARGET ${LIB_PREFIX}scalapack)
-        foreach(_dep ${LIB_PREFIX}lapack ${LIB_PREFIX}blacs ${LIB_PREFIX}pblas
-                     ${LIB_PREFIX}scalapack_tools)
+        # scalapack_common (which now carries NUMROC/ICEIL/ILCM) is linked
+        # automatically by add_migrated_fortran_library(scalapack) above.
+        foreach(_dep ${LIB_PREFIX}lapack ${LIB_PREFIX}blacs ${LIB_PREFIX}pblas)
             if(TARGET ${_dep})
                 target_link_libraries(${LIB_PREFIX}scalapack PUBLIC ${_dep})
             endif()
@@ -1038,6 +1066,21 @@ if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}scalapack)
             endif()
         endif()
     endif()
+endif()
+
+# PBBLAS → scalapack_common (NUMROC / ICEIL / ILCM).
+#
+# pb*tran / pb*trnv / pb*trsrt / pb*trget / pb*trst1 in PBBLAS call
+# NUMROC / ICEIL / ILCM. Those three precision-independent helpers were
+# folded from the retired ${LIB_PREFIX}scalapack_tools archive into
+# scalapack_common (section 4b). scalapack_common is created in
+# section 7 (after PBBLAS, section 5), so the PUBLIC link is wired here
+# where the target is guaranteed to exist. tests/pbblas links only
+# ${LIB_PREFIX}pbblas — it now transitively pulls scalapack_common for
+# these symbols instead of the old tools archive, without dragging in
+# the full ${LIB_PREFIX}scalapack.
+if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}pbblas AND TARGET scalapack_common)
+    target_link_libraries(${LIB_PREFIX}pbblas PUBLIC scalapack_common)
 endif()
 
 # 9. MUMPS (depends on LAPACK, BLAS, ScaLAPACK; needs MPI Fortran).
