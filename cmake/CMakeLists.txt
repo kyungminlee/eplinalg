@@ -462,6 +462,19 @@ function(add_migrated_fortran_library lib_name)
         if(TARGET la_xisnan_mw)
             target_link_libraries(${_precision_target} PUBLIC la_xisnan_mw)
         endif()
+        # The common archive can also hold family-independent sources that
+        # the multifloats migrator rewrites to ``USE multifloats`` (e.g.
+        # scalapack's PCHK1MAT/PCHK2MAT in pchkxmat.f rebind the generic
+        # mod/min/operators onto TYPE(real64x2)). Those objects need the
+        # multifloats module on their include path and a build-order
+        # dependency on it. The precision target links multifloatsf above,
+        # but that does not flow down to _common (precision links _common,
+        # not the reverse), so link it here too. BUILD_INTERFACE keeps it
+        # out of install(EXPORT), exactly as for the precision target.
+        if(TARGET ${_common_target})
+            target_link_libraries(${_common_target} PUBLIC
+                $<BUILD_INTERFACE:multifloatsf>)
+        endif()
     endif()
 endfunction()
 
