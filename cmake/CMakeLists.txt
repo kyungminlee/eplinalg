@@ -1107,6 +1107,13 @@ if(NOT BASELINE_BUILD)
         file(GLOB _pord_c CONFIGURE_DEPENDS ${_mumps_pord_src}/*.c)
         if(_pord_c)
             add_library(pord STATIC ${_pord_c})
+            # Ship the archive as libpord_mumps.a (not libpord.a): the
+            # CMake target keeps its short name ``pord`` for the internal
+            # link graph, but the installed filename carries the _mumps
+            # tag so it cannot collide on disk with a system/other-dev
+            # ordering archive of the same base name (mirrors the _mumps
+            # symbol namespacing).
+            set_target_properties(pord PROPERTIES OUTPUT_NAME pord_mumps)
             # PORD symbols (SPACE_ordering, firstPostorder, …) are called
             # by plain C name from mumps_pord.c — no Fortran mangling, so
             # no ``Add_`` here. Its sources #include <space.h> etc. from
@@ -1177,7 +1184,10 @@ if(NOT BASELINE_BUILD)
                 target_compile_definitions(metis PRIVATE HAVE_GETLINE)
             endif()
             set_target_properties(metis PROPERTIES
-                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
+                # libmetis_mumps.a — filename-namespaced like the _mumps
+                # symbol rename, so it never clashes with a system METIS.
+                OUTPUT_NAME metis_mumps)
             # GKlib is warning-noisy by design (upstream builds it with a
             # long -Wno-* list); quiet it rather than drown the log.
             if(NOT MSVC)
@@ -1243,13 +1253,19 @@ if(NOT BASELINE_BUILD)
                 SCOTCH_RENAME SCOTCH_NAME_SUFFIX=_mumps
                 restrict=__restrict NDEBUG)
 
+            # Ship these three as lib{scotch,scotcherr,esmumps}_mumps.a:
+            # the _mumps filename tag mirrors the SCOTCH_NAME_SUFFIX=_mumps
+            # symbol namespacing, so this private Scotch copy cannot clash
+            # on disk with a system Scotch another developer might add. The
+            # CMake target names stay short for the internal link graph.
             add_library(scotch STATIC ${_scotch_lib_c})
             target_include_directories(scotch PUBLIC
                 $<BUILD_INTERFACE:${_mumps_scotch_inc}>
                 $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
             target_compile_definitions(scotch PRIVATE ${_scotch_defs})
             set_target_properties(scotch PROPERTIES
-                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
+                OUTPUT_NAME scotch_mumps)
 
             add_library(scotcherr STATIC ${_scotch_err_c})
             target_include_directories(scotcherr PUBLIC
@@ -1257,7 +1273,8 @@ if(NOT BASELINE_BUILD)
                 $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
             target_compile_definitions(scotcherr PRIVATE ${_scotch_defs})
             set_target_properties(scotcherr PROPERTIES
-                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
+                OUTPUT_NAME scotcherr_mumps)
 
             add_library(esmumps STATIC ${_scotch_esm_c})
             target_include_directories(esmumps PUBLIC
@@ -1267,7 +1284,8 @@ if(NOT BASELINE_BUILD)
                 $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
             target_compile_definitions(esmumps PRIVATE ${_scotch_defs})
             set_target_properties(esmumps PROPERTIES
-                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
+                OUTPUT_NAME esmumps_mumps)
             # esmumps.c / order_scotch_graph.c / … include the *public*
             # scotch.h (bare prototypes) and call bare SCOTCH_* — its own
             # esmumps/module.h does NOT carry the public rename list (only
