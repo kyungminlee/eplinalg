@@ -46,10 +46,10 @@ file(MAKE_DIRECTORY ${_xb_moddir})
 
 # ── Common helper modules ───────────────────────────────────────────
 add_library(xblas_test_common STATIC
-    common/prec_kinds.f90
-    common/compare.f90
+    ../common/prec_kinds.f90
+    ../common/compare.f90
     common/prec_report.f90
-    common/test_data.f90
+    ../common/test_data.f90
     common/ref_quad_xblas.f90
 )
 set_target_properties(xblas_test_common PROPERTIES

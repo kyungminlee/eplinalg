@@ -289,9 +289,7 @@ extra_renames:
   PILAENVX: PILAENVX_EP
 
 # Patches applied to staged sources before migration (one per upstream
-# bug). See doc/upstream-bugs/scalapack.md for the bug catalogue
-# (prose section titles; the S##/X##/P##/I##/W## tags below are an
-# older internal index that no longer cross-references the doc) and
+# bug). See doc/upstream-bugs/scalapack.md for the bug catalogue and
 # doc/archive/refactor-20260509.md for the patch convention.
 #
 # Bug summaries:
@@ -374,10 +372,6 @@ patches:
   - pzunml2.f.patch    # PB_TOPGET → PB_TOPSET (topology restore)
   - pdsyevd.f.patch    # LQUERY missing LIWORK.EQ.-1 branch
   - pslaed3.f.patch    # missing INFO=0 init + missing I+J.LE.N guard
-
-# local_renames: (reserved for non-precision local-variable drift like
-# CONJTOPH→TTOPH that isn't an S↔D / C↔Z prefix swap. Precision-prefix
-# drift is now auto-filtered at diff time — see _filter_precision_drift.)
 
 # No hand-patched Fortran overrides needed. With multifloats prefixes
 # M/W, the V→VCOPY collisions in pXlahqr/pXlaqr1 and the T→TSCAL

@@ -9,7 +9,7 @@ exercised both from Fortran (`call qmumps(id)`) and from C
 [`c/include/qmumps_c.h`](c/include/qmumps_c.h)), and per-case JSON
 reports are written under `<build>/precision_reports/` for the standard
 aggregator. All three targets pass 26/26 mumps ctests under
-`linux-impi` (B4 RESOLVED 2026-05-04).
+`linux-impi` (see the B4 entry in `CHANGELOG.md`).
 
 ## How to run
 
@@ -40,12 +40,14 @@ uv run python -m migrator stage /tmp/stg-q --target kind16 \
 
 The `recipes/` and `cmake/` trees live in this single repo
 (`eplinalg`) — the historical fm-mumps split was retired when
-the mumps work merged into `tests` (see TODO.md B7).
+the mumps work merged into `tests` (see the B7 entry in `CHANGELOG.md`).
 
-Tests are wrapped via `mpiexec -n 1` because the migrated qmumps archive
-calls MPI primitives unconditionally (see TODO.md B3 for the
-libmpiseq-based no-mpiexec alternative — currently a known incomplete
-path).
+Each test is built twice: linked against real MPI (wrapped via
+`mpiexec -n 1`, since the migrated qmumps archive calls MPI primitives
+unconditionally) and linked against the in-tree `mpiseq` archive (plain
+binary, suffix `_seq`, no mpiexec needed). Both variants pass 26/26 on
+all three targets with bit-identical JSON precision reports — see the
+libmpiseq entries in `CHANGELOG.md` for the linkage mechanics.
 
 The suite also runs at `np ≥ 2` (default `MUMPS_TEST_NPROCS=2`). Several
 MUMPS API conventions only bite once a slave rank exists — host-only sparse
@@ -59,7 +61,7 @@ RHS, the distributed-solution `INFO(23)` slice size, and `-j1` serialization
 tests/mumps/
 ├── CMakeLists.txt        — gates + bridge build + test registration
 ├── README.md             — this file
-├── TODO.md               — open issues, design plan, deferred coverage
+├── TODO.md               — open issues (currently the D1 input-validation watch)
 ├── common/               — shared helpers (prec_kinds, compare,
 │                           prec_report, test_data_mumps,
 │                           ref_quad_lapack_solve, target_mumps_body.fypp)
@@ -73,13 +75,14 @@ tests/mumps/
 ```
 
 Supplementary libmpiseq C-side stubs live alongside the Fortran ones at
-`cmake/mpiseq_c_stubs.c` (folded into the `mpiseq` target when
+`runtime/mpiseq/mpiseq_c_stubs.c` (folded into the `mpiseq` target when
 `USE_LIBMPISEQ=ON` — see the `linux-libmpiseq` preset).
 
-## Coverage plan
+## Coverage
 
-See [TODO.md](TODO.md) for the full design and the per-test parameter
-matrix. The first landed tests cover the `JOB=-1 → JOB=6 → JOB=-2`
-roundtrip on a small unsymmetric problem; subsequent tests will sweep
-SYM, ICNTL ordering, JOB phasing, NRHS, error paths, and the C-side
-parity equivalent.
+The 26 tests cover the `JOB=-1 → JOB=6 → JOB=-2` roundtrip, SYM
+variants, ICNTL ordering choices, JOB phasing, multiple NRHS, error
+paths (see TODO.md D1), and Fortran/C parity — each in real (`d`-named
+drivers) and complex (`z`-named) form against the migrated archive.
+Resolved design history lives in [CHANGELOG.md](CHANGELOG.md); the only
+open item is TODO.md.

@@ -16,7 +16,7 @@
  *
  * s/c/d/z are the four "genuine" arithmetics MUMPS ships and the four Intel MKL
  * provides a ScaLAPACK/BLACS backend for. e/y/q/x/m/w are eplinalg's extended
- * precisions. This is the whole point of the Task 29 archive split: the migrator
+ * precisions. This is the whole point of the archive split: the migrator
  * fully prefix-renames every extended stack (emumps/ymumps/qmumps/xmumps/mmumps/
  * wmumps_c, ey/qx/mw-prefixed ScaLAPACK/LAPACK/BLAS/BLACS) and all share ONE
  * arith-agnostic mumps_common, so the ten stacks carry pairwise-disjoint symbols
@@ -85,6 +85,36 @@ static void quiet_icntl(int *icntl) {
     icntl[0] = -1; icntl[1] = -1; icntl[2] = -1; icntl[3] = 0;
 }
 
+/* Ordering selection. Exercises the ordering libraries shipped in the release:
+ * the sequential ones via ICNTL(7) (PORD/SCOTCH/METIS), and the distributed
+ * PT-Scotch via ICNTL(28)=2 (parallel analysis) + ICNTL(29)=1. PT-Scotch is
+ * only meaningful on a real-MPI build at np>=2; a seq (libmpiseq) release links
+ * no PT-Scotch, so it is not offered there. */
+enum { ORD_DEFAULT = 0, ORD_PORD, ORD_SCOTCH, ORD_METIS, ORD_PTSCOTCH };
+static int g_ordering = ORD_DEFAULT;
+static int g_infog7   = -1;   /* INFOG(7): ordering method MUMPS actually used */
+static int g_infog32  = -1;   /* INFOG(32): analysis type used (1=seq, 2=parallel) */
+
+static void set_ordering(int *icntl) {
+    /* 0-based: ICNTL(7)=icntl[6], ICNTL(28)=icntl[27], ICNTL(29)=icntl[28]. */
+    switch (g_ordering) {
+        case ORD_PORD:     icntl[6]  = 4;                  break;  /* seq PORD   */
+        case ORD_SCOTCH:   icntl[6]  = 3;                  break;  /* seq SCOTCH */
+        case ORD_METIS:    icntl[6]  = 5;                  break;  /* seq METIS  */
+        case ORD_PTSCOTCH: icntl[27] = 2; icntl[28] = 1;   break;  /* PT-Scotch  */
+        default:                                           break;  /* automatic  */
+    }
+}
+
+static int ordering_from_name(const char *s) {
+    if (!strcmp(s, "pord"))     return ORD_PORD;
+    if (!strcmp(s, "scotch"))   return ORD_SCOTCH;
+    if (!strcmp(s, "metis"))    return ORD_METIS;
+    if (!strcmp(s, "ptscotch")) return ORD_PTSCOTCH;
+    if (!strcmp(s, "default"))  return ORD_DEFAULT;
+    return -1;
+}
+
 /* ── real solve (s, d) ────────────────────────────────────────────────
  * On the host, assemble typed COO arrays from the double-valued MM, run the
  * MUMPS init→solve→finalize cycle, and copy the centralized solution (which
@@ -112,10 +142,13 @@ static int NAME(const MM *A, const MM *b, int is_host, int sym, int verbose,    
     id.job = JOB_INIT; CFUN(&id);                                                \
     if (id.infog[0] < 0) { infog1 = id.infog[0]; goto cleanup; }                 \
     if (!verbose) quiet_icntl(id.icntl);                                         \
+    set_ordering(id.icntl);                                                      \
     if (is_host) { id.n = n; id.nnz = (MUMPS_INT8)nz;                            \
                    id.irn = irn; id.jcn = jcn; id.a = a; id.rhs = rhs; }         \
     id.job = JOB_ANALYZE_FACTOR_SOLVE; CFUN(&id);                                \
     if (id.infog[0] < 0) { infog1 = id.infog[0]; id.job = JOB_END; CFUN(&id); goto cleanup; } \
+    g_infog7 = id.infog[6];  /* INFOG(7): ordering actually used */               \
+    g_infog32 = id.infog[31];  /* INFOG(32): analysis type (1=seq, 2=parallel) */ \
     if (is_host) for (int i = 0; i < n; i++) xr[i] = (double)rhs[i];             \
     id.job = JOB_END; CFUN(&id);                                                 \
 cleanup:                                                                         \
@@ -149,10 +182,13 @@ static int NAME(const MM *A, const MM *b, int is_host, int sym, int verbose,    
     id.job = JOB_INIT; CFUN(&id);                                                \
     if (id.infog[0] < 0) { infog1 = id.infog[0]; goto cleanup; }                 \
     if (!verbose) quiet_icntl(id.icntl);                                         \
+    set_ordering(id.icntl);                                                      \
     if (is_host) { id.n = n; id.nnz = (MUMPS_INT8)nz;                            \
                    id.irn = irn; id.jcn = jcn; id.a = a; id.rhs = rhs; }         \
     id.job = JOB_ANALYZE_FACTOR_SOLVE; CFUN(&id);                                \
     if (id.infog[0] < 0) { infog1 = id.infog[0]; id.job = JOB_END; CFUN(&id); goto cleanup; } \
+    g_infog7 = id.infog[6];  /* INFOG(7): ordering actually used */               \
+    g_infog32 = id.infog[31];  /* INFOG(32): analysis type (1=seq, 2=parallel) */ \
     if (is_host) for (int i = 0; i < n; i++) { xr[i] = (double)rhs[i].r; xi[i] = (double)rhs[i].i; } \
     id.job = JOB_END; CFUN(&id);                                                 \
 cleanup:                                                                         \
@@ -186,10 +222,13 @@ static int NAME(const MM *A, const MM *b, int is_host, int sym, int verbose,    
     id.job = JOB_INIT; CFUN(&id);                                                \
     if (id.infog[0] < 0) { infog1 = id.infog[0]; goto cleanup; }                 \
     if (!verbose) quiet_icntl(id.icntl);                                         \
+    set_ordering(id.icntl);                                                      \
     if (is_host) { id.n = n; id.nnz = (MUMPS_INT8)nz;                            \
                    id.irn = irn; id.jcn = jcn; id.a = a; id.rhs = rhs; }         \
     id.job = JOB_ANALYZE_FACTOR_SOLVE; CFUN(&id);                                \
     if (id.infog[0] < 0) { infog1 = id.infog[0]; id.job = JOB_END; CFUN(&id); goto cleanup; } \
+    g_infog7 = id.infog[6];  /* INFOG(7): ordering actually used */               \
+    g_infog32 = id.infog[31];  /* INFOG(32): analysis type (1=seq, 2=parallel) */ \
     if (is_host) for (int i = 0; i < n; i++) xr[i] = rhs[i].limbs[0];            \
     id.job = JOB_END; CFUN(&id);                                                 \
 cleanup:                                                                         \
@@ -221,10 +260,13 @@ static int NAME(const MM *A, const MM *b, int is_host, int sym, int verbose,    
     id.job = JOB_INIT; CFUN(&id);                                                \
     if (id.infog[0] < 0) { infog1 = id.infog[0]; goto cleanup; }                 \
     if (!verbose) quiet_icntl(id.icntl);                                         \
+    set_ordering(id.icntl);                                                      \
     if (is_host) { id.n = n; id.nnz = (MUMPS_INT8)nz;                            \
                    id.irn = irn; id.jcn = jcn; id.a = a; id.rhs = rhs; }         \
     id.job = JOB_ANALYZE_FACTOR_SOLVE; CFUN(&id);                                \
     if (id.infog[0] < 0) { infog1 = id.infog[0]; id.job = JOB_END; CFUN(&id); goto cleanup; } \
+    g_infog7 = id.infog[6];  /* INFOG(7): ordering actually used */               \
+    g_infog32 = id.infog[31];  /* INFOG(32): analysis type (1=seq, 2=parallel) */ \
     if (is_host) for (int i = 0; i < n; i++) { xr[i] = rhs[i].r.limbs[0]; xi[i] = rhs[i].i.limbs[0]; } \
     id.job = JOB_END; CFUN(&id);                                                 \
 cleanup:                                                                         \
@@ -251,10 +293,13 @@ GEN_CPLX_DD(solve_w, WMUMPS_STRUC_C, wmumps_c, mumps_complex64x2)
 
 static void usage(const char *prog) {
     fprintf(stderr,
-        "usage: %s -t <s|c|d|z|e|y|q|x|m|w> [-v] <matrix.mtx> <rhs.mtx> <solution.mtx>\n"
+        "usage: %s -t <s|c|d|z|e|y|q|x|m|w> [-o <ordering>] [-v]"
+        " <matrix.mtx> <rhs.mtx> <solution.mtx>\n"
         "  -t  arithmetic (real / complex):\n"
         "        s/c = single        d/z = double        e/y = long double (kind10)\n"
         "        q/x = __float128 (kind16)               m/w = double-double (multifloats)\n"
+        "  -o  ordering: default | pord | scotch | metis | ptscotch\n"
+        "        (ptscotch = parallel analysis, real MPI at np>=2 only)\n"
         "  -v  leave MUMPS diagnostics on (default: silent)\n", prog);
 }
 
@@ -274,6 +319,13 @@ int main(int argc, char **argv)
     const char *paths[3] = {0}; int np = 0;
     for (int i = 1; i < argc; i++) {
         if      (strcmp(argv[i], "-t") == 0 && i + 1 < argc) type = argv[++i][0];
+        else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            g_ordering = ordering_from_name(argv[++i]);
+            if (g_ordering < 0) {
+                if (is_host) fprintf(stderr, "mmsolve: unknown ordering '%s'\n", argv[i]);
+                MPI_Finalize(); return 2;
+            }
+        }
         else if (strcmp(argv[i], "-v") == 0)                 verbose = 1;
         else if (np < 3)                                     paths[np++] = argv[i];
         else {
@@ -336,8 +388,8 @@ int main(int argc, char **argv)
         rc = 1;
     } else if (is_host) {
         if (mm_write_vector(xpath, n, xr, is_cplx ? xi : NULL)) rc = 1;
-        else printf("mmsolve: type=%c  n=%d  nnz=%ld  sym=%d  ->  %s\n",
-                    type, n, A.nnz, sym, xpath);
+        else printf("mmsolve: type=%c  n=%d  nnz=%ld  sym=%d  INFOG(7)=%d  INFOG(32)=%d  ->  %s\n",
+                    type, n, A.nnz, sym, g_infog7, g_infog32, xpath);
     }
 
     free(xr); free(xi); mm_free(&A); mm_free(&b);

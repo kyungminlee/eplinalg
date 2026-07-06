@@ -263,6 +263,15 @@ def replace_xerbla_strings(line: str, rename_map: dict[str, str]) -> str:
     per entry per line, which is O(N * lines) — catastrophic once the
     map hits MUMPS scale (6k+ entries). The regex version below is
     O(lines) with a dict lookup per quoted identifier found.
+
+    Wiring note: :func:`replace_routine_names` does not mask string
+    literals, so by the time this pass runs (always after it) the
+    quoted name has normally been renamed already and the lookup here
+    misses. What remains is uppercasing the literal when the mapped
+    name still resolves (identity-mapped entries). Only the fixed-form
+    drivers call this; the free-form drivers deliberately rely on
+    ``replace_routine_names`` alone — verified empirically that quoted
+    names are renamed there too.
     """
     def sub(m):
         name = m.group(1)

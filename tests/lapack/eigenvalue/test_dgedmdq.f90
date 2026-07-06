@@ -3,8 +3,9 @@
 ! internally via QR + sliding. Layer (a) compares the canonicalized
 ! complex spectrum (sorted lex Re,Im); layer (b) checks routine-reported
 ! residuals stay below tol_res * ||A||_F. Layer (c) (reconstruction) is
-! intentionally skipped — TODO 310-313 flags T-matrix canonicality risk
-! when JOBT='F', so v1 stays at (a)+(b).
+! intentionally skipped — with JOBT='F' the returned T matrix is not
+! canonical across implementations (eigenvector scaling is free), so a
+! reconstruction comparison would be seed-brittle; v1 stays at (a)+(b).
 program test_dgedmdq
     use prec_kinds,      only: ep
     use prec_report,     only: report_init, report_case, report_finalize

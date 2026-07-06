@@ -90,8 +90,10 @@ def _filter_expected_divergences(report: list[dict],
     ]
 from .symbol_scanner import scan_symbols
 from .prefix_classifier import classify_symbols
+from .fortran.lex import (
+    _find_inline_bang, is_comment_line, is_continuation_line,
+)
 from .fortran_migrator import (
-    _find_inline_bang,
     migrate_file_to_string,
     target_filename,
 )
@@ -140,8 +142,7 @@ def _strip_fortran_comments(text: str, ext: str) -> str:
     is_fixed = ext.lower() in ('.f', '.for')
     out_lines: list[str] = []
     for line in text.split('\n'):
-        if is_fixed and line[:1] in ('C', 'c', '*', '!'):
-            # Column-1 comment marker in fixed-form.
+        if is_fixed and is_comment_line(line):
             continue
         if not is_fixed and line.lstrip().startswith('!'):
             continue
@@ -151,15 +152,13 @@ def _strip_fortran_comments(text: str, ext: str) -> str:
             out_lines.append(stripped.rstrip())
 
     # Join fixed-form continuation lines so sibling sources that wrap
-    # at different columns still normalize to the same text. In
-    # fixed-form, column 6 (non-blank, non-zero) indicates a
-    # continuation of the previous line — merge it into its parent
-    # after stripping the continuation marker and surrounding
-    # whitespace.
+    # at different columns still normalize to the same text — merge
+    # each continuation into its parent after stripping the marker
+    # and surrounding whitespace.
     if is_fixed:
         joined: list[str] = []
         for ln in out_lines:
-            if len(ln) > 5 and ln[5] not in (' ', '0', '\t') and joined:
+            if is_continuation_line(ln) and joined:
                 joined[-1] = joined[-1].rstrip() + ' ' + ln[6:].lstrip()
             else:
                 joined.append(ln)
@@ -663,7 +662,7 @@ def _canonicalize_for_compare(text: str) -> str:
             return line[:i + 1] + line[i + 2:j - 1]
         return line
     text = '\n'.join(_strip_rhs_parens(ln) for ln in text.split('\n'))
-    # 6e. Collapse doubled parens ``((X))`` → ``(X)``. LAPACK
+    # 6f. Collapse doubled parens ``((X))`` → ``(X)``. LAPACK
     #     occasionally wraps a boolean / logical expression in an
     #     extra redundant paren on one half.
     prev = None
@@ -701,7 +700,7 @@ def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
     # Identify precision-independent symbols
     if classification is None:
         symbols = scan_symbols(config.source_dir, config.language,
-                               config.extensions, config.library_path,
+                               config.extensions,
                                extra_c_return_types=tuple(config.c_return_types))
         classification = classify_symbols(symbols)
     independent = classification.independent
@@ -901,7 +900,7 @@ def _collect_all_symbols(config: RecipeConfig,
     own_c_types = tuple(config.c_return_types)
     symbols = scan_symbols(
         config.source_dir, config.language,
-        config.extensions, config.library_path,
+        config.extensions,
         extra_c_return_types=own_c_types,
     )
     symbols |= _scan_extra_dirs(config.extra_symbol_dirs, own_c_types)
@@ -918,7 +917,7 @@ def _collect_all_symbols(config: RecipeConfig,
         dep_c_types = tuple(dep_cfg.c_return_types)
         symbols |= scan_symbols(
             dep_cfg.source_dir, dep_cfg.language,
-            dep_cfg.extensions, dep_cfg.library_path,
+            dep_cfg.extensions,
             extra_c_return_types=dep_c_types,
         )
         symbols |= _scan_extra_dirs(dep_cfg.extra_symbol_dirs, dep_c_types)
@@ -1053,14 +1052,15 @@ def run_c_migration(config: RecipeConfig, output_dir: Path,
     like PBLAS). Otherwise the BLACS-specific path is used.
     """
     if dry_run:
-        print('  (dry-run for C migration not yet implemented)')
+        print('  WARNING: --dry-run is not supported for C migration; '
+              'no C files were analyzed. Rerun without --dry-run for '
+              'the real migration.')
         return {'cloned': [], 'template_vars': {}}
 
     overrides = _resolve_overrides(config, target_mode)
 
     result = migrate_c_directory(
         config.source_dir, output_dir, target_mode,
-        copy_originals=config.copy_all_originals,
         classification=classification,
         rename_map=rename_map,
         c_type_aliases=config.c_type_aliases,
@@ -1144,7 +1144,7 @@ def run_migration(recipe_path: Path, output_dir: Path,
     print('Scanning symbols...')
     own_symbols = scan_symbols(
         config.source_dir, config.language,
-        config.extensions, config.library_path,
+        config.extensions,
         extra_c_return_types=tuple(config.c_return_types),
     )
     own_count = len(own_symbols)

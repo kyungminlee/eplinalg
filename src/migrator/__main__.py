@@ -11,29 +11,20 @@ Usage (from the src/ directory):
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 from .cmake_gen import _generate_cmake
-from .libseq_patch import _patch_libseq_mpi_f
 from .pipeline import (
     run_divergence_report, run_migration,
 )
 from .prepare import prepare_recipe, run_prepare, verify_patches
 from .prefix_classifier import classify_symbols
 from .symbol_scanner import scan_symbols
-from .target_mode import load_target
-from .cli_common import (  # noqa: F401  (re-export)
-    _get_target_mode, _parser_args,
-)
-from .staging import (  # noqa: F401  (re-export)
-    _DUAL_ENTRY_C_RE, LIBRARY_ORDER, BASELINE_TARGETS, _collect_source_files, cmd_stage, _stage_baseline,
-)
-
-
-
+from .cli_common import _get_target_mode, _parser_args
+from .fortran.lex import is_comment_line
+from .staging import cmd_stage
 
 
 
@@ -132,13 +123,18 @@ def cmd_diverge(args):
 def _is_fixed_form_comment(line: str) -> bool:
     """A fixed-form line is a comment if its first character is C/c/*/!
     OR if its first non-whitespace character is ``!`` (the inline-comment
-    marker can also start a whole-line comment when it stands alone)."""
+    marker can also start a whole-line comment when it stands alone).
+
+    Deliberately a superset of :func:`migrator.fortran.lex.is_comment_line`
+    (which only tests the column-1 marker): the column-overflow check in
+    ``cmd_check`` must also ignore empty lines and indented ``!`` comments,
+    which are code-irrelevant but can exceed column 72.
+    """
     if not line:
         return True
-    if line[0] in ('C', 'c', '*', '!'):
+    if is_comment_line(line):
         return True
-    stripped = line.lstrip()
-    return stripped.startswith('!')
+    return line.lstrip().startswith('!')
 
 
 def _is_free_form_comment(line: str) -> bool:
@@ -388,7 +384,7 @@ def cmd_build(args):
 
     # Classify source files into common vs precision-specific
     symbols = scan_symbols(config.source_dir, config.language,
-                           config.extensions, config.library_path,
+                           config.extensions,
                            extra_c_return_types=tuple(config.c_return_types))
     classification = classify_symbols(symbols)
     independent = classification.independent
@@ -405,13 +401,17 @@ def cmd_build(args):
             p for p in src_dir.iterdir()
             if p.is_file() and p.suffix.lower() in allowed
         )
-    # copy_files are routed to the precision library unconditionally:
-    # their stems may collide with module names the symbol scanner has
-    # now classified as ``independent`` (post-MODULE-scanner), but the
-    # bodies often USE precision-specific modules that live in the
-    # precision lib — a common-lib copy would create a forbidden
-    # common -> precision dependency. Keeping copy_files in precision
-    # preserves the one-way precision -> common link direction.
+    # copy_files are routed to the precision library unconditionally.
+    # This single-target build has no per-target file special-casing,
+    # and some copy_files entries are target-specific verbatim copies
+    # whose bodies USE precision modules (LAPACK's LA_XISNAN_QX USEs
+    # LA_CONSTANTS_QX) — a common-lib copy would create a forbidden
+    # common -> precision module dependency. NOTE this deliberately
+    # differs from ``cmd_stage`` (staging.py), which routes those
+    # LA_* pairs via ``_la_own``/``_la_foreign`` first and can then
+    # safely send the remaining, genuinely shareable copy_files
+    # entries (MUMPS common modules, PBLAS Fortran helpers) to the
+    # shared common archive.
     common_files, precision_files = [], []
     for f in files:
         rel = f.relative_to(output_dir)

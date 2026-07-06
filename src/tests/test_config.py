@@ -59,16 +59,17 @@ def test_unknown_keys_warn_on_stderr(tmp_path, capsys):
 
 
 def test_empty_symbols_block_loads(tmp_path):
-    # ``symbols:`` with no body parses to None, not {}; the loader must
-    # tolerate that without an AttributeError.
     recipe = _write_recipe(tmp_path, """
         library: blas
         language: fortran
         source_dir: src
         symbols:
     """)
-    config = load_recipe(recipe, project_root=tmp_path)
-    assert config.library_path is None
+    # Empty ``symbols:`` block must load without raising; the field
+    # (an nm-based archive scan) was retired along with
+    # ``library_path``, but YAML loader tolerance is still a
+    # regression-worthy property.
+    load_recipe(recipe, project_root=tmp_path)
 
 
 def test_empty_prefix_block_loads(tmp_path):

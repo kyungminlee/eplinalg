@@ -15,25 +15,6 @@ except ImportError:
     yaml = None  # type: ignore[assignment]
 
 
-# Top-level keys recognized by load_recipe(). Unknown keys are warned on
-# load so that a typo (``copy-files`` vs ``copy_files``) doesn't silently
-# default to empty and produce a partially-migrated tree.
-_KNOWN_RECIPE_KEYS: frozenset[str] = frozenset({
-    'library', 'language', 'source_dir', 'extensions',
-    'symbols',
-    'skip_files', 'copy_files', 'force_common', 'prefer_source',
-    'module_renames', 'extra_renames',
-    'copy_all_originals', 'patches',
-    'depends', 'extra_symbol_dirs',
-    'extra_migrate_files', 'extra_c_dirs', 'extra_fortran_dirs',
-    'keep_kind_manifest', 'call_arg_casts',
-    'c_return_types', 'c_type_aliases', 'c_pointer_cast_aliases',
-    'header_patches', 'overrides',
-    'expected_divergences', 'defer_all_divergences',
-    'asymmetric_patches', 'one_sided_cleanup',
-})
-
-
 @dataclass
 class RecipeConfig:
     """Configuration for a single library migration."""
@@ -41,7 +22,6 @@ class RecipeConfig:
     language: str                     # "fortran" or "c"
     source_dir: Path
     extensions: list[str]
-    library_path: Path | None = None
     skip_files: set[str] = field(default_factory=set)
     copy_files: set[str] = field(default_factory=set)  # Copy unchanged (multi-precision utilities)
     # Source stems (uppercase, no extension) forced into the ``_common``
@@ -61,7 +41,6 @@ class RecipeConfig:
     # PZUNGQL / PZUNML2 call PB_TOPGET where they should call
     # PB_TOPSET; PCUNGQL / PCUNML2 have the correct restore).
     prefer_source: set[str] = field(default_factory=set)
-    copy_all_originals: bool = False  # For C: copy all files, then add clones
     patches: list[str] = field(default_factory=list)
     depends: list[Path] = field(default_factory=list)  # Dependency recipe paths
     extra_symbol_dirs: list[Path] = field(default_factory=list)  # Extra dirs to scan for symbols
@@ -222,6 +201,20 @@ class RecipeConfig:
     one_sided_cleanup: list[str] = field(default_factory=list)
 
 
+# Top-level keys recognized by load_recipe(): the RecipeConfig fields a
+# recipe can set, plus YAML-only spellings the loader maps to a
+# differently-named field (``keep_kind_manifest`` is read from disk into
+# ``keep_kind_lines``). Unknown keys are warned on load so that a typo
+# (``copy-files`` vs ``copy_files``) doesn't silently default to empty
+# and produce a partially-migrated tree.
+_LOADER_ONLY_FIELDS: frozenset[str] = frozenset({
+    'recipe_dir', 'keep_kind_lines',
+})
+_KNOWN_RECIPE_KEYS: frozenset[str] = (
+    frozenset(RecipeConfig.__dataclass_fields__) - _LOADER_ONLY_FIELDS
+) | frozenset({'keep_kind_manifest'})
+
+
 def _parse_call_arg_casts(
         raw: object) -> dict[str, list[tuple[str, str]]]:
     """Normalize the ``call_arg_casts:`` recipe field.
@@ -284,11 +277,6 @@ def load_recipe(recipe_path: Path,
 
     source_dir = project_root / data['source_dir']
 
-    library_path = None
-    symbols_cfg = data.get('symbols') or {}
-    if symbols_cfg.get('library_path'):
-        library_path = project_root / symbols_cfg['library_path']
-
     skip = set(s.upper() for s in data.get('skip_files', []))
     copy = set(s.upper() for s in data.get('copy_files', []))
     force_common = set(s.upper() for s in data.get('force_common', []))
@@ -325,12 +313,10 @@ def load_recipe(recipe_path: Path,
         language=data['language'],
         source_dir=source_dir,
         extensions=[e.lower() for e in data.get('extensions', ['.f', '.f90'])],
-        library_path=library_path,
         skip_files=skip,
         copy_files=copy,
         force_common=force_common,
         prefer_source=prefer,
-        copy_all_originals=data.get('copy_all_originals', False),
         patches=data.get('patches', []),
         depends=depends,
         extra_symbol_dirs=extra_symbol_dirs,

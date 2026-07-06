@@ -62,15 +62,15 @@ file(MAKE_DIRECTORY ${_sp_moddir})
 
 # ── Common helper modules ───────────────────────────────────────────
 add_library(scalapack_test_common STATIC
-    common/prec_kinds.f90
-    common/compare.f90
+    ../common/prec_kinds.f90
+    ../common/compare.f90
     common/prec_report.f90
-    common/test_data.f90
+    ../common/test_data.f90
     common/ref_quad_blas.f90
     common/ref_quad_lapack.f90
     common/cond_helpers.f90
     common/pblas_grid.f90
-    common/pblas_distrib.f90
+    ../common/pblas_distrib.f90
 )
 set_target_properties(scalapack_test_common PROPERTIES
     Fortran_MODULE_DIRECTORY "${_sp_moddir}"

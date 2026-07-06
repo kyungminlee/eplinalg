@@ -1,11 +1,10 @@
-"""Symbol scanning from source files or compiled libraries.
+"""Symbol scanning from source files.
 
 Extracts SUBROUTINE/FUNCTION names from Fortran source, or function
-names from C source, or defined symbols from compiled archives via nm.
+names from C source.
 """
 
 import re
-import subprocess
 from pathlib import Path
 
 from .fortran.lex import is_continuation_line
@@ -188,44 +187,14 @@ def scan_c_source(src_dir: Path,
     return names
 
 
-def scan_library_archive(lib_path: Path) -> set[str]:
-    """Extract defined symbols from a static or shared library using nm."""
-    cmd = ['nm', '--defined-only', '-g', str(lib_path)]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True,
-                                timeout=30)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return set()
-
-    nm_re = re.compile(r'\s*[0-9a-fA-F]*\s+[TtWw]\s+(\S+)')
-    names: set[str] = set()
-    for line in result.stdout.splitlines():
-        m = nm_re.match(line)
-        if m:
-            sym = m.group(1)
-            # Strip leading underscore (macOS) and trailing underscore (Fortran)
-            if sym.startswith('_'):
-                sym = sym[1:]
-            if sym.endswith('_'):
-                sym = sym[:-1]
-            if sym:
-                names.add(sym.upper())
-    return names
-
-
 def scan_symbols(source_dir: Path, language: str,
                  extensions: list[str] | None = None,
-                 library_path: Path | None = None,
                  extra_c_return_types: tuple[str, ...] = ()) -> set[str]:
-    """Scan for symbols using the appropriate method.
+    """Scan source for symbols using the language-appropriate method.
 
-    If library_path is provided, uses nm. Otherwise scans source.
     ``extra_c_return_types`` is forwarded to :func:`scan_c_source` when
     ``language == 'c'``.
     """
-    if library_path and library_path.exists():
-        return scan_library_archive(library_path)
-
     if language == 'fortran':
         return scan_fortran_source(source_dir, extensions)
     elif language == 'c':

@@ -1,13 +1,26 @@
-This directory is a workspace for type migration of BLAS, LAPACK, BLACS, and ScaLAPACK in respective directories.
-It contains  scripts that extracts all the necessary information, does the type migration, and checks for correctness, and produce reports,
-compile, and then build the libraries in extended precision.
+# Migration recipes
+
+One YAML recipe per library (BLAS, LAPACK, BLACS, PBLAS, ScaLAPACK, MUMPS,
+XBLAS, …), consumed by the migrator (`src/migrator/`) to retarget the
+double-precision sources under `external/` to the extended-precision
+targets defined in `targets/*.yaml`. The recipe schema is documented in
+`doc/guide/recipes.md`.
 
 ## Per-library sidecars
 
 Each library may carry an optional `<library>/` sidecar directory alongside its
 top-level `<library>.yaml` recipe. The sidecar holds library-specific
 artifacts — override tables, constant maps, or line-level manifests — that
-would clutter the YAML.
+would clutter the YAML. Common conventions:
+
+- `patches/` — unified diffs applied to the staged source tree before
+  migration (the `patches:` recipe key).
+- `*_overrides/` (e.g. `mfc_overrides`, `k16_overrides`, `qfc_overrides`) —
+  hand-written files that replace migrated output for one target
+  (the `overrides:` recipe key).
+- `extras/`, `source/` — extra sources shipped alongside the migrated
+  output (helper modules, tools sources).
+- one-off helper scripts and generated manifests, like the ones below.
 
 ### `mumps/keep-kind.manifest`
 

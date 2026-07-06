@@ -5,6 +5,7 @@ module compare
     public :: rel_err_scalar, rel_err_scalar_z
     public :: max_rel_err_vec, max_rel_err_vec_z
     public :: max_rel_err_mat, max_rel_err_mat_z
+    public :: sort_eig_lex_z
 contains
 
     ! Relative error of two scalars: |a-b| / max(|b|, tiny).
@@ -76,5 +77,27 @@ contains
             err = maxval(abs(a - b)) / denom
         end if
     end function max_rel_err_mat_z
+
+    ! In-place insertion sort on a complex array, ascending lexicographic
+    ! by (real, imag). Used to canonicalize eigenvalue spectra before
+    ! cross-implementation comparison.
+    pure subroutine sort_eig_lex_z(w)
+        complex(ep), intent(inout) :: w(:)
+        complex(ep) :: key
+        integer :: i, j
+
+        do i = 2, size(w)
+            key = w(i)
+            j = i - 1
+            do while (j >= 1)
+                if (real(w(j), ep) < real(key, ep)) exit
+                if (real(w(j), ep) == real(key, ep) .and. &
+                    aimag(w(j)) <= aimag(key)) exit
+                w(j + 1) = w(j)
+                j = j - 1
+            end do
+            w(j + 1) = key
+        end do
+    end subroutine sort_eig_lex_z
 
 end module compare

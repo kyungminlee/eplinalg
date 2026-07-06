@@ -8,7 +8,9 @@ module prec_kinds
     ! which target is being tested.
     integer, parameter :: ep = 16
 
-    ! Double precision — used inside multifloats wrappers to bridge
-    ! REAL(KIND=8) and TYPE(real64x2).
+    ! Double precision — the kind for interfaces that stay REAL(KIND=8)
+    ! regardless of the working precision: multifloats wrappers bridging
+    ! REAL(KIND=8) and TYPE(real64x2), and fixed-ABI values such as
+    ! MPI_WTIME results in the MUMPS drivers.
     integer, parameter :: dp = 8
 end module prec_kinds

@@ -243,3 +243,149 @@ set(SCOTCH_ESMUMPS_SOURCES
   symbol_fax.c
   symbol_fax_graph.c
 )
+
+# ---------------------------------------------------------------------------
+# PT-Scotch (distributed / parallel) increment.  These are the library
+# translation units NOT present in SCOTCH_LIBSCOTCH_SOURCES above -- the
+# distributed dgraph/dorder/dmapping/bdgraph/vdgraph/hdgraph/kdgraph objects
+# plus the base context/error/memory Fortran bindings that upstream compiles
+# only into libptscotch.  Derived as the complement of the sequential list
+# (all real .c TUs minus the sequential set minus library_error.c; #include-only
+# fragment files such as common_psort.c / dgraph_allreduce templates are
+# excluded exactly as for the sequential list).  Compile these WITH
+# -DSCOTCH_PTSCOTCH and MPI; link the resulting libptscotch ALONGSIDE the
+# sequential libscotch (increment, not a superset).  Disjoint from
+# SCOTCH_LIBSCOTCH_SOURCES, so no symbol is defined twice.
+set(SCOTCH_LIBPTSCOTCH_SOURCES
+  bdgraph.c
+  bdgraph_bipart_bd.c
+  bdgraph_bipart_df.c
+  bdgraph_bipart_ex.c
+  bdgraph_bipart_ml.c
+  bdgraph_bipart_sq.c
+  bdgraph_bipart_st.c
+  bdgraph_bipart_zr.c
+  bdgraph_check.c
+  bdgraph_gather_all.c
+  bdgraph_store.c
+  comm.c
+  dgraph.c
+  dgraph_allreduce.c
+  dgraph_band.c
+  dgraph_build.c
+  dgraph_build_grid3d.c
+  dgraph_build_hcub.c
+  dgraph_check.c
+  dgraph_coarsen.c
+  dgraph_compact.c
+  dgraph_fold.c
+  dgraph_fold_comm.c
+  dgraph_fold_dup.c
+  dgraph_gather.c
+  dgraph_gather_all.c
+  dgraph_ghst.c
+  dgraph_halo.c
+  dgraph_induce.c
+  dgraph_io_load.c
+  dgraph_io_save.c
+  dgraph_match.c
+  dgraph_match_check.c
+  dgraph_match_sync_coll.c
+  dgraph_match_sync_ptop.c
+  dgraph_redist.c
+  dgraph_scatter.c
+  dgraph_view.c
+  dmapping.c
+  dmapping_io.c
+  dorder.c
+  dorder_gather.c
+  dorder_io.c
+  dorder_io_block.c
+  dorder_io_tree.c
+  dorder_perm.c
+  dorder_tree_dist.c
+  graph_dump.c
+  hdgraph.c
+  hdgraph_check.c
+  hdgraph_fold.c
+  hdgraph_gather.c
+  hdgraph_induce.c
+  hdgraph_order_nd.c
+  hdgraph_order_si.c
+  hdgraph_order_sq.c
+  hdgraph_order_st.c
+  hgraph_dump.c
+  kdgraph.c
+  kdgraph_gather.c
+  kdgraph_map_rb.c
+  kdgraph_map_rb_map.c
+  kdgraph_map_rb_part.c
+  kdgraph_map_st.c
+  library_context_dgraph.c
+  library_context_dgraph_f.c
+  library_context_f.c
+  library_context_mesh.c
+  library_context_mesh_f.c
+  library_dgraph.c
+  library_dgraph_band.c
+  library_dgraph_band_f.c
+  library_dgraph_build.c
+  library_dgraph_build_f.c
+  library_dgraph_build_grid3d.c
+  library_dgraph_build_grid3d_f.c
+  library_dgraph_check.c
+  library_dgraph_check_f.c
+  library_dgraph_coarsen.c
+  library_dgraph_coarsen_f.c
+  library_dgraph_f.c
+  library_dgraph_gather.c
+  library_dgraph_gather_f.c
+  library_dgraph_grow.c
+  library_dgraph_halo.c
+  library_dgraph_halo_f.c
+  library_dgraph_induce.c
+  library_dgraph_induce_f.c
+  library_dgraph_io_load.c
+  library_dgraph_io_load_f.c
+  library_dgraph_io_save.c
+  library_dgraph_io_save_f.c
+  library_dgraph_map.c
+  library_dgraph_map_f.c
+  library_dgraph_map_view.c
+  library_dgraph_map_view_f.c
+  library_dgraph_order.c
+  library_dgraph_order_f.c
+  library_dgraph_order_gather.c
+  library_dgraph_order_gather_f.c
+  library_dgraph_order_io.c
+  library_dgraph_order_io_block.c
+  library_dgraph_order_io_block_f.c
+  library_dgraph_order_io_f.c
+  library_dgraph_order_perm.c
+  library_dgraph_order_perm_f.c
+  library_dgraph_order_tree_dist.c
+  library_dgraph_order_tree_dist_f.c
+  library_dgraph_redist.c
+  library_dgraph_redist_f.c
+  library_dgraph_scatter.c
+  library_dgraph_scatter_f.c
+  library_dgraph_stat.c
+  library_dgraph_stat_f.c
+  library_dmapping.c
+  library_dorder.c
+  library_errcom.c
+  library_error_exit.c
+  library_graph_dump.c
+  library_graph_induce_f.c
+  library_memory_f.c
+  vdgraph.c
+  vdgraph_check.c
+  vdgraph_gather_all.c
+  vdgraph_separate_bd.c
+  vdgraph_separate_df.c
+  vdgraph_separate_ml.c
+  vdgraph_separate_sq.c
+  vdgraph_separate_st.c
+  vdgraph_separate_zr.c
+  vdgraph_store.c
+)

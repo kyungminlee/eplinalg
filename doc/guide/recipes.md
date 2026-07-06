@@ -9,13 +9,9 @@ library: blas
 language: fortran
 source_dir: external/lapack-3.12.1/BLAS/SRC
 extensions: [.f]
-
-symbols:
-  method: scan_source
-
-prefix:
-  style: direct
 ```
+
+Symbols are discovered by scanning `source_dir` for `SUBROUTINE`/`FUNCTION` definitions; the target prefix scheme comes from the target definition (`targets/*.yaml`), not the recipe.
 
 ## Recipe Fields
 
@@ -35,21 +31,6 @@ The relative path from the project root to the directory containing the source f
 #### `extensions` (list of strings, optional)
 File extensions to include. Defaults to `[.f, .f90]`. Use `[.c, .h]` for C libraries. Note: `.F90` (uppercase) triggers preprocessing.
 
-### Symbol Discovery
-
-#### `symbols` (object, optional)
-*   `method`:
-    *   `scan_source` (default): Scans the `source_dir` for `SUBROUTINE` and `FUNCTION` definitions.
-    *   `nm_library`: Uses the `nm` tool to extract symbols from a pre-built library.
-*   `library_path`: Path to the pre-built library file (required if `method` is `nm_library`).
-
-### Naming Convention
-
-#### `prefix` (object, optional)
-*   `style`:
-    *   `direct` (default): Single-character prefix (e.g., `DGEMM` → `QGEMM`).
-    *   `scalapack`: `P` + precision character (e.g., `PDGESV` → `PQGESV`).
-
 ### File Handling
 
 #### `skip_files` (list of strings, optional)
@@ -57,9 +38,6 @@ Source stems to skip during migration (case-insensitive). Useful for mixed-preci
 
 #### `copy_files` (list of strings, optional)
 Source stems to copy unchanged. Used for multi-precision utility routines that don't need transformation.
-
-#### `copy_all_originals` (boolean, optional)
-*For C migration only.* If `true`, all original source files are copied to the output directory before migrated clones are added. Useful for libraries where only a subset of files are precision-specific.
 
 ### Dependencies
 

@@ -26,10 +26,10 @@ endif()
 
 # ── Common helper modules ───────────────────────────────────────────
 add_library(ptzblas_test_common STATIC
-    common/prec_kinds.f90
-    common/compare.f90
+    ../common/prec_kinds.f90
+    ../common/compare.f90
     common/prec_report.f90
-    common/test_data.f90
+    ../common/test_data.f90
     common/ref_quad_blas.f90
     common/ref_quad_aux.f90
 )
