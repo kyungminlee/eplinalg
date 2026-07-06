@@ -258,8 +258,8 @@ endif()
 # PT-Scotch is the parallel-ordering leaf: an MPI release (stacks ① ②) ships
 # ptscotch so mmsolve can exercise ICNTL(28)=2 parallel analysis; a seq
 # release (stack ③, no-PTSCOTCH) omits it. Link it only when the install
-# actually provides it (it arrives via eplinalgOrdering, a transparent
-# find_dependency of the MUMPS packages above).
+# actually provides it (it arrives via eplinalgPtscotch, a transparent
+# find_dependency of the real-MPI flavors of the MUMPS packages above).
 if(NOT MMSOLVE_SEQ AND TARGET eplinalg::ptscotch)
   set(_mmsolve_ptscotch
       $<TARGET_FILE:eplinalg::ptscotch>)
