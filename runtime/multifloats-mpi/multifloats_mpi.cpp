@@ -40,6 +40,11 @@ MPI_Fint mf_mpi_zz_amn_f      = 0;
 
 /* ---- User-op callbacks ------------------------------------------ */
 
+/* The static_casts from MPI's void* buffers assume the payload is a
+ * contiguous array of float64x2/complex64x2 (plain structs of doubles,
+ * 8-byte aligned) — true for every caller, since the buffers originate
+ * as Fortran TYPE(real64x2)/TYPE(cmplx64x2) arrays or their C mirrors. */
+
 static void dd_sum_fn(void *in, void *inout, int *len, MPI_Datatype *) {
     auto *a = static_cast<float64x2 *>(in);
     auto *b = static_cast<float64x2 *>(inout);

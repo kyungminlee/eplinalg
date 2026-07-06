@@ -160,7 +160,7 @@ def cmd_stage(args):
         # Classify files into common vs precision-specific
         config = prepare_recipe(recipe_path, proj_root)
         symbols = scan_symbols(config.source_dir, config.language,
-                               config.extensions, config.library_path,
+                               config.extensions,
                                extra_c_return_types=tuple(config.c_return_types))
         classification = classify_symbols(symbols)
         independent = classification.independent
@@ -247,12 +247,17 @@ def cmd_stage(args):
             # precision-specific by construction — see ``rename_targets``.
             elif f.stem in _la_own or stem in rename_targets:
                 precision_files.append(rel)
-            # ``copy_files`` entries are precision-independent by
-            # contract (the file is staged verbatim, no prefix rename).
-            # The symbol scanner may never have visited them — e.g. a
-            # Fortran ``copy_files`` entry in a C recipe — so they
-            # won't appear in ``independent``. Treat them as common
-            # explicitly.
+            # Any ``copy_files`` entry that survives to this branch is
+            # precision-independent (staged verbatim, no prefix rename,
+            # shareable across targets): the target-specific verbatim
+            # copies — LAPACK's LA_CONSTANTS/LA_XISNAN pairs — were
+            # already routed by the ``_la_own``/``_la_foreign`` checks
+            # above. The symbol scanner may never have visited these —
+            # e.g. a Fortran ``copy_files`` entry in a C recipe — so
+            # they won't appear in ``independent``. Treat them as
+            # common explicitly. (``cmd_build`` in __main__.py lacks
+            # the LA_* special-casing and therefore routes copy_files
+            # to PRECISION instead — see the comment there.)
             elif stem in independent or stem in config.copy_files:
                 common_files.append(rel)
             else:

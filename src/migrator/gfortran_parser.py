@@ -22,8 +22,7 @@ import subprocess
 from pathlib import Path
 
 from .flang_parser import (
-    CallSite, ParseTreeFacts, RoutineDef, TypeDecl,
-    ParameterInfo, DataInfo, ProcInfo, UseStmtInfo
+    CallSite, ParseTreeFacts, RoutineDef, TypeDecl, UseStmtInfo
 )
 
 
@@ -142,14 +141,10 @@ _CALL_RE = re.compile(r'\bCALL\s+(\w+)\s*\(')
 _USE_STMT_RE = re.compile(
     r'^\s*USE(?:\s*,[^:]*)?\s*(?:::)?\s+(\w+)', re.IGNORECASE)
 _USE_ASSOC_RE = re.compile(r'USE-ASSOC\(([\w]+)\)')
-_DATA_RE = re.compile(r'^\s+DATA\s+(\w+)/([^/]+)/', re.IGNORECASE)
 _ATTRS_RE = re.compile(r'attributes:\s*\(([^)]*)\)')
 
 # Regex for function references: ``name[[ ... ]]``
 _FUNCREF_RE = re.compile(r'\b(\w+)\[\[')
-
-# Regex for character literals in code: ``('STRING')``
-_CHAR_LIT_RE = re.compile(r"\('([^']*)'\)")
 
 # Regex for real literals in code: ``digits.digitsEdigits_kind``
 _REAL_LIT_RE = re.compile(
@@ -197,8 +192,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
         if pm:
             proc_name = pm.group(1).lower()
             in_code = False
-            facts.procedure_boundaries.append(
-                ProcInfo(proc_name.upper(), 0, None, 0))
             i += 1
             continue
 
@@ -240,7 +233,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                 type_spec = None
                 kind_value = None
                 attrs_raw = ''
-                val = None
                 j = i + 1
                 while j < len(lines) and lines[j].startswith('    '):
                     sline = lines[j]
@@ -248,8 +240,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                         type_spec, kind_value = _parse_type_spec(sline)
                     if 'attributes:' in sline:
                         attrs_raw = sline
-                    if 'value:' in sline:
-                        val = sline.split('value:')[1].strip()
                     # Harvest USE-ASSOC(modname) tags from any
                     # attribute line — these mark symbols imported
                     # from another module, which we need in
@@ -283,7 +273,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                     'type_spec': type_spec,
                     'kind_value': kind_value,
                     'attrs': attrs,
-                    'value': val,
                     # Record the procedure block this symbol was defined
                     # in. Without this, is_proc_sym below compares each
                     # symbol against the *last* proc_name seen in the
@@ -296,13 +285,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                 i = j
                 continue
         else:
-            # --- Code section: scan for calls, references, literals, DATA ---
-            # DATA zero/0.0/
-            dm = _DATA_RE.match(line)
-            if dm:
-                facts.data_stmts.append(
-                    DataInfo([dm.group(1).upper()], [dm.group(2)], None))
-
+            # --- Code section: scan for calls, references, literals ---
             for cm in _CALL_RE.finditer(line):
                 name = cm.group(1).lower()
                 # Skip scope-qualified prefix (e.g. ``dgemm:``)
@@ -317,9 +300,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                     continue
                 func_ref_names.add(name)
 
-            for cm in _CHAR_LIT_RE.finditer(line):
-                facts.char_literals.append(cm.group(1))
-
             for rm in _REAL_LIT_RE.finditer(line):
                 facts.real_literals.append(rm.group(1))
 
@@ -330,7 +310,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
         attrs = info['attrs']
         ts = info['type_spec']
         kv = info['kind_value']
-        val = info.get('value')
 
         # Skip the procedure's own entry (e.g. ``symtree: 'dgemm'`` for
         # the dgemm subroutine) — we handle that via the ``procedure
@@ -365,9 +344,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
         if 'EXTERNAL' in attrs and 'INTRINSIC' not in attrs:
             facts.external_names.append(sym_name.upper())
 
-        if 'INTRINSIC' in attrs:
-            facts.intrinsic_names.append(sym_name.upper())
-
         # Variable declarations (non-procedure, non-intrinsic symbols)
         if ts is not None:
             if ts in ('Real', 'DoublePrecision', 'Complex', 'Integer', 'Logical'):
@@ -377,12 +353,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                 if ts in ('Real', 'DoublePrecision', 'Complex'):
                     facts.type_decls.append(
                         TypeDecl(ts, kv, [sym_name.upper()]))
-            
-            if 'PARAMETER' in attrs:
-                # Basic type classification: FP if REAL/DOUBLEPRECISION/COMPLEX
-                p_type = 'FP' if ts in ('Real', 'DoublePrecision', 'Complex') else 'integer'
-                facts.parameter_stmts.append(
-                    ParameterInfo(sym_name.upper(), val or "unknown", p_type))
 
     # --- Call sites from code section ---
     for name in sorted(call_names):

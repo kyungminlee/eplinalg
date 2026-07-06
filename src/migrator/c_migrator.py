@@ -240,7 +240,7 @@ def rename_c_file(name: str, old_prefix: str, new_prefix: str) -> str:
 
 
 def migrate_c_directory(src_dir: Path, output_dir: Path,
-                        target_mode: TargetMode, copy_originals: bool = True,
+                        target_mode: TargetMode,
                         classification: SymbolClassification | None = None,
                         rename_map: dict[str, str] | None = None,
                         c_type_aliases: list[dict] | None = None,
@@ -277,7 +277,7 @@ def migrate_c_directory(src_dir: Path, output_dir: Path,
     """
     if classification is not None and rename_map is not None:
         result = _migrate_generic_c_directory(
-            src_dir, output_dir, target_mode, copy_originals,
+            src_dir, output_dir, target_mode,
             classification, rename_map,
             c_type_aliases=c_type_aliases,
             c_pointer_cast_aliases=c_pointer_cast_aliases,
@@ -288,7 +288,7 @@ def migrate_c_directory(src_dir: Path, output_dir: Path,
         )
     else:
         result = _migrate_blacs_c_directory(
-            src_dir, output_dir, target_mode, copy_originals,
+            src_dir, output_dir, target_mode,
             skip_files=skip_files,
         )
     if overrides:
@@ -856,7 +856,7 @@ def _apply_header_patches(output_dir: Path,
 
 
 def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
-                                 target_mode: TargetMode, copy_originals: bool,
+                                 target_mode: TargetMode,
                                  classification: SymbolClassification,
                                  rename_map: dict[str, str],
                                  c_type_aliases: list[dict] | None = None,
@@ -885,7 +885,8 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
     if extra_c_dirs:
         all_src_dirs.extend(extra_c_dirs)
 
-    # Copy all originals first (keeps S/D/C/Z entry points available).
+    # Stage the pass-through files first (headers, copy_files entries,
+    # precision-independent dispatchers).
     # When extra_c_dirs sources contain `#include "../foo.h"` paths
     # (PTOOLS uses ../pblas.h etc.), strip the `..` part since we're
     # flattening into a single output dir.
@@ -893,9 +894,8 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
     # compile as C++ (mpicxx).
     _skip = skip_files or set()
     _copy = copy_files or set()
-    # Headers, copy_files entries, AND precision-independent dispatcher
-    # .c files are always staged into the migrated output_dir, even
-    # when ``copy_originals`` is False. The std archive (built directly
+    # Only headers, copy_files entries, and precision-independent
+    # dispatcher .c files are staged. The std archive (built directly
     # from upstream sources by the CMake side) carries the S/D/C/Z
     # entry points; the migrated archive carries the Q/X/E/Y/M/W
     # clones plus the dispatchers (PB_Cconjg, PB_CpswapNN, BI_BlacsErr,
@@ -952,8 +952,7 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
                 continue
             if stem_upper in _skip or base_stem_upper in _skip:
                 continue
-            if (not copy_originals and not is_header and not is_copy
-                    and not is_dispatcher):
+            if not (is_header or is_copy or is_dispatcher):
                 continue
             text = f.read_text(errors='replace')
             if is_copy and not is_c_or_h:
@@ -983,8 +982,8 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
                 #       double*/float* signatures must stay so the
                 #       body still compiles as C++ (struct types
                 #       cannot assign to native scalar lvalues).
-                is_dispatcher = stem_upper not in rename_map
-                if is_dispatcher or target_mode.is_kind_based:
+                is_unprefixed = stem_upper not in rename_map
+                if is_unprefixed or target_mode.is_kind_based:
                     text = _apply_aliases_to_original(
                         text, template_vars, c_type_aliases,
                         c_pointer_cast_aliases)
@@ -1147,7 +1146,7 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
 
 
 def _migrate_blacs_c_directory(src_dir: Path, output_dir: Path,
-                                 target_mode: TargetMode, copy_originals: bool,
+                                 target_mode: TargetMode,
                                  skip_files: set[str] | None = None) -> dict:
     """BLACS-specific C migration (original behavior).
 
@@ -1170,9 +1169,10 @@ def _migrate_blacs_c_directory(src_dir: Path, output_dir: Path,
 
     sources = sorted(src_dir.iterdir())
 
-    # Copy headers always; copy precision-prefixed .c originals only
-    # when copy_originals; copy precision-independent dispatcher .c
-    # files always (BI_BlacsErr, BI_GetBuff, blacs_setup_, ...). The
+    # Copy headers always; drop precision-prefixed .c originals (the
+    # std archive owns the S/D/C/Z entry points); copy precision-
+    # independent dispatcher .c files (BI_BlacsErr, BI_GetBuff,
+    # blacs_setup_, ...). The
     # dispatchers ride in the migrated archive because callers reach
     # them through the BLACS-style symbol map; the std archive picks
     # them up too via the upstream source dir, but the linker only
@@ -1199,7 +1199,7 @@ def _migrate_blacs_c_directory(src_dir: Path, output_dir: Path,
         if ext == '.h':
             shutil.copy2(f, output_dir / f.name)
         elif ext == '.c':
-            if copy_originals or not _is_blacs_precision_prefix(f.stem):
+            if not _is_blacs_precision_prefix(f.stem):
                 shutil.copy2(f, output_dir / f.name)
 
     cloned = []

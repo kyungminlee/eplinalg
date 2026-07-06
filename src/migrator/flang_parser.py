@@ -46,33 +46,6 @@ class CallSite:
 
 
 @dataclass
-class ParameterInfo:
-    """Information about a PARAMETER statement."""
-    name: str
-    value: str
-    type_spec: str          # 'FP' or 'integer' (simplified)
-    line_number: int | None = None
-
-
-@dataclass
-class DataInfo:
-    """Information about a DATA statement."""
-    names: list[str]
-    values: list[str]
-    types: list[str] | None = None
-    line_number: int | None = None
-
-
-@dataclass
-class ProcInfo:
-    """Information about procedure boundaries."""
-    name: str
-    header_line: int
-    first_exec_line: int | None
-    end_line: int
-
-
-@dataclass
 class UseStmtInfo:
     """Information about a USE statement."""
     module_name: str
@@ -93,14 +66,7 @@ class ParseTreeFacts:
     routine_defs: list[RoutineDef] = field(default_factory=list)
     call_sites: list[CallSite] = field(default_factory=list)
     external_names: list[str] = field(default_factory=list)
-    intrinsic_names: list[str] = field(default_factory=list)
     real_literals: list[str] = field(default_factory=list)
-    char_literals: list[str] = field(default_factory=list)
-
-    # New fields for Phase 1.5
-    parameter_stmts: list[ParameterInfo] = field(default_factory=list)
-    data_stmts: list[DataInfo] = field(default_factory=list)
-    procedure_boundaries: list[ProcInfo] = field(default_factory=list)
     variable_types: dict[str, str] = field(default_factory=dict)
     use_stmt_ranges: list[UseStmtInfo] = field(default_factory=list)
 
@@ -163,8 +129,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
             if name:
                 facts.routine_defs.append(
                     RoutineDef('subroutine', name, None))
-                facts.procedure_boundaries.append(
-                    ProcInfo(name, 0, None, 0))
 
         # --- Function definition ---
         elif 'FunctionStmt' in line:
@@ -180,8 +144,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
             if name:
                 facts.routine_defs.append(
                     RoutineDef('function', name, ret_type))
-                facts.procedure_boundaries.append(
-                    ProcInfo(name, 0, None, 0))
 
         # --- Type declaration ---
         elif 'TypeDeclarationStmt' in line:
@@ -202,17 +164,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                 facts.use_stmt_ranges.append(
                     UseStmtInfo(mod_name, (0, 0), []))
 
-        # --- Parameter statement ---
-        elif 'ParameterStmt' in line:
-            p_name = _extract_first_name(lines, i + 1)
-            if p_name:
-                facts.parameter_stmts.append(
-                    ParameterInfo(p_name, "unknown", "FP"))
-
-        # --- Data statement ---
-        elif 'DataStmt' in line:
-            facts.data_stmts.append(DataInfo([], [], None))
-
         # --- Call statement ---
         elif 'CallStmt' in line:
             name = _extract_procedure_name(lines, i)
@@ -231,12 +182,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
             if m:
                 facts.external_names.append(m.group(1).upper())
 
-        # --- Intrinsic declaration ---
-        elif 'IntrinsicStmt' in line:
-            m = _NAME_RE.search(line)
-            if m:
-                facts.intrinsic_names.append(m.group(1).upper())
-
         # --- Real literal constant ---
         elif 'RealLiteralConstant' in line:
             m = re.search(r"Real\s*=\s*'([^']+)'", line)
@@ -246,14 +191,6 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                     m = re.search(r"Real\s*=\s*'([^']+)'", lines[i + 1])
             if m:
                 facts.real_literals.append(m.group(1))
-
-        # --- Character literal constant ---
-        elif 'CharLiteralConstant' in line:
-            m = re.search(r"string\s*=\s*'([^']*)'", line)
-            if not m and i + 1 < len(lines):
-                m = re.search(r"string\s*=\s*'([^']*)'", lines[i + 1])
-            if m:
-                facts.char_literals.append(m.group(1))
 
         i += 1
 

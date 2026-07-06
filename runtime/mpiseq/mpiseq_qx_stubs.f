@@ -7,9 +7,12 @@ C  migrated qmumps / xmumps (kind16) and emumps / ymumps (kind10)
 C  archives request the Q/X/E/Y-prefixed equivalents — those resolve
 C  through ${LIB_PREFIX}scalapack at the standard mpiexec path, but
 C  for a fully-sequential libmpiseq link those symbols have to live
-C  somewhere too. This file ships them inside the migrator (the
+C  somewhere too. This file ships them here in runtime/ (the
 C  external/ tree is read-only) and is appended to the mpiseq target
-C  in cmake/CMakeLists.txt.
+C  in runtime/mpiseq/CMakeLists.txt.
+C
+C  Despite the _qx_ filename, this file carries all four kind-based
+C  prefixes: Q/X (kind16, REAL*16) and E/Y (kind10, REAL*10).
 C
 C  Each stub mirrors upstream's pattern exactly: print "should not be
 C  called", STOP. Single-rank operation never reaches them; they exist

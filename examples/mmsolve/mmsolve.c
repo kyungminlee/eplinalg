@@ -16,7 +16,7 @@
  *
  * s/c/d/z are the four "genuine" arithmetics MUMPS ships and the four Intel MKL
  * provides a ScaLAPACK/BLACS backend for. e/y/q/x/m/w are eplinalg's extended
- * precisions. This is the whole point of the Task 29 archive split: the migrator
+ * precisions. This is the whole point of the archive split: the migrator
  * fully prefix-renames every extended stack (emumps/ymumps/qmumps/xmumps/mmumps/
  * wmumps_c, ey/qx/mw-prefixed ScaLAPACK/LAPACK/BLAS/BLACS) and all share ONE
  * arith-agnostic mumps_common, so the ten stacks carry pairwise-disjoint symbols

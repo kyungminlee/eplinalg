@@ -126,7 +126,7 @@ copy_files:
   # MUMPS_LR_COMMON: integer-only constants / size helpers. No FP.
   - LR_COMMON
 
-  # --- Arithmetic-independent common modules (Task 13) ---------------
+  # --- Arithmetic-independent common modules --------------------------
   # These 10 modules define unprefixed MUMPS_* symbols the migrator was
   # bundling into every ${LIB_PREFIX}mumps archive. They carry no
   # working-precision interface, so migrating them only over-promoted
@@ -134,7 +134,7 @@ copy_files:
   # and kind10 copies *semantically diverge* despite identical symbol
   # names, blocking a single all-precision binary. Pinned verbatim so
   # they are byte-identical across targets and can live once in the
-  # shared common archive. Audit: workspace task 13, 03-copy-files-audit.
+  # shared common archive.
   # (copy_files matches uppercased filename basenames, not module names.)
   - ANA_OMP_M                    # MUMPS_ANA_OMP_M: all-integer interface; ARITH is a runtime CHARACTER(1); DP is OMP cost-model scratch
   - ANA_BLK_M                    # MUMPS_ANA_BLK_M: COL_LMATRIX_T/LMATRIX_T/COMPACT_GRAPH_T are integer/pointer only
@@ -152,7 +152,7 @@ copy_files:
   # modules that USE it (their layout depended on TPS_T's size).
   - OMP_TPS_COMMON_M             # MUMPS_TPS_M
 
-  # --- Complete the genuine 36-file common (Task 17) ------------------
+  # --- Complete the genuine 36-file common ----------------------------
   # Full unification: the migrated ``mumps_common`` becomes the *entire*
   # upstream shared common so genuine s/c/d/z and the extended prefixes
   # (e/y, q/x, m/w) all link one common — retiring the parallel genuine
@@ -162,8 +162,7 @@ copy_files:
   # argument; extended precision is just one more working precision served
   # by the same objects. These 11 were the last still classified as
   # precision by the file-stem heuristic; each was scanned and carries no
-  # working-precision interface. Audit: workspace task 17,
-  # 02-common-unification-verdict. (Matches uppercased basenames.)
+  # working-precision interface. (Matches uppercased basenames.)
   - ANA_AMDMF          # AMD/AMF ordering: only float is THRESM, a local INTEGER-derived threshold
   - ANA_BLK            # block analysis: NBBLOCK-style integer counts; USE only MUMPS_ANA_BLK_M/MUMPS_TOOLS_COMMON_M (both common)
   - ANA_SET_ORDERING   # integer-only ordering selection

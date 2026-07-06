@@ -1,17 +1,22 @@
 /*
  * C-side MPI stubs for libmpiseq, replacing libseq's bundled mpic.c
- * outright. We compile against the configured MPI's mpi.h (Intel MPI
- * by default, see cmake/CMakeLists.txt) so libmpiseq.a is ABI-
- * compatible with archives compiled against real MPI: same opaque-type
- * sizes, same constant values, same calling conventions. The
- * implementation is single-rank stubs.
+ * outright. We compile against the configured MPI's mpi.h so
+ * libmpiseq.a is ABI-compatible with archives compiled against real
+ * MPI: same opaque-type sizes, same constant values, same calling
+ * conventions. The implementation is single-rank stubs. Two CMake
+ * files cooperate here: cmake/CMakeLists.txt hosts the compatibility
+ * gate (the mpiseq target is only built when the active MPI is Intel
+ * MPI, whose handles are integer constants these stubs can resolve
+ * against), and runtime/mpiseq/CMakeLists.txt does the header overlay
+ * (deletes libseq's bundled mpi.h/mpif.h and points the include path
+ * at the real MPI's headers) and adds this file to the target.
  *
  * libseq's mpic.c is dropped from the mpiseq target because Intel's
  * mpi.h defines ``MPI_Comm_f2c`` as a function-like macro; libseq's
  * mpic.c declares it as a function, and the two collide before any
- * compiler tricks can paper over it. This file provides the four
- * routines libseq's mpic.c shipped (MPI_Init, MPI_Comm_rank,
- * MPI_Finalize, MUMPS_CHECKADDREQUAL + aliases, MPI_Wtime) plus every
+ * compiler tricks can paper over it. This file provides everything
+ * libseq's mpic.c shipped (MPI_Comm_f2c, MPI_Init, MPI_Comm_rank,
+ * MPI_Finalize, MPI_Wtime, MUMPS_CHECKADDREQUAL + aliases) plus every
  * additional MPI_* symbol the BLACS / PBLAS / multifloats_mpi C side
  * calls and which Intel's MPI runtime would normally provide.
  *
@@ -266,9 +271,34 @@ int MPI_Type_create_struct(int c, const int bls[], const MPI_Aint disps[],
 }
 int MPI_Type_commit(MPI_Datatype *t)                       { (void) t; return MPI_SUCCESS; }
 int MPI_Type_free(MPI_Datatype *t)                         { (void) t; return MPI_SUCCESS; }
+/* BLACS combines (igamx2d_ et al.) call this unconditionally at entry
+ * to resolve the index datatype, even on a single-rank grid where no
+ * communication follows — so it must return a real answer, not abort.
+ * The handles returned are ones mpiseq_base_type_bytes() recognises,
+ * keeping derived-type sizes correct downstream. */
 int MPI_Type_match_size(int typeclass, int size, MPI_Datatype *t)
 {
-    (void) typeclass; (void) size; *t = MPI_DATATYPE_NULL; return MPI_SUCCESS;
+    switch (typeclass)
+    {
+    case MPI_TYPECLASS_INTEGER:
+        if (size == (int) sizeof(int))  { *t = MPI_INT;           return MPI_SUCCESS; }
+        if (size == 8)                  { *t = MPI_LONG_LONG_INT; return MPI_SUCCESS; }
+        if (size == 2)                  { *t = MPI_SHORT;         return MPI_SUCCESS; }
+        break;
+    case MPI_TYPECLASS_REAL:
+        if (size == 4)                  { *t = MPI_FLOAT;         return MPI_SUCCESS; }
+        if (size == 8)                  { *t = MPI_DOUBLE;        return MPI_SUCCESS; }
+        if (size == 16)                 { *t = MPI_LONG_DOUBLE;   return MPI_SUCCESS; }
+        break;
+    case MPI_TYPECLASS_COMPLEX:
+        if (size == 8)                  { *t = MPI_COMPLEX;       return MPI_SUCCESS; }
+        if (size == 16)                 { *t = MPI_DOUBLE_COMPLEX; return MPI_SUCCESS; }
+        if (size == 32)                 { *t = MPI_C_LONG_DOUBLE_COMPLEX; return MPI_SUCCESS; }
+        break;
+    }
+    mpiseq_should_not_be_called("MPI_Type_match_size (unrecognised typeclass/size)");
+    *t = MPI_DATATYPE_NULL;
+    return MPI_SUCCESS;
 }
 
 int MPI_Pack_size(int incount, MPI_Datatype dt, MPI_Comm cm, int *size)

@@ -12,6 +12,11 @@ sidesteps the ambiguity of, say, treating Netlib `scopy.f` as either
 Rows are dropped if the multifloats cell is missing — that filters out
 universal utilities (`xerbla`, `xerbla_array`, `lsame`, …) and
 upstream-only names (`dsdot`, `sdsdot`) that the migrator never re-emits.
+
+Prerequisite: staged trees at ``/tmp/stg-<target>`` for kind10, kind16,
+and multifloats — produce each with
+``uv run python -m migrator stage /tmp/stg-<target> --target <target>
+--parser gfortran`` before running this script.
 """
 from pathlib import Path
 import re

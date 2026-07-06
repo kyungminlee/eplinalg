@@ -7,7 +7,7 @@ LAPACK 2-stage routines (``iparam2stage.F``, ``dsytrd_sb2st.F``,
 Linux, so ``*.f`` does **not** match ``*.F``; the helper must glob both.
 """
 
-from migrator.__main__ import _collect_source_files
+from migrator.staging import _collect_source_files
 
 
 def test_collect_fortran_picks_up_capital_F(tmp_path):
