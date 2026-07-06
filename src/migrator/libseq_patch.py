@@ -118,4 +118,38 @@ def _patch_libseq_mpi_f(path: Path) -> None:
     if 'SUBROUTINE MUMPS_COPY_REAL16' not in src:
         src = src.rstrip() + '\n' + extra_helpers
 
+    # Base libseq mpi.f stubs pchk2mat (MUMPS calls it) but NOT pchk1mat /
+    # globchk. Our migrated *typed* ScaLAPACK archives (ey/qx/mw) are full
+    # netlib ports that reference all three, co-located in the reference
+    # ScaLAPACK's single pchkxmat.f.o object. In a seq link, pulling that
+    # object in for pchk1mat_/globchk_ also drags its pchk2mat_, colliding
+    # with libseq's pchk2mat_. Stubbing pchk1mat / globchk here makes libseq
+    # fully cover pchkxmat.f.o, so the reference object is never extracted and
+    # there is no duplicate symbol (no --allow-multiple-definition). Like
+    # pchk2mat these are descriptor checks reached only from inside pXgetrf/
+    # pXpotrf, which MUMPS never calls at np=1 (the root is factored by
+    # sequential LAPACK) — so the STOP body never executes.
+    extra_pchk = """
+      SUBROUTINE pchk1mat( MA, MAPOS0, NA, NAPOS0, IA, JA, DESCA,
+     &                     DESCAPOS0, NEXTRA, EX, EXPOS, INFO )
+      IMPLICIT NONE
+      INTEGER            DESCAPOS0, IA, INFO, JA, MA, MAPOS0, NA,
+     &                   NAPOS0, NEXTRA
+      INTEGER            DESCA( * ), EX( NEXTRA ), EXPOS( NEXTRA )
+        WRITE(*,*) 'Error. PCHK1MAT should not be called.'
+        STOP
+      RETURN
+      END SUBROUTINE pchk1mat
+      SUBROUTINE globchk( ICTXT, N, X, LDX, IWORK, INFO )
+      IMPLICIT NONE
+      INTEGER            ICTXT, INFO, LDX, N
+      INTEGER            IWORK( * ), X( LDX, * )
+        WRITE(*,*) 'Error. GLOBCHK should not be called.'
+        STOP
+      RETURN
+      END SUBROUTINE globchk
+"""
+    if 'SUBROUTINE pchk1mat' not in src:
+        src = src.rstrip() + '\n' + extra_pchk
+
     path.write_text(src)

@@ -376,7 +376,15 @@ find_dependency(MPI COMPONENTS C Fortran)
 # --- Derive consumer's MPI flavor + major.minor tag ---
 find_package(MPI QUIET COMPONENTS C)
 set(_FC_consumer_mpi_tag \"\")
-if(MPI_C_FOUND)
+# A consumer may FORCE the MPI flavor tag via -DEPLINALG_MPI_TAG=<tag>,
+# bypassing the mpi.h vendor probe below. This is required for a
+# libmpiseq/seq release: such a consumer still finds a real MPI for the
+# mpi.h *headers* (mmsolve.c #includes mpi.h), so the probe would detect
+# that vendor (e.g. intelmpi-2021.18) — but the installed archives are
+# tagged `seq`. Setting EPLINALG_MPI_TAG=seq resolves the seq targets file.
+if(DEFINED EPLINALG_MPI_TAG)
+  set(_FC_consumer_mpi_tag \"\${EPLINALG_MPI_TAG}\")
+elseif(MPI_C_FOUND)
   set(_FC_mpi_inc \"\${MPI_C_HEADER_DIR}\")
   if(TARGET MPI::MPI_C)
     get_target_property(_FC_mpi_iface MPI::MPI_C INTERFACE_INCLUDE_DIRECTORIES)

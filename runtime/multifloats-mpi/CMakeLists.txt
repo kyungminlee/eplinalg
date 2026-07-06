@@ -18,9 +18,15 @@ if(MPI_CXX_FOUND)
     # Each consumer that wants the real-MPI runtime adds MPI::* on
     # its own — keeps the libmpiseq link path (which substitutes
     # mpiseq for ALL of MPI/BLACS/PBLAS/scalapack) clean.
+    # multifloats is the header-only C++ double-double core: needed only to
+    # compile multifloats_mpi.cpp (symbols baked into libmultifloats_mpi.a),
+    # so it is a BUILD_INTERFACE-only dep. Leaking multifloats:: into the
+    # installed interface would make find_package(multifloats_mpi) — and every
+    # precision package that find_dependency's it — fail, because the
+    # FetchContent'd core is not an installed, find_package-able package.
     target_link_libraries(multifloats_mpi
         PRIVATE MPI::MPI_CXX
-        PUBLIC  multifloats)
+        PUBLIC  $<BUILD_INTERFACE:multifloats>)
     target_compile_features(multifloats_mpi PRIVATE cxx_std_17)
 else()
     # No MPI — still provide the bridge header via an interface target

@@ -207,19 +207,40 @@ if(NEEDS_MULTIFLOATS)
     # Use the multifloats top-level directory (not src/ and fsrc/
     # separately): upstream's src/CMakeLists.txt uses CMAKE_SOURCE_DIR
     # which is only correct when multifloats is the top-level project.
-    # EXCLUDE_FROM_ALL keeps us from building multifloats's install
-    # rules / tests by default.
+    #
+    # We deliberately do NOT pass EXCLUDE_FROM_ALL. The C++ core ``multifloats``
+    # is a genuine runtime dependency of the m/w stack (its extern "C" adddd /
+    # cadddd / … are called by the Fortran module procedures and are not baked
+    # into any archive), so a find_package consumer must be able to link it and
+    # resolve ``multifloats::multifloats`` (referenced by multifloatsfTargets).
+    # The sub-build already installs it as package ``multifloats`` (namespace
+    # ``multifloats::``); EXCLUDE_FROM_ALL suppresses that install *action* while
+    # still registering the export set, which both hides the archive from the
+    # prefix and, if we add our own, trips CMake's "target in multiple export
+    # sets" error. Letting the sub-build install is the clean path. Its own
+    # multifloatsf install stays gated off (MULTIFLOATSF_INSTALL_PRECOMPILED_MOD),
+    # so we still install multifloatsf ourselves below with no conflict.
     #
     # BUILD_TESTING/MULTIFLOATS_BUILD_BENCH are set as plain (non-cache)
-    # variables so they only suppress tests *inside* the multifloats
-    # sub-build. A `CACHE … FORCE` here would also disable our own
-    # `tests/` directory at the end of this file.
+    # variables so they only suppress tests/benches *inside* the multifloats
+    # sub-build (leaving just the two libraries) — without EXCLUDE_FROM_ALL these
+    # gates are what keep the sub-build lean. A `CACHE … FORCE` here would also
+    # disable our own `tests/` directory at the end of this file.
     set(BUILD_TESTING OFF)
     set(MULTIFLOATS_BUILD_BENCH OFF)
+    # Build the C++ core WITHOUT LTO. With LTO on (upstream default), the core
+    # installs as libmultifloats-<cxx-tag>.a (e.g. -gcc-13) with a Config
+    # selector that requires the *consumer* to expose a matching C++ compiler
+    # tag; a find_package consumer built with a different (or no) C++ compiler
+    # is rejected ("no build matching compiler '-'"). A non-LTO build installs
+    # the portable, untagged libmultifloats.a, so any consumer resolves
+    # multifloats::multifloats regardless of its toolchain. Plain (non-cache)
+    # set() → CMP0077 lets it win over the sub-build's option() default.
+    set(MULTIFLOATS_USE_LTO OFF)
     if(DEFINED MULTIFLOATS_DIR)
         message(STATUS "Using local multifloats: ${MULTIFLOATS_DIR}")
         add_subdirectory(${MULTIFLOATS_DIR}
-            ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
+            ${CMAKE_CURRENT_BINARY_DIR}/_mf)
     else()
         include(FetchContent)
         set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
@@ -239,7 +260,7 @@ if(NEEDS_MULTIFLOATS)
         FetchContent_Populate(multifloats_fetch)
         add_subdirectory(
             ${multifloats_fetch_SOURCE_DIR}
-            ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
+            ${CMAKE_CURRENT_BINARY_DIR}/_mf)
     endif()
 
     # la_constants_mw helper module (needs Fortran multifloats module)
@@ -624,9 +645,16 @@ function(add_migrated_c_library lib_name)
         target_compile_options(${_precision_target} PRIVATE -fpermissive -Wno-write-strings)
         target_compile_definitions(${_precision_target} PRIVATE
             MPICH_SKIP_MPICXX OMPI_SKIP_MPICXX)
-        # Link multifloats + bridge for C libraries in multifloats mode
+        # Link multifloats + bridge for C libraries in multifloats mode.
+        # ``multifloats`` is the header-only C++ double-double core: it is
+        # only needed to *compile* this target's own C++ sources — the
+        # instantiated symbols are baked into the resulting archive — so it
+        # is a BUILD_INTERFACE-only dependency. Leaking ``multifloats::``
+        # into the install export would make find_package(${_precision_target})
+        # fail, because the FetchContent'd core is not itself an installed,
+        # find_package-able package.
         if(TARGET multifloats)
-            target_link_libraries(${_precision_target} PUBLIC multifloats)
+            target_link_libraries(${_precision_target} PUBLIC $<BUILD_INTERFACE:multifloats>)
         endif()
         if(TARGET multifloats_mpi)
             target_link_libraries(${_precision_target} PUBLIC multifloats_mpi)
@@ -1068,7 +1096,10 @@ if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}scalapack)
         endif()
         if(C_AS_CXX)
             if(TARGET multifloats)
-                target_link_libraries(${LIB_PREFIX}scalapack PUBLIC multifloats)
+                # Header-only C++ core — build-time only (symbols baked into
+                # the archive). Keep it out of the install interface so
+                # find_package(mscalapack) doesn't chase an uninstalled core.
+                target_link_libraries(${LIB_PREFIX}scalapack PUBLIC $<BUILD_INTERFACE:multifloats>)
             endif()
             if(TARGET multifloats_mpi)
                 target_link_libraries(${LIB_PREFIX}scalapack PUBLIC multifloats_mpi)
@@ -2015,6 +2046,20 @@ if(NOT BASELINE_BUILD)
                     target_include_directories(${_g} PRIVATE
                         $<BUILD_INTERFACE:${_mumps_scotch_inc}>)
                 endif()
+                # -Dptscotch activates the distributed-analysis path in
+                # [dz]ana_aux_par.F / [dz]ana_driver.F (MUMPS_PTSCOTCH_* →
+                # SCOTCHFDGRAPH*), runtime-selected by ICNTL(28)=2 /
+                # ICNTL(29)=1. Without it those branches drop to INFO(1)=-38
+                # "PT-SCOTCH not available" for the genuine s/c/d/z solvers,
+                # exactly as the migrated ${LIB_PREFIX}mumps carries it. The
+                # pt Fortran renames bind the bare SCOTCHFDGRAPH*/CONTEXT*
+                # calls to the _mumps-suffixed archive symbols (ptscotchf.h
+                # shares the scotch include dir added just above).
+                if(MUMPS_HAVE_PTSCOTCH)
+                    target_compile_definitions(${_g} PRIVATE
+                        $<$<COMPILE_LANGUAGE:Fortran>:ptscotch>
+                        $<$<COMPILE_LANGUAGE:Fortran>:${_scotch_pt_f_renames}>)
+                endif()
                 # Pristine upstream compiles within column limits, but
                 # relieve line length anyway to match the migrated macro
                 # and stay robust to compiler defaults.
@@ -2042,6 +2087,16 @@ if(NOT BASELINE_BUILD)
             # dependency.)
             foreach(_s dzmumps scmumps)
                 target_link_libraries(${_s} PUBLIC mumps_common)
+                # PT-Scotch distributed increment (upstream -lptscotch
+                # -lscotch order; scotch itself is folded into mumps_common's
+                # C runtime). BUILD_INTERFACE so it backs our tests but is
+                # not forced into install(EXPORT) — same convention as the
+                # migrated ${LIB_PREFIX}mumps and the parallel stack below.
+                if(MUMPS_HAVE_PTSCOTCH)
+                    target_link_libraries(${_s} PUBLIC
+                        $<BUILD_INTERFACE:ptscotch>
+                        $<BUILD_INTERFACE:ptscotcherr>)
+                endif()
                 if(_have_bundled_parallel)
                     # MPI-matched in-tree stack. The circular refs between
                     # these static archives are resolved by the RESCAN
@@ -2396,6 +2451,164 @@ function(_install_standard_archive lib_name)
     endif()
 endfunction()
 
+# ── Shared arith-agnostic packages (task 35) ─────────────────────────
+# The full 10-arithmetic release is built from three separately-migrated
+# trees (kind10→e/y, kind16→q/x, multifloats→m/w) installed into one
+# prefix. Every tree ALSO rebuilds the identical arith-agnostic shared
+# targets (the ``*_common`` archives, the genuine s/c/d/z solvers, the
+# ordering libraries). If each tree bundles those into its OWN typed
+# export set, the generated ``*Targets.cmake`` collide at find_package
+# time ("Some (but not all) targets in this export set were already
+# defined") and the release cannot be find_package'd for all ten
+# precisions at once. The fix — mirroring ``_install_standard_archive``
+# for the Netlib archives — is to export each shared target ONCE, in its
+# own package, and have the precision Configs ``find_dependency`` it. The
+# content-driven archive filenames (commit 07fc6989) make the three
+# trees emit byte-identical ``.a`` files, so the shared package is a
+# genuine last-writer-wins no-op on re-install.
+
+# eplinalgCommon<Lib> — package name for a library's ``_common`` archive.
+function(_common_pkg_name lib_name out_var)
+    string(SUBSTRING "${lib_name}" 0 1 _f)
+    string(SUBSTRING "${lib_name}" 1 -1 _r)
+    string(TOUPPER "${_f}" _f)
+    set(${out_var} "eplinalgCommon${_f}${_r}" PARENT_SCOPE)
+endfunction()
+
+# Install ``${lib_name}_common`` into its own eplinalgCommon<Lib> package
+# (once per configure). MPI-tagged for the MPI-dependent libraries.
+# mumps_common PUBLIC-links the ordering leaves, so its Config
+# find_dependency's the ordering package.
+function(_install_shared_common lib_name)
+    set(_ct "${lib_name}_common")
+    if(NOT TARGET ${_ct})
+        return()
+    endif()
+    _common_pkg_name(${lib_name} _pkg)
+    get_property(_done GLOBAL PROPERTY _FC_COMMON_INSTALLED_${_pkg})
+    if(_done)
+        return()
+    endif()
+    set_property(GLOBAL PROPERTY _FC_COMMON_INSTALLED_${_pkg} TRUE)
+
+    set(_mpi_arg "")
+    if("${lib_name}" IN_LIST _MPI_DEPENDENT_LIBS)
+        set(_mpi_arg "MPI")
+    endif()
+    set(_deps "")
+    if("${lib_name}" STREQUAL "mumps" AND
+       (TARGET pord OR TARGET scotch OR TARGET metis))
+        list(APPEND _deps eplinalgOrdering)
+    endif()
+
+    # C ``_common`` archives built in multifloats mode PUBLIC-link the
+    # multifloats_mpi bridge (line ~634); mumps_common likewise reaches
+    # the first-party bridges transitively. Whatever the _common target
+    # actually links to a standalone bridge package must be a
+    # find_dependency of its Config, or the generated ${_pkg}Targets file
+    # references an undefined ``eplinalg::multifloats_mpi`` (etc.).
+    get_target_property(_ct_link_libs ${_ct} LINK_LIBRARIES)
+    if(_ct_link_libs)
+        foreach(_rt_bridge multifloats_mpi multifloats_mpi_f quad_mpi quad_mpi_f)
+            if(TARGET ${_rt_bridge} AND "${_rt_bridge}" IN_LIST _ct_link_libs)
+                list(APPEND _deps ${_rt_bridge})
+            endif()
+        endforeach()
+    endif()
+
+    fortran_install_library(${_ct}
+        EXPORT ${_pkg}Targets
+        NAMESPACE eplinalg::
+        ${_mpi_arg}
+        DEPENDS ${_deps})
+    get_target_property(_md ${_ct} Fortran_MODULE_DIRECTORY)
+    if(_md)
+        fortran_install_modules(${_ct})
+    endif()
+endfunction()
+
+# Install the MUMPS ordering leaf archives (pord/metis/scotch/scotcherr/
+# esmumps + the MPI-tied ptscotch/ptscotcherr) into a single
+# eplinalgOrdering package (once per configure). These are pure-C leaf
+# archives whose OUTPUT_NAMEs were fixed by task 32
+# (``libpord_mumps.a`` …) — they must NOT go through
+# fortran_install_library (which would re-tag the filename), so the
+# export + a minimal Config are emitted by hand. mumps_common and the
+# genuine/typed solvers reach these via find_dependency(eplinalgOrdering).
+function(_install_ordering_package)
+    if(NOT TARGET pord AND NOT TARGET scotch AND NOT TARGET metis)
+        return()
+    endif()
+    get_property(_done GLOBAL PROPERTY _FC_ORDERING_INSTALLED)
+    if(_done)
+        return()
+    endif()
+    set_property(GLOBAL PROPERTY _FC_ORDERING_INSTALLED TRUE)
+
+    set(_ord "")
+    foreach(_t pord metis scotch scotcherr esmumps ptscotch ptscotcherr)
+        if(TARGET ${_t})
+            list(APPEND _ord ${_t})
+        endif()
+    endforeach()
+    install(TARGETS ${_ord} EXPORT eplinalgOrderingTargets)
+    install(EXPORT eplinalgOrderingTargets
+        FILE eplinalgOrderingTargets.cmake
+        NAMESPACE eplinalg::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/eplinalgOrdering)
+
+    # ptscotch/ptscotcherr link MPI::MPI_C; only then does the Config need MPI.
+    set(_ord_mpi_dep "")
+    if(TARGET ptscotch)
+        set(_ord_mpi_dep "find_dependency(MPI COMPONENTS C)")
+    endif()
+    set(_cfg "\
+# eplinalgOrderingConfig.cmake — auto-generated by cmake/CMakeLists.txt
+# MUMPS ordering leaf archives (PORD / METIS / Scotch / [PT-Scotch]).
+# Pure-C archives with a stable ABI, so no compiler-tag matching is
+# needed — a single untagged targets file suffices.
+cmake_minimum_required(VERSION 3.12)
+include(CMakeFindDependencyMacro)
+${_ord_mpi_dep}
+include(\"\${CMAKE_CURRENT_LIST_DIR}/eplinalgOrderingTargets.cmake\")
+")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/eplinalgOrderingConfig.cmake "${_cfg}")
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/eplinalgOrderingConfig.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/eplinalgOrdering)
+endfunction()
+
+# Install the genuine single+double MUMPS solvers (dzmumps/scmumps +
+# their RESCAN umbrellas) into eplinalgGenuineMumps (once per configure).
+# They PUBLIC-link the shared mumps_common → find_dependency(eplinalgCommonMumps).
+function(_install_genuine_mumps)
+    if(NOT TARGET dzmumps AND NOT TARGET scmumps)
+        return()
+    endif()
+    get_property(_done GLOBAL PROPERTY _FC_GENUINE_INSTALLED)
+    if(_done)
+        return()
+    endif()
+    set_property(GLOBAL PROPERTY _FC_GENUINE_INSTALLED TRUE)
+
+    foreach(_g dzmumps scmumps)
+        if(TARGET ${_g})
+            fortran_install_library(${_g}
+                EXPORT eplinalgGenuineMumpsTargets
+                NAMESPACE eplinalg:: MPI
+                DEPENDS eplinalgCommonMumps)
+            get_target_property(_md ${_g} Fortran_MODULE_DIRECTORY)
+            if(_md)
+                fortran_install_modules(${_g})
+            endif()
+        endif()
+    endforeach()
+    foreach(_gf dzmumps_full scmumps_full)
+        if(TARGET ${_gf})
+            install(TARGETS ${_gf} EXPORT eplinalgGenuineMumpsTargets)
+        endif()
+    endforeach()
+endfunction()
+
 function(_install_library_pair lib_name)
     set(_precision_target "${LIB_PREFIX}${lib_name}")
     set(_common_target "${lib_name}_common")
@@ -2429,6 +2642,19 @@ function(_install_library_pair lib_name)
     # CMake fails with "target X not in any export set".
     _install_standard_archive(${lib_name})
 
+    # Factor the shared arith-agnostic targets into their own packages
+    # (task 35) BEFORE the precision export is written, so its INTERFACE
+    # references (eplinalg::${lib}_common, eplinalg::pord, …) resolve as
+    # cross-export references into those standalone packages rather than
+    # being bundled into — and colliding across — the typed export sets.
+    if("${lib_name}" STREQUAL "mumps")
+        _install_ordering_package()
+    endif()
+    _install_shared_common(${lib_name})
+    if("${lib_name}" STREQUAL "mumps")
+        _install_genuine_mumps()
+    endif()
+
     # If the std archive exists, its package is a transparent dep of
     # the precision Config so consumers only need find_package(qblas)
     # and ``eplinalg::blas`` resolves automatically.
@@ -2453,12 +2679,49 @@ function(_install_library_pair lib_name)
         endforeach()
     endif()
 
-    # Install precision-specific library FIRST. fortran_install_library
-    # only writes Config.cmake on the first call per export, scanning
-    # THAT target's INTERFACE_LINK_LIBRARIES for cross-package deps.
-    # The precision target (qmumps) has the canonical dependency set
-    # for find_package consumers; siblings sharing the export
-    # (qmumps_c, mumps_common) follow after.
+    # A subset of precision targets (blacs / scalapack / mumps) PUBLIC-link
+    # the first-party MPI bridges — multifloats_mpi(_f) for the m/w double-
+    # double MPI ops, quad_mpi(_f) for the q/x __float128 ops (see ~lines
+    # 733, 1073, 1526). Each bridge is installed as its own Config package
+    # (EXPORT ${_t}Targets, ~line 2700). Whichever bridge the precision
+    # target actually links must be a find_dependency of its Config, else
+    # the generated typed Targets file carries an ``eplinalg::multifloats_mpi``
+    # (etc.) INTERFACE_LINK_LIBRARIES entry that resolves to an undefined
+    # imported target when a consumer links the package. Read the target's
+    # real LINK_LIBRARIES (bare target names) rather than re-deriving the
+    # per-site NEEDS_* guards.
+    get_target_property(_pt_link_libs ${_precision_target} LINK_LIBRARIES)
+    if(_pt_link_libs)
+        foreach(_rt_bridge multifloats_mpi multifloats_mpi_f quad_mpi quad_mpi_f)
+            if(TARGET ${_rt_bridge} AND "${_rt_bridge}" IN_LIST _pt_link_libs)
+                list(APPEND _precision_deps ${_rt_bridge})
+            endif()
+        endforeach()
+    endif()
+
+    # The precision archive PUBLIC-links its ``_common`` (now factored
+    # into eplinalgCommon<Lib>), so its Config find_dependency's it.
+    if(TARGET ${_common_target})
+        _common_pkg_name(${lib_name} _common_pkg)
+        list(APPEND _precision_deps ${_common_pkg})
+    endif()
+
+    # MUMPS precision archives additionally reach the ordering leaves
+    # (${LIB_PREFIX}mumps PUBLIC-links ptscotch/ptscotcherr directly, and
+    # mumps_common the rest), and — for consumer convenience, preserving
+    # the old bundled behaviour — the genuine s/c/d/z solver package.
+    if("${lib_name}" STREQUAL "mumps")
+        if(TARGET pord OR TARGET scotch OR TARGET metis)
+            list(APPEND _precision_deps eplinalgOrdering)
+        endif()
+        if(TARGET dzmumps OR TARGET scmumps)
+            list(APPEND _precision_deps eplinalgGenuineMumps)
+        endif()
+    endif()
+
+    # Install the precision-specific archive. fortran_install_library
+    # writes ${_export}'s Config.cmake on this first call, emitting a
+    # find_dependency() for each transparent package in _precision_deps.
     fortran_install_library(${_precision_target}
         EXPORT ${_export}
         NAMESPACE eplinalg::
@@ -2469,79 +2732,13 @@ function(_install_library_pair lib_name)
         fortran_install_modules(${_precision_target})
     endif()
 
-    # MUMPS-special: the C-side bridge is now folded into
-    # ${LIB_PREFIX}mumps and the shared C runtime into mumps_common (both
-    # installed via the generic paths), so the export just needs the
-    # ordering leaves mumps_common PUBLIC-links and the umbrella INTERFACE
-    # (${LIB_PREFIX}mumps_full) that wraps solver + common in a
-    # LINK_GROUP:RESCAN. ``find_package(qmumps)`` then brings the Fortran
-    # archive, its folded C entry points (qmumps_c, xmumps_c) and the
-    # umbrella.
-    if("${lib_name}" STREQUAL "mumps" AND TARGET mumps_common)
-        # PORD ordering archive — PUBLIC-linked by mumps_common (folded C
-        # runtime), so it must join the same export (CMake rejects an
-        # exported target that requires a non-exported one). A leaf C
-        # archive: no Fortran modules, no MPI, its include dir is
-        # BUILD_INTERFACE-only, so a plain install(TARGETS) suffices.
-        # Consumers of find_package(qmumps) need it on the link line to
-        # resolve PORD's SPACE_ordering et al.
-        if(TARGET pord)
-            install(TARGETS pord EXPORT ${_export})
-        endif()
-        # METIS ordering archive — PUBLIC-linked by mumps_common, so it
-        # must join the same export. Like pord, a leaf C archive with a
-        # BUILD_INTERFACE-only include dir, so a plain install(TARGETS)
-        # suffices; consumers need it to resolve METIS_MUMPS_NodeND et al.
-        if(TARGET metis)
-            install(TARGETS metis EXPORT ${_export})
-        endif()
-        # Scotch ordering archives — PUBLIC-linked by mumps_common
-        # (esmumps + scotch + scotcherr), so they must join the same
-        # export. Leaf C archives with BUILD_INTERFACE-only include dirs;
-        # consumers need them to resolve SCOTCH_*_mumps / esmumps.
-        if(TARGET scotch)
-            install(TARGETS scotch scotcherr esmumps EXPORT ${_export})
-        endif()
-        # PT-Scotch distributed increment — PUBLIC-linked by mumps_common
-        # under -Dptscotch, so it joins the same export. MPI-tied leaf C
-        # archives (OUTPUT_NAME already carries -${MPI_TAG}); consumers need
-        # them on the link line before scotch to resolve SCOTCH_dgraph*_mumps
-        # / SCOTCHFDGRAPH*_mumps.
-        if(TARGET ptscotch)
-            install(TARGETS ptscotch ptscotcherr EXPORT ${_export})
-        endif()
-        install(TARGETS ${LIB_PREFIX}mumps_full
-            EXPORT ${_export})
-
-        # Genuine single+double solvers (additive; present only when the
-        # system BLAS/LAPACK/ScaLAPACK deps were found). Each now carries
-        # its folded-in C bridge, so there are no separate *_c archives.
-        # dzmumps_common is retired — the genuine solvers link the shared
-        # migrated ``mumps_common`` (installed via the library-pair path
-        # below), so it is not listed here.
-        foreach(_g dzmumps scmumps)
-            if(TARGET ${_g})
-                fortran_install_library(${_g} EXPORT ${_export} NAMESPACE eplinalg:: MPI)
-                get_target_property(_g_moddir ${_g} Fortran_MODULE_DIRECTORY)
-                if(_g_moddir)
-                    fortran_install_modules(${_g})
-                endif()
-            endif()
-        endforeach()
-        foreach(_gf dzmumps_full scmumps_full)
-            if(TARGET ${_gf})
-                install(TARGETS ${_gf} EXPORT ${_export})
-            endif()
-        endforeach()
-    endif()
-
-    # Bundle common library into the same export
-    if(TARGET ${_common_target})
-        fortran_install_library(${_common_target} EXPORT ${_export} NAMESPACE eplinalg:: ${_install_mpi_arg})
-        get_target_property(_fc_moddir ${_common_target} Fortran_MODULE_DIRECTORY)
-        if(_fc_moddir)
-            fortran_install_modules(${_common_target})
-        endif()
+    # The MUMPS typed umbrella (${LIB_PREFIX}mumps_full — a RESCAN wrapper
+    # over the typed solver + shared mumps_common) is precision-specific,
+    # so it stays in the typed export. The shared C runtime (mumps_common),
+    # the ordering leaves and the genuine solvers were already factored
+    # into their standalone packages above.
+    if("${lib_name}" STREQUAL "mumps" AND TARGET ${LIB_PREFIX}mumps_full)
+        install(TARGETS ${LIB_PREFIX}mumps_full EXPORT ${_export})
     endif()
 endfunction()
 
@@ -2584,7 +2781,44 @@ if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}mumps)
 endif()
 
 if(NEEDS_MULTIFLOATS)
-    # multifloats defines its own install rules; only install local helpers.
+    # The double-double *Fortran* module ``multifloatsf`` (module name
+    # ``multifloats``, symbols ``__multifloats_MOD_*``) is a genuine link
+    # dependency of every m/w Fortran archive: those archives leave the
+    # module procedures as *undefined* references (we link it BUILD_INTERFACE
+    # so they compile against its .mod, but the symbols are NOT baked in the
+    # way the header-only C++ core is). A find_package consumer therefore has
+    # to link libmultifloatsf itself, so it must be installed as its own
+    # package. The FetchContent'd multifloats sub-build gates its own install
+    # off (MULTIFLOATSF_INSTALL_PRECOMPILED_MOD, and it is EXCLUDE_FROM_ALL),
+    # so we install the target from here. Non-MPI, clean interface (PRIVATE
+    # includes only), so no DEPENDS / MPI tag. Built on demand as a link
+    # dependency of the m/w targets (which ARE in ALL), so the archive exists
+    # by install time despite EXCLUDE_FROM_ALL.
+    # The C++ double-double *core* ``multifloats`` (extern "C" adddd / cadddd /
+    # sindd / csqrtdd … from multifloats_math.cc) is a genuine link dependency:
+    # the Fortran module procedures in libmultifloatsf call straight into these
+    # C-ABI functions, and they are NOT baked into any m/w archive (only
+    # header-instantiated template ops are). The FetchContent'd sub-build already
+    # installs it as package ``multifloats`` under namespace ``multifloats::``
+    # (add_subdirectory EXCLUDE_FROM_ALL excludes it from the default *build*
+    # target, but the sub-build's install() rules still run), so we do NOT
+    # re-install it here — doing so would place ``multifloats`` in a second
+    # export set and break install(EXPORT multifloatsfTargets), which requires
+    # its dependency to live in exactly one. We only wire multifloatsf's Config
+    # to find it (below).
+
+    if(TARGET multifloatsf)
+        # multifloatsf's exported interface references multifloats::multifloats
+        # (PUBLIC-linked C++ core), so emit find_dependency(multifloats) into its
+        # Config — otherwise find_package(multifloatsf) fails with "imported
+        # targets referenced, but missing: multifloats::multifloats".
+        fortran_install_library(multifloatsf EXPORT multifloatsfTargets NAMESPACE eplinalg:: DEPENDS multifloats)
+        get_target_property(_mff_moddir multifloatsf Fortran_MODULE_DIRECTORY)
+        if(_mff_moddir)
+            fortran_install_modules(multifloatsf)
+        endif()
+    endif()
+
     # multifloats_mpi(_f) link MPI; tag them accordingly.
     set(_mf_mpi_helpers multifloats_mpi multifloats_mpi_f)
     foreach(_t la_constants_mw la_xisnan_mw multifloats_mpi multifloats_mpi_f)
@@ -2593,7 +2827,15 @@ if(NEEDS_MULTIFLOATS)
             if("${_t}" IN_LIST _mf_mpi_helpers)
                 set(_mf_mpi_arg "MPI")
             endif()
-            fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE eplinalg:: ${_mf_mpi_arg})
+            # multifloats_mpi_f PUBLIC-links multifloats_mpi, so its Targets
+            # file references eplinalg::multifloats_mpi. Emit the matching
+            # find_dependency into its Config so a consumer that loads only
+            # multifloats_mpi_f still resolves the base bridge.
+            set(_mf_dep_arg "")
+            if("${_t}" STREQUAL "multifloats_mpi_f")
+                set(_mf_dep_arg DEPENDS multifloats_mpi)
+            endif()
+            fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE eplinalg:: ${_mf_mpi_arg} ${_mf_dep_arg})
             get_target_property(_fc_moddir ${_t} Fortran_MODULE_DIRECTORY)
             if(_fc_moddir)
                 fortran_install_modules(${_t})
@@ -2606,7 +2848,14 @@ if(NEEDS_QUAD_MPI)
     # quad_mpi / quad_mpi_f both link (or stand in for) MPI; tag them.
     foreach(_t quad_mpi quad_mpi_f)
         if(TARGET ${_t})
-            fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE eplinalg:: MPI)
+            # quad_mpi_f PUBLIC-links quad_mpi, so its Targets file references
+            # eplinalg::quad_mpi. Emit find_dependency(quad_mpi) into its
+            # Config so loading only quad_mpi_f still resolves the base bridge.
+            set(_q_dep_arg "")
+            if("${_t}" STREQUAL "quad_mpi_f")
+                set(_q_dep_arg DEPENDS quad_mpi)
+            endif()
+            fortran_install_library(${_t} EXPORT ${_t}Targets NAMESPACE eplinalg:: MPI ${_q_dep_arg})
             get_target_property(_fc_moddir ${_t} Fortran_MODULE_DIRECTORY)
             if(_fc_moddir)
                 fortran_install_modules(${_t})
