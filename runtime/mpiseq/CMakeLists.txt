@@ -80,6 +80,17 @@ endif()
 # archives in place of real MPI without further plumbing.
 target_sources(mpiseq PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/mpiseq_c_stubs.c)
+# PT-Scotch dgraph stand-ins. When PT-Scotch is staged the mumps
+# archives are compiled -Dptscotch and reference the distributed
+# SCOTCHFDGRAPH*_MUMPS / SCOTCH_dgraphInit_mumps entry points, which a
+# libmpiseq link can't take from the real ptscotch archive (it needs a
+# real MPI underneath). Single-rank execution never reaches them, so
+# aborting stubs close the link. Always folded in like the C stubs:
+# without PT-Scotch nothing references them and the archive members
+# stay unpulled (sequential scotch defines no dgraph symbols, so there
+# is no overlap either way).
+target_sources(mpiseq PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/mpiseq_ptscotch_stubs.f90)
 target_include_directories(mpiseq PUBLIC
     $<BUILD_INTERFACE:${_mpiseq_upstream}>
 )
