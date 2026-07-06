@@ -73,7 +73,7 @@ tests/mumps/
 ```
 
 Supplementary libmpiseq C-side stubs live alongside the Fortran ones at
-`cmake/mpiseq_c_stubs.c` (folded into the `mpiseq` target when
+`runtime/mpiseq/mpiseq_c_stubs.c` (folded into the `mpiseq` target when
 `USE_LIBMPISEQ=ON` — see the `linux-libmpiseq` preset).
 
 ## Coverage plan

@@ -7,17 +7,18 @@
 # extended types (notably LLVM Flang 20, which has no working
 # REAL(KIND=16)).
 #
-# The migrated per-target modules no longer #ifdef on these macros: each
-# now lives in its precision-specific archive (la_constants_ey/la_xisnan_ey
-# in libelapack, la_constants_qx/la_xisnan_qx in libqlapack) and is compiled
-# only when that target is built — which by definition has the precision —
-# so the guard became redundant. The compile definitions are kept for any
-# preprocessed source that still wants a capability macro.
+# The migrated per-target modules do not #ifdef on these macros: each
+# lives in its precision-specific archive (la_constants_ey/la_xisnan_ey
+# in libelapack, la_constants_qx/la_xisnan_qx in libqlapack) and is
+# compiled only when that target is built — which by definition has the
+# precision. The compile definitions are kept for any preprocessed
+# source that wants a capability macro.
 #
 # Two CMake driver paths include this file:
 #   - cmake/CMakeLists.txt           (shared, used by ``migrator stage``)
-#   - the embedded template in       (per-library, used by ``migrator run``)
-#     src/migrator/__main__.py       — copies this file alongside.
+#   - the generated per-library CMakeLists from ``migrator run``
+#     (``_generate_cmake`` in src/migrator/cmake_gen.py — copies this
+#     file alongside).
 include_guard(GLOBAL)
 
 include(CheckFortranSourceCompiles)
@@ -28,9 +29,9 @@ include(CheckFortranSourceCompiles)
 # silently aliases the KIND=10 path onto KIND=16. Asking for KIND=10
 # directly fails to compile on such compilers, so HAVE_REAL10 stays
 # undefined and LA_XISNAN_EY's body is #ifdef'd out entirely — which
-# is the behavior we want. (Since the EY/QX split puts EISNAN and
-# QISNAN in separate modules, a KIND alias no longer risks the
-# ambiguous-generic-interface error the shared LA_XISNAN_EP once hit.)
+# is the behavior we want. (The EY/QX split puts EISNAN and QISNAN in
+# separate modules, so a KIND alias cannot produce an ambiguous generic
+# interface between them.)
 check_fortran_source_compiles("
     program test_real10
     real(kind=10) :: x

@@ -53,8 +53,7 @@ endif()
 # --- eplinalg extended kind10 e/y (long double) closure -------------------
 # The MUMPS package carries the extended emumps solver, but its imported target
 # pulls a per-precision parallel stack whose sibling packages eplinalg
-# deliberately does NOT auto-load (see epblas-parallel/CONTEXT.md, "No
-# sibling-deps inside eplinalg"): a consumer must find_package every piece of
+# deliberately does NOT auto-load: a consumer must find_package every piece of
 # the closure itself, and — because find_package(emumps) validates that its
 # referenced targets already exist — the whole closure must be found *before*
 # the MUMPS package below.
@@ -78,9 +77,9 @@ endforeach()
 # Same shape as e/y: the qmumps solver names a per-precision parallel stack it
 # does not auto-load, so we find every typed archive of the closure before the
 # MUMPS package. quad_mpi(_f) are the first-party MPI bridges that register the
-# __float128 MPI_Op / MPI_COMPLEX32 datatypes (task-35 wires them as transparent
-# find_dependency's of qblacs/qscalapack/qmumps, but we also link them directly
-# below because mmsolve.c calls quad_mpi_init()).
+# __float128 MPI_Op / MPI_COMPLEX32 datatypes (transparent find_dependency's of
+# qblacs/qscalapack/qmumps, but we also link them directly below because
+# mmsolve.c calls quad_mpi_init()).
 foreach(_p qblas qxblas qblacs qptzblas qlapack
            qpbblas qpblas qscalapack)
   find_package(${_p} REQUIRED)
@@ -120,8 +119,8 @@ find_package(multifloats REQUIRED)
 
 # --- eplinalg (genuine MUMPS s/c/d/z + extended e/q/m solvers + ordering) --
 # All three typed MUMPS packages share the same genuine dz/sc, mumps_common and
-# ordering leaves (factored into standalone packages by task 35), so finding all
-# three is collision-free.
+# ordering leaves (factored into standalone packages), so finding all three is
+# collision-free.
 foreach(_p emumps qmumps mmumps)
   find_package(${_p} REQUIRED)
 endforeach()
@@ -326,9 +325,9 @@ target_link_libraries(mmsolve PRIVATE
     -Wl,--end-group
     -Wl,--start-group
       $<TARGET_FILE:eplinalg::escalapack>       # e/y long-double ScaLAPACK (pegetrf_, pypotrf_, …)
-      # NUMROC/ICEIL/ILCM (formerly escalapack_tools) are now folded into
-      # scalapack_common, which is dropped under MKL — MKL supplies the
-      # type-agnostic numroc_/iceil_/ilcm_ here (linked first, above).
+      # NUMROC/ICEIL/ILCM live in scalapack_common, which is dropped
+      # under MKL — MKL supplies the type-agnostic numroc_/iceil_/ilcm_
+      # here (linked first, above).
       $<TARGET_FILE:eplinalg::elapack>          # e/y long-double LAPACK
       $<TARGET_FILE:eplinalg::eblacs>           # e/y long-double BLACS (Cegamx2d, …)
       $<TARGET_FILE:eplinalg::epblas>           # e/y long-double PBLAS

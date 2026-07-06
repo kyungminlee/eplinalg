@@ -32,9 +32,9 @@ and let the tests check `INFOG(1)` directly.
 Each test source under `tests/mumps/{fortran,c}/` is built twice — once
 linked against real MPI (`mpiexec -n 1`), once linked against the
 in-tree `mpiseq` archive (plain binary, suffix `_seq`). libmpiseq is
-Intel-MPI ABI compatible: cmake/CMakeLists.txt overlays the configured
+Intel-MPI ABI compatible: runtime/mpiseq/CMakeLists.txt overlays the configured
 MPI's `mpi.h` / `mpif.h` onto `_mpiseq_src/`, libseq's bundled `mpic.c`
-is replaced by `cmake/mpiseq_c_stubs.c` (compiled against Intel's
+is replaced by `runtime/mpiseq/mpiseq_c_stubs.c` (compiled against Intel's
 signatures), and `migrator stage` patches libseq's `mpi.f` to extend
 `MUMPS_COPY` with the precision-specific datatype cases:
 

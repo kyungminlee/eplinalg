@@ -1,6 +1,6 @@
 ! Multifloats (M/W) ScaLAPACK stub forwarders for libmpiseq.
 !
-! Symmetric to cmake/mpiseq_qx_stubs.f for the multifloats prefixes
+! Symmetric to mpiseq_qx_stubs.f for the multifloats prefixes
 ! M (real, type(real64x2)) and W (complex, type(cmplx64x2)). The
 ! migrated mmumps / wmumps archives request these P[MW]* symbols at
 ! link time; under a real-MPI build they resolve through the migrated
@@ -14,7 +14,7 @@
 !
 ! Free-form (.f90) so the multifloats module can be USEd for the
 ! derived-type argument shadows. Built only when NEEDS_MULTIFLOATS is
-! on (see cmake/CMakeLists.txt:834+).
+! on (see the gate in runtime/mpiseq/CMakeLists.txt).
 
 !-----------------------------------------------------------------------
 subroutine PMGETRF( M, N, A, IA, JA, DESCA, IPIV, INFO )

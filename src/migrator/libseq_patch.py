@@ -40,7 +40,7 @@ def _patch_libseq_mpi_f(path: Path) -> None:
         '      CALL MUMPS_COPY_REAL10( SENDBUF, RECVBUF, CNT, SS, RS )\n'
         '      ELSE IF ( DATATYPE .EQ. MPI_C_LONG_DOUBLE_COMPLEX ) THEN\n'
         '      CALL MUMPS_COPY_COMPLEX20( SENDBUF, RECVBUF, CNT, SS, RS )\n'
-        # multifloats: cmake/mpiseq_c_stubs.c encodes derived-type
+        # multifloats: runtime/mpiseq/mpiseq_c_stubs.c encodes derived-type
         # sentinels as 0x10000000 | total_bytes. float64x2 → 16-byte
         # element (sentinel 268435472); complex64x2 → 32-byte
         # (268435488). MPI_Type_c2f / MPI_Op_c2f in Intel mpi.h are
