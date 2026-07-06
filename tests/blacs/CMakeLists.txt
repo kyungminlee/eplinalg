@@ -28,8 +28,8 @@ endif()
 # ── Dedicated module directory ──────────────────────────────────────
 # pblas_grid module name is shared with tests/{pbblas,pblas} (whose
 # bodies have since diverged), so use a per-tree subdir to keep our
-# .mod files from colliding in the shared fmod/ tree.
-set(_bl_moddir "${PROJECT_BINARY_DIR}/fmod/${FORTRAN_MOD_COMPAT_TAG}/blacs_tests")
+# .mod files from colliding in the shared fmod_tests/ tree.
+set(_bl_moddir "${PROJECT_BINARY_DIR}/fmod_tests/${FORTRAN_MOD_COMPAT_TAG}/blacs_tests")
 file(MAKE_DIRECTORY ${_bl_moddir})
 
 # ── Common helper modules ───────────────────────────────────────────

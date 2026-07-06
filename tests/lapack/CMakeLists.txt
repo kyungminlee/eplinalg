@@ -50,9 +50,9 @@ endif()
 # ── Dedicated module directory ──────────────────────────────────────
 # tests/lapack/common reuses the same module names as tests/blas/common
 # (prec_kinds, compare, prec_report, test_data). Placing the LAPACK
-# variants in their own subdirectory under fmod prevents .mod-file
+# variants in their own subdirectory under fmod_tests prevents .mod-file
 # collisions when both test trees build together.
-set(_lp_moddir "${PROJECT_BINARY_DIR}/fmod/${FORTRAN_MOD_COMPAT_TAG}/lapack_tests")
+set(_lp_moddir "${PROJECT_BINARY_DIR}/fmod_tests/${FORTRAN_MOD_COMPAT_TAG}/lapack_tests")
 file(MAKE_DIRECTORY ${_lp_moddir})
 
 # ── Common helper modules ───────────────────────────────────────────

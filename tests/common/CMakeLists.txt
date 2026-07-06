@@ -18,7 +18,7 @@ if(NOT IS_DIRECTORY ${_conv_dir})
 endif()
 
 add_library(target_conv STATIC ${_conv_dir}/target_conv.f90)
-fortran_module_layout(target_conv)
+fortran_test_module_layout(target_conv)
 if(NEEDS_MULTIFLOATS AND TARGET multifloatsf)
     target_link_libraries(target_conv PUBLIC
         $<BUILD_INTERFACE:multifloatsf>)

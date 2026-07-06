@@ -33,7 +33,7 @@ add_library(ptzblas_test_common STATIC
     common/ref_quad_blas.f90
     common/ref_quad_aux.f90
 )
-fortran_module_layout(ptzblas_test_common)
+fortran_test_module_layout(ptzblas_test_common)
 target_link_libraries(ptzblas_test_common PUBLIC refblas_quad)
 
 # ── Per-target wrapper module ───────────────────────────────────────
@@ -49,7 +49,7 @@ add_fypp_source(_ptzblas_wrapper_src
     ${CMAKE_CURRENT_SOURCE_DIR}/common
 )
 add_library(ptzblas_test_target STATIC ${_ptzblas_wrapper_src})
-fortran_module_layout(ptzblas_test_target)
+fortran_test_module_layout(ptzblas_test_target)
 target_link_libraries(ptzblas_test_target PUBLIC
     ptzblas_test_common
     target_conv

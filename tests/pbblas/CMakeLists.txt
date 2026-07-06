@@ -44,8 +44,8 @@ endif()
 # copy (pbblas added `grid_init_shape` for the pb[dz]trnv non-square
 # grid coverage in commit 90f76d2). Keep our .mod files in a per-tree
 # subdir so neither version overwrites the other in the shared
-# fmod/${FORTRAN_MOD_COMPAT_TAG} dir.
-set(_pbb_moddir "${PROJECT_BINARY_DIR}/fmod/${FORTRAN_MOD_COMPAT_TAG}/pbblas_tests")
+# fmod_tests/${FORTRAN_MOD_COMPAT_TAG} dir.
+set(_pbb_moddir "${PROJECT_BINARY_DIR}/fmod_tests/${FORTRAN_MOD_COMPAT_TAG}/pbblas_tests")
 file(MAKE_DIRECTORY ${_pbb_moddir})
 
 # ── Common helper modules ───────────────────────────────────────────
