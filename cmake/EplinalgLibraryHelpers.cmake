@@ -62,7 +62,7 @@ endfunction()
 # vendored upstream sources. The target name is the bare library name
 # (``blas``, ``lapack``, ...) — no ``_std`` suffix — so consumers can
 # write ``target_link_libraries(... blas)`` and get the upstream
-# DGEMM_/ZGEMM_/etc. symbols. The migrated archive (``${LIB_PREFIX}<name>``)
+# DGEMM_/ZGEMM_/etc. symbols. The migrated archive (``${LIB_PAIR_PREFIX}<name>``)
 # PUBLIC-links it so Q/X/E/Y/M/W clones can call into the stock half
 # without bundling the originals into the migrated archive.
 #
@@ -162,8 +162,14 @@ function(add_migrated_fortran_library lib_name)
         list(APPEND _precision "${_dir}/${f}")
     endforeach()
 
+    # The precision target carries the full family-pair prefix (ey/qx/mw)
+    # so the target name, the emitted archive filename and the installed
+    # package name all agree: target eylapack → libeylapack.a →
+    # find_package(eylapack). (LIB_PREFIX / LIB_PREFIX_COMPLEX remain the
+    # single-letter SYMBOL prefixes — EGEMM/YGEMM etc. — and are not used
+    # for target names.)
     set(_common_target "${lib_name}_common")
-    set(_precision_target "${LIB_PREFIX}${lib_name}")
+    set(_precision_target "${LIB_PAIR_PREFIX}${lib_name}")
 
     if(_common)
         add_library(${_common_target} STATIC ${_common})
@@ -175,14 +181,6 @@ function(add_migrated_fortran_library lib_name)
     if(TARGET ${_common_target})
         target_link_libraries(${_precision_target} PUBLIC ${_common_target})
     endif()
-
-    # Content-driven archive filename. The CMake target keeps LIB_PREFIX
-    # (so exported symbols and inter-target references are unchanged), but
-    # the emitted ``.a`` is renamed to reflect what it actually holds:
-    # E/Y families → ey, Q/X → qx, M/W → mw (see ${lib_name}_ARCHIVE_PREFIX
-    # in the staged manifest). fortran_install_library reads this property.
-    set_target_properties(${_precision_target} PROPERTIES
-        MIGRATED_OUTPUT_BASE "${${lib_name}_ARCHIVE_PREFIX}${lib_name}")
 
     fortran_relax_line_length(${_precision_target})
     if(TARGET ${_common_target})
@@ -199,12 +197,6 @@ function(add_migrated_fortran_library lib_name)
     if(NEEDS_MULTIFLOATS)
         target_link_libraries(${_precision_target} PUBLIC
             $<BUILD_INTERFACE:multifloatsf>)
-        if(TARGET la_constants_mw)
-            target_link_libraries(${_precision_target} PUBLIC la_constants_mw)
-        endif()
-        if(TARGET la_xisnan_mw)
-            target_link_libraries(${_precision_target} PUBLIC la_xisnan_mw)
-        endif()
         # The common archive can also hold family-independent sources that
         # the multifloats migrator rewrites to ``USE multifloats`` (e.g.
         # scalapack's PCHK1MAT/PCHK2MAT in pchkxmat.f rebind the generic
@@ -243,8 +235,10 @@ function(add_migrated_c_library lib_name)
         list(APPEND _dual "${_dir}/${f}")
     endforeach()
 
+    # Family-pair-prefixed target name, matching the archive filename and
+    # package name (see add_migrated_fortran_library).
     set(_common_target "${lib_name}_common")
-    set(_precision_target "${LIB_PREFIX}${lib_name}")
+    set(_precision_target "${LIB_PAIR_PREFIX}${lib_name}")
 
     if(_common)
         add_library(${_common_target} STATIC ${_common})
@@ -269,10 +263,6 @@ function(add_migrated_c_library lib_name)
         target_link_libraries(${_precision_target} PRIVATE MPI::MPI_C)
         target_link_libraries(${_precision_target} INTERFACE $<LINK_ONLY:MPI::MPI_C>)
     endif()
-
-    # Content-driven archive filename (see add_migrated_fortran_library).
-    set_target_properties(${_precision_target} PROPERTIES
-        MIGRATED_OUTPUT_BASE "${${lib_name}_ARCHIVE_PREFIX}${lib_name}")
 
     # Dual-interface compile: files listed in
     # ``${lib_name}_DUAL_INTERFACE_SOURCES`` are already compiled once

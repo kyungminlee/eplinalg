@@ -51,12 +51,12 @@ set(_reflap_srcs ${_reflap_f} ${_reflap_F} ${_reflap_f90} ${_reflap_F90})
 list(FILTER _reflap_srcs EXCLUDE REGEX "/(dsgesv|zcgesv|dsposv|zcposv|dsgels|zcgels)\\.[fF]9?0?$")
 list(FILTER _reflap_srcs EXCLUDE REGEX "/(dlag2s|slag2d|zlag2c|clag2z|dlat2s|zlat2c)\\.[fF]9?0?$")
 
-# Skip multifloats-specific auxiliary modules (la_*_mf / la_*_ep are
-# for targets that don't use the standard -freal-8-real-16 promotion).
-list(FILTER _reflap_srcs EXCLUDE REGEX "la_constants_mf")
-list(FILTER _reflap_srcs EXCLUDE REGEX "la_constants_ep")
-list(FILTER _reflap_srcs EXCLUDE REGEX "la_xisnan_mf")
-list(FILTER _reflap_srcs EXCLUDE REGEX "la_xisnan_ep")
+# Skip target-specific auxiliary modules (la_*_mf / la_*_ep and the
+# per-target la_*_{ey,qx,mw} pairs are for targets that don't use the
+# standard -freal-8-real-16 promotion; the _mw pair even ``USE``s the
+# multifloats module, which doesn't exist in kind10/kind16 builds).
+list(FILTER _reflap_srcs EXCLUDE REGEX "la_constants_(mf|ep|ey|qx|mw)")
+list(FILTER _reflap_srcs EXCLUDE REGEX "la_xisnan_(mf|ep|ey|qx|mw)")
 
 # Skip iparam2stage.F. It is a precision-independent INTEGER function
 # (no FP argument promotion), and the staged lapack/src/iparam2stage.F
@@ -145,7 +145,7 @@ target_link_libraries(reflapack_quad PUBLIC refblas_quad)
 # XBLAS Level-2 entry points by their upstream d/z names
 # (blas_dgemv_x_, blas_dgbmv_x_, blas_dsymv_x_, blas_zhemv_x_, ...).
 # We don't ship a standard-precision XBLAS archive, and the migrated
-# ${LIB_PREFIX}xblas is at the *target* working precision (e.g. 80-bit
+# ${LIB_PAIR_PREFIX}xblas is at the *target* working precision (e.g. 80-bit
 # extended on kind10, double-double on multifloats) — so its q/x/e/m/y
 # entry points cannot satisfy reflapack_quad's d/z calls under
 # -freal-8-real-16 (which promotes both to KIND=16 quad).

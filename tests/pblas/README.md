@@ -1,8 +1,8 @@
 # Differential precision tests for migrated PBLAS
 
 This directory extends the `tests/blas/` scaffold to the **distributed**
-extended-precision PBLAS libraries (`${LIB_PREFIX}pblas` —
-`qpblas`, `epblas`, `ddpblas`). Each test runs a PBLAS operation over
+extended-precision PBLAS libraries (`${LIB_PAIR_PREFIX}pblas` —
+`qxpblas`, `eypblas`, `mwpblas`). Each test runs a PBLAS operation over
 a BLACS process grid, gathers the distributed result back to rank 0,
 and compares against serial quad-precision BLAS applied to the full
 global matrix.

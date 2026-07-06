@@ -36,18 +36,17 @@ def _strip_iso_fortran_env_realN(line: str) -> str:
 def rewrite_la_constants_use(source: str, target_mode: TargetMode) -> str:
     """Rewrite ``USE LA_CONSTANTS`` clauses for the chosen target.
 
-    KIND mode (extended precision): the LAPACK la_constants module is
-    cloned to a per-target module (``LA_CONSTANTS_EY`` for KIND=10,
-    ``LA_CONSTANTS_QX`` for KIND=16) named via ``la_constants_suffix``,
-    so we just rename the module reference and rename each constant to
-    its prefixed equivalent (E*/Y* or Q*/X*).
+    The LAPACK la_constants module is cloned to a per-target module
+    (``LA_CONSTANTS_EY`` for KIND=10, ``LA_CONSTANTS_QX`` for KIND=16,
+    ``LA_CONSTANTS_MW`` for multifloats) named via
+    ``la_constants_suffix``, so we just rename the module reference and
+    rename each constant to its prefixed equivalent (E*/Y*, Q*/X* or
+    M*/W*).
 
-    Multifloats mode: there is no ``la_constants_mw`` module — instead,
-    we rewrite the import to point at the real ``multifloats`` module
-    and rename each LAPACK constant (``dzero``, ``dsafmin``, ...) to its
-    multifloats equivalent (``MF_ZERO``, ``MF_SAFMIN``, ...). The
-    ``wp=>dp`` rename entry is dropped because ``wp`` is no longer
-    meaningful once the type becomes ``TYPE(float64x2)``.
+    KIND mode additionally renames the ``wp=>dp`` / ``wp=>sp`` kind
+    aliases to the target kind parameter; multifloats mode instead
+    drops them, because ``wp`` is no longer meaningful once the type
+    becomes ``TYPE(real64x2)``.
     """
     const_renames = _la_constants_rename_map(target_mode)
     lines, result, in_use_stmt = source.split('\n'), [], False
@@ -121,7 +120,7 @@ def _la_constants_rename_map(target_mode: TargetMode) -> dict[str, str]:
 
       KIND=10  → ``ezero``, ``ysafmin`` (la_constants_ey)
       KIND=16  → ``qzero``, ``xsafmin`` (la_constants_qx)
-      multifloats → ``ddzero``, ``zzsafmin`` (la_constants_mw)
+      multifloats → ``mzero``, ``wsafmin`` (la_constants_mw)
 
     Only the prefixed names are mapped — the LHS aliases ``zero``,
     ``half`` etc. are intentionally left untouched so the body of the

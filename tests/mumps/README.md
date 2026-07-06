@@ -2,8 +2,8 @@
 
 Differential precision tests for the migrated MUMPS sparse direct solver.
 Mirrors the tests/blas / tests/lapack pattern: every check happens at
-`REAL(KIND=16)`, the migrated `${LIB_PREFIX}mumps` archive
-(`qmumps` / `emumps` / `mmumps` for kind16 / kind10 / multifloats) is
+`REAL(KIND=16)`, the migrated `${LIB_PAIR_PREFIX}mumps` archive
+(`qxmumps` / `eymumps` / `mwmumps` for kind16 / kind10 / multifloats) is
 exercised both from Fortran (`call qmumps(id)`) and from C
 (`qmumps_c(&id)` via the bridge described in
 [`c/include/qmumps_c.h`](c/include/qmumps_c.h)), and per-case JSON
@@ -43,7 +43,7 @@ The `recipes/` and `cmake/` trees live in this single repo
 the mumps work merged into `tests` (see the B7 entry in `CHANGELOG.md`).
 
 Each test is built twice: linked against real MPI (wrapped via
-`mpiexec -n 1`, since the migrated qmumps archive calls MPI primitives
+`mpiexec -n 1`, since the migrated qxmumps archive calls MPI primitives
 unconditionally) and linked against the in-tree `mpiseq` archive (plain
 binary, suffix `_seq`, no mpiexec needed). Both variants pass 26/26 on
 all three targets with bit-identical JSON precision reports — see the

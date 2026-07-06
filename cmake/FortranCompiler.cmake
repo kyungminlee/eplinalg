@@ -260,18 +260,27 @@ endfunction()
 #     [EXPORT <export-name>]
 #     [DESTINATION <lib-dir>])
 #
-# Installs the library with a compiler-version-tagged filename (for ABI),
-# while the export/config system uses the mod compat tag to find modules.
+# Installs the library with a filename tagged by exactly the ABI axes the
+# archive depends on, while the export/config system uses the mod compat
+# tag to find modules:
 #
-# When ``MPI`` is passed, the install ALSO tags the output with a flavor
-# tag (e.g. ``intelmpi-2021.18`` / ``openmpi-5.0`` / ``mpich-4.2`` / the
-# ``seq`` libmpiseq release) so MPI-dependent libraries built against
-# different implementations can coexist in the same install prefix. The
-# flavor comes from ``MPI_LIB_TAG`` when the caller defines it (letting a
-# libmpiseq release override it to ``seq``), otherwise from the raw
-# ``MPI_TAG`` the top-level CMakeLists detects from mpi.h's vendor macros.
-# When neither is set, the MPI option is a no-op — the build falls back to
-# compiler-only tagging.
+#   - compiler tag (``gfortran-13``, …): included only when the target
+#     compiles Fortran sources (auto-detected from the SOURCES property).
+#     Pure-C archives have a stable platform ABI and carry no compiler tag.
+#   - MPI flavor tag (``openmpi-4.1`` / ``mpich-4.2`` / ``seq``, …):
+#     included only when ``MPI`` is passed, i.e. when the objects
+#     themselves are MPI-ABI-bound (reference MPI symbols or bake mpi.h
+#     constants). The flavor comes from ``MPI_LIB_TAG`` when the caller
+#     defines it (letting a libmpiseq release override it to ``seq``),
+#     otherwise from the raw ``MPI_TAG`` the top-level CMakeLists detects
+#     from mpi.h's vendor macros. When neither is set, ``MPI`` is a no-op.
+#
+# An archive needing neither tag installs untagged (``libfoo.a``), and its
+# Config performs no consumer-side detection at all. Independently of the
+# flavor tag, a Config emits ``find_dependency(MPI COMPONENTS …)`` whenever
+# the target's link interface references ``MPI::MPI_*`` imported targets
+# (static archives export PRIVATE deps as ``$<LINK_ONLY:…>``), so e.g. an
+# MPI-ABI-clean archive that merely compiles against mpi.h still resolves.
 #
 # Note: This function generates a <ProjectName>Config.cmake. If your project
 # has multiple Fortran library targets, add them all to a single EXPORT set
@@ -279,7 +288,7 @@ endfunction()
 # generated only once per export set.
 # ---------------------------------------------------------------------------
 function(fortran_install_library target)
-  cmake_parse_arguments(PARSE_ARGV 1 ARG "MPI" "NAMESPACE;EXPORT;DESTINATION" "DEPENDS")
+  cmake_parse_arguments(PARSE_ARGV 1 ARG "MPI;KEEP_OUTPUT_NAME" "NAMESPACE;EXPORT;DESTINATION" "DEPENDS")
   if(ARG_UNPARSED_ARGUMENTS)
     message(FATAL_ERROR "fortran_install_library: unexpected arguments: ${ARG_UNPARSED_ARGUMENTS}")
   endif()
@@ -293,19 +302,59 @@ function(fortran_install_library target)
     set(ARG_DESTINATION "${CMAKE_INSTALL_LIBDIR}")
   endif()
 
-  # Assemble the install tag. Compiler-version always; MPI flavor
-  # appended for MPI-dependent libs when a flavor tag is known.
-  # Prefer ``MPI_LIB_TAG`` (which a caller may override, e.g. to ``seq``
-  # for the libmpiseq release) and fall back to the raw ``MPI_TAG``.
+  # Assemble the install tag from the components the archive's ABI
+  # actually depends on — each appears only when genuinely needed.
+  # Compiler tag: only for targets that compile Fortran (name mangling,
+  # module format and runtime library differ per compiler); detected
+  # from the SOURCES property. MPI flavor tag: only when the caller
+  # passes ``MPI`` (objects are MPI-ABI-bound); prefer ``MPI_LIB_TAG``
+  # (which a caller may override, e.g. to ``seq`` for the libmpiseq
+  # release) and fall back to the raw ``MPI_TAG``. Archives needing
+  # neither install untagged.
+  get_target_property(_fc_sources ${target} SOURCES)
+  set(_has_fortran FALSE)
+  foreach(_fc_src IN LISTS _fc_sources)
+    string(TOLOWER "${_fc_src}" _fc_src_lower)
+    if(_fc_src_lower MATCHES "\\.(f|for|ftn|f77|f90|f95|f03|f08)$")
+      set(_has_fortran TRUE)
+      break()
+    endif()
+  endforeach()
+
   set(_flavor_tag "${MPI_TAG}")
   if(DEFINED MPI_LIB_TAG)
     set(_flavor_tag "${MPI_LIB_TAG}")
   endif()
-  set(_full_tag "${FORTRAN_COMPILER_TAG}")
+
+  set(_tag_parts "")
+  if(_has_fortran)
+    list(APPEND _tag_parts "${FORTRAN_COMPILER_TAG}")
+  endif()
   set(_is_mpi_lib FALSE)
   if(ARG_MPI AND _flavor_tag)
-    set(_full_tag "${FORTRAN_COMPILER_TAG}-${_flavor_tag}")
+    list(APPEND _tag_parts "${_flavor_tag}")
     set(_is_mpi_lib TRUE)
+  endif()
+  list(JOIN _tag_parts "-" _full_tag)
+
+  # Even a flavor-untagged package may reference MPI::MPI_* imported
+  # targets in its exported Targets file — static archives export their
+  # PRIVATE deps as $<LINK_ONLY:…>, and pblas/scalapack/xblas compile
+  # against mpi.h without their objects binding to the MPI ABI. Such a
+  # Config must find_dependency(MPI) or the imported-target references
+  # dangle at consumer time. Derive the needed components from the link
+  # interface rather than from the MPI flag. (MPI_C needs the delimiter
+  # guard so it doesn't match the MPI_CXX substring.)
+  get_target_property(_fc_iface_links ${target} INTERFACE_LINK_LIBRARIES)
+  set(_mpi_dep_components "")
+  if(_fc_iface_links MATCHES "MPI::MPI_C(>|;|$)")
+    list(APPEND _mpi_dep_components C)
+  endif()
+  if(_fc_iface_links MATCHES "MPI::MPI_Fortran")
+    list(APPEND _mpi_dep_components Fortran)
+  endif()
+  if(_fc_iface_links MATCHES "MPI::MPI_CXX")
+    list(APPEND _mpi_dep_components CXX)
   endif()
 
   # Derive config name from the export set name (strip trailing "Targets").
@@ -313,22 +362,25 @@ function(fortran_install_library target)
   # unique EXPORT name (e.g. EXPORT qblasTargets → qblasConfig.cmake).
   string(REGEX REPLACE "Targets$" "" _config_name "${ARG_EXPORT}")
   set(_cmake_install_dir "${ARG_DESTINATION}/cmake/${_config_name}")
-  set(_targets_file "${ARG_EXPORT}-${_full_tag}.cmake")
 
-  # Tag the library output filename by compiler + (optionally) MPI.
-  # Migrated precision libraries carry a MIGRATED_OUTPUT_BASE property
-  # holding a content-driven archive base (e.g. ``eylapack`` for a target
-  # named ``elapack``); use it as the filename stem so the emitted archive
-  # reflects what it contains (both E and Y families → libeylapack.a),
-  # while the CMake target name and exported symbols stay on LIB_PREFIX.
-  # Non-migrated targets have no such property and keep their target name.
-  get_target_property(_out_base ${target} MIGRATED_OUTPUT_BASE)
-  if(NOT _out_base)
-    set(_out_base "${target}")
+  # Tag the library output filename. The target name IS the archive
+  # base: migrated precision targets are pair-prefixed (eylapack →
+  # libeylapack-<tag>.a), so name, filename and package agree. An
+  # untagged target keeps its default output name (libeypblas.a).
+  # KEEP_OUTPUT_NAME preserves an OUTPUT_NAME already baked at target
+  # creation (vendored archives like libptscotch_mumps-<tag>.a carry a
+  # _mumps suffix plus their own flavor tag) — only the cmake package
+  # machinery applies, not the rename.
+  if(_full_tag)
+    set(_targets_file "${ARG_EXPORT}-${_full_tag}.cmake")
+    if(NOT ARG_KEEP_OUTPUT_NAME)
+      set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME "${target}-${_full_tag}"
+      )
+    endif()
+  else()
+    set(_targets_file "${ARG_EXPORT}.cmake")
   endif()
-  set_target_properties(${target} PROPERTIES
-    OUTPUT_NAME "${_out_base}-${_full_tag}"
-  )
 
   # Add target to the export set
   install(TARGETS ${target}
@@ -358,23 +410,36 @@ function(fortran_install_library target)
   # No cross-package sibling find_dependency() calls are emitted
   # into the generated Config.cmake — consumers list every archive
   # they need on their own link line; symbol resolution happens at
-  # final link. Rationale: precision siblings (qblas vs eblas, …) are
+  # final link. Rationale: precision siblings (qxblas vs eyblas, …) are
   # independently useful, and auto-loading them would force every
   # consumer to install all of them. Only transparent deps a package's
   # own Targets file references (DEPENDS below) are emitted.
 
-  # Generate Config.cmake that finds the right targets file.
-  # Strategy: derive the consumer's compiler tag (and MPI tag if this
-  # is an MPI-dependent library) and look for an exact match. If no
-  # exact match, fail with an informative error listing available builds.
+  # Generate Config.cmake that finds the right targets file. Strategy:
+  # re-derive, on the consumer side, exactly the tag components this
+  # install baked into the filename — compiler tag from the consumer's
+  # Fortran compiler, MPI flavor tag from an mpi.h vendor probe — and
+  # look for an exact match, failing with an informative error listing
+  # available builds. A package with no tag components includes a
+  # fixed targets file with no detection at all.
+
+  # find_dependency(MPI) whenever the Targets file references
+  # MPI::MPI_* — independent of the flavor tag (see the derivation of
+  # _mpi_dep_components above).
+  if(_mpi_dep_components)
+    list(JOIN _mpi_dep_components " " _mpi_dep_components_str)
+    set(_mpi_dep_block "\
+# The Targets file references MPI::MPI_* imported targets (static
+# archives export PRIVATE deps as LINK_ONLY entries); bring them into
+# scope so those references resolve.
+find_dependency(MPI COMPONENTS ${_mpi_dep_components_str})
+")
+  else()
+    set(_mpi_dep_block "")
+  endif()
+
   if(_is_mpi_lib)
     set(_mpi_detect_block "\
-# --- MPI is a required dependency for this library ---
-# Bring MPI::MPI_C / MPI::MPI_Fortran into scope so the Targets file's
-# INTERFACE_LINK_LIBRARIES references resolve. The detection just
-# below re-uses MPI_C_HEADER_DIR / the imported target's interface,
-# both of which find_dependency(MPI) populates.
-find_dependency(MPI COMPONENTS C Fortran)
 # --- Derive consumer's MPI flavor + major.minor tag ---
 find_package(MPI QUIET COMPONENTS C)
 set(_FC_consumer_mpi_tag \"\")
@@ -422,46 +487,42 @@ if(NOT _FC_consumer_mpi_tag)
   return()
 endif()
 ")
-    set(_consumer_tag_expr "\${_FC_consumer_tag}-\${_FC_consumer_mpi_tag}")
     set(_cleanup_mpi "unset(_FC_consumer_mpi_tag)")
   else()
     set(_mpi_detect_block "")
-    set(_consumer_tag_expr "\${_FC_consumer_tag}")
     set(_cleanup_mpi "")
   endif()
+
+  # Consumer-side tag expression mirrors the producer-side _tag_parts
+  # composition: compiler part iff the archive has Fortran objects,
+  # flavor part iff it is MPI-ABI-bound.
+  set(_consumer_tag_parts "")
+  if(_has_fortran)
+    list(APPEND _consumer_tag_parts "\${_FC_consumer_tag}")
+  endif()
+  if(_is_mpi_lib)
+    list(APPEND _consumer_tag_parts "\${_FC_consumer_mpi_tag}")
+  endif()
+  list(JOIN _consumer_tag_parts "-" _consumer_tag_expr)
 
   # Build a block of find_dependency() calls for the DEPENDS list. These
   # are transparent dependencies (not user-facing): factored-out shared
   # packages that the precision archive PUBLIC-links and that are each
   # installed as their own Config. Examples: the standard-precision
-  # archive `eplinalg::blas` (package `eplinalgStdBlas`), and for
-  # multifloats targets the `la_constants_mw` / `la_xisnan_mw` helper
-  # archives. The per-precision Config auto-loads them so consumers only
-  # need to find_package(qblas) / find_package(mblas).
+  # archive `eplinalg::blas` (package `eplinalgStdBlas`), and the
+  # first-party MPI bridges (multifloats_mpi, quad_mpi). The
+  # per-precision Config auto-loads them so consumers only need to
+  # find_package(qxblas) / find_package(mwblas).
   set(_deps_block "")
   foreach(_dep IN LISTS ARG_DEPENDS)
     string(APPEND _deps_block "find_dependency(${_dep})\n")
   endforeach()
 
-  set(_config_content "\
-# ${_config_name}Config.cmake
-# Auto-generated by FortranCompiler.cmake
-#
-# Detects the consuming compiler and includes the matching targets file.
-# Library files are tagged by compiler version (ABI compatibility).
-# Module directories are tagged by .mod format version (compile-time compatibility).
-
-cmake_minimum_required(VERSION 3.12)
-
-# find_dependency() is used by the MPI block below for MPI-dependent
-# libraries, and by the transparent DEPENDS block emitted right after
-# this include for libraries that link a factored-out shared package
-# (the standard-precision archive, currently). No precision-sibling
-# find_dependency() calls are emitted — consumers list every
-# per-precision package they need on their own.
-include(CMakeFindDependencyMacro)
-${_deps_block}
-
+  # Compiler-detection block: emitted only for archives with Fortran
+  # objects. Pure-C packages skip it entirely, so a consumer project
+  # with no Fortran language enabled can still find_package() them.
+  if(_has_fortran)
+    set(_fc_detect_block "\
 # --- Derive consumer's compiler family and ABI version tag ---
 set(_FC_consumer_family \"\")
 
@@ -495,9 +556,66 @@ else()
 endif()
 set(_FC_consumer_tag \"\${_FC_consumer_family}-\${_FC_abi_version}\")
 unset(_FC_abi_version)
+")
+  else()
+    set(_fc_detect_block "")
+  endif()
 
+  if(_full_tag)
+    # The dependency set can differ BETWEEN FLAVORS of the same package
+    # sharing one install prefix (e.g. a real-MPI mumps_common transparently
+    # depends on PT-Scotch; a seq (libmpiseq) one does not, and its Targets
+    # file references eplinalg::mpiseq instead of MPI::MPI_*). The Config
+    # file below is flavor-independent and gets overwritten by whichever
+    # flavor installs last — so the find_dependency() calls must NOT live in
+    # it. Split them into a per-tag deps file installed next to the per-tag
+    # targets file; the Config includes the one matching the consumer's tag.
+    set(_deps_file "${ARG_EXPORT}-deps-${_full_tag}.cmake")
+    file(GENERATE
+      OUTPUT "${PROJECT_BINARY_DIR}/cmake/${_deps_file}"
+      CONTENT "\
+# ${_deps_file}
+# Auto-generated by FortranCompiler.cmake
+#
+# Transparent dependencies of the '${_full_tag}' flavor of package
+# ${_config_name}. Kept per-tag (not in the shared Config) because one
+# prefix can hold several flavors of this package with different
+# dependency sets. Included by ${_config_name}Config.cmake after it
+# resolves the consumer's tag; CMakeFindDependencyMacro is already in
+# scope there.
+${_mpi_dep_block}${_deps_block}"
+    )
+    install(
+      FILES "${PROJECT_BINARY_DIR}/cmake/${_deps_file}"
+      DESTINATION "${_cmake_install_dir}"
+    )
+
+    set(_config_content "\
+# ${_config_name}Config.cmake
+# Auto-generated by FortranCompiler.cmake
+#
+# Re-derives, on the consumer side, the ABI tag components baked into
+# this package's archive filename (compiler tag → Fortran ABI, MPI
+# flavor tag → MPI ABI) and includes the matching targets file.
+# Module directories are tagged by .mod format version separately.
+#
+# This file is identical across all flavors of the package and may be
+# overwritten by any of them; everything flavor-specific (the archive
+# targets AND their transparent find_dependency() calls) lives in the
+# per-tag targets/deps files included below.
+
+cmake_minimum_required(VERSION 3.12)
+
+# find_dependency() is used by the per-tag deps file included below (the
+# MPI dependency line when the Targets file references MPI targets, and
+# the transparent DEPENDS block for libraries that link a factored-out
+# shared package). No precision-sibling find_dependency() calls are
+# emitted — consumers list every per-precision package they need on
+# their own.
+include(CMakeFindDependencyMacro)
+${_fc_detect_block}
 ${_mpi_detect_block}
-# Look for exact (compiler[+MPI]) tag match
+# Look for exact tag match
 set(_FC_targets_file \"\${CMAKE_CURRENT_LIST_DIR}/${ARG_EXPORT}-${_consumer_tag_expr}.cmake\")
 
 if(NOT EXISTS \"\${_FC_targets_file}\")
@@ -522,13 +640,38 @@ if(NOT EXISTS \"\${_FC_targets_file}\")
   return()
 endif()
 
-include(\"\${_FC_targets_file}\")
+# Transparent deps of THIS flavor (other flavors in the same prefix may
+# have different ones), then the flavor's targets. The deps file runs
+# nested find_dependency() calls whose Configs come from this same
+# template and (re)use the same _FC_* variables in this scope — stash
+# the targets path in a package-unique variable across that include.
+set(_FC_targets_file_${ARG_EXPORT} \"\${_FC_targets_file}\")
+include(\"\${CMAKE_CURRENT_LIST_DIR}/${ARG_EXPORT}-deps-${_consumer_tag_expr}.cmake\")
+include(\"\${_FC_targets_file_${ARG_EXPORT}}\")
+unset(_FC_targets_file_${ARG_EXPORT})
 
 unset(_FC_consumer_family)
 unset(_FC_consumer_tag)
 unset(_FC_targets_file)
 ${_cleanup_mpi}
 ")
+  else()
+    set(_config_content "\
+# ${_config_name}Config.cmake
+# Auto-generated by FortranCompiler.cmake
+#
+# This package's archive contains no Fortran objects and is not bound
+# to an MPI ABI, so it is compatible across Fortran compilers and MPI
+# flavors — a single untagged targets file suffices and no
+# consumer-side tag detection is performed.
+
+cmake_minimum_required(VERSION 3.12)
+
+include(CMakeFindDependencyMacro)
+${_mpi_dep_block}${_deps_block}
+include(\"\${CMAKE_CURRENT_LIST_DIR}/${ARG_EXPORT}.cmake\")
+")
+  endif()
 
   file(GENERATE
     OUTPUT "${PROJECT_BINARY_DIR}/cmake/${_config_name}Config.cmake"

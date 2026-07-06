@@ -59,8 +59,8 @@ ctest  --preset linux-impi --test-dir /tmp/stage-q/build
 `mpi.h`) and BLACS/PBLAS p2p tests are only verified against Intel MPI;
 OpenMPI/MPICH may hang or fail to link.
 
-Resulting archives: `libqblas-<tag>.a`, `libqlapack-<tag>.a`,
-`libqscalapack-<tag>.a`, etc.
+Resulting archives: `libqxblas-<tag>.a`, `libqxlapack-<tag>.a`,
+`libqxscalapack-<tag>.a`, etc.
 
 Link against them from a Fortran program:
 

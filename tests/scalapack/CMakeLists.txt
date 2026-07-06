@@ -42,8 +42,8 @@ if(BASELINE_BUILD)
         endif()
     endforeach()
 else()
-    foreach(_lib ${LIB_PREFIX}scalapack ${LIB_PREFIX}pblas
-                 ${LIB_PREFIX}blacs ${LIB_PREFIX}lapack)
+    foreach(_lib ${LIB_PAIR_PREFIX}scalapack ${LIB_PAIR_PREFIX}pblas
+                 ${LIB_PAIR_PREFIX}blacs ${LIB_PAIR_PREFIX}lapack)
         if(NOT TARGET ${_lib})
             message(STATUS "tests/scalapack: skipping — ${_lib} not built")
             return()
@@ -89,7 +89,7 @@ else()
     target_link_libraries(scalapack_test_common PUBLIC
         refblas_quad
         reflapack_quad
-        ${LIB_PREFIX}blacs
+        ${LIB_PAIR_PREFIX}blacs
         MPI::MPI_Fortran
     )
 endif()
@@ -131,15 +131,15 @@ else()
     target_link_libraries(scalapack_test_target PUBLIC
         scalapack_test_common
         target_conv
-        ${LIB_PREFIX}scalapack
-        ${LIB_PREFIX}pblas
-        ${LIB_PREFIX}lapack
-        ${LIB_PREFIX}blas
+        ${LIB_PAIR_PREFIX}scalapack
+        ${LIB_PAIR_PREFIX}pblas
+        ${LIB_PAIR_PREFIX}lapack
+        ${LIB_PAIR_PREFIX}blas
     )
-    # qscalapack's Fortran routines call qlamov_/pqgemr2d_ etc.; those C
-    # helpers are now folded into ${LIB_PREFIX}scalapack itself, so no
+    # qxscalapack's Fortran routines call qlamov_/pqgemr2d_ etc.; those C
+    # helpers are now folded into ${LIB_PAIR_PREFIX}scalapack itself, so no
     # separate qscalapack_c link is needed.
-    foreach(_dep ${LIB_PREFIX}ptzblas ${LIB_PREFIX}pbblas)
+    foreach(_dep ${LIB_PAIR_PREFIX}ptzblas ${LIB_PAIR_PREFIX}pbblas)
         if(TARGET ${_dep})
             target_link_libraries(scalapack_test_target PUBLIC ${_dep})
         endif()
@@ -173,22 +173,22 @@ function(add_scalapack_precision_test test_src)
     else()
         set(_sp_cycle
             scalapack_test_target scalapack_test_common
-            ${LIB_PREFIX}scalapack ${LIB_PREFIX}pblas
-            ${LIB_PREFIX}ptzblas  ${LIB_PREFIX}pbblas
-            ${LIB_PREFIX}lapack   ${LIB_PREFIX}blas
-            ${LIB_PREFIX}blacs
+            ${LIB_PAIR_PREFIX}scalapack ${LIB_PAIR_PREFIX}pblas
+            ${LIB_PAIR_PREFIX}ptzblas  ${LIB_PAIR_PREFIX}pbblas
+            ${LIB_PAIR_PREFIX}lapack   ${LIB_PAIR_PREFIX}blas
+            ${LIB_PAIR_PREFIX}blacs
             reflapack_quad refblas_quad)
         # The dlamov-family wrappers (qlamov_, xlamov_) and REDIST entry
-        # points (pqgemr2d_, pxgemr2d_) that ${LIB_PREFIX}scalapack's
-        # Fortran routines call are now folded into ${LIB_PREFIX}scalapack
+        # points (pqgemr2d_, pxgemr2d_) that ${LIB_PAIR_PREFIX}scalapack's
+        # Fortran routines call are now folded into ${LIB_PAIR_PREFIX}scalapack
         # itself — no separate qscalapack_c archive to add.
-        # qxblas is a PUBLIC dep of qlapack (cmake/CMakeLists.txt:600) for
-        # the iterative-refinement extra-precision routines. It pulls qblas,
-        # which is already in the cycle — must include qxblas explicitly so
+        # qxxblas is a PUBLIC dep of qxlapack (cmake/CMakeLists.txt:600) for
+        # the iterative-refinement extra-precision routines. It pulls qxblas,
+        # which is already in the cycle — must include qxxblas explicitly so
         # the LINK_GROUP closes; otherwise CMake reports a strongly-connected
-        # component cycle (group ↔ qxblas).
-        if(TARGET ${LIB_PREFIX}xblas)
-            list(APPEND _sp_cycle ${LIB_PREFIX}xblas)
+        # component cycle (group ↔ qxxblas).
+        if(TARGET ${LIB_PAIR_PREFIX}xblas)
+            list(APPEND _sp_cycle ${LIB_PAIR_PREFIX}xblas)
         endif()
     endif()
     foreach(_common blas_common blacs_common ptzblas_common pblas_common lapack_common scalapack_common)

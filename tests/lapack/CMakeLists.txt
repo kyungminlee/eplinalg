@@ -2,7 +2,7 @@
 #
 # Mirrors tests/blas/CMakeLists.txt. Each test program runs the same
 # operation through (a) the migrated extended-precision routine under
-# test (linked from ${LIB_PREFIX}lapack) and (b) a REAL(KIND=16)
+# test (linked from ${LIB_PAIR_PREFIX}lapack) and (b) a REAL(KIND=16)
 # reference (reflapack_quad — see reflapack/, which in turn links
 # refblas_quad from the BLAS side), then compares results in
 # REAL(KIND=16) and writes a per-test JSON report.
@@ -85,7 +85,7 @@ target_include_directories(lapack_test_target PUBLIC
 )
 if(BASELINE_BUILD)
     # kind4/kind8: link the standard Netlib lapack/blas archives. There
-    # is no ${LIB_PREFIX}lapack target — LIB_PREFIX is empty under
+    # is no ${LIB_PAIR_PREFIX}lapack target — LIB_PREFIX is empty under
     # baseline staging, so the migrated archives never get built.
     target_link_libraries(lapack_test_target PUBLIC
         lapack_test_common
@@ -97,8 +97,8 @@ else()
     target_link_libraries(lapack_test_target PUBLIC
         lapack_test_common
         target_conv
-        ${LIB_PREFIX}lapack
-        ${LIB_PREFIX}blas
+        ${LIB_PAIR_PREFIX}lapack
+        ${LIB_PAIR_PREFIX}blas
     )
 endif()
 if(NEEDS_MULTIFLOATS AND TARGET multifloatsf)
@@ -126,7 +126,7 @@ foreach(_group linear_solve factorization eigenvalue svd auxiliary)
         # XBLAS-dependent iterative-refinement tests (xx-suffix and
         # rfsx-suffix routines: dgbsvxx, dgerfsx, zporfsx, …) need a
         # native-precision XBLAS archive that this build doesn't ship.
-        # The migrated path links qxblas + a quad bridge in
+        # The migrated path links qxxblas + a quad bridge in
         # reflapack_quad; for kind4/kind8 there is neither, so the
         # corresponding tests would fail to link. Skip them.
         list(FILTER _tests EXCLUDE REGEX "/test_[a-z]+(rfsx|svxx)\\.f90$")

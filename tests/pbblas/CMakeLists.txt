@@ -29,13 +29,13 @@ if(NOT TARGET refblas_quad)
     return()
 endif()
 
-if(NOT TARGET ${LIB_PREFIX}pbblas)
-    message(STATUS "tests/pbblas: skipping — ${LIB_PREFIX}pbblas not built")
+if(NOT TARGET ${LIB_PAIR_PREFIX}pbblas)
+    message(STATUS "tests/pbblas: skipping — ${LIB_PAIR_PREFIX}pbblas not built")
     return()
 endif()
 
-if(NOT TARGET ${LIB_PREFIX}blacs)
-    message(STATUS "tests/pbblas: skipping — ${LIB_PREFIX}blacs not built")
+if(NOT TARGET ${LIB_PAIR_PREFIX}blacs)
+    message(STATUS "tests/pbblas: skipping — ${LIB_PAIR_PREFIX}blacs not built")
     return()
 endif()
 
@@ -66,7 +66,7 @@ target_include_directories(pbblas_test_common PUBLIC
 )
 target_link_libraries(pbblas_test_common PUBLIC
     refblas_quad
-    ${LIB_PREFIX}blacs
+    ${LIB_PAIR_PREFIX}blacs
     MPI::MPI_Fortran
 )
 
@@ -92,7 +92,7 @@ target_include_directories(pbblas_test_target PUBLIC
 target_link_libraries(pbblas_test_target PUBLIC
     pbblas_test_common
     target_conv
-    ${LIB_PREFIX}pbblas
+    ${LIB_PAIR_PREFIX}pbblas
 )
 if(NEEDS_MULTIFLOATS AND TARGET multifloatsf)
     target_link_libraries(pbblas_test_target PUBLIC multifloatsf)
@@ -129,8 +129,8 @@ function(add_pbblas_precision_test test_src nproc)
     # archives until cross-references settle.
     set(_pbblas_cycle
         pbblas_test_target pbblas_test_common
-        ${LIB_PREFIX}pbblas ${LIB_PREFIX}ptzblas
-        ${LIB_PREFIX}blacs ${LIB_PREFIX}blas refblas_quad)
+        ${LIB_PAIR_PREFIX}pbblas ${LIB_PAIR_PREFIX}ptzblas
+        ${LIB_PAIR_PREFIX}blacs ${LIB_PAIR_PREFIX}blas refblas_quad)
     foreach(_common blas_common blacs_common ptzblas_common pbblas_common)
         if(TARGET ${_common})
             list(APPEND _pbblas_cycle ${_common})

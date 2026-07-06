@@ -124,9 +124,10 @@ def cmd_stage(args):
     else:
         libraries = list(LIBRARY_ORDER)
 
-    # The real / complex family letters (e/y, q/x, m/w). Used both to
-    # build the per-library archive-filename prefix below and to stamp
-    # LIB_PREFIX / LIB_PREFIX_COMPLEX into target_config.cmake.
+    # The real / complex family letters (e/y, q/x, m/w). Stamped into
+    # target_config.cmake as LIB_PREFIX / LIB_PREFIX_COMPLEX (symbol
+    # prefixes) and, concatenated, as LIB_PAIR_PREFIX — the target /
+    # archive / package name prefix (eyblas, qxlapack, mwmumps, ...).
     pmap = target_mode.prefix_map
     lib_prefix = pmap['R'].lower()
     lib_prefix_complex = pmap['C'].lower()
@@ -196,15 +197,11 @@ def cmd_stage(args):
         # Per-target LA_CONSTANTS / LA_XISNAN precision helpers. Each
         # extended target owns exactly one prefix-pair module —
         #   kind10 → *_ey   kind16 → *_qx   multifloats → *_mw
-        # (suffix taken from the target's ``la_constants_suffix``). Only
-        # the target's own pair belongs in this staging tree; the other
-        # targets' pairs, which sit in the shared LAPACK SRC dir, are
-        # excluded. multifloats' *_mw pair is not in SRC at all — it
-        # ships as separate helper libraries from
-        # recipes/lapack/mf_helpers/ (staged below) — so this exclusion
-        # is also what keeps the *_ey/*_qx SRC files out of a
-        # multifloats build (formerly the ``module_name is not None``
-        # special-case for the shared *_ep pair).
+        # (suffix taken from the target's ``la_constants_suffix``). All
+        # three pairs sit in the shared LAPACK SRC dir; only the
+        # target's own pair belongs in this staging tree — the other
+        # targets' pairs are excluded, so e.g. the *_ey/*_qx SRC files
+        # stay out of a multifloats build.
         _la_suffixes = ('_ey', '_qx', '_mw')
         _own_suffix = target_mode.la_constants_suffix.lower()
         _la_own = {f'la_constants{_own_suffix}', f'la_xisnan{_own_suffix}'}
@@ -284,26 +281,6 @@ def cmd_stage(args):
                 if _DUAL_ENTRY_C_RE.search(text):
                     dual_files.append(f'src/{f.name}')
 
-        # Content-driven archive-filename prefix. The classifier's family
-        # slots carry an 'R' (real) / 'C' (complex) type tag; the emitted
-        # archive is named after what it actually contains, independent of
-        # any filename convention:
-        #   real families only    → e / q / m
-        #   complex families only → y / x / w
-        #   both                  → ey / qx / mw   (e.g. libeylapack.a)
-        #   neither (precision-independent, e.g. scalapack_tools) → no prefix
-        # This is the archive FILE name only; the CMake target name and the
-        # exported linker symbols stay on LIB_PREFIX, so nothing links-breaks.
-        _tags = {
-            slot.type_tag
-            for fam in classification.families
-            for slot in fam.slots
-        }
-        archive_prefix = (
-            (lib_prefix if 'R' in _tags else '')
-            + (lib_prefix_complex if 'C' in _tags else '')
-        )
-
         # Write manifest.cmake
         common_list = '\n    '.join(common_files) if common_files else ''
         precision_list = '\n    '.join(precision_files) if precision_files else ''
@@ -322,8 +299,6 @@ set({lib_name}_DUAL_INTERFACE_SOURCES
 )
 
 set({lib_name}_LANGUAGE {config.language})
-
-set({lib_name}_ARCHIVE_PREFIX {archive_prefix})
 """
         (lib_dir / 'manifest.cmake').write_text(manifest)
         print(f'  Manifest: {len(common_files)} common, '
@@ -369,14 +344,7 @@ set({lib_name}_ARCHIVE_PREFIX {archive_prefix})
             merged.append(n)
     staged_list = ';'.join(merged)
 
-    helpers_src = proj_root / 'recipes' / 'lapack' / 'mf_helpers'
-    helpers_dst = staging_dir / '_helpers'
     if needs_mf:
-        helpers_dst.mkdir(exist_ok=True)
-        for name in ['la_constants_mw.f90', 'la_xisnan_mw.f90']:
-            src = helpers_src / name
-            if src.exists():
-                shutil.copy2(src, helpers_dst / name)
         # Copy the first-party multifloats-mpi bridge library wholesale.
         # It is a standalone library under runtime/ with its own
         # CMakeLists.txt (add_subdirectory'd from cmake/CMakeLists.txt);
@@ -415,10 +383,10 @@ set({lib_name}_ARCHIVE_PREFIX {archive_prefix})
 set(TARGET_NAME "{target_mode.name}")
 set(LIB_PREFIX "{lib_prefix}")
 set(LIB_PREFIX_COMPLEX "{lib_prefix_complex}")
+set(LIB_PAIR_PREFIX "{lib_prefix}{lib_prefix_complex}")
 set(NEEDS_MULTIFLOATS {'TRUE' if needs_mf else 'FALSE'})
 set(NEEDS_QUAD_MPI {'TRUE' if needs_quad_mpi else 'FALSE'})
 set(C_AS_CXX {'TRUE' if needs_mf else 'FALSE'})
-set(MF_HELPERS_DIR "${{CMAKE_CURRENT_SOURCE_DIR}}/_helpers")
 set(STAGED_LIBRARIES {staged_list})
 """
     (staging_dir / 'target_config.cmake').write_text(target_config)
@@ -472,7 +440,7 @@ set(STAGED_LIBRARIES {staged_list})
 
     # Same recipe for LAPACK: vendored Netlib SRC/ promoted to quad
     # precision gives tests/lapack/reflapack/ a KIND=16 reference to
-    # compare the migrated qlapack/elapack/ddlapack against. The
+    # compare the migrated qxlapack/eylapack/mwlapack against. The
     # INSTALL/ directory provides {s,d}lamch.f / {s,d}roundup_lwork.f,
     # which LAPACK SRC routines call but which aren't in SRC/ itself —
     # copy them into _reflapack_src/ alongside the SRC contents so a
@@ -522,7 +490,7 @@ set(STAGED_LIBRARIES {staged_list})
         ('_scalapack_tools_src', 'scalapack-2.2.3/TOOLS'),
         ('_scalapack_redist_src', 'scalapack-2.2.3/REDIST/SRC'),
         # MUMPS sequential MPI stub. Lets cmake build a single-process
-        # ``libmpiseq`` archive alongside the migrated qmumps; tests can
+        # ``libmpiseq`` archive alongside the migrated qxmumps; tests can
         # link it instead of MPI::MPI_Fortran for plain (no mpiexec)
         # executables. Stubs print a "should not be called" error if a
         # collective/comm primitive that requires multi-rank coordination
@@ -530,7 +498,7 @@ set(STAGED_LIBRARIES {staged_list})
         ('_mpiseq_src',    'MUMPS_5.8.2/libseq'),
         # MUMPS upstream src/ + include/. The recipe (which is fortran-
         # only) skips every *MUMPS_C / MUMPS_C_TYPES header and every
-        # *.c file, so the migrated qmumps archive ships without a C
+        # *.c file, so the migrated qxmumps archive ships without a C
         # interface. tests/mumps's C-bridge build re-uses upstream
         # mumps_c.c (compiled twice with quad-precision type overrides
         # supplied from tests/mumps/c/include/, see B2 in
@@ -571,8 +539,8 @@ set(STAGED_LIBRARIES {staged_list})
         # names through scotch_rename_mumps.h. The bison/flex parser and
         # scotch.h/scotchf.h are pre-generated and vendored, so the build
         # needs no bison/flex. Staging libscotch + esmumps sources and the
-        # generated headers lets cmake build ``scotch``/``scotcherr``/
-        # ``esmumps`` and define ``-Dscotch`` so ICNTL(7)=3 works; without
+        # generated headers lets cmake build ``scotch``/``esmumps``
+        # and define ``-Dscotch`` so ICNTL(7)=3 works; without
         # it the mumps_scotch*.c compile as inert stubs. Integer-graph
         # only, so a single build serves every migrated arithmetic.
         ('_mumps_scotch_libsrc',    'scotch-7.0.4/libscotch'),
@@ -591,7 +559,7 @@ set(STAGED_LIBRARIES {staged_list})
     # libseq's mpi.f bundles BLACS/ScaLAPACK forwarders (which collide
     # with the real migrated archives) and only knows the standard MPI
     # datatypes in MUMPS_COPY (no MPI_REAL16 / MPI_COMPLEX32 needed by
-    # qmumps reductions). Patch the staged copy to fix both. Upstream
+    # qxmumps reductions). Patch the staged copy to fix both. Upstream
     # external/ stays read-only.
     mpiseq_dst = staging_dir / '_mpiseq_src' / 'mpi.f'
     if mpiseq_dst.is_file():
@@ -638,9 +606,9 @@ def _stage_baseline(args, target_name: str):
         f'set(TARGET_NAME "{target_name}")\n'
         'set(LIB_PREFIX "")\n'
         'set(LIB_PREFIX_COMPLEX "")\n'
+        'set(LIB_PAIR_PREFIX "")\n'
         'set(NEEDS_MULTIFLOATS FALSE)\n'
         'set(C_AS_CXX FALSE)\n'
-        'set(MF_HELPERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/_helpers")\n'
         'set(STAGED_LIBRARIES )\n'
     )
     (staging_dir / 'target_config.cmake').write_text(target_config)

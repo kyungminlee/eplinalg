@@ -6,8 +6,10 @@ and mirrors the contents of the recipe's ``source_dir``. Patches listed in
 --no-index``) applied with ``git apply`` from inside the staged tree.
 
 Idempotency: a ``.prepared.stamp`` file inside the staged tree records when
-preparation last completed. If the stamp is newer than every listed patch
-file, the stage is skipped. Pass ``rebuild=True`` to force a clean re-stage.
+preparation last completed and a fingerprint of the upstream source tree
+(file names, sizes, mtimes). If the stamp is newer than every listed patch
+file and the upstream fingerprint is unchanged, the stage is skipped.
+Pass ``rebuild=True`` to force a clean re-stage.
 
 This module is the input side of the pipeline reshape described in
 ``doc/archive/refactor-20260509.md``. Phase A wires it as a no-op-by-default CLI
@@ -16,6 +18,7 @@ command; subsequent phases route migration to read from the staged tree.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import subprocess
@@ -212,14 +215,37 @@ def _resolve_patches(recipe_path: Path,
     return resolved
 
 
-def _is_fresh(stamp: Path, patches: list[Path]) -> bool:
+def _source_fingerprint(source_dir: Path) -> str:
+    """Cheap content fingerprint of the upstream source tree.
+
+    Hashes the sorted (relative-path, size, mtime_ns) triples of every
+    file under ``source_dir``. The *name set* is part of the hash, so
+    files added to or removed from upstream invalidate the cache even
+    when their mtimes predate the stamp — ``git mv`` preserves mtime,
+    so an mtime-only check misses files relocated into the tree.
+    """
+    h = hashlib.sha256()
+    for p in sorted(source_dir.rglob('*')):
+        if p.is_file():
+            st = p.stat()
+            h.update(
+                f'{p.relative_to(source_dir)}\t'
+                f'{st.st_size}\t{st.st_mtime_ns}\n'.encode()
+            )
+    return h.hexdigest()
+
+
+def _is_fresh(stamp: Path, patches: list[Path], source_dir: Path) -> bool:
     if not stamp.exists():
         return False
     stamp_mtime = stamp.stat().st_mtime
     for p in patches:
         if p.stat().st_mtime > stamp_mtime:
             return False
-    return True
+    # Stamp body records the upstream fingerprint at stage time. An
+    # empty body is a pre-fingerprint stamp — treat as stale once so
+    # existing caches upgrade themselves.
+    return stamp.read_text().strip() == _source_fingerprint(source_dir)
 
 
 def run_prepare(recipe_path: Path,
@@ -239,18 +265,20 @@ def run_prepare(recipe_path: Path,
 
     patches = _resolve_patches(recipe_path, config)
 
-    if not rebuild and staged_root.exists() and _is_fresh(stamp, patches):
+    if not config.source_dir.exists():
+        raise FileNotFoundError(
+            f'{recipe_path.name}: source_dir does not exist: '
+            f'{config.source_dir}'
+        )
+
+    if (not rebuild and staged_root.exists()
+            and _is_fresh(stamp, patches, config.source_dir)):
         return staged_root
 
     if staged_root.exists():
         shutil.rmtree(staged_root)
     staged_root.parent.mkdir(parents=True, exist_ok=True)
 
-    if not config.source_dir.exists():
-        raise FileNotFoundError(
-            f'{recipe_path.name}: source_dir does not exist: '
-            f'{config.source_dir}'
-        )
     shutil.copytree(config.source_dir, staged_root)
 
     for patch in patches:
@@ -282,7 +310,7 @@ def run_prepare(recipe_path: Path,
     # idiom, comment markers).
     _normalize_staged_kinds(staged_root)
 
-    stamp.touch()
+    stamp.write_text(_source_fingerprint(config.source_dir) + '\n')
     return staged_root
 
 

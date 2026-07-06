@@ -10,7 +10,7 @@
 # ``common/ref_quad_xblas.f90``.
 #
 # Each test program runs the same operation through (a) the migrated
-# extra-precise routine under test (linked from ${LIB_PREFIX}xblas)
+# extra-precise routine under test (linked from ${LIB_PAIR_PREFIX}xblas)
 # and (b) the quad reference, then compares results in REAL(KIND=16)
 # and writes a per-test JSON report.
 
@@ -75,8 +75,8 @@ target_include_directories(xblas_test_target PUBLIC
 target_link_libraries(xblas_test_target PUBLIC
     xblas_test_common
     target_conv
-    ${LIB_PREFIX}xblas
-    ${LIB_PREFIX}blas
+    ${LIB_PAIR_PREFIX}xblas
+    ${LIB_PAIR_PREFIX}blas
 )
 if(NEEDS_MULTIFLOATS AND TARGET multifloatsf)
     target_link_libraries(xblas_test_target PUBLIC multifloatsf)

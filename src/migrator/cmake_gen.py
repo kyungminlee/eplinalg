@@ -17,7 +17,10 @@ def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
     """Generate a self-contained CMakeLists.txt in the output directory."""
     pmap = target_mode.prefix_map
     real_pfx = pmap['R'].lower()
-    precision_lib = f'{real_pfx}{lib_name}'
+    # Pair prefix (real + complex letters: ey, qx, mw) names the target
+    # and archive, matching the in-tree LIB_PAIR_PREFIX convention.
+    pair_pfx = f"{real_pfx}{pmap['C'].lower()}"
+    precision_lib = f'{pair_pfx}{lib_name}'
     common_lib = f'{lib_name}_common'
 
     common_list = '\n    '.join(sorted(common_files))
@@ -171,26 +174,20 @@ if(TARGET {common_lib})
 endif()
 """
     else:
-        # If multifloats, we need to link against the multifloats library
-        # AND build the la_constants_mw / la_xisnan_mw helper modules
-        # that the migrated source depends on for la_constants USE clauses.
+        # If multifloats, we need to link against the multifloats
+        # library. The la_constants_mw / la_xisnan_mw helper modules
+        # that the migrated source depends on for la_constants USE
+        # clauses live in the shared LAPACK SRC dir alongside the
+        # _ey/_qx pairs and ride inside PRECISION_SOURCES (routed
+        # there by cmd_build's own-suffix pair filter).
         mf_link = ""
         mf_deps = ""
         if target_mode.module_name is not None:
             # Resolve absolute paths to external dependencies so the
             # generated CMakeLists.txt works from any output directory.
-            # MF helpers (la_constants_mw.f90 / la_xisnan_mw.f90) live
-            # under recipes/<lib>/mf_helpers/. Prefer the per-recipe
-            # directory if present; otherwise fall back to the upstream
-            # SRC dir which (historically) shipped the EP helpers.
-            _root = project_root or Path.cwd()
-            _per_recipe_mf = _root / 'recipes' / lib_name / 'mf_helpers'
-            if _per_recipe_mf.is_dir():
-                _helpers_default = str(_per_recipe_mf.resolve())
-            else:
-                _helpers_default = str((_root / 'external' / 'lapack-3.12.1' / 'SRC').resolve())
             # multifloats-mpi extras: Fortran-side MPI handle module
             # used by MUMPS (``USE multifloats_mpi_f``).
+            _root = project_root or Path.cwd()
             _mf_mpi_dir = (_root / 'runtime' / 'multifloats-mpi').resolve()
             mf_link = f"""
 # Fetch the multifloats library from GitHub (default) or use a local
@@ -225,46 +222,6 @@ else()
         ${{CMAKE_CURRENT_BINARY_DIR}}/_mf EXCLUDE_FROM_ALL)
 endif()
 
-# Build the la_constants_mw and la_xisnan_mw helper modules. These
-# re-export multifloats's MF_* constants under the M/W-prefixed names
-# that the migrated LAPACK source uses via its rewritten
-# ``USE LA_CONSTANTS_MW`` clause.
-set(MF_HELPERS_DIR "{_helpers_default}"
-    CACHE PATH "Directory containing la_constants_mw.f90 / la_xisnan_mw.f90")
-if(EXISTS "${{MF_HELPERS_DIR}}/la_constants_mw.f90")
-    add_library(la_constants_mw STATIC
-        "${{MF_HELPERS_DIR}}/la_constants_mw.f90")
-    set_target_properties(la_constants_mw PROPERTIES
-        Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
-    target_include_directories(la_constants_mw PUBLIC
-        $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
-    # la_constants_mw.f90 does ``use multifloats, only: real64x2`` —
-    # the Fortran module lives in ``multifloatsf`` (the Fortran half),
-    # not the C++ ``multifloats`` target.
-    if(TARGET multifloatsf)
-        target_link_libraries(la_constants_mw PUBLIC
-            $<BUILD_INTERFACE:multifloatsf>)
-    endif()
-    if(TARGET multifloats)
-        target_link_libraries(la_constants_mw PUBLIC multifloats)
-    endif()
-endif()
-if(EXISTS "${{MF_HELPERS_DIR}}/la_xisnan_mw.f90")
-    add_library(la_xisnan_mw STATIC
-        "${{MF_HELPERS_DIR}}/la_xisnan_mw.f90")
-    set_target_properties(la_xisnan_mw PROPERTIES
-        Fortran_MODULE_DIRECTORY ${{CMAKE_CURRENT_BINARY_DIR}}/mod)
-    target_include_directories(la_xisnan_mw PUBLIC
-        $<BUILD_INTERFACE:${{CMAKE_CURRENT_BINARY_DIR}}/mod>)
-    if(TARGET multifloatsf)
-        target_link_libraries(la_xisnan_mw PUBLIC
-            $<BUILD_INTERFACE:multifloatsf>)
-    endif()
-    if(TARGET multifloats)
-        target_link_libraries(la_xisnan_mw PUBLIC multifloats)
-    endif()
-endif()
-
 # multifloats_mpi_f.f90: Fortran module exposing the C-side MPI
 # datatype handles (MPI_FLOAT64X2 / MPI_DD_SUM / ...) via bind(c).
 # MUMPS's migrated source `USE multifloats_mpi_f` requires the .mod;
@@ -295,12 +252,6 @@ endif()
 if(TARGET multifloatsf)
     target_link_libraries({precision_lib} PUBLIC
         $<BUILD_INTERFACE:multifloatsf>)
-endif()
-if(TARGET la_constants_mw)
-    target_link_libraries({precision_lib} PUBLIC la_constants_mw)
-endif()
-if(TARGET la_xisnan_mw)
-    target_link_libraries({precision_lib} PUBLIC la_xisnan_mw)
 endif()
 if(TARGET multifloats_mpi_f)
     target_link_libraries({precision_lib} PUBLIC multifloats_mpi_f)
@@ -364,8 +315,7 @@ include(${{CMAKE_CURRENT_SOURCE_DIR}}/DetectExtendedPrecision.cmake)
 # the migrated archive's bodies reference but don't ship themselves.
 # The migrated archive PUBLIC-links this so downstreams resolve both
 # symbol families through one link line. Modules also flow to the
-# migrated build via the shared module directory (e.g. la_xisnan.mod
-# from std-precision is what the la_xisnan_mw helper `use`s).
+# migrated build via the shared module directory.
 set(REF_SOURCES
     {ref_list}
 )

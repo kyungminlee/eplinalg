@@ -213,13 +213,12 @@ patches:
 #    XERBLA / XERBLA_ARRAY) — these come from the standard-precision
 #    archive ``lapack`` (built from the same Netlib sources without
 #    -freal-8-real-16) which the migrated archive PUBLIC-links. The
-#    extended-precision-only helpers (LA_CONSTANTS_{EY,QX} /
-#    LA_XISNAN_{EY,QX}) DO ride in the migrated archive — they have no
-#    standard sibling. Each is single-precision (one target's E/Y, Q/X
-#    or M/W block) and is routed into the PREFIXED precision archive
-#    (libelapack / libqlapack), not the shared lapack_common — see
-#    staging.py. multifloats' M/W pair ships as separate helper libs
-#    from recipes/lapack/mf_helpers/ (built into libmlapack).
+#    extended-precision-only helpers (LA_CONSTANTS_{EY,QX,MW} /
+#    LA_XISNAN_{EY,QX,MW}) DO ride in the migrated archive — they have
+#    no standard sibling. Each is single-precision (one target's E/Y,
+#    Q/X or M/W block) and is routed into the PREFIXED precision
+#    archive (libeylapack / libqxlapack / libmwlapack), not the shared
+#    lapack_common — see staging.py.
 skip_files:
   - ZCGESV
   - DSGESV
@@ -252,8 +251,7 @@ skip_files:
 # migrated archive); only the target-specific siblings are emitted:
 #   kind10 → LA_CONSTANTS_EY / LA_XISNAN_EY   (E/Y, 80-bit)
 #   kind16 → LA_CONSTANTS_QX / LA_XISNAN_QX   (Q/X, __float128)
-#   multifloats → LA_CONSTANTS_MW / LA_XISNAN_MW (M/W, double-double,
-#                 shipped as separate libs from mf_helpers/)
+#   multifloats → LA_CONSTANTS_MW / LA_XISNAN_MW (M/W, double-double)
 # staging.py stages only the target's own pair (foreign-suffix siblings
 # are excluded) and routes it to the PREFIXED precision archive.
 copy_files:

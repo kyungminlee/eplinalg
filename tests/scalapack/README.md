@@ -1,8 +1,8 @@
 # Differential precision tests for migrated ScaLAPACK
 
 This directory extends the `tests/pblas/` scaffold to the **distributed**
-extended-precision ScaLAPACK libraries (`${LIB_PREFIX}scalapack` —
-`qscalapack`, `escalapack`, `ddscalapack`). Each test runs a ScaLAPACK
+extended-precision ScaLAPACK libraries (`${LIB_PAIR_PREFIX}scalapack` —
+`qxscalapack`, `eyscalapack`, `mwscalapack`). Each test runs a ScaLAPACK
 operation over a BLACS process grid, gathers the distributed result
 back to rank 0, and compares against serial quad-precision Netlib
 LAPACK applied to the full global matrix.

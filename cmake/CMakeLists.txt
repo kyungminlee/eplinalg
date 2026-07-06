@@ -15,12 +15,12 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/target_config.cmake)
 
 # BASELINE_BUILD is true for the un-migrated kind4 / kind8 targets:
 # `migrator stage --target kind4|kind8` writes target_config.cmake
-# with LIB_PREFIX="" so the test framework links the standard archives
+# with LIB_PAIR_PREFIX="" so the test framework links the standard archives
 # (blas / lapack / pblas / scalapack) directly. We skip every
 # add_migrated_* call and its post-link wiring under that mode — the
 # bare archive names would otherwise collide with the standard archive
 # of the same name (e.g. ``target_link_libraries(blas PUBLIC blas)``).
-if("${LIB_PREFIX}" STREQUAL "")
+if("${LIB_PAIR_PREFIX}" STREQUAL "")
     set(BASELINE_BUILD TRUE)
 else()
     set(BASELINE_BUILD FALSE)
@@ -260,20 +260,6 @@ if(NEEDS_MULTIFLOATS)
             ${CMAKE_CURRENT_BINARY_DIR}/_mf)
     endif()
 
-    # la_constants_mw helper module (needs Fortran multifloats module)
-    if(EXISTS "${MF_HELPERS_DIR}/la_constants_mw.f90")
-        add_library(la_constants_mw STATIC "${MF_HELPERS_DIR}/la_constants_mw.f90")
-        fortran_module_layout(la_constants_mw)
-        target_link_libraries(la_constants_mw PUBLIC $<BUILD_INTERFACE:multifloatsf>)
-    endif()
-
-    # la_xisnan_mw helper module (needs Fortran multifloats module)
-    if(EXISTS "${MF_HELPERS_DIR}/la_xisnan_mw.f90")
-        add_library(la_xisnan_mw STATIC "${MF_HELPERS_DIR}/la_xisnan_mw.f90")
-        fortran_module_layout(la_xisnan_mw)
-        target_link_libraries(la_xisnan_mw PUBLIC $<BUILD_INTERFACE:multifloatsf>)
-    endif()
-
     # multifloats_mpi / multifloats_mpi_f — first-party MPI bridge for the
     # real64x2 arithmetic, a standalone library under runtime/. Its own
     # CMakeLists.txt defines both targets (STATIC when MPI_CXX_FOUND, else
@@ -316,7 +302,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/EplinalgLibraryHelpers.cmake)
 #
 # Standard-precision archive ``blas`` is built from the vendored Netlib
 # BLAS sources (staged into ``_refblas_src/`` by ``migrator stage``).
-# The migrated archive ``${LIB_PREFIX}blas`` carries only Q/X/E/Y/M/W
+# The migrated archive ``${LIB_PAIR_PREFIX}blas`` carries only Q/X/E/Y/M/W
 # clones and PUBLIC-links the standard archive so downstreams resolve
 # the S/D/C/Z entry points (DGEMM_, ZGEMM_, ...) through one link line.
 # Cross-precision routines (dsdot, sdsdot) are excluded — the migrator
@@ -326,7 +312,7 @@ add_standard_fortran_library(blas
     EXCLUDE_REGEX "/(dsdot|sdsdot)\\.f9?0?$")
 if(NOT BASELINE_BUILD)
     add_migrated_fortran_library(blas)
-    link_if_present(${LIB_PREFIX}blas blas)
+    link_if_present(${LIB_PAIR_PREFIX}blas blas)
 endif()
 
 # 1.5. XBLAS (depends on BLAS).
@@ -334,7 +320,7 @@ endif()
 # Netlib's Extra-Precise BLAS (1.0.248) is a C library that exposes
 # Level 1/2/3 BLAS-like entry points with an additional ``prec``
 # parameter selecting the internal accumulation precision
-# (single / double / extra). The migrated archive ``${LIB_PREFIX}xblas``
+# (single / double / extra). The migrated archive ``${LIB_PAIR_PREFIX}xblas``
 # carries Q/X/E/Y clones (BLAS_qgemv_x, BLAS_xgemv_x, ...) of every
 # uniform-precision _x routine; mixed-input variants
 # (BLAS_dgemv_d_s_x, ...) are skipped by the recipe — they're not
@@ -346,18 +332,18 @@ endif()
 # *_extended.f routines that would call into it are not built).
 if(NOT BASELINE_BUILD)
     add_migrated_c_library(xblas)
-    if(TARGET ${LIB_PREFIX}xblas)
+    if(TARGET ${LIB_PAIR_PREFIX}xblas)
         # f2c-bridge.h defaults to no Fortran-symbol mangling. gfortran
         # emits lowercase + trailing underscore (the "Add_" convention),
         # so define CONFIG_FC_UNDERSCORE to make the bridge produce
         # ``blas_qgemv_x_`` etc. — matching what Fortran callers expect.
-        target_compile_definitions(${LIB_PREFIX}xblas PRIVATE
+        target_compile_definitions(${LIB_PAIR_PREFIX}xblas PRIVATE
             CONFIG_FC_UNDERSCORE)
         if(TARGET xblas_common)
             target_compile_definitions(xblas_common PRIVATE
                 CONFIG_FC_UNDERSCORE)
         endif()
-        link_if_present(${LIB_PREFIX}xblas ${LIB_PREFIX}blas)
+        link_if_present(${LIB_PAIR_PREFIX}xblas ${LIB_PAIR_PREFIX}blas)
     endif()
 endif()
 
@@ -400,7 +386,7 @@ if(NOT BASELINE_BUILD)
     # multifloats_mpi / quad_mpi only exist under their respective
     # NEEDS_* modes, so the TARGET checks inside link_if_present gate
     # the bridge links to the matching arithmetic.
-    link_if_present(${LIB_PREFIX}blacs multifloats_mpi quad_mpi blacs)
+    link_if_present(${LIB_PAIR_PREFIX}blacs multifloats_mpi quad_mpi blacs)
 endif()
 
 # 3. LAPACK (depends on BLAS).
@@ -424,21 +410,21 @@ endif()
 if(NOT BASELINE_BUILD)
     add_migrated_fortran_library(lapack)
     # The xx-family iterative-refinement helpers (qla_gerfsx_extended,
-    # xla_gerfsx_extended, ...) live inside ${LIB_PREFIX}lapack and call
+    # xla_gerfsx_extended, ...) live inside ${LIB_PAIR_PREFIX}lapack and call
     # XBLAS extra-precise Level-2 entry points (BLAS_QGEMV_X_, ...). With
-    # static archives, linking ${LIB_PREFIX}lapack into a test executable
+    # static archives, linking ${LIB_PAIR_PREFIX}lapack into a test executable
     # pulls those *_extended objects via undefined-symbol resolution as
     # soon as any xx driver (qgesvxx / xgesvxx / qgbsvxx / ...) is reached
     # transitively, so the XBLAS symbols must be resolvable on the same
     # link line — the xblas dependency is PUBLIC so every consumer of
     # the migrated lapack archive picks it up automatically.
-    link_if_present(${LIB_PREFIX}lapack
-        ${LIB_PREFIX}blas lapack ${LIB_PREFIX}xblas)
-    # The per-target precision helpers (la_constants_{ey,qx},
-    # la_xisnan_{ey,qx}) ride in the PREFIXED ${LIB_PREFIX}lapack
+    link_if_present(${LIB_PAIR_PREFIX}lapack
+        ${LIB_PAIR_PREFIX}blas lapack ${LIB_PAIR_PREFIX}xblas)
+    # The per-target precision helpers (la_constants_{ey,qx,mw},
+    # la_xisnan_{ey,qx,mw}) ride in the PREFIXED ${LIB_PAIR_PREFIX}lapack
     # archive (routed there by staging.py), not the shared lapack_common.
     # They ``USE`` the standard la_constants / la_xisnan modules supplied
-    # by the std ``lapack`` archive; the ${LIB_PREFIX}lapack -> lapack
+    # by the std ``lapack`` archive; the ${LIB_PAIR_PREFIX}lapack -> lapack
     # PUBLIC link above already resolves ``la_xisnan.mod`` at compile
     # time. The lapack_common -> lapack link below is defensive — it
     # only fires if some other precision-independent member keeps a
@@ -456,7 +442,7 @@ add_standard_fortran_library(ptzblas
     ${CMAKE_CURRENT_SOURCE_DIR}/_ptzblas_src)
 if(NOT BASELINE_BUILD)
     add_migrated_fortran_library(ptzblas)
-    link_if_present(${LIB_PREFIX}ptzblas ${LIB_PREFIX}blas ptzblas)
+    link_if_present(${LIB_PAIR_PREFIX}ptzblas ${LIB_PAIR_PREFIX}blas ptzblas)
 endif()
 
 # 5. PBBLAS (depends on BLAS, BLACS; scalapack_common wired post-section-8).
@@ -471,8 +457,8 @@ if(NOT BASELINE_BUILD)
     # is created later (section 7's add_migrated_fortran_library), so
     # that PUBLIC link is wired after section 8 — see the "PBBLAS →
     # scalapack_common" block below.
-    link_if_present(${LIB_PREFIX}pbblas
-        ${LIB_PREFIX}blas ${LIB_PREFIX}blacs pbblas)
+    link_if_present(${LIB_PAIR_PREFIX}pbblas
+        ${LIB_PAIR_PREFIX}blas ${LIB_PAIR_PREFIX}blacs pbblas)
 endif()
 
 # 6. PBLAS (depends on BLAS, BLACS, PTZBLAS, PBBLAS; C library).
@@ -504,9 +490,9 @@ if(TARGET pblas)
 endif()
 if(NOT BASELINE_BUILD)
     add_migrated_c_library(pblas)
-    link_if_present(${LIB_PREFIX}pblas
-        ${LIB_PREFIX}blas ${LIB_PREFIX}blacs
-        ${LIB_PREFIX}ptzblas ${LIB_PREFIX}pbblas pblas)
+    link_if_present(${LIB_PAIR_PREFIX}pblas
+        ${LIB_PAIR_PREFIX}blas ${LIB_PAIR_PREFIX}blacs
+        ${LIB_PAIR_PREFIX}ptzblas ${LIB_PAIR_PREFIX}pbblas pblas)
 endif()
 
 # 7. ScaLAPACK (depends on LAPACK, BLACS, PBLAS).
@@ -535,8 +521,8 @@ if(NOT BASELINE_BUILD)
     add_migrated_fortran_library(scalapack)
     # scalapack_common (which carries NUMROC/ICEIL/ILCM) is linked
     # automatically by add_migrated_fortran_library(scalapack) above.
-    link_if_present(${LIB_PREFIX}scalapack
-        ${LIB_PREFIX}lapack ${LIB_PREFIX}blacs ${LIB_PREFIX}pblas scalapack)
+    link_if_present(${LIB_PAIR_PREFIX}scalapack
+        ${LIB_PAIR_PREFIX}lapack ${LIB_PAIR_PREFIX}blacs ${LIB_PAIR_PREFIX}pblas scalapack)
 endif()
 
 # 8. ScaLAPACK C entry points — folded into the scalapack archive.
@@ -585,12 +571,12 @@ if(TARGET scalapack)
         target_link_libraries(scalapack INTERFACE $<LINK_ONLY:MPI::MPI_C>)
     endif()
 endif()
-if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}scalapack)
+if(NOT BASELINE_BUILD AND TARGET ${LIB_PAIR_PREFIX}scalapack)
     # Migrated C clones (qlamov_, pqgemr2d_, ...) fold into the migrated
     # scalapack archive pair instead of a separate qscalapack_c. Read the
     # scalapack_c manifest for the precision/common C split and build each
     # as an OBJECT lib; the precision objects fold into
-    # ${LIB_PREFIX}scalapack and the arithmetic-independent common object
+    # ${LIB_PAIR_PREFIX}scalapack and the arithmetic-independent common object
     # (pbchkvect.c) into scalapack_common.
     set(_scalapack_c_dir ${CMAKE_CURRENT_SOURCE_DIR}/scalapack_c)
     if(EXISTS "${_scalapack_c_dir}/manifest.cmake")
@@ -640,7 +626,7 @@ if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}scalapack)
             endforeach()
         endif()
         if(TARGET scalapack_c_prec_obj)
-            target_sources(${LIB_PREFIX}scalapack
+            target_sources(${LIB_PAIR_PREFIX}scalapack
                 PRIVATE $<TARGET_OBJECTS:scalapack_c_prec_obj>)
         endif()
         if(TARGET scalapack_c_common_obj)
@@ -648,29 +634,29 @@ if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}scalapack)
                 target_sources(scalapack_common
                     PRIVATE $<TARGET_OBJECTS:scalapack_c_common_obj>)
             else()
-                target_sources(${LIB_PREFIX}scalapack
+                target_sources(${LIB_PAIR_PREFIX}scalapack
                     PRIVATE $<TARGET_OBJECTS:scalapack_c_common_obj>)
             endif()
         endif()
         # The migrated scalapack archive carries the C objects: expose
         # the C source dir (internal prototype headers) and propagate
         # MPI + the multifloats bridge.
-        target_include_directories(${LIB_PREFIX}scalapack
+        target_include_directories(${LIB_PAIR_PREFIX}scalapack
             PUBLIC $<BUILD_INTERFACE:${_scalapack_c_dir}/src>)
         if(MPI_C_FOUND)
-            target_link_libraries(${LIB_PREFIX}scalapack PRIVATE MPI::MPI_C)
-            target_link_libraries(${LIB_PREFIX}scalapack
+            target_link_libraries(${LIB_PAIR_PREFIX}scalapack PRIVATE MPI::MPI_C)
+            target_link_libraries(${LIB_PAIR_PREFIX}scalapack
                 INTERFACE $<LINK_ONLY:MPI::MPI_C>)
         endif()
         if(C_AS_CXX)
             if(TARGET multifloats)
                 # Header-only C++ core — build-time only (symbols baked into
                 # the archive). Keep it out of the install interface so
-                # find_package(mscalapack) doesn't chase an uninstalled core.
-                target_link_libraries(${LIB_PREFIX}scalapack PUBLIC $<BUILD_INTERFACE:multifloats>)
+                # find_package(mwscalapack) doesn't chase an uninstalled core.
+                target_link_libraries(${LIB_PAIR_PREFIX}scalapack PUBLIC $<BUILD_INTERFACE:multifloats>)
             endif()
             if(TARGET multifloats_mpi)
-                target_link_libraries(${LIB_PREFIX}scalapack PUBLIC multifloats_mpi)
+                target_link_libraries(${LIB_PAIR_PREFIX}scalapack PUBLIC multifloats_mpi)
             endif()
         endif()
     endif()
@@ -688,23 +674,23 @@ endif()
 # (same profile as blacs_common). scalapack_common is created in
 # section 7 (after PBBLAS, section 5), so the PUBLIC link is wired here
 # where the target is guaranteed to exist. tests/pbblas links only
-# ${LIB_PREFIX}pbblas — it transitively pulls scalapack_common for
-# these symbols without dragging in the full ${LIB_PREFIX}scalapack.
+# ${LIB_PAIR_PREFIX}pbblas — it transitively pulls scalapack_common for
+# these symbols without dragging in the full ${LIB_PAIR_PREFIX}scalapack.
 #
 # Wrapped in $<BUILD_INTERFACE:> so the dependency serves the in-tree
 # tests but is NOT written into install(EXPORT). scalapack_common lives
-# in a DIFFERENT package (escalapack's export, per _install_library_pair)
-# than epbblas (pbblas' export); leaking it into epbblas'
-# INTERFACE_LINK_LIBRARIES makes find_package(epbblas) reference an
-# imported target defined only by find_package(escalapack) — and a
-# consumer that finds epbblas first then trips epbblas_FOUND = FALSE.
+# in a DIFFERENT package (eyscalapack's export, per _install_library_pair)
+# than eypbblas (pbblas' export); leaking it into eypbblas'
+# INTERFACE_LINK_LIBRARIES makes find_package(eypbblas) reference an
+# imported target defined only by find_package(eyscalapack) — and a
+# consumer that finds eypbblas first then trips eypbblas_FOUND = FALSE.
 # Keeping it build-only matches the repo convention (no cross-package
 # find_dependency; consumers list every archive on their own link line,
 # resolving NUMROC/ICEIL/ILCM from MKL or from eplinalg::scalapack_common
-# via find_package(escalapack)) — identical to how the MUMPS parallel
+# via find_package(eyscalapack)) — identical to how the MUMPS parallel
 # stack is BUILD_INTERFACE-wrapped out of the solver exports.
-if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}pbblas AND TARGET scalapack_common)
-    target_link_libraries(${LIB_PREFIX}pbblas PUBLIC $<BUILD_INTERFACE:scalapack_common>)
+if(NOT BASELINE_BUILD AND TARGET ${LIB_PAIR_PREFIX}pbblas AND TARGET scalapack_common)
+    target_link_libraries(${LIB_PAIR_PREFIX}pbblas PUBLIC $<BUILD_INTERFACE:scalapack_common>)
 endif()
 
 # 9. MUMPS (depends on LAPACK, BLAS, ScaLAPACK; needs MPI Fortran) —

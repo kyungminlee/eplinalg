@@ -19,8 +19,8 @@ if(NOT TARGET refblas_quad)
     return()
 endif()
 
-if(NOT TARGET ${LIB_PREFIX}ptzblas)
-    message(STATUS "tests/ptzblas: skipping — ${LIB_PREFIX}ptzblas not built")
+if(NOT TARGET ${LIB_PAIR_PREFIX}ptzblas)
+    message(STATUS "tests/ptzblas: skipping — ${LIB_PAIR_PREFIX}ptzblas not built")
     return()
 endif()
 
@@ -53,7 +53,7 @@ fortran_module_layout(ptzblas_test_target)
 target_link_libraries(ptzblas_test_target PUBLIC
     ptzblas_test_common
     target_conv
-    ${LIB_PREFIX}ptzblas
+    ${LIB_PAIR_PREFIX}ptzblas
 )
 if(NEEDS_MULTIFLOATS AND TARGET multifloatsf)
     target_link_libraries(ptzblas_test_target PUBLIC multifloatsf)
@@ -73,7 +73,7 @@ function(add_ptzblas_precision_test test_src)
     # quad-promoted DASUM/DDOT, ptzblas provides QVASUM, etc.).
     set(_ptzblas_cycle
         ptzblas_test_target ptzblas_test_common
-        ${LIB_PREFIX}ptzblas ${LIB_PREFIX}blas refblas_quad)
+        ${LIB_PAIR_PREFIX}ptzblas ${LIB_PAIR_PREFIX}blas refblas_quad)
     foreach(_common blas_common ptzblas_common)
         if(TARGET ${_common})
             list(APPEND _ptzblas_cycle ${_common})
