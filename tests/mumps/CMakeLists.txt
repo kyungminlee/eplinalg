@@ -272,8 +272,8 @@ endif()
 
 # ── Common helper modules ────────────────────────────────────────────
 add_library(mumps_test_common STATIC
-    common/prec_kinds.f90
-    common/compare.f90
+    ../common/prec_kinds.f90
+    ../common/compare.f90
     common/prec_report.f90
     common/test_data_mumps.f90
     common/ref_quad_lapack_solve.f90

@@ -1,7 +1,7 @@
 ! zgedmdq: complex snapshot-form Dynamic Mode Decomposition. Mirrors
 ! test_dgedmdq with EIGS(*) complex spectrum (no REIG/IMEIG split) and
 ! a real WORK + complex ZWORK + integer IWORK trio. Layer (c) skipped
-! per same TODO 310-313 risk.
+! for the same T-matrix canonicality reason as test_dgedmdq.
 program test_zgedmdq
     use prec_kinds,      only: ep
     use prec_report,     only: report_init, report_case, report_finalize

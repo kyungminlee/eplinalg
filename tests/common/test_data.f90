@@ -13,6 +13,8 @@ module test_data
 
 contains
 
+    ! Seed Fortran's intrinsic RNG with a value derived from `seed` so
+    ! every test gets reproducible inputs that differ across cases.
     subroutine seed_rng(seed)
         integer, intent(in) :: seed
         integer :: n, i

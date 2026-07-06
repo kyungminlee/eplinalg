@@ -1,5 +1,10 @@
 # kind4 / kind8 baseline columns — status
 
+> **Archived snapshot** (moved from `tests/KIND48_BASELINE_STATUS.md`).
+> Describes the state as of 2026-05-06 and is not kept up to date;
+> current baseline coverage is whatever `migrator stage --target
+> kind{4,8}` + ctest reports today.
+
 *Status as of 2026-05-06.* The plumbing is in place and produces sane numbers,
 but the baseline column is **not yet promoted** into the published precision
 matrix — residual upstream issues (catalogued under "Recommended treatment"

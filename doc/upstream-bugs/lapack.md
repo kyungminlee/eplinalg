@@ -332,7 +332,8 @@ path (`migrator stage --target kind{4,8}`) skips migration and stages
 upstream `external/lapack-3.12.1/SRC/` verbatim into `_reflapack_src/`,
 so the std `lapack` archive that the baseline links against still has
 the typo. Two of the residual failures in
-`tests/KIND48_BASELINE_STATUS.md` (`zunbdb3`, `dorbdb3`) trace to this
+`doc/archive/kind48-baseline-status-20260506.md` (`zunbdb3`, `dorbdb3`)
+trace to this
 gap and are parked under `tests/lapack/TODO.md` until the staging path
 overlays `recipes/lapack/patches/` on top of the upstream
 copy. Confirmed both clear when the override is overlaid.

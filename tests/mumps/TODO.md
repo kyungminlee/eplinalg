@@ -26,38 +26,3 @@ a final valid-input pass that reaches MIC_OK and factors via JOB=6.
 **Reopen condition**: when MUMPS upstream tightens validation and
 returns the documented `INFOG(1) = -16` / `-6` codes, drop the wrapper
 and let the tests check `INFOG(1)` directly.
-
-## libmpiseq linkage — landed on all three targets
-
-Each test source under `tests/mumps/{fortran,c}/` is built twice — once
-linked against real MPI (`mpiexec -n 1`), once linked against the
-in-tree `mpiseq` archive (plain binary, suffix `_seq`). libmpiseq is
-Intel-MPI ABI compatible: runtime/mpiseq/CMakeLists.txt overlays the configured
-MPI's `mpi.h` / `mpif.h` onto `_mpiseq_src/`, libseq's bundled `mpic.c`
-is replaced by `runtime/mpiseq/mpiseq_c_stubs.c` (compiled against Intel's
-signatures), and `migrator stage` patches libseq's `mpi.f` to extend
-`MUMPS_COPY` with the precision-specific datatype cases:
-
-- `MPI_REAL16` / `MPI_COMPLEX32` (kind16)
-- `MPI_LONG_DOUBLE` / `MPI_C_LONG_DOUBLE_COMPLEX` (kind10 — 80-bit
-  extended types map to MPI's long-double tokens, no `MPI_REAL10`
-  exists in standard MPI)
-- `268435472` / `268435488` (multifloats — sentinel handles for
-  `MPI_FLOAT64X2` / `MPI_COMPLEX64X2`, see below)
-
-**Multifloats sentinel scheme**: `multifloats_mpi.cpp` registers its
-custom datatypes via `MPI_Type_contiguous(count, MPI_DOUBLE, &out)`. The
-libmpiseq C stub for `MPI_Type_contiguous` encodes the total byte size
-in low bits with a high tag (`0x10000000 | nbytes`), so float64x2 → 16
-bytes → handle `0x10000010`, complex64x2 → 32 bytes → handle
-`0x10000020`. `MPI_Type_c2f` is a passthrough cast in Intel mpi.h, so
-the Fortran handle is the same value, and `MUMPS_COPY` dispatches on
-those constants to a generic byte-block copy helper. `MPI_Op_create`
-returns distinct non-null sentinels above `MPI_OP_NULL` (0x18000000);
-the user-op callback never fires under single-rank ALLREDUCE. The
-0x10000000 / 0x18000000 ranges are well clear of Intel's 0x4c00****
-datatype constants.
-
-**Status (all three targets)**: 26/26 `_seq` ctests pass; per-test JSON
-precision reports are bit-identical to the impi-linked runs (verified
-via `diff -q`).
