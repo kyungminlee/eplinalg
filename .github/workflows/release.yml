@@ -89,6 +89,10 @@ jobs:
       # should work on any MPI; extending the test coverage to
       # kind16 / multifloats / openmpi / mpich is a known follow-up.
       IS_TEST_SLOT: ${{ matrix.target == 'kind10' && matrix.compiler.name == 'gfortran-15' && matrix.mpi.name == 'intelmpi' }}
+      # The seq column builds against the Intel-MPI toolchain too:
+      # MUMPS_LIBSEQ_RELEASE hard-requires it (libmpiseq's stub ABI),
+      # even though the shipped archives link no real MPI.
+      USES_INTEL_MPI: ${{ matrix.mpi.name == 'intelmpi' || matrix.mpi.name == 'seq' }}
     strategy:
       fail-fast: false
       matrix:
@@ -106,6 +110,11 @@ jobs:
           - { name: openmpi,  pkg: libopenmpi-dev }
           - { name: mpich,    pkg: libmpich-dev }
           - { name: intelmpi }
+          # seq: the MUMPS stack linked against the in-tree libmpiseq
+          # stub instead of a real MPI (MUMPS_LIBSEQ_RELEASE=ON).
+          # MPI-dependent archives are tagged -seq and libmpiseq is
+          # installed; consumers run single-process with no MPI at all.
+          - { name: seq }
 
     steps:
       - uses: actions/checkout@v5
@@ -157,7 +166,7 @@ jobs:
         run: sudo apt-get install -y libmpich-dev
 
       - name: Install Intel MPI
-        if: matrix.mpi.name == 'intelmpi' && !startsWith(matrix.compiler.name, 'ifx')
+        if: env.USES_INTEL_MPI == 'true' && !startsWith(matrix.compiler.name, 'ifx')
         run: |
           wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
             | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
@@ -167,7 +176,7 @@ jobs:
           sudo apt-get install -y intel-oneapi-mpi-devel
 
       - name: Install Intel MPI (with oneAPI compilers)
-        if: matrix.mpi.name == 'intelmpi' && startsWith(matrix.compiler.name, 'ifx')
+        if: env.USES_INTEL_MPI == 'true' && startsWith(matrix.compiler.name, 'ifx')
         run: |
           sudo apt-get install -y intel-oneapi-mpi-devel
 
@@ -180,7 +189,7 @@ jobs:
       # re-sourcing it inside every cmake invocation. Only vars that
       # setvars.sh actually adds/changes are forwarded.
       - name: Setup Intel oneAPI environment
-        if: matrix.compiler.oneapi != '' || matrix.mpi.name == 'intelmpi'
+        if: matrix.compiler.oneapi != '' || env.USES_INTEL_MPI == 'true'
         run: |
           env | sort > /tmp/env.before
           source /opt/intel/oneapi/setvars.sh > /dev/null
@@ -188,7 +197,7 @@ jobs:
           comm -13 /tmp/env.before /tmp/env.after >> "$GITHUB_ENV"
 
       - name: Setup Intel MPI compiler shims
-        if: matrix.mpi.name == 'intelmpi' && matrix.compiler.oneapi == ''
+        if: env.USES_INTEL_MPI == 'true' && matrix.compiler.oneapi == ''
         run: |
           {
             echo "I_MPI_F90=${{ matrix.compiler.fc }}"
@@ -204,6 +213,7 @@ jobs:
             -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }} \
             -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }} \
             -DMIGRATOR_BUILD_TESTS=${{ env.IS_TEST_SLOT == 'true' && 'ON' || 'OFF' }} \
+            -DMUMPS_LIBSEQ_RELEASE=${{ matrix.mpi.name == 'seq' && 'ON' || 'OFF' }} \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
 
       - name: Build
@@ -331,6 +341,11 @@ jobs:
             | OpenMPI | `openmpi` |
             | MPICH | `mpich` |
             | Intel MPI | `intelmpi` |
+            | none (sequential libmpiseq) | `seq` |
+
+            The `seq` archives link the MUMPS stack against the bundled
+            `libmpiseq` stub instead of a real MPI: single-process
+            solves with no MPI installation or `mpiexec` needed.
 
             ### Installation
             ```bash
