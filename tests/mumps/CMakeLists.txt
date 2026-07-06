@@ -74,7 +74,7 @@ file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/precision_reports)
 # Same prec_kinds / compare / prec_report / test_data module names as
 # tests/blas and tests/lapack, so isolate the .mod outputs to avoid
 # collision when multiple test trees build together.
-set(_mp_moddir "${PROJECT_BINARY_DIR}/fmod/${FORTRAN_MOD_COMPAT_TAG}/mumps_tests")
+set(_mp_moddir "${PROJECT_BINARY_DIR}/fmod_tests/${FORTRAN_MOD_COMPAT_TAG}/mumps_tests")
 file(MAKE_DIRECTORY ${_mp_moddir})
 
 # ── C-side bridge ─────────────────────────────────────────────────────

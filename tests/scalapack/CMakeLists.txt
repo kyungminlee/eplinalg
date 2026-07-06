@@ -55,9 +55,9 @@ endif()
 # tests/scalapack/common reuses the same module names as
 # tests/pblas/common (prec_kinds, compare, pblas_prec_report,
 # test_data, ref_quad_blas, pblas_grid, pblas_distrib). Placing the
-# ScaLAPACK variants' .mod files in their own subdirectory under fmod
+# ScaLAPACK variants' .mod files in their own subdirectory under fmod_tests
 # prevents collisions when both test trees build together.
-set(_sp_moddir "${PROJECT_BINARY_DIR}/fmod/${FORTRAN_MOD_COMPAT_TAG}/scalapack_tests")
+set(_sp_moddir "${PROJECT_BINARY_DIR}/fmod_tests/${FORTRAN_MOD_COMPAT_TAG}/scalapack_tests")
 file(MAKE_DIRECTORY ${_sp_moddir})
 
 # ── Common helper modules ───────────────────────────────────────────

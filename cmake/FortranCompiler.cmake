@@ -218,6 +218,28 @@ function(fortran_module_layout target)
 endfunction()
 
 # ---------------------------------------------------------------------------
+# fortran_test_module_layout(<target>)
+#
+# Module layout for test-only targets. Modules go to a parallel
+# fmod_tests/ tree instead of the shared fmod/ tree so that
+# fortran_install_modules() — which installs the *entire* shared
+# module directory — can never sweep test-harness modules into a
+# release package. No INSTALL_INTERFACE path: test targets are never
+# installed.
+# ---------------------------------------------------------------------------
+function(fortran_test_module_layout target)
+  set(_moddir "${PROJECT_BINARY_DIR}/fmod_tests/${FORTRAN_MOD_COMPAT_TAG}")
+
+  set_target_properties(${target} PROPERTIES
+    Fortran_MODULE_DIRECTORY "${_moddir}"
+  )
+
+  target_include_directories(${target} PUBLIC
+    $<BUILD_INTERFACE:${_moddir}>
+  )
+endfunction()
+
+# ---------------------------------------------------------------------------
 # fortran_install_modules(<target> [DESTINATION <base>])
 #
 # Installs .mod and .smod files to <base>/fmod/<mod-tag>/

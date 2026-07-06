@@ -41,7 +41,7 @@ endif()
 # tests/xblas/common reuses the same module names as tests/blas/common
 # (prec_kinds, compare, prec_report, test_data); a separate .mod
 # directory prevents collisions when both test trees build together.
-set(_xb_moddir "${PROJECT_BINARY_DIR}/fmod/${FORTRAN_MOD_COMPAT_TAG}/xblas_tests")
+set(_xb_moddir "${PROJECT_BINARY_DIR}/fmod_tests/${FORTRAN_MOD_COMPAT_TAG}/xblas_tests")
 file(MAKE_DIRECTORY ${_xb_moddir})
 
 # ── Common helper modules ───────────────────────────────────────────

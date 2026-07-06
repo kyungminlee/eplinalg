@@ -35,7 +35,7 @@ add_library(blas_test_common STATIC
     ../common/test_data.f90
     common/ref_quad_blas.f90
 )
-fortran_module_layout(blas_test_common)
+fortran_test_module_layout(blas_test_common)
 target_link_libraries(blas_test_common PUBLIC refblas_quad)
 
 # ── Per-target wrapper module ───────────────────────────────────────
@@ -52,7 +52,7 @@ add_fypp_source(_blas_wrapper_src
     ${CMAKE_CURRENT_SOURCE_DIR}/common
 )
 add_library(blas_test_target STATIC ${_blas_wrapper_src})
-fortran_module_layout(blas_test_target)
+fortran_test_module_layout(blas_test_target)
 # Baseline (kind4/kind8): link the standard Netlib archive directly
 # (s/c or d/z entry points), since there is no migrated archive to
 # point at. Migrated targets (kind10/kind16/multifloats) link
