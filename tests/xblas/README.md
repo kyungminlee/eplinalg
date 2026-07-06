@@ -3,8 +3,8 @@
 XBLAS (Netlib's Extra-Precise BLAS, 1.0.248) is a C library of
 BLAS-shaped routines that take an additional `prec` argument
 selecting the internal accumulation precision. The migrated archive
-`${LIB_PREFIX}xblas` (`libqxblas.a` for kind16, `libexblas.a` for
-kind10, `libmxblas.a` for multifloats) carries Q/X/E/Y/M/W clones of
+`${LIB_PAIR_PREFIX}xblas` (`libqxxblas.a` for kind16, `libeyxblas.a` for
+kind10, `libmwxblas.a` for multifloats) carries Q/X/E/Y/M/W clones of
 every uniform-precision `_x` routine with type promotion applied —
 e.g. `BLAS_dgemv_x(double *, ...)` → `BLAS_qgemv_x(QREAL *, ...)`
 where `QREAL` is `__float128`.

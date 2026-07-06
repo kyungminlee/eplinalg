@@ -69,16 +69,16 @@ layering against their own in-tree archives.
 
 ### Building
 
-You need: an installed eplinalg release (its `${LIB_PREFIX}mumps` package, which
-bundles the genuine `dzmumps`/`scmumps` solvers *and* the extended `emumps`
-long-double solver, plus the e/y long-double ScaLAPACK/BLAS closure it pulls),
-Intel MKL, and MPI. The consumer `find_package`s that whole closure — see the
-comments at the top of `mmsolve/CMakeLists.txt`.
+You need: an installed eplinalg release (its `${LIB_PAIR_PREFIX}mumps` packages —
+`eymumps`/`qxmumps`/`mwmumps` — which bundle the genuine `dzmumps`/`scmumps`
+solvers *and* the extended typed solvers, plus the per-precision
+ScaLAPACK/BLAS closures they pull), Intel MKL, and MPI. The consumer
+`find_package`s that whole closure — see the comments at the top of
+`mmsolve/CMakeLists.txt`.
 
 ```sh
 cmake -S examples/mmsolve -B build/mmsolve \
       -DCMAKE_PREFIX_PATH="<eplinalg-install>;<mkl-root>/lib/cmake" \
-      -DEPLINALG_MUMPS_PACKAGE=emumps \
       -DMKL_MPI=openmpi
 cmake --build build/mmsolve
 ```
@@ -92,10 +92,6 @@ Two things **must match the release you installed**:
 2. **MKL BLACS flavor (`-DMKL_MPI=…`) must match the release's MPI.** An OpenMPI
    release needs `MKL_MPI=openmpi` (`libmkl_blacs_openmpi_lp64`); an Intel-MPI
    release needs `MKL_MPI=intelmpi`. A mismatch fails at link or run time.
-
-`EPLINALG_MUMPS_PACKAGE` names the installed package that carries the genuine
-solvers (kind10 → `emumps`, kind16 → `qmumps`, …); the genuine targets inside
-are identical regardless of which one you use.
 
 If MKL is installed to a non-standard prefix, add its runtime to the loader path
 before running: `export LD_LIBRARY_PATH=<mkl-root>/lib:$LD_LIBRARY_PATH`.

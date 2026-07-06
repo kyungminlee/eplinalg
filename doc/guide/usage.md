@@ -69,7 +69,7 @@ Checks for:
 
 ### `build`
 Compiles and archives the migrated files into static libraries. It produces two libraries:
-1.  `lib<prefix><library>.a`: Contains precision-specific routines (e.g., `libqblas.a`).
+1.  `lib<pair-prefix><library>.a`: Contains precision-specific routines (e.g., `libqxblas.a`).
 2.  `lib<library>_common.a`: Contains precision-independent routines.
 
 ```bash

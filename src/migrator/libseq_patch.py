@@ -12,7 +12,7 @@ def _patch_libseq_mpi_f(path: Path) -> None:
     cases so reductions on REAL(KIND=16) / COMPLEX(KIND=16) buffers
     dispatch correctly under our libmpiseq variant. Upstream's
     ``MUMPS_COPY`` only knows the standard MPI datatypes; the migrated
-    qmumps archive passes MPI_REAL16 (Intel MPI = 1275072555) for
+    qxmumps archive passes MPI_REAL16 (Intel MPI = 1275072555) for
     kind16 reductions.
 
     Patches the staged copy at ``_mpiseq_src/mpi.f``; upstream's

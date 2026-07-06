@@ -1,7 +1,7 @@
 # Differential precision tests for migrated BLAS.
 #
 # Each test program runs the same operation through (a) the migrated
-# extended-precision routine under test (linked from ${LIB_PREFIX}blas)
+# extended-precision routine under test (linked from ${LIB_PAIR_PREFIX}blas)
 # and (b) a REAL(KIND=16) reference (refblas_quad — see refblas/), then
 # compares results in REAL(KIND=16) and writes a per-test JSON report.
 #
@@ -56,7 +56,7 @@ fortran_module_layout(blas_test_target)
 # Baseline (kind4/kind8): link the standard Netlib archive directly
 # (s/c or d/z entry points), since there is no migrated archive to
 # point at. Migrated targets (kind10/kind16/multifloats) link
-# ${LIB_PREFIX}blas as before.
+# ${LIB_PAIR_PREFIX}blas as before.
 if(BASELINE_BUILD)
     target_link_libraries(blas_test_target PUBLIC
         blas_test_common
@@ -67,7 +67,7 @@ else()
     target_link_libraries(blas_test_target PUBLIC
         blas_test_common
         target_conv
-        ${LIB_PREFIX}blas
+        ${LIB_PAIR_PREFIX}blas
     )
 endif()
 if(NEEDS_MULTIFLOATS AND TARGET multifloatsf)

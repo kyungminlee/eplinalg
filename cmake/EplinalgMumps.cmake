@@ -9,7 +9,7 @@
 # 9. MUMPS (depends on LAPACK, BLAS, ScaLAPACK; needs MPI Fortran).
 #
 # MUMPS is a sparse direct solver (Multifrontal Massively Parallel). The
-# migrated archive ``${LIB_PREFIX}mumps`` carries the Q/X clones of
+# migrated archive ``${LIB_PAIR_PREFIX}mumps`` carries the Q/X clones of
 # DMUMPS / ZMUMPS plus their auxiliary subroutines.
 #
 # (The genuine-precision solvers are handled separately at the end of
@@ -147,8 +147,8 @@ if(NOT BASELINE_BUILD)
     # application might pull in. The bison/flex parser (parser_yy.c,
     # parser_ll.c, parser_ly.h) and the public headers (scotch.h,
     # scotchf.h) are pre-generated and vendored, so the eplinalg build
-    # gains no bison/flex dependency. Building ``scotch`` (+ ``scotcherr``,
-    # ``esmumps`` the MUMPS adapter) here and defining ``-Dscotch`` on the
+    # gains no bison/flex dependency. Building ``scotch`` (+ ``esmumps``,
+    # the MUMPS adapter) here and defining ``-Dscotch`` on the
     # MUMPS C runtime turns on the ICNTL(7)=3 sequential ordering; without
     # the define mumps_scotch*.c compile as inert stubs (bodies guarded by
     # ``#if defined(scotch)``) and the Fortran never references Scotch.
@@ -189,12 +189,20 @@ if(NOT BASELINE_BUILD)
                 SCOTCH_RENAME SCOTCH_NAME_SUFFIX=_mumps
                 restrict=__restrict NDEBUG)
 
-            # Ship these three as lib{scotch,scotcherr,esmumps}_mumps.a:
-            # the _mumps filename tag mirrors the SCOTCH_NAME_SUFFIX=_mumps
-            # symbol namespacing, so this private Scotch copy cannot clash
-            # on disk with a system Scotch another developer might add. The
+            # Ship these two as lib{scotch,esmumps}_mumps.a: the _mumps
+            # filename tag mirrors the SCOTCH_NAME_SUFFIX=_mumps symbol
+            # namespacing, so this private Scotch copy cannot clash on
+            # disk with a system Scotch another developer might add. The
             # CMake target names stay short for the internal link graph.
-            add_library(scotch STATIC ${_scotch_lib_c})
+            #
+            # Upstream ships the error handler (library_error*.c) as a
+            # separate libscotcherr.a so applications can substitute
+            # their own handler archive on the link line. We fold it
+            # into libscotch itself: ld extracts archive members on
+            # demand, so an application-supplied handler *object* still
+            # overrides the archive member, and nothing here swaps
+            # handlers — one archive fewer to ship and order.
+            add_library(scotch STATIC ${_scotch_lib_c} ${_scotch_err_c})
             target_include_directories(scotch PUBLIC
                 $<BUILD_INTERFACE:${_mumps_scotch_inc}>
                 $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
@@ -202,15 +210,6 @@ if(NOT BASELINE_BUILD)
             set_target_properties(scotch PROPERTIES
                 C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
                 OUTPUT_NAME scotch_mumps)
-
-            add_library(scotcherr STATIC ${_scotch_err_c})
-            target_include_directories(scotcherr PUBLIC
-                $<BUILD_INTERFACE:${_mumps_scotch_inc}>
-                $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
-            target_compile_definitions(scotcherr PRIVATE ${_scotch_defs})
-            set_target_properties(scotcherr PROPERTIES
-                C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
-                OUTPUT_NAME scotcherr_mumps)
 
             add_library(esmumps STATIC ${_scotch_esm_c})
             target_include_directories(esmumps PUBLIC
@@ -246,9 +245,8 @@ if(NOT BASELINE_BUILD)
             if(NOT MSVC)
                 set(_scotch_cflags -w -fno-strict-aliasing
                     -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0)
-                target_compile_options(scotch    PRIVATE ${_scotch_cflags})
-                target_compile_options(scotcherr PRIVATE ${_scotch_cflags})
-                target_compile_options(esmumps   PRIVATE ${_scotch_cflags})
+                target_compile_options(scotch  PRIVATE ${_scotch_cflags})
+                target_compile_options(esmumps PRIVATE ${_scotch_cflags})
             endif()
             # The C caller sites are remapped bare→_mumps by force-including
             # scotch_rename_mumps.h. The Fortran caller (ana_orderings_
@@ -320,48 +318,41 @@ if(NOT BASELINE_BUILD)
         # fortran_install_library, which would drop the _mumps stem and add
         # the compiler tag.
         set(_ptscotch_out ptscotch_mumps)
-        set(_ptscotcherr_out ptscotcherr_mumps)
         if(MPI_LIB_TAG)
             set(_ptscotch_out ptscotch_mumps-${MPI_LIB_TAG})
-            set(_ptscotcherr_out ptscotcherr_mumps-${MPI_LIB_TAG})
         endif()
 
-        add_library(ptscotch STATIC ${_ptscotch_lib_c})
+        # The error handler (library_error*.c) is rebuilt under
+        # -DSCOTCH_PTSCOTCH — a distinct, MPI-aware (rank-printing)
+        # object from the one folded into sequential libscotch — and
+        # folded into libptscotch the same way. On a pt link line
+        # (ptscotch before scotch) the distributed increment's error
+        # references extract THIS member first, so the seq copy inside
+        # libscotch is never pulled — the MPI-aware handler wins with
+        # no duplicate definitions, mirroring upstream's -lptscotcherr
+        # -lscotch -lscotcherr order with two fewer archives.
+        add_library(ptscotch STATIC ${_ptscotch_lib_c} ${_scotch_err_c})
         target_include_directories(ptscotch PUBLIC
             $<BUILD_INTERFACE:${_mumps_scotch_inc}>
             $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
         target_compile_definitions(ptscotch PRIVATE ${_ptscotch_defs})
         # The distributed increment references the sequential SCOTCH_*_mumps
-        # symbols (and the parallel error handler) but does not define them.
-        # Declaring the dependency PUBLIC makes CMake emit ptscotch BEFORE
-        # scotch/scotcherr on every consumer's static link line (GNU ld is
-        # single-pass), so those forward references resolve — mirroring
-        # upstream's -lptscotch -lscotch order. ptscotcherr (forward-declared;
-        # defined just below) carries the distributed error symbols. Every
-        # consumer then only has to link ptscotch; the rest follow transitively
-        # in the correct order and dedup against any explicit scotch entry.
-        target_link_libraries(ptscotch PUBLIC ptscotcherr scotch scotcherr MPI::MPI_C)
+        # symbols but does not define them. Declaring the dependency PUBLIC
+        # makes CMake emit ptscotch BEFORE scotch on every consumer's static
+        # link line (GNU ld is single-pass), so those forward references
+        # resolve — mirroring upstream's -lptscotch -lscotch order. Every
+        # consumer then only has to link ptscotch; scotch follows
+        # transitively in the correct order and dedups against any explicit
+        # scotch entry.
+        target_link_libraries(ptscotch PUBLIC scotch MPI::MPI_C)
         set_target_properties(ptscotch PROPERTIES
             C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
             OUTPUT_NAME ${_ptscotch_out})
 
-        # library_error.c rebuilt under -DSCOTCH_PTSCOTCH — distinct object
-        # from the sequential scotcherr (that one has no MPI include).
-        add_library(ptscotcherr STATIC ${_scotch_err_c})
-        target_include_directories(ptscotcherr PUBLIC
-            $<BUILD_INTERFACE:${_mumps_scotch_inc}>
-            $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
-        target_compile_definitions(ptscotcherr PRIVATE ${_ptscotch_defs})
-        target_link_libraries(ptscotcherr PUBLIC MPI::MPI_C)
-        set_target_properties(ptscotcherr PROPERTIES
-            C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
-            OUTPUT_NAME ${_ptscotcherr_out})
-
         # Same warning-quiet + based-array fortify mitigation as sequential
         # Scotch (the distributed sources use the identical idiom).
         if(NOT MSVC)
-            target_compile_options(ptscotch    PRIVATE ${_scotch_cflags})
-            target_compile_options(ptscotcherr PRIVATE ${_scotch_cflags})
+            target_compile_options(ptscotch PRIVATE ${_scotch_cflags})
         endif()
 
         # Distributed Fortran entry points MUMPS calls under -Dptscotch
@@ -448,16 +439,16 @@ if(NOT BASELINE_BUILD)
         endforeach()
     endfunction()
 
-    if(TARGET ${LIB_PREFIX}mumps)
-        foreach(_dep ${LIB_PREFIX}scalapack ${LIB_PREFIX}lapack ${LIB_PREFIX}blas)
+    if(TARGET ${LIB_PAIR_PREFIX}mumps)
+        foreach(_dep ${LIB_PAIR_PREFIX}scalapack ${LIB_PAIR_PREFIX}lapack ${LIB_PAIR_PREFIX}blas)
             if(TARGET ${_dep})
-                target_link_libraries(${LIB_PREFIX}mumps PUBLIC ${_dep})
+                target_link_libraries(${LIB_PAIR_PREFIX}mumps PUBLIC ${_dep})
             endif()
         endforeach()
         if(MPI_Fortran_FOUND)
             # PRIVATE so consumers can substitute libmpiseq at link time
             # without dragging libmpifort.so along the PUBLIC dep chain.
-            target_link_libraries(${LIB_PREFIX}mumps PRIVATE MPI::MPI_Fortran)
+            target_link_libraries(${LIB_PAIR_PREFIX}mumps PRIVATE MPI::MPI_Fortran)
         endif()
         # Multifloats: the migrator rewrites MPI_DOUBLE_PRECISION →
         # MPI_FLOAT64X2 (and reduction op tokens) in MUMPS Fortran sources,
@@ -465,7 +456,7 @@ if(NOT BASELINE_BUILD)
         # Link the module library so the .mod is on the include path and
         # the C++ side that actually defines the handles is pulled in.
         if(NEEDS_MULTIFLOATS AND TARGET multifloats_mpi_f)
-            target_link_libraries(${LIB_PREFIX}mumps PUBLIC multifloats_mpi_f)
+            target_link_libraries(${LIB_PAIR_PREFIX}mumps PUBLIC multifloats_mpi_f)
         endif()
         # Quad (kind16): same story — the migrator rewrites the reduce-op
         # tokens to MPI_QQ_SUM / MPI_XX_* on the standard MPI_REAL16 /
@@ -473,16 +464,16 @@ if(NOT BASELINE_BUILD)
         # shim so its .mod is on the include path and quad_mpi (which
         # defines the handles) is pulled in transitively.
         if(NEEDS_QUAD_MPI AND TARGET quad_mpi_f)
-            target_link_libraries(${LIB_PREFIX}mumps PUBLIC quad_mpi_f)
+            target_link_libraries(${LIB_PAIR_PREFIX}mumps PUBLIC quad_mpi_f)
         endif()
         # Ordering defines on the migrated analysis Fortran; the
         # defines reach it because CMAKE_Fortran_PREPROCESS is ON.
         # Link the distributed increment BEFORE the sequential library
         # (upstream -lptscotch -lscotch order; scotch itself is reached
         # via mumps_common's folded C runtime).
-        _add_mumps_ordering_defines(${LIB_PREFIX}mumps)
+        _add_mumps_ordering_defines(${LIB_PAIR_PREFIX}mumps)
         if(MUMPS_HAVE_PTSCOTCH)
-            target_link_libraries(${LIB_PREFIX}mumps PUBLIC ptscotch ptscotcherr)
+            target_link_libraries(${LIB_PAIR_PREFIX}mumps PUBLIC ptscotch)
         endif()
     endif()
     if(TARGET mumps_common AND MPI_Fortran_FOUND)
@@ -514,7 +505,7 @@ if(NOT BASELINE_BUILD)
     # ``double`` widths with the target's extended types; it is
     # force-included into the bridge objects below.
     #
-    # Built here (not test-only) so ``find_package(qmumps)`` delivers a
+    # Built here (not test-only) so ``find_package(qxmumps)`` delivers a
     # usable C API: the raw upstream ``dmumps_c.h`` alone would be
     # misleading — it expects libdmumps, not libqmumps.
     set(_mumps_c_src ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_upstream_src)
@@ -559,7 +550,7 @@ if(NOT BASELINE_BUILD)
                 MUMPS_ARITH=MUMPS_ARITH_${arith} Add_)
         endif()
     endfunction()
-    if(TARGET ${LIB_PREFIX}mumps
+    if(TARGET ${LIB_PAIR_PREFIX}mumps
             AND IS_DIRECTORY ${_mumps_c_src}
             AND IS_DIRECTORY ${_mumps_c_inc}
             AND IS_DIRECTORY ${_mumps_c_bridge_inc_target})
@@ -604,7 +595,7 @@ if(NOT BASELINE_BUILD)
 
         # Fold the C runtime .c (plus the DP-pinned mumps_addr object)
         # into the Fortran common archive. mumps_common is guaranteed here
-        # (${LIB_PREFIX}mumps PUBLIC-links it via add_migrated_fortran_library).
+        # (${LIB_PAIR_PREFIX}mumps PUBLIC-links it via add_migrated_fortran_library).
         set(_mumps_c_runtime_srcs
             ${_mumps_c_src}/mumps_common.c
             ${_mumps_c_src}/mumps_io.c
@@ -671,7 +662,7 @@ if(NOT BASELINE_BUILD)
         if(MUMPS_HAVE_SCOTCH)
             target_compile_options(mumps_common PRIVATE
                 "SHELL:$<$<COMPILE_LANGUAGE:C>:-include ${_mumps_scotch_inc}/scotch_rename_mumps.h>")
-            target_link_libraries(mumps_common PUBLIC esmumps scotch scotcherr)
+            target_link_libraries(mumps_common PUBLIC esmumps scotch)
         endif()
         # PT-Scotch C side: mumps_scotch.c's MUMPS_DGRAPHINIT shim calls
         # bare SCOTCH_dgraphInit under -Dptscotch (the define is applied for
@@ -683,7 +674,7 @@ if(NOT BASELINE_BUILD)
         if(MUMPS_HAVE_PTSCOTCH)
             target_compile_options(mumps_common PRIVATE
                 "SHELL:$<$<COMPILE_LANGUAGE:C>:-include ${_mumps_scotch_inc}/scotch_rename_pt_mumps.h>")
-            target_link_libraries(mumps_common PUBLIC ptscotch ptscotcherr)
+            target_link_libraries(mumps_common PUBLIC ptscotch)
         endif()
         if(MPI_C_FOUND)
             target_link_libraries(mumps_common PRIVATE MPI::MPI_C)
@@ -693,20 +684,20 @@ if(NOT BASELINE_BUILD)
 
         # ── Fold the migrated C bridge INTO the Fortran archive ─────
         # The two per-arithmetic bridge objects are compiled INTO
-        # ${LIB_PREFIX}mumps, so libeymumps.a carries both the e/y Fortran
+        # ${LIB_PAIR_PREFIX}mumps, so libeymumps.a carries both the e/y Fortran
         # solvers and their C entry points (${LIB_PREFIX}mumps_c() /
         # ${LIB_PREFIX_COMPLEX}mumps_c()) — no separate libeymumps_c.a.
         # The shared runtime lives inside mumps_common (folded above),
-        # which ${LIB_PREFIX}mumps already PUBLIC-links — so it is LINKED,
+        # which ${LIB_PAIR_PREFIX}mumps already PUBLIC-links — so it is LINKED,
         # not bundled here, and isn't duplicated against the genuine bridge
         # in a combined link. The bridge↔solver reference (qmumps_c →
         # qmumps_f77_) is internal to the one archive; only the
         # solver↔common (runtime) cycle remains, which the
-        # ${LIB_PREFIX}mumps_full RESCAN below resolves.
-        target_sources(${LIB_PREFIX}mumps PRIVATE
+        # ${LIB_PAIR_PREFIX}mumps_full RESCAN below resolves.
+        target_sources(${LIB_PAIR_PREFIX}mumps PRIVATE
             $<TARGET_OBJECTS:${LIB_PREFIX}mumps_c_obj>
             $<TARGET_OBJECTS:${LIB_PREFIX_COMPLEX}mumps_c_obj>)
-        target_include_directories(${LIB_PREFIX}mumps
+        target_include_directories(${LIB_PAIR_PREFIX}mumps
             PUBLIC
                 $<BUILD_INTERFACE:${_mumps_c_bridge_inc_target}>
                 $<BUILD_INTERFACE:${_mumps_c_bridge_inc_shared}>
@@ -714,30 +705,30 @@ if(NOT BASELINE_BUILD)
                 $<BUILD_INTERFACE:${_mumps_c_src}>
                 $<INSTALL_INTERFACE:include/mumps>)
         if(MPI_C_FOUND)
-            target_link_libraries(${LIB_PREFIX}mumps PRIVATE MPI::MPI_C)
-            target_link_libraries(${LIB_PREFIX}mumps INTERFACE
+            target_link_libraries(${LIB_PAIR_PREFIX}mumps PRIVATE MPI::MPI_C)
+            target_link_libraries(${LIB_PAIR_PREFIX}mumps INTERFACE
                 $<LINK_ONLY:MPI::MPI_C>)
         endif()
 
-        # Umbrella INTERFACE target. The qmumps archive (Fortran solvers
+        # Umbrella INTERFACE target. The qxmumps archive (Fortran solvers
         # + the folded-in C bridge) and mumps_common (Fortran common +
         # the folded-in C runtime) are mutually recursive at link time:
-        # qmumps.a references mumps_size_c_ (in mumps_common's
-        # mumps_addr.c) and the common is scanned back against qmumps.a.
+        # qxmumps.a references mumps_size_c_ (in mumps_common's
+        # mumps_addr.c) and the common is scanned back against qxmumps.a.
         # A plain left-to-right scan misses one or the other. The
-        # ``${LIB_PREFIX}mumps_full`` target wraps the archives in a
+        # ``${LIB_PAIR_PREFIX}mumps_full`` target wraps the archives in a
         # ``LINK_GROUP:RESCAN`` so ld --start-group / --end-group resolves
         # the cycle automatically. Consumers who use
-        # ``kind16_libraries::${LIB_PREFIX}mumps_full`` don't have to know
+        # ``kind16_libraries::${LIB_PAIR_PREFIX}mumps_full`` don't have to know
         # about the static-archive ordering subtlety. Requires CMake 3.24+
         # on the consumer side. ``mumps_common`` is named explicitly in
         # the group because mumps_size_c_ (Fortran → runtime) lives
         # there, in the folded-in C runtime.
-        add_library(${LIB_PREFIX}mumps_full INTERFACE)
+        add_library(${LIB_PAIR_PREFIX}mumps_full INTERFACE)
         # Propagate include directories (mumps_full is a meta-target;
-        # by itself it has no headers, so pull them from qmumps
+        # by itself it has no headers, so pull them from qxmumps
         # which now carries the per-target bridge include path).
-        target_include_directories(${LIB_PREFIX}mumps_full INTERFACE
+        target_include_directories(${LIB_PAIR_PREFIX}mumps_full INTERFACE
             $<INSTALL_INTERFACE:include/mumps>)
         # ``install(EXPORT)`` rewrites bare target names to
         # ``${PROJECT_NAME}::name`` in INTERFACE_LINK_LIBRARIES, but
@@ -746,8 +737,8 @@ if(NOT BASELINE_BUILD)
         # therefore embed the namespace literals here so the
         # serialized Targets file points at valid imported targets at
         # consumer time.
-        target_link_libraries(${LIB_PREFIX}mumps_full INTERFACE
-            "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::${LIB_PREFIX}mumps,${PROJECT_NAME}::mumps_common>")
+        target_link_libraries(${LIB_PAIR_PREFIX}mumps_full INTERFACE
+            "$<LINK_GROUP:RESCAN,${PROJECT_NAME}::${LIB_PAIR_PREFIX}mumps,${PROJECT_NAME}::mumps_common>")
 
         # ══ Genuine double-precision MUMPS (additive) ═══════════════
         # Build real libdmumps / libzmumps + a plain-``double`` dmumps_c
@@ -849,7 +840,7 @@ if(NOT BASELINE_BUILD)
             # migrated ``mumps_common`` already holds all 36 upstream common
             # files verbatim (recipe ``copy_files``) and is the sole producer
             # of their .mod set. The genuine solvers link it below, exactly
-            # as the extended ${LIB_PREFIX}mumps does.
+            # as the extended ${LIB_PAIR_PREFIX}mumps does.
 
             # ── genuine solvers, combined by real+complex family ─────
             # Mirrors the extended one-archive layout (libeymumps.a holds
@@ -878,7 +869,7 @@ if(NOT BASELINE_BUILD)
                 # PRIVATE MPI Fortran on every genuine Fortran archive —
                 # the sources #include mpif.h, and PRIVATE keeps the
                 # libmpiseq substitution open (mirrors the migrated
-                # mumps_common / ${LIB_PREFIX}mumps).
+                # mumps_common / ${LIB_PAIR_PREFIX}mumps).
                 target_link_libraries(${_g} PRIVATE MPI::MPI_Fortran)
                 # Add_ (C name-mangling) only for the gpu-stub C; don't
                 # pass -DAdd_ to the Fortran compile.
@@ -910,17 +901,16 @@ if(NOT BASELINE_BUILD)
                 # -lscotch order; scotch itself is folded into mumps_common's
                 # C runtime). BUILD_INTERFACE so it backs our tests but is
                 # not forced into install(EXPORT) — same convention as the
-                # migrated ${LIB_PREFIX}mumps and the parallel stack below.
+                # migrated ${LIB_PAIR_PREFIX}mumps and the parallel stack below.
                 if(MUMPS_HAVE_PTSCOTCH)
                     target_link_libraries(${_s} PUBLIC
-                        $<BUILD_INTERFACE:ptscotch>
-                        $<BUILD_INTERFACE:ptscotcherr>)
+                        $<BUILD_INTERFACE:ptscotch>)
                 endif()
                 if(_have_bundled_parallel)
                     # MPI-matched in-tree stack. The circular refs between
                     # these static archives are resolved by the RESCAN
                     # link group each test builds (tests/mumps); listing
-                    # them PUBLIC here mirrors the migrated ${LIB_PREFIX}mumps.
+                    # them PUBLIC here mirrors the migrated ${LIB_PAIR_PREFIX}mumps.
                     foreach(_p ${_genuine_parallel_stack})
                         target_link_libraries(${_s} PUBLIC $<BUILD_INTERFACE:${_p}>)
                     endforeach()
@@ -944,7 +934,7 @@ if(NOT BASELINE_BUILD)
             # archives: libdzmumps.a carries both the d/z Fortran solvers
             # and their C entry points (dmumps_c()+zmumps_c()), libscmumps.a
             # the s/c pair — no separate libdzmumps_c.a / libscmumps_c.a,
-            # matching the folded extended ${LIB_PREFIX}mumps. The shared
+            # matching the folded extended ${LIB_PAIR_PREFIX}mumps. The shared
             # runtime lives inside mumps_common (linked above), not
             # bundled. The bridge↔solver reference is internal to the
             # archive; the solver↔common (runtime) cycle is resolved by the
@@ -969,7 +959,7 @@ if(NOT BASELINE_BUILD)
             endforeach()
 
             # Umbrella INTERFACE targets — same solver↔common archive cycle
-            # as ${LIB_PREFIX}mumps_full; RESCAN over the (combined) solver
+            # as ${LIB_PAIR_PREFIX}mumps_full; RESCAN over the (combined) solver
             # with its folded-in bridge and mumps_common (Fortran common +
             # the folded-in shared C runtime).
             add_library(dzmumps_full INTERFACE)

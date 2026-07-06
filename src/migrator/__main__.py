@@ -412,8 +412,24 @@ def cmd_build(args):
     # safely send the remaining, genuinely shareable copy_files
     # entries (MUMPS common modules, PBLAS Fortran helpers) to the
     # shared common archive.
+    #
+    # The LA_CONSTANTS/LA_XISNAN pair filter below IS shared with
+    # staging.py: only the target's own suffix pair (_ey/_qx/_mw) may
+    # be compiled. Foreign pairs are not just dead weight — the *_mw
+    # pair does ``use multifloats``, which doesn't exist in a
+    # kind10/kind16 build, so compiling it would break the build.
+    _la_suffixes = ('_ey', '_qx', '_mw')
+    _own_suffix = target_mode.la_constants_suffix.lower()
+    _la_foreign = {
+        f'la_{base}{s}'
+        for base in ('constants', 'xisnan')
+        for s in _la_suffixes
+        if s != _own_suffix
+    }
     common_files, precision_files = [], []
     for f in files:
+        if f.stem in _la_foreign:
+            continue
         rel = f.relative_to(output_dir)
         stem = f.stem.upper()
         # ``force_common`` pins a stem to the family-independent archive
@@ -493,8 +509,8 @@ def cmd_build(args):
 
     # Report results
     pmap = target_mode.prefix_map
-    real_pfx = pmap['R'].lower()
-    precision_lib_name = f'lib{real_pfx}{lib_name}.a'
+    pair_pfx = f"{pmap['R'].lower()}{pmap['C'].lower()}"
+    precision_lib_name = f'lib{pair_pfx}{lib_name}.a'
     common_lib_name = f'lib{lib_name}_common.a'
     ref_lib_name = f'lib{lib_name}.a'
 

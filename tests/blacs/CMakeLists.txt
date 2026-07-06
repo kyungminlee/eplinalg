@@ -20,8 +20,8 @@ if(NOT MPI_Fortran_FOUND)
     return()
 endif()
 
-if(NOT TARGET ${LIB_PREFIX}blacs)
-    message(STATUS "tests/blacs: skipping — ${LIB_PREFIX}blacs not built")
+if(NOT TARGET ${LIB_PAIR_PREFIX}blacs)
+    message(STATUS "tests/blacs: skipping — ${LIB_PAIR_PREFIX}blacs not built")
     return()
 endif()
 
@@ -47,7 +47,7 @@ target_include_directories(blacs_test_common PUBLIC
     $<BUILD_INTERFACE:${_bl_moddir}>
 )
 target_link_libraries(blacs_test_common PUBLIC
-    ${LIB_PREFIX}blacs
+    ${LIB_PAIR_PREFIX}blacs
     MPI::MPI_Fortran
 )
 
@@ -73,7 +73,7 @@ target_include_directories(blacs_test_target PUBLIC
 target_link_libraries(blacs_test_target PUBLIC
     blacs_test_common
     target_conv
-    ${LIB_PREFIX}blacs
+    ${LIB_PAIR_PREFIX}blacs
 )
 if(NEEDS_MULTIFLOATS AND TARGET multifloatsf)
     target_link_libraries(blacs_test_target PUBLIC multifloatsf)
@@ -94,7 +94,7 @@ function(add_blacs_precision_test test_src)
     target_link_options(${test_name} PRIVATE -fno-lto)
     set(_blacs_cycle
         blacs_test_target blacs_test_common
-        ${LIB_PREFIX}blacs)
+        ${LIB_PAIR_PREFIX}blacs)
     foreach(_common blas_common blacs_common)
         if(TARGET ${_common})
             list(APPEND _blacs_cycle ${_common})

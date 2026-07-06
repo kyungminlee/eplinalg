@@ -7,7 +7,7 @@
 #      type-agnostic upstream helpers (mumps_common.c, mumps_addr.c, IO
 #      / save / thread / metis / pord / scotch). See tests/mumps/TODO.md
 #      B2 for the override design.
-#   2. Every test runs via ``mpiexec -n 1`` — the migrated qmumps Fortran
+#   2. Every test runs via ``mpiexec -n 1`` — the migrated qxmumps Fortran
 #      calls MPI primitives (mpi_init_, mpi_bcast_, ...) regardless of
 #      NPROCS. Real MPI is required at runtime; libmpiseq exists as an
 #      alternative (B3 in TODO.md) but its full sequential-link path is
@@ -17,8 +17,8 @@
 # ``${CMAKE_BINARY_DIR}/precision_reports/<test_name>.<target>.json``.
 
 # ── Gate checks ──────────────────────────────────────────────────────
-if(NOT TARGET ${LIB_PREFIX}mumps)
-    message(STATUS "tests/mumps: skipping — ${LIB_PREFIX}mumps not built")
+if(NOT TARGET ${LIB_PAIR_PREFIX}mumps)
+    message(STATUS "tests/mumps: skipping — ${LIB_PAIR_PREFIX}mumps not built")
     return()
 endif()
 if(NOT HAVE_REAL16)
@@ -140,7 +140,7 @@ target_compile_definitions(mumps_c_addr_obj PRIVATE Add_)
 # objects with the type-agnostic upstream runtime (mumps_common.c,
 # IO, save/restore, thread, numa, flytes, config, metis, pord, scotch)
 # into ONE archive. Doing this rather than two archives sidesteps a
-# static-link ordering problem: the migrated qmumps Fortran (built
+# static-link ordering problem: the migrated qxmumps Fortran (built
 # upstream of tests/) calls into both the bridge's
 # dmumps_set_tmp_ptr_c_ and the runtime's mumps_size_c_ /
 # mumps_low_level_*, and a separate runtime archive listed before
@@ -236,7 +236,7 @@ endif()
 # references them with no definition. Mirror the shipped mumps_common
 # (folded C runtime) wiring: define scotch, expose the Scotch include dir, force-include
 # scotch_rename_mumps.h so the bare caller names bind to the _mumps-suffixed
-# archive symbols, and link scotch/esmumps/scotcherr. Gated on the scotch
+# archive symbols, and link scotch/esmumps. Gated on the scotch
 # target so the tree still builds when Scotch wasn't staged.
 set(_MUMPS_SCOTCH_INC ${PROJECT_SOURCE_DIR}/_mumps_scotch_include)
 if(TARGET scotch)
@@ -248,7 +248,7 @@ if(TARGET scotch)
     # would collapse both -include tokens and orphan the second header).
     target_compile_options(mumps_c_bridge PRIVATE
         "SHELL:-include ${_MUMPS_SCOTCH_INC}/scotch_rename_mumps.h")
-    target_link_libraries(mumps_c_bridge PUBLIC esmumps scotch scotcherr)
+    target_link_libraries(mumps_c_bridge PUBLIC esmumps scotch)
 endif()
 
 # PT-Scotch parallel analysis (ICNTL(28)=2, ICNTL(29)=1). The bridge
@@ -257,8 +257,8 @@ endif()
 # ptscotch.h. Mirror the shipped mumps_common wiring: define ptscotch,
 # force-include scotch_rename_pt_mumps.h so that bare distributed call
 # binds to the _mumps-suffixed archive symbol, and link the distributed
-# increment. ptscotch PUBLIC-depends on scotch/scotcherr, so CMake emits
-# it ahead of them on the static link line (single-pass ld). Gated on the
+# increment. ptscotch PUBLIC-depends on scotch, so CMake emits it ahead
+# on the static link line (single-pass ld). Gated on the
 # ptscotch target so the tree still builds when PT-Scotch wasn't staged
 # (libseq / no-MPI columns).
 if(TARGET ptscotch)
@@ -267,7 +267,7 @@ if(TARGET ptscotch)
         $<TARGET_PROPERTY:ptscotch,INTERFACE_INCLUDE_DIRECTORIES>)
     target_compile_options(mumps_c_bridge PRIVATE
         "SHELL:-include ${_MUMPS_SCOTCH_INC}/scotch_rename_pt_mumps.h")
-    target_link_libraries(mumps_c_bridge PUBLIC ptscotch ptscotcherr)
+    target_link_libraries(mumps_c_bridge PUBLIC ptscotch)
 endif()
 
 # ── Common helper modules ────────────────────────────────────────────
@@ -324,25 +324,25 @@ if(NEEDS_QUAD_MPI AND TARGET quad_mpi_f)
     target_link_libraries(mumps_test_target PUBLIC
         $<BUILD_INTERFACE:quad_mpi_f>)
 endif()
-# qmumps + scalapack + lapack + blas + mumps_c_bridge are NOT attached
+# qxmumps + scalapack + lapack + blas + mumps_c_bridge are NOT attached
 # as PUBLIC dependencies because cmake's PUBLIC propagation would place
 # them OUTSIDE the per-test LINK_GROUP wrapper. They're listed
 # explicitly inside add_mumps_*_test()'s LINK_GROUP so every archive
-# carrying cross-references (qmumps Fortran ↔ bridge's
+# carrying cross-references (qxmumps Fortran ↔ bridge's
 # dmumps_set_tmp_ptr_c_ / mumps_size_c_ / mumps_low_level_*; bridge ↔
 # qmumps_f77_) gets re-scanned until everything resolves. The wrapper
-# Fortran source still needs qmumps's .mod files at compile time, so
+# Fortran source still needs qxmumps's .mod files at compile time, so
 # pull just the include dir without taking a link dependency.
-get_target_property(_qmumps_moddir ${LIB_PREFIX}mumps Fortran_MODULE_DIRECTORY)
+get_target_property(_qmumps_moddir ${LIB_PAIR_PREFIX}mumps Fortran_MODULE_DIRECTORY)
 if(_qmumps_moddir)
     target_include_directories(mumps_test_target PUBLIC
         $<BUILD_INTERFACE:${_qmumps_moddir}>)
 endif()
 # Build-order dependency: qmumps_struc_def.mod / xmumps_struc_def.mod
 # need to exist before target_mumps.f90 compiles. We didn't set
-# qmumps as a link dependency (PUBLIC propagation would break the
+# qxmumps as a link dependency (PUBLIC propagation would break the
 # LINK_GROUP wrapping), so make it explicit here.
-add_dependencies(mumps_test_target ${LIB_PREFIX}mumps)
+add_dependencies(mumps_test_target ${LIB_PAIR_PREFIX}mumps)
 
 # ── Test executables ──────────────────────────────────────────────────
 # Rank count for the real-MPI test variant. Default 2 so ctest actually
@@ -366,40 +366,40 @@ function(_mumps_register_test name)
 endfunction()
 
 # All static archives that carry cross-references between the migrated
-# qmumps Fortran and the C bridge — collected here so each test wraps
+# qxmumps Fortran and the C bridge — collected here so each test wraps
 # them in a single LINK_GROUP RESCAN.
 set(_mumps_link_group_archives
     mumps_test_target
     mumps_c_bridge
-    ${LIB_PREFIX}mumps
+    ${LIB_PAIR_PREFIX}mumps
     # mumps_common carries ana_orderings_wrappers_m, whose only external
     # ordering reference (mumps_pordf_ under -Dpord) is defined in the C
-    # bridge. It's a transitive dep of qmumps and would otherwise land
+    # bridge. It's a transitive dep of qxmumps and would otherwise land
     # AFTER --end-group, where that reference can't reach back into the
     # bridge. Naming it in the group keeps the mumps_common <-> bridge
     # cycle inside the RESCAN.
     mumps_common
-    ${LIB_PREFIX}scalapack
-    ${LIB_PREFIX}pblas
-    ${LIB_PREFIX}pbblas
-    ${LIB_PREFIX}ptzblas
-    ${LIB_PREFIX}blacs
-    ${LIB_PREFIX}lapack
-    ${LIB_PREFIX}blas
+    ${LIB_PAIR_PREFIX}scalapack
+    ${LIB_PAIR_PREFIX}pblas
+    ${LIB_PAIR_PREFIX}pbblas
+    ${LIB_PAIR_PREFIX}ptzblas
+    ${LIB_PAIR_PREFIX}blacs
+    ${LIB_PAIR_PREFIX}lapack
+    ${LIB_PAIR_PREFIX}blas
 )
-# Under PARALLEL_BLAS, ${LIB_PREFIX}blas is an INTERFACE composite.
+# Under PARALLEL_BLAS, ${LIB_PAIR_PREFIX}blas is an INTERFACE composite.
 # $<TARGET_FILE:...> can't resolve interfaces, AND substituting
-# _serial into this list creates a CMake target-dep cycle (elapack
+# _serial into this list creates a CMake target-dep cycle (eylapack
 # PUBLIC-links the composite, which links _serial, which is also in
 # the group). The fix lives in the per-target foreach below: we keep
-# ${LIB_PREFIX}blas in the list for add_dependencies(), but in the
+# ${LIB_PAIR_PREFIX}blas in the list for add_dependencies(), but in the
 # link-line construction we route the blas slot through
 # target_link_libraries() (composite) instead of $<TARGET_FILE:>.
-# qxblas is a PUBLIC dep of qlapack (cmake/CMakeLists.txt:600). qblas is
-# already in the cycle, so qxblas → qblas → group → qxblas closes a
-# cycle CMake refuses to build unless qxblas is named in the LINK_GROUP.
-if(TARGET ${LIB_PREFIX}xblas)
-    list(APPEND _mumps_link_group_archives ${LIB_PREFIX}xblas)
+# qxxblas is a PUBLIC dep of qxlapack (cmake/CMakeLists.txt:600). qxblas is
+# already in the cycle, so qxxblas → qxblas → group → qxxblas closes a
+# cycle CMake refuses to build unless qxxblas is named in the LINK_GROUP.
+if(TARGET ${LIB_PAIR_PREFIX}xblas)
+    list(APPEND _mumps_link_group_archives ${LIB_PAIR_PREFIX}xblas)
 endif()
 # Ordering archives (ICNTL(7)=4 pord, =5 metis, =3 scotch). The migrated
 # solver + bridge + common members reference their symbols (eini/yini_driver.F's
@@ -408,13 +408,13 @@ endif()
 # mumps_scotch.c's SCOTCH_*_mumps), yet mumps_c_bridge/mumps_common only
 # PUBLIC-link them — and PUBLIC propagation lands them OUTSIDE the per-test
 # LINK_GROUP, where the LINK_GROUP genex drops them. They are NOT named as
-# LINK_GROUP targets here: emumps PUBLIC-links mumps_common which PUBLIC-links
+# LINK_GROUP targets here: eymumps PUBLIC-links mumps_common which PUBLIC-links
 # pord/metis/scotch, so pulling them into the group closes a group<->common
 # target-graph cycle. Instead they are appended AFTER the group as raw archive
 # files (see _mumps_attach_link_group); collect the target list here, gated on
-# their targets, ordered esmumps->scotch->scotcherr for the intra-Scotch chain.
+# their targets, ordered esmumps->scotch for the intra-Scotch chain.
 set(_mumps_ordering_archives "")
-foreach(_p pord metis esmumps scotch scotcherr)
+foreach(_p pord metis esmumps scotch)
     if(TARGET ${_p})
         list(APPEND _mumps_ordering_archives ${_p})
     endif()
@@ -426,7 +426,7 @@ endforeach()
 # rescan regardless of position. Gated on the ptscotch target: absent in the
 # libseq / no-MPI columns, so those links stay sequential-Scotch-only.
 if(TARGET ptscotch)
-    list(APPEND _mumps_ordering_archives ptscotch ptscotcherr)
+    list(APPEND _mumps_ordering_archives ptscotch)
 endif()
 
 # libmpiseq is a complete drop-in for MPI + BLACS + PBLAS + ScaLAPACK
@@ -437,13 +437,13 @@ endif()
 set(_mumps_link_group_archives_seq
     mumps_test_target
     mumps_c_bridge
-    ${LIB_PREFIX}mumps
+    ${LIB_PAIR_PREFIX}mumps
     mumps_common   # see _mumps_link_group_archives note (mumps_pordf_)
-    ${LIB_PREFIX}lapack
-    ${LIB_PREFIX}blas
+    ${LIB_PAIR_PREFIX}lapack
+    ${LIB_PAIR_PREFIX}blas
 )
-if(TARGET ${LIB_PREFIX}xblas)
-    list(APPEND _mumps_link_group_archives_seq ${LIB_PREFIX}xblas)
+if(TARGET ${LIB_PAIR_PREFIX}xblas)
+    list(APPEND _mumps_link_group_archives_seq ${LIB_PAIR_PREFIX}xblas)
 endif()
 # (PARALLEL_BLAS workaround: see comment on _mumps_link_group_archives;
 # same per-target swap-in-foreach trick applies to _seq.)
@@ -528,10 +528,10 @@ function(_mumps_attach_link_group tgt variant want_c)
         # carry .mod / header search paths.
         set(_archives
             mumps_test_target          # test harness — needs to scan
-            mumps_c_bridge             #   alongside mmumps
-            ${LIB_PREFIX}mumps
-            ${LIB_PREFIX}lapack
-            ${LIB_PREFIX}blas
+            mumps_c_bridge             #   alongside mwmumps
+            ${LIB_PAIR_PREFIX}mumps
+            ${LIB_PAIR_PREFIX}lapack
+            ${LIB_PAIR_PREFIX}blas
             mumps_test_common
             target_conv
             mpiseq                     # MPI / BLACS / scalapack stubs
@@ -557,21 +557,21 @@ function(_mumps_attach_link_group tgt variant want_c)
         # Ordering archives (pord/metis/scotch) — the migrated solver + bridge
         # + common members reference their symbols (see _mumps_link_group_archives
         # note); include them in the --start-group block, gated on their targets.
-        foreach(_ord pord metis esmumps scotch scotcherr)
+        foreach(_ord pord metis esmumps scotch)
             if(TARGET ${_ord})
                 list(APPEND _archives ${_ord})
             endif()
         endforeach()
-        if(TARGET ${LIB_PREFIX}xblas)
-            list(APPEND _archives ${LIB_PREFIX}xblas)
+        if(TARGET ${LIB_PAIR_PREFIX}xblas)
+            list(APPEND _archives ${LIB_PAIR_PREFIX}xblas)
         endif()
-        # Composite-${LIB_PREFIX}blas is an INTERFACE under
+        # Composite-${LIB_PAIR_PREFIX}blas is an INTERFACE under
         # PARALLEL_BLAS=ON; $<TARGET_FILE:...> can't resolve it.
         # Swap to the underlying _serial. See note above near
         # _mumps_link_group_archives.
-        if(PARALLEL_BLAS AND TARGET ${LIB_PREFIX}blas_serial)
+        if(PARALLEL_BLAS AND TARGET ${LIB_PAIR_PREFIX}blas_serial)
             list(TRANSFORM _archives REPLACE
-                "^${LIB_PREFIX}blas$" "${LIB_PREFIX}blas_serial")
+                "^${LIB_PAIR_PREFIX}blas$" "${LIB_PAIR_PREFIX}blas_serial")
         endif()
         if(NEEDS_MULTIFLOATS)
             # multifloats_mpi (C++ MPI bridge) included as a raw
@@ -587,7 +587,6 @@ function(_mumps_attach_link_group tgt variant want_c)
             # surfaces at runtime if hit.
             list(APPEND _archives
                 multifloats_mpi_f multifloats_mpi
-                la_constants_mw la_xisnan_mw
                 multifloatsf multifloats)
         endif()
         if(NEEDS_QUAD_MPI)
@@ -606,18 +605,18 @@ function(_mumps_attach_link_group tgt variant want_c)
         # resolve test_*.o symbols against the group.
         target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
         foreach(_arc IN LISTS _archives)
-            if(_arc STREQUAL "${LIB_PREFIX}blas" AND PARALLEL_BLAS
-                    AND TARGET ${LIB_PREFIX}blas_serial)
+            if(_arc STREQUAL "${LIB_PAIR_PREFIX}blas" AND PARALLEL_BLAS
+                    AND TARGET ${LIB_PAIR_PREFIX}blas_serial)
                 # Composite is INTERFACE → $<TARGET_FILE:> can't
                 # resolve. Inline the two underlying archives directly.
                 # Overlay first so its egemm_ wins over the serial
                 # archive's egemm_ when ld scans the group.
-                if(TARGET ${LIB_PREFIX}blas_parallel)
+                if(TARGET ${LIB_PAIR_PREFIX}blas_parallel)
                     target_link_libraries(${tgt} PRIVATE
-                        $<TARGET_FILE:${LIB_PREFIX}blas_parallel>)
+                        $<TARGET_FILE:${LIB_PAIR_PREFIX}blas_parallel>)
                 endif()
                 target_link_libraries(${tgt} PRIVATE
-                    $<TARGET_FILE:${LIB_PREFIX}blas_serial>)
+                    $<TARGET_FILE:${LIB_PAIR_PREFIX}blas_serial>)
             else()
                 target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
             endif()
@@ -648,10 +647,10 @@ function(_mumps_attach_link_group tgt variant want_c)
         # mumps/scalapack group — so trailing placement resolves the ordering
         # symbols the group members left undefined (ld carries the unresolved
         # set forward). Raw $<TARGET_FILE:> + add_dependencies keeps them out of
-        # the target link graph, so the emumps->mumps_common->pord PUBLIC
+        # the target link graph, so the eymumps->mumps_common->pord PUBLIC
         # chain does NOT form a group<->common cycle (which naming them as
         # LINK_GROUP targets would). Their own --start-group covers the
-        # esmumps->scotch->scotcherr intra-Scotch cross-references.
+        # esmumps->scotch intra-Scotch cross-references.
         if(_mumps_ordering_archives)
             add_dependencies(${tgt} ${_mumps_ordering_archives})
             target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
@@ -771,7 +770,7 @@ endforeach()
 
 # --- C bridge coexistence link checks --------------------------------
 # A release emits FOUR ?mumps_c entry points: the migrated real/complex
-# pair folded into ${LIB_PREFIX}mumps (e/y, q/x or m/w — always the
+# pair folded into ${LIB_PAIR_PREFIX}mumps (e/y, q/x or m/w — always the
 # upstream d/z lineages) and the genuine double pair folded into dzmumps.
 # All share the arithmetic-independent C runtime, now folded into
 # libmumps_common.
@@ -809,19 +808,19 @@ if(TARGET dzmumps AND TARGET mumps_common)
                 --target test_mumps_c_coexist_genuine --config $<CONFIG>)
 endif()
 
-# migrated pair — already shipped; guards the ${LIB_PREFIX}mumps bridge
+# migrated pair — already shipped; guards the ${LIB_PAIR_PREFIX}mumps bridge
 # (both e/y-lineage objects, now folded in) against a future
 # runtime-duplication regression.
-if(TARGET ${LIB_PREFIX}mumps AND TARGET mumps_common)
+if(TARGET ${LIB_PAIR_PREFIX}mumps AND TARGET mumps_common)
     add_executable(test_mumps_c_coexist_migrated EXCLUDE_FROM_ALL ${_coexist_src})
     target_compile_definitions(test_mumps_c_coexist_migrated PRIVATE ${_coexist_defs})
     target_link_options(test_mumps_c_coexist_migrated PRIVATE
         -Wl,--whole-archive
-        $<TARGET_FILE:${LIB_PREFIX}mumps> $<TARGET_FILE:mumps_common>
+        $<TARGET_FILE:${LIB_PAIR_PREFIX}mumps> $<TARGET_FILE:mumps_common>
         -Wl,--no-whole-archive
         -Wl,--unresolved-symbols=ignore-all
         -fno-lto)
-    add_dependencies(test_mumps_c_coexist_migrated ${LIB_PREFIX}mumps mumps_common)
+    add_dependencies(test_mumps_c_coexist_migrated ${LIB_PAIR_PREFIX}mumps mumps_common)
     add_test(NAME mumps_c_coexist_migrated
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
                 --target test_mumps_c_coexist_migrated --config $<CONFIG>)
@@ -870,7 +869,7 @@ if(TARGET dzmumps
     # ana_orderings_wrappers_m / d/z ini_driver callers) would be undefined at
     # link. Name them explicitly inside the group, gated on the target so the
     # tree still builds when a given ordering wasn't staged.
-    foreach(_p pord metis esmumps scotch scotcherr)
+    foreach(_p pord metis esmumps scotch)
         if(TARGET ${_p})
             list(APPEND _genuine_group ${_p})
         endif()
@@ -880,7 +879,7 @@ if(TARGET dzmumps
     # distributed SCOTCH_dgraph*_mumps / SCOTCHFDGRAPH*_mumps symbols. MPI-only
     # → plain variant only; gated on the target so libseq stays sequential.
     if(TARGET ptscotch)
-        list(APPEND _genuine_group ptscotch ptscotcherr)
+        list(APPEND _genuine_group ptscotch)
     endif()
     # _seq variant: libmpiseq replaces ScaLAPACK/PBLAS/BLACS entirely;
     # keep the std double LAPACK + BLAS the genuine solvers call.
@@ -893,7 +892,7 @@ if(TARGET dzmumps
     endforeach()
     # Same ordering archives for the sequential stack (mumps_common is present
     # in both variants and references them identically).
-    foreach(_p pord metis esmumps scotch scotcherr)
+    foreach(_p pord metis esmumps scotch)
         if(TARGET ${_p})
             list(APPEND _genuine_group_seq ${_p})
         endif()

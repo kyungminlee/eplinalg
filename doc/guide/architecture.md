@@ -223,12 +223,13 @@ sections:
    `libseq/`. Provides `mpi_init_`, `mpi_send_`, `blacs_pinfo_`,
    etc. so single-rank tests can link cleanly without a real MPI.
    Conditionally compiled if `_mpiseq_src/` is present in the stage.
-7. Multifloats helper modules: `la_constants_mf`, `la_xisnan_mf`,
-   `multifloats_mpi`. Wrapped in `$<BUILD_INTERFACE:>` generator
+7. Multifloats helper modules: `la_constants_mw` and `la_xisnan_mw`
+   compile directly into the m/w LAPACK archive; `multifloats_mpi`
+   stays a separate target wrapped in `$<BUILD_INTERFACE:>` generator
    expressions to avoid leaking into downstream consumers.
 8. Install rules — per-target export sets, Config.cmake files
    keyed on compiler tag (gfortran-13, ifx-2024.x, etc.) so
-   downstream `find_package(qlapack)` fails clearly when the
+   downstream `find_package(qxlapack)` fails clearly when the
    consumer's compiler doesn't match an installed build.
 
 ## Test infrastructure

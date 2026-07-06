@@ -8,17 +8,26 @@
 
 # ── Install ──────────────────────────────────────────────────────────
 # Each precision library gets its own export set and Config.cmake,
-# so consumers can do: find_package(qblas), find_package(qlapack), etc.
+# so consumers can do: find_package(qxblas), find_package(qxlapack), etc.
 # The common library is bundled into the same export as its precision library.
 
-# Libraries that link MPI (transitively or directly) — their installs
-# pick up an extra ``-${MPI_TAG}`` suffix so OpenMPI/MPICH/Intel-MPI
-# variants can coexist in the same install prefix. (ptscotch/ptscotcherr
-# are also MPI-ABI-tied and carry -${MPI_TAG}, but they are plain-installed
-# alongside scotch in the mumps block below — where the tag is baked into
-# their OUTPUT_NAME at target creation — not through this list, which only
-# the _install_standard_archive / _install_library_pair paths consult.)
-set(_MPI_DEPENDENT_LIBS blacs pblas pbblas scalapack mumps)
+# Libraries whose *objects* are MPI-ABI-bound (reference MPI symbols or
+# bake mpi.h constants) — their installs pass ``MPI`` so the archive
+# filename picks up a ``-${MPI_TAG}`` suffix and OpenMPI/MPICH/Intel-MPI
+# variants can coexist in the same install prefix. Per an nm audit of
+# the installed archives: only blacs and mumps objects reference MPI;
+# pblas/pbblas/scalapack reach MPI exclusively through BLACS (their
+# archives are byte-identical across MPI flavors), so they carry no
+# flavor tag. (ptscotch is also MPI-ABI-tied and carries -${MPI_TAG},
+# but it is plain-installed alongside scotch in the mumps block below —
+# where the tag is baked into its OUTPUT_NAME at target creation — not
+# through this list.)
+set(_MPI_ABI_LIBS blacs mumps)
+
+# Libraries that cannot build without MPI at all (their sources include
+# mpi.h or call BLACS) — installs are skipped entirely when MPI is
+# absent, independent of whether the resulting archive is ABI-bound.
+set(_MPI_REQUIRED_LIBS blacs pblas pbblas scalapack mumps)
 
 # _install_target_and_modules(<target> <fortran_install_library args…>):
 # every install site pairs fortran_install_library with the module
@@ -106,7 +115,7 @@ function(install_library_headers lib_name)
     if(NOT _hdrs)
         return()
     endif()
-    foreach(_t ${LIB_PREFIX}${lib_name} ${lib_name} ${lib_name}_common)
+    foreach(_t ${LIB_PAIR_PREFIX}${lib_name} ${lib_name} ${lib_name}_common)
         if(TARGET ${_t})
             target_include_directories(${_t}
                 INTERFACE $<INSTALL_INTERFACE:include/${lib_name}>)
@@ -123,8 +132,8 @@ endfunction()
 # Netlib sources, no real-promotion flag, no precision-specific
 # defines), so re-installing on top of an existing prefix overwrites
 # matching content — which is exactly what consumers want: one
-# ``eplinalg::blas`` target shared by ``find_package(qblas)``,
-# ``find_package(eblas)``, ``find_package(mblas)``, ... avoiding the
+# ``eplinalg::blas`` target shared by ``find_package(qxblas)``,
+# ``find_package(eyblas)``, ``find_package(mwblas)``, ... avoiding the
 # multi-target redefinition that bundling the std archive in each
 # per-precision export used to cause.
 function(_install_standard_archive lib_name)
@@ -136,7 +145,7 @@ function(_install_standard_archive lib_name)
     _return_if_already_installed(_FC_STD_INSTALLED_${_pkg})
 
     set(_mpi_arg "")
-    if("${lib_name}" IN_LIST _MPI_DEPENDENT_LIBS)
+    if("${lib_name}" IN_LIST _MPI_ABI_LIBS)
         set(_mpi_arg "MPI")
     endif()
 
@@ -193,7 +202,7 @@ function(_install_shared_common lib_name)
     _return_if_already_installed(_FC_COMMON_INSTALLED_${_pkg})
 
     set(_mpi_arg "")
-    if("${lib_name}" IN_LIST _MPI_DEPENDENT_LIBS)
+    if("${lib_name}" IN_LIST _MPI_ABI_LIBS)
         set(_mpi_arg "MPI")
     endif()
     set(_deps "")
@@ -214,8 +223,8 @@ function(_install_shared_common lib_name)
         DEPENDS ${_deps})
 endfunction()
 
-# Install the MUMPS ordering leaf archives (pord/metis/scotch/scotcherr/
-# esmumps + the MPI-tied ptscotch/ptscotcherr) into a single
+# Install the MUMPS ordering leaf archives (pord/metis/scotch/esmumps
+# + the MPI-tied ptscotch) into a single
 # eplinalgOrdering package (once per configure). These are pure-C leaf
 # archives whose OUTPUT_NAMEs are baked at target creation
 # (``libpord_mumps.a`` …) — they must NOT go through
@@ -229,7 +238,7 @@ function(_install_ordering_package)
     _return_if_already_installed(_FC_ORDERING_INSTALLED)
 
     set(_ord "")
-    foreach(_t pord metis scotch scotcherr esmumps ptscotch ptscotcherr)
+    foreach(_t pord metis scotch esmumps ptscotch)
         if(TARGET ${_t})
             list(APPEND _ord ${_t})
         endif()
@@ -240,7 +249,7 @@ function(_install_ordering_package)
         NAMESPACE eplinalg::
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/eplinalgOrdering)
 
-    # ptscotch/ptscotcherr link MPI::MPI_C; only then does the Config need MPI.
+    # ptscotch links MPI::MPI_C; only then does the Config need MPI.
     set(_ord_mpi_dep "")
     if(TARGET ptscotch)
         set(_ord_mpi_dep "find_dependency(MPI COMPONENTS C)")
@@ -285,7 +294,7 @@ function(_install_genuine_mumps)
 endfunction()
 
 function(_install_library_pair lib_name)
-    set(_precision_target "${LIB_PREFIX}${lib_name}")
+    set(_precision_target "${LIB_PAIR_PREFIX}${lib_name}")
     set(_common_target "${lib_name}_common")
     set(_export "${_precision_target}Targets")
 
@@ -294,9 +303,11 @@ function(_install_library_pair lib_name)
     endif()
 
     set(_install_mpi_arg "")
-    if("${lib_name}" IN_LIST _MPI_DEPENDENT_LIBS)
+    if("${lib_name}" IN_LIST _MPI_ABI_LIBS)
         set(_install_mpi_arg "MPI")
-        # MPI-dependent libs only compile when MPI is available; the
+    endif()
+    if("${lib_name}" IN_LIST _MPI_REQUIRED_LIBS)
+        # MPI-requiring libs only compile when MPI is available; the
         # target exists but the build never produces an archive file,
         # which would later cause cmake --install to fail with "file
         # INSTALL cannot find ...". Skip install when MPI is missing —
@@ -331,28 +342,12 @@ function(_install_library_pair lib_name)
     endif()
 
     # If the std archive exists, its package is a transparent dep of
-    # the precision Config so consumers only need find_package(qblas)
+    # the precision Config so consumers only need find_package(qxblas)
     # and ``eplinalg::blas`` resolves automatically.
     set(_precision_deps "")
     if(TARGET ${lib_name} AND NOT "${lib_name}" STREQUAL "${_precision_target}")
         _eplinalg_pkg_name(Std ${lib_name} _std_pkg)
         list(APPEND _precision_deps "${_std_pkg}")
-    endif()
-
-    # NEEDS_MULTIFLOATS precision targets also PUBLIC-link the
-    # la_constants_mw / la_xisnan_mw helper archives (built in the
-    # multifloats bring-up), each installed as its own Config package
-    # (see the NEEDS_MULTIFLOATS install block below). Like
-    # eplinalgStdBlas they are transparent deps, so
-    # consumers only need find_package(mblas) — without these the
-    # generated Config references undefined imported targets and sets
-    # mblas_FOUND = FALSE.
-    if(NEEDS_MULTIFLOATS)
-        foreach(_mf_helper la_constants_mw la_xisnan_mw)
-            if(TARGET ${_mf_helper})
-                list(APPEND _precision_deps ${_mf_helper})
-            endif()
-        endforeach()
     endif()
 
     # A subset of precision targets (the blacs / scalapack / mumps
@@ -377,7 +372,7 @@ function(_install_library_pair lib_name)
     endif()
 
     # MUMPS precision archives additionally reach the ordering leaves
-    # (${LIB_PREFIX}mumps PUBLIC-links ptscotch/ptscotcherr directly, and
+    # (${LIB_PAIR_PREFIX}mumps PUBLIC-links ptscotch directly, and
     # mumps_common the rest), and — for consumer convenience — the
     # genuine s/c/d/z solver package.
     if("${lib_name}" STREQUAL "mumps")
@@ -398,13 +393,13 @@ function(_install_library_pair lib_name)
         ${_install_mpi_arg}
         DEPENDS ${_precision_deps})
 
-    # The MUMPS typed umbrella (${LIB_PREFIX}mumps_full — a RESCAN wrapper
-    # over the typed solver + shared mumps_common) is precision-specific,
-    # so it stays in the typed export. The shared C runtime (mumps_common),
-    # the ordering leaves and the genuine solvers were already factored
-    # into their standalone packages above.
-    if("${lib_name}" STREQUAL "mumps" AND TARGET ${LIB_PREFIX}mumps_full)
-        install(TARGETS ${LIB_PREFIX}mumps_full EXPORT ${_export})
+    # The MUMPS typed umbrella (${LIB_PAIR_PREFIX}mumps_full — a RESCAN
+    # wrapper over the typed solver + shared mumps_common) is
+    # precision-specific, so it stays in the typed export. The shared C
+    # runtime (mumps_common), the ordering leaves and the genuine solvers
+    # were already factored into their standalone packages above.
+    if("${lib_name}" STREQUAL "mumps" AND TARGET ${LIB_PAIR_PREFIX}mumps_full)
+        install(TARGETS ${LIB_PAIR_PREFIX}mumps_full EXPORT ${_export})
     endif()
 endfunction()
 
@@ -429,7 +424,7 @@ endif()
 #      #includes the upstream mumps_c_types.h from layer 1 and overrides
 #      its ``double`` widths. The extended header is shipped for
 #      completeness/rebuilds; consumers of the wrappers do not include it.
-if(NOT BASELINE_BUILD AND TARGET ${LIB_PREFIX}mumps)
+if(NOT BASELINE_BUILD AND TARGET ${LIB_PAIR_PREFIX}mumps)
     if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_upstream_include)
         install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/_mumps_upstream_include/
             DESTINATION include/mumps
@@ -481,39 +476,33 @@ if(NEEDS_MULTIFLOATS)
         _install_target_and_modules(multifloatsf EXPORT multifloatsfTargets NAMESPACE eplinalg:: DEPENDS multifloats)
     endif()
 
-    # multifloats_mpi(_f) link MPI; tag them accordingly.
-    set(_mf_mpi_helpers multifloats_mpi multifloats_mpi_f)
-    foreach(_t la_constants_mw la_xisnan_mw multifloats_mpi multifloats_mpi_f)
-        if(TARGET ${_t})
-            set(_mf_mpi_arg "")
-            if("${_t}" IN_LIST _mf_mpi_helpers)
-                set(_mf_mpi_arg "MPI")
-            endif()
-            # multifloats_mpi_f PUBLIC-links multifloats_mpi, so its Targets
-            # file references eplinalg::multifloats_mpi. Emit the matching
-            # find_dependency into its Config so a consumer that loads only
-            # multifloats_mpi_f still resolves the base bridge.
-            set(_mf_dep_arg "")
-            if("${_t}" STREQUAL "multifloats_mpi_f")
-                set(_mf_dep_arg DEPENDS multifloats_mpi)
-            endif()
-            _install_target_and_modules(${_t} EXPORT ${_t}Targets NAMESPACE eplinalg:: ${_mf_mpi_arg} ${_mf_dep_arg})
-        endif()
-    endforeach()
+    # multifloats_mpi's C objects register the custom MPI ops and are
+    # MPI-ABI-bound → flavor tag. multifloats_mpi_f is a single Fortran
+    # binding shim with no MPI references of its own → compiler tag
+    # only (auto-detected); it PUBLIC-links multifloats_mpi, so its
+    # Targets file references eplinalg::multifloats_mpi — emit the
+    # matching find_dependency into its Config so a consumer that loads
+    # only multifloats_mpi_f still resolves the base bridge.
+    if(TARGET multifloats_mpi)
+        _install_target_and_modules(multifloats_mpi EXPORT multifloats_mpiTargets NAMESPACE eplinalg:: MPI)
+    endif()
+    if(TARGET multifloats_mpi_f)
+        _install_target_and_modules(multifloats_mpi_f EXPORT multifloats_mpi_fTargets NAMESPACE eplinalg:: DEPENDS multifloats_mpi)
+    endif()
 endif()
 
 if(NEEDS_QUAD_MPI)
-    # quad_mpi / quad_mpi_f both link (or stand in for) MPI; tag them.
-    foreach(_t quad_mpi quad_mpi_f)
-        if(TARGET ${_t})
-            # quad_mpi_f PUBLIC-links quad_mpi, so its Targets file references
-            # eplinalg::quad_mpi. Emit find_dependency(quad_mpi) into its
-            # Config so loading only quad_mpi_f still resolves the base bridge.
-            set(_q_dep_arg "")
-            if("${_t}" STREQUAL "quad_mpi_f")
-                set(_q_dep_arg DEPENDS quad_mpi)
-            endif()
-            _install_target_and_modules(${_t} EXPORT ${_t}Targets NAMESPACE eplinalg:: MPI ${_q_dep_arg})
-        endif()
-    endforeach()
+    # quad_mpi's C objects register the custom MPI ops and are
+    # MPI-ABI-bound → flavor tag. quad_mpi_f is a single Fortran binding
+    # shim with no MPI references of its own → compiler tag only
+    # (auto-detected); it PUBLIC-links quad_mpi, so its Targets file
+    # references eplinalg::quad_mpi — emit find_dependency(quad_mpi)
+    # into its Config so loading only quad_mpi_f still resolves the
+    # base bridge.
+    if(TARGET quad_mpi)
+        _install_target_and_modules(quad_mpi EXPORT quad_mpiTargets NAMESPACE eplinalg:: MPI)
+    endif()
+    if(TARGET quad_mpi_f)
+        _install_target_and_modules(quad_mpi_f EXPORT quad_mpi_fTargets NAMESPACE eplinalg:: DEPENDS quad_mpi)
+    endif()
 endif()

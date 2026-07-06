@@ -8,7 +8,6 @@
 # Configure like:
 #   cmake -S examples/mmsolve -B build \
 #         -DCMAKE_PREFIX_PATH="<eplinalg-install>;<mkl-root>/lib/cmake" \
-#         -DEPLINALG_MUMPS_PACKAGE=emumps \
 #         -DMKL_MPI=openmpi
 #
 # The MKL BLACS flavor (MKL_MPI) MUST match the MPI the eplinalg release was
@@ -26,12 +25,6 @@ cmake_minimum_required(VERSION 3.20)
 # non-LTO), so find_package(multifloats) resolves regardless of the consumer's
 # exact C++ compiler — no LTO compiler-tag matching required.
 project(mmsolve LANGUAGES C CXX Fortran)
-
-# The genuine dzmumps/scmumps solvers ship *inside* the ${LIB_PREFIX}mumps
-# package of a release (e.g. kind10 -> emumps, kind16 -> qmumps). Point this at
-# whichever package your install provides; the genuine targets are the same.
-set(EPLINALG_MUMPS_PACKAGE "emumps" CACHE STRING
-    "Name of the installed eplinalg MUMPS package to find (e.g. emumps, qmumps, dmumps)")
 
 # --- sequential (libmpiseq) release ---------------------------------------
 # A `seq` release (MUMPS_LIBSEQ_RELEASE=ON) links the libmpiseq MPI stub rather
@@ -51,10 +44,10 @@ if(MMSOLVE_SEQ)
 endif()
 
 # --- eplinalg extended kind10 e/y (long double) closure -------------------
-# The MUMPS package carries the extended emumps solver, but its imported target
+# The MUMPS package carries the extended eymumps solver, but its imported target
 # pulls a per-precision parallel stack whose sibling packages eplinalg
 # deliberately does NOT auto-load: a consumer must find_package every piece of
-# the closure itself, and — because find_package(emumps) validates that its
+# the closure itself, and — because find_package(eymumps) validates that its
 # referenced targets already exist — the whole closure must be found *before*
 # the MUMPS package below.
 #
@@ -68,20 +61,20 @@ foreach(_p eplinalgStdBlas eplinalgStdLapack eplinalgStdBlacs eplinalgStdPtzblas
 endforeach()
 # The kind10 e/y typed archives (long-double ScaLAPACK/BLACS/PBLAS/LAPACK/BLAS),
 # in dependency order (each before its dependents):
-foreach(_p eblas exblas eblacs eptzblas elapack
-           epbblas epblas escalapack)
+foreach(_p eyblas eyxblas eyblacs eyptzblas eylapack
+           eypbblas eypblas eyscalapack)
   find_package(${_p} REQUIRED)
 endforeach()
 
 # --- eplinalg extended kind16 q/x (__float128) closure --------------------
-# Same shape as e/y: the qmumps solver names a per-precision parallel stack it
+# Same shape as e/y: the qxmumps solver names a per-precision parallel stack it
 # does not auto-load, so we find every typed archive of the closure before the
 # MUMPS package. quad_mpi(_f) are the first-party MPI bridges that register the
 # __float128 MPI_Op / MPI_COMPLEX32 datatypes (transparent find_dependency's of
-# qblacs/qscalapack/qmumps, but we also link them directly below because
+# qxblacs/qxscalapack/qxmumps, but we also link them directly below because
 # mmsolve.c calls quad_mpi_init()).
-foreach(_p qblas qxblas qblacs qptzblas qlapack
-           qpbblas qpblas qscalapack)
+foreach(_p qxblas qxxblas qxblacs qxptzblas qxlapack
+           qxpbblas qxpblas qxscalapack)
   find_package(${_p} REQUIRED)
 endforeach()
 
@@ -90,10 +83,11 @@ endforeach()
 # each m-typed archive (weak/COMDAT), but its compiled extern "C" functions
 # (adddd / cadddd / sindd / csqrtdd …) live only in the core archive and are
 # shipped as the standalone `multifloats` package (linked below).
-# multifloats_mpi(_f) bridge the double-double MPI_Op; la_constants_mw /
-# la_xisnan_mw are the double-double numeric-constant / isnan helper modules.
-foreach(_p mblas mxblas mblacs mptzblas mlapack
-           mpbblas mpblas mscalapack)
+# multifloats_mpi(_f) bridge the double-double MPI_Op. The double-double
+# numeric-constant / isnan helper modules (la_constants_mw / la_xisnan_mw)
+# ride inside the m/w LAPACK archive itself.
+foreach(_p mwblas mwxblas mwblacs mwptzblas mwlapack
+           mwpbblas mwpblas mwscalapack)
   find_package(${_p} REQUIRED)
 endforeach()
 
@@ -102,12 +96,11 @@ endforeach()
 # after MPI_Init — the genuine blacs_pinfo_ wins the link and never registers
 # the q/x __float128 and m/w double-double custom MPI ops otherwise).
 # multifloatsf is the double-double *Fortran* module (module `multifloats`,
-# symbols `__multifloats_MOD_*`). The m/w typed archives — and the
-# la_constants_mw / la_xisnan_mw helpers — reference it as *undefined* symbols
-# (the eplinalg build links it BUILD_INTERFACE-only, so unlike the header-only
-# C++ core it is NOT baked into the archives). The consumer must link it.
-foreach(_p multifloatsf quad_mpi quad_mpi_f multifloats_mpi multifloats_mpi_f
-           la_constants_mw la_xisnan_mw)
+# symbols `__multifloats_MOD_*`). The m/w typed archives reference it as
+# *undefined* symbols (the eplinalg build links it BUILD_INTERFACE-only, so
+# unlike the header-only C++ core it is NOT baked into the archives). The
+# consumer must link it.
+foreach(_p multifloatsf quad_mpi quad_mpi_f multifloats_mpi multifloats_mpi_f)
   find_package(${_p} REQUIRED)
 endforeach()
 # The double-double C++ core (package `multifloats`, target
@@ -121,7 +114,7 @@ find_package(multifloats REQUIRED)
 # All three typed MUMPS packages share the same genuine dz/sc, mumps_common and
 # ordering leaves (factored into standalone packages), so finding all three is
 # collision-free.
-foreach(_p emumps qmumps mmumps)
+foreach(_p eymumps qxmumps mwmumps)
   find_package(${_p} REQUIRED)
 endforeach()
 
@@ -208,13 +201,13 @@ add_executable(mmsolve mmsolve.c mmio_min.c)
 
 # We link the solver archives by file path (see below), which carries no usage
 # requirements — so pull the MUMPS C headers (?mumps_c.h / ?mumps_struc.h) from
-# the imported targets' include interfaces explicitly. emumps carries the
-# genuine s/c/d/z + kind10 e/y headers; qmumps the kind16 q/x; mmumps the
+# the imported targets' include interfaces explicitly. eymumps carries the
+# genuine s/c/d/z + kind10 e/y headers; qxmumps the kind16 q/x; mwmumps the
 # multifloats m/w.
 target_include_directories(mmsolve PRIVATE
-    $<TARGET_PROPERTY:eplinalg::emumps,INTERFACE_INCLUDE_DIRECTORIES>
-    $<TARGET_PROPERTY:eplinalg::qmumps,INTERFACE_INCLUDE_DIRECTORIES>
-    $<TARGET_PROPERTY:eplinalg::mmumps,INTERFACE_INCLUDE_DIRECTORIES>)
+    $<TARGET_PROPERTY:eplinalg::eymumps,INTERFACE_INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:eplinalg::qxmumps,INTERFACE_INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:eplinalg::mwmumps,INTERFACE_INCLUDE_DIRECTORIES>)
 
 # For a seq release we do NOT link the real-MPI targets (they'd drag the actual
 # MPI runtime); we link libmpiseq instead. But mmsolve.c still #includes mpi.h,
@@ -263,14 +256,13 @@ else()
 endif()
 
 # PT-Scotch is the parallel-ordering leaf: an MPI release (stacks ① ②) ships
-# ptscotch/ptscotcherr so mmsolve can exercise ICNTL(28)=2 parallel analysis; a
-# seq release (stack ③, no-PTSCOTCH) omits them. Link them only when the install
-# actually provides them (they arrive via eplinalgOrdering, a transparent
+# ptscotch so mmsolve can exercise ICNTL(28)=2 parallel analysis; a seq
+# release (stack ③, no-PTSCOTCH) omits it. Link it only when the install
+# actually provides it (it arrives via eplinalgOrdering, a transparent
 # find_dependency of the MUMPS packages above).
 if(NOT MMSOLVE_SEQ AND TARGET eplinalg::ptscotch)
   set(_mmsolve_ptscotch
-      $<TARGET_FILE:eplinalg::ptscotch>
-      $<TARGET_FILE:eplinalg::ptscotcherr>)
+      $<TARGET_FILE:eplinalg::ptscotch>)
 else()
   set(_mmsolve_ptscotch "")
 endif()
@@ -318,57 +310,54 @@ target_link_libraries(mmsolve PRIVATE
     -Wl,--start-group
       $<TARGET_FILE:eplinalg::dzmumps>       # double + double-complex genuine solver
       $<TARGET_FILE:eplinalg::scmumps>       # single + single-complex genuine solver
-      $<TARGET_FILE:eplinalg::emumps>        # extended kind10 e/y (long double) solver
-      $<TARGET_FILE:eplinalg::qmumps>        # extended kind16 q/x (__float128) solver
-      $<TARGET_FILE:eplinalg::mmumps>        # extended multifloats m/w (double-double) solver
+      $<TARGET_FILE:eplinalg::eymumps>        # extended kind10 e/y (long double) solver
+      $<TARGET_FILE:eplinalg::qxmumps>        # extended kind16 q/x (__float128) solver
+      $<TARGET_FILE:eplinalg::mwmumps>        # extended multifloats m/w (double-double) solver
       $<TARGET_FILE:eplinalg::mumps_common>  # shared MUMPS runtime (Fortran common + C runtime)
     -Wl,--end-group
     -Wl,--start-group
-      $<TARGET_FILE:eplinalg::escalapack>       # e/y long-double ScaLAPACK (pegetrf_, pypotrf_, …)
+      $<TARGET_FILE:eplinalg::eyscalapack>       # e/y long-double ScaLAPACK (pegetrf_, pypotrf_, …)
       # NUMROC/ICEIL/ILCM live in scalapack_common, which is dropped
       # under MKL — MKL supplies the type-agnostic numroc_/iceil_/ilcm_
       # here (linked first, above).
-      $<TARGET_FILE:eplinalg::elapack>          # e/y long-double LAPACK
-      $<TARGET_FILE:eplinalg::eblacs>           # e/y long-double BLACS (Cegamx2d, …)
-      $<TARGET_FILE:eplinalg::epblas>           # e/y long-double PBLAS
-      $<TARGET_FILE:eplinalg::epbblas>          # e/y long-double PB-BLAS
-      $<TARGET_FILE:eplinalg::eptzblas>         # e/y long-double trapezoidal BLAS
-      $<TARGET_FILE:eplinalg::eblas>            # e/y long-double BLAS
-      $<TARGET_FILE:eplinalg::exblas>           # e/y long-double extra-precision BLAS
+      $<TARGET_FILE:eplinalg::eylapack>          # e/y long-double LAPACK
+      $<TARGET_FILE:eplinalg::eyblacs>           # e/y long-double BLACS (Cegamx2d, …)
+      $<TARGET_FILE:eplinalg::eypblas>           # e/y long-double PBLAS
+      $<TARGET_FILE:eplinalg::eypbblas>          # e/y long-double PB-BLAS
+      $<TARGET_FILE:eplinalg::eyptzblas>         # e/y long-double trapezoidal BLAS
+      $<TARGET_FILE:eplinalg::eyblas>            # e/y long-double BLAS
+      $<TARGET_FILE:eplinalg::eyxblas>           # e/y long-double extra-precision BLAS
     -Wl,--end-group
     -Wl,--start-group
-      $<TARGET_FILE:eplinalg::qscalapack>       # q/x __float128 ScaLAPACK (pqgetrf_, pxpotrf_, …)
-      $<TARGET_FILE:eplinalg::qlapack>          # q/x __float128 LAPACK
-      $<TARGET_FILE:eplinalg::qblacs>           # q/x __float128 BLACS
-      $<TARGET_FILE:eplinalg::qpblas>           # q/x __float128 PBLAS
-      $<TARGET_FILE:eplinalg::qpbblas>          # q/x __float128 PB-BLAS
-      $<TARGET_FILE:eplinalg::qptzblas>         # q/x __float128 trapezoidal BLAS
-      $<TARGET_FILE:eplinalg::qblas>            # q/x __float128 BLAS
-      $<TARGET_FILE:eplinalg::qxblas>           # q/x __float128 extra-precision BLAS
+      $<TARGET_FILE:eplinalg::qxscalapack>       # q/x __float128 ScaLAPACK (pqgetrf_, pxpotrf_, …)
+      $<TARGET_FILE:eplinalg::qxlapack>          # q/x __float128 LAPACK
+      $<TARGET_FILE:eplinalg::qxblacs>           # q/x __float128 BLACS
+      $<TARGET_FILE:eplinalg::qxpblas>           # q/x __float128 PBLAS
+      $<TARGET_FILE:eplinalg::qxpbblas>          # q/x __float128 PB-BLAS
+      $<TARGET_FILE:eplinalg::qxptzblas>         # q/x __float128 trapezoidal BLAS
+      $<TARGET_FILE:eplinalg::qxblas>            # q/x __float128 BLAS
+      $<TARGET_FILE:eplinalg::qxxblas>           # q/x __float128 extra-precision BLAS
     -Wl,--end-group
     -Wl,--start-group
-      $<TARGET_FILE:eplinalg::mscalapack>       # m/w double-double ScaLAPACK (pmgetrf_, pwpotrf_, …)
-      $<TARGET_FILE:eplinalg::mlapack>          # m/w double-double LAPACK
-      $<TARGET_FILE:eplinalg::mblacs>           # m/w double-double BLACS
-      $<TARGET_FILE:eplinalg::mpblas>           # m/w double-double PBLAS
-      $<TARGET_FILE:eplinalg::mpbblas>          # m/w double-double PB-BLAS
-      $<TARGET_FILE:eplinalg::mptzblas>         # m/w double-double trapezoidal BLAS
-      $<TARGET_FILE:eplinalg::mblas>            # m/w double-double BLAS
-      $<TARGET_FILE:eplinalg::mxblas>           # m/w double-double extra-precision BLAS
+      $<TARGET_FILE:eplinalg::mwscalapack>       # m/w double-double ScaLAPACK (pmgetrf_, pwpotrf_, …)
+      $<TARGET_FILE:eplinalg::mwlapack>          # m/w double-double LAPACK
+      $<TARGET_FILE:eplinalg::mwblacs>           # m/w double-double BLACS
+      $<TARGET_FILE:eplinalg::mwpblas>           # m/w double-double PBLAS
+      $<TARGET_FILE:eplinalg::mwpbblas>          # m/w double-double PB-BLAS
+      $<TARGET_FILE:eplinalg::mwptzblas>         # m/w double-double trapezoidal BLAS
+      $<TARGET_FILE:eplinalg::mwblas>            # m/w double-double BLAS
+      $<TARGET_FILE:eplinalg::mwxblas>           # m/w double-double extra-precision BLAS
     -Wl,--end-group
     -Wl,--start-group
       # First-party MPI bridges + double-double helpers. quad_mpi(_f) register
       # the __float128 MPI ops/datatypes; multifloats_mpi(_f) the double-double
-      # ones; la_constants_mw / la_xisnan_mw the double-double numeric helpers;
-      # multifloatsf the double-double Fortran arithmetic module itself
+      # ones; multifloatsf the double-double Fortran arithmetic module itself
       # (__multifloats_MOD_*), referenced-undefined by all of the m/w archives.
       $<TARGET_FILE:eplinalg::multifloatsf>
       $<TARGET_FILE:eplinalg::quad_mpi>
       $<TARGET_FILE:eplinalg::quad_mpi_f>
       $<TARGET_FILE:eplinalg::multifloats_mpi>
       $<TARGET_FILE:eplinalg::multifloats_mpi_f>
-      $<TARGET_FILE:eplinalg::la_constants_mw>
-      $<TARGET_FILE:eplinalg::la_xisnan_mw>
       $<TARGET_FILE:multifloats::multifloats>  # C++ core: extern "C" adddd/cadddd/sindd/…
     -Wl,--end-group
     -Wl,--start-group
@@ -376,7 +365,6 @@ target_link_libraries(mmsolve PRIVATE
       $<TARGET_FILE:eplinalg::esmumps>
       $<TARGET_FILE:eplinalg::metis>
       $<TARGET_FILE:eplinalg::scotch>
-      $<TARGET_FILE:eplinalg::scotcherr>
       ${_mmsolve_ptscotch}                      # PT-Scotch parallel ordering (MPI builds only)
     -Wl,--end-group
     ${_mmsolve_mpi_link}           # real MPI, or libmpiseq for a seq release

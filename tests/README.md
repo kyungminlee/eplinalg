@@ -61,7 +61,7 @@ compares the results in REAL(KIND=16) space:
   static library. Routine names stay as the canonical D/Z prefixes
   (`dgemm`, `ddot`, `zaxpy`, …) but operate at REAL(KIND=16).
 - **Target under test**: the migrated extended-precision library
-  (`qblas`/`eblas`/`ddblas`) for the active build target.
+  (`qxblas`/`eyblas`/`mwblas`) for the active build target.
 
 Inputs are generated at REAL(KIND=16). The reference call is direct;
 the target call goes through a per-target wrapper that converts the

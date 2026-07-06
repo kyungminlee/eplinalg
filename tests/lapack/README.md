@@ -1,7 +1,7 @@
 # LAPACK differential precision tests
 
 Differential precision tests for the migrated LAPACK libraries
-(`qlapack` / `elapack` / `ddlapack`), following the scheme described in
+(`qxlapack` / `eylapack` / `mwlapack`), following the scheme described in
 `tests/README.md`. Each test runs a routine through the migrated
 extended-precision implementation and through a REAL(KIND=16) reference
 (`reflapack_quad`), then compares the outputs in KIND=16 and writes a

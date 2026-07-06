@@ -29,7 +29,7 @@ endif()
 
 if(BASELINE_BUILD)
     # kind4/kind8: link standard Netlib pblas/blacs archives. Skip the
-    # migrated-target presence checks since LIB_PREFIX is empty.
+    # migrated-target presence checks since LIB_PAIR_PREFIX is empty.
     if(NOT TARGET pblas)
         message(STATUS "tests/pblas: skipping — pblas std archive not built")
         return()
@@ -39,12 +39,12 @@ if(BASELINE_BUILD)
         return()
     endif()
 else()
-    if(NOT TARGET ${LIB_PREFIX}pblas)
-        message(STATUS "tests/pblas: skipping — ${LIB_PREFIX}pblas not built")
+    if(NOT TARGET ${LIB_PAIR_PREFIX}pblas)
+        message(STATUS "tests/pblas: skipping — ${LIB_PAIR_PREFIX}pblas not built")
         return()
     endif()
-    if(NOT TARGET ${LIB_PREFIX}blacs)
-        message(STATUS "tests/pblas: skipping — ${LIB_PREFIX}blacs not built")
+    if(NOT TARGET ${LIB_PAIR_PREFIX}blacs)
+        message(STATUS "tests/pblas: skipping — ${LIB_PAIR_PREFIX}blacs not built")
         return()
     endif()
 endif()
@@ -81,7 +81,7 @@ if(BASELINE_BUILD)
 else()
     target_link_libraries(pblas_test_common PUBLIC
         refblas_quad
-        ${LIB_PREFIX}blacs
+        ${LIB_PAIR_PREFIX}blacs
         MPI::MPI_Fortran
     )
 endif()
@@ -115,7 +115,7 @@ else()
     target_link_libraries(pblas_test_target PUBLIC
         pblas_test_common
         target_conv
-        ${LIB_PREFIX}pblas
+        ${LIB_PAIR_PREFIX}pblas
     )
 endif()
 if(NEEDS_MULTIFLOATS AND TARGET multifloatsf)
@@ -164,8 +164,8 @@ function(add_pblas_precision_test test_src)
     else()
         set(_pblas_cycle
             pblas_test_target pblas_test_common
-            ${LIB_PREFIX}pblas ${LIB_PREFIX}ptzblas ${LIB_PREFIX}pbblas
-            ${LIB_PREFIX}blacs ${LIB_PREFIX}blas refblas_quad)
+            ${LIB_PAIR_PREFIX}pblas ${LIB_PAIR_PREFIX}ptzblas ${LIB_PAIR_PREFIX}pbblas
+            ${LIB_PAIR_PREFIX}blacs ${LIB_PAIR_PREFIX}blas refblas_quad)
     endif()
     # pblas_common / blacs_common / ptzblas_common hold the common
     # (precision-independent) halves split out by _install_library_pair;
