@@ -16,7 +16,7 @@ def _patch_libseq_mpi_f(path: Path) -> None:
     kind16 reductions.
 
     Patches the staged copy at ``_mpiseq_src/mpi.f``; upstream's
-    ``external/MUMPS_5.8.2/libseq/mpi.f`` stays read-only. BLACS /
+    ``external/MUMPS_5.9.0/libseq/mpi.f`` stays read-only. BLACS /
     ScaLAPACK forwarders inside the same file are deliberately KEPT
     — libmpiseq stands in for those archives in the ``_seq`` test
     link, and the real BLACS / ScaLAPACK archives aren't linked there

@@ -162,9 +162,16 @@ def _looks_like_statement_function(stripped: str, lines: list[str], k: int) -> b
     return False
 
 
+# ``__KEEPKIND_DP__`` is the keep-kind sentinel that stands in for
+# ``DOUBLE PRECISION`` (see fortran/keepkind.py). ``specialize_use_module``
+# scans for locally-declared names while the sentinel is still in place —
+# the restore happens only after migrate_*_form returns — so this pattern
+# must recognise the sentinel too, or a keep-kind-protected local (e.g. a
+# ``DOUBLE PRECISION :: GAMMA`` that collides with a multifloats generic)
+# is missed and wrongly imported via ``USE ..., only:``.
 _DECL_LINE_RE = re.compile(
     r'^\s+(?:TYPE\s*\([^)]*\)|INTEGER\b|REAL\b|COMPLEX\b|LOGICAL\b|'
-    r'CHARACTER\b|DOUBLE\s+PRECISION\b|DOUBLE\s+COMPLEX\b)',
+    r'CHARACTER\b|DOUBLE\s+PRECISION\b|DOUBLE\s+COMPLEX\b|__KEEPKIND_DP__)',
     re.IGNORECASE,
 )
 

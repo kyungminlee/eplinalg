@@ -67,7 +67,7 @@ class RecipeConfig:
     extra_c_dirs: list[Path] = field(default_factory=list)
     # Additional Fortran source directories whose files are migrated in
     # the same pass as ``source_dir``. Used by MUMPS to pull in the
-    # per-arithmetic header files under ``external/MUMPS_5.8.2/include/``
+    # per-arithmetic header files under ``external/MUMPS_5.9.0/include/``
     # (``dmumps_struc.h`` etc.), which are Fortran content despite the
     # ``.h`` extension and must be migrated so the ``INCLUDE`` statements
     # in ``dmumps_struc_def.F`` resolve against the renamed target file.

@@ -33,7 +33,7 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SRC_DIR = REPO / 'external' / 'MUMPS_5.8.2' / 'src'
+SRC_DIR = REPO / 'external' / 'MUMPS_5.9.0' / 'src'
 MANIFEST = REPO / 'recipes' / 'mumps' / 'keep-kind.manifest'
 
 # copy_files stems (must match recipes/mumps.yaml). Anything listed
@@ -163,7 +163,7 @@ def main() -> int:
 
     sites = find_call_sites(shared)
     entries = sorted(
-        f'external/MUMPS_5.8.2/src/{name}:{ln}'
+        f'external/MUMPS_5.9.0/src/{name}:{ln}'
         for (name, ln) in sites
     )
 

@@ -21,6 +21,7 @@ from migrator.fortran_migrator import (
     convert_parameter_stmts,
     convert_data_stmts,
     insert_use_multifloats,
+    specialize_use_module,
     rewrite_la_constants_use,
     _la_constants_rename_map,
     _rewrite_mpi_datatypes,
@@ -443,6 +444,38 @@ def test_insert_use_multifloats_dedupes(mf):
         ''')
     out = insert_use_multifloats(src, mf, extra_lines=None)
     assert out.count('USE multifloats') == 1
+
+
+def test_specialize_use_excludes_keepkind_masked_local(mf):
+    """A keep-kind-protected ``DOUBLE PRECISION`` local whose name
+    collides with a multifloats generic (e.g. ``GAMMA``) must NOT be
+    imported via ``USE ..., only:``.
+
+    ``specialize_use_module`` runs while the keep-kind sentinel is still
+    in place (the restore happens after migrate_*_form returns), so the
+    declaration appears as ``__KEEPKIND_DP__ :: GAMMA``. The local-name
+    scanner must recognise the sentinel form, or ``gamma`` leaks into the
+    import list and gfortran rejects it ("GENERIC procedure 'gamma' is
+    not allowed as an actual argument"). Regression for the MUMPS 5.9.0
+    DMUMPS_LRMIXED_FRxFR routine.
+    """
+    from migrator.fortran.keepkind import _KK_SENTINEL
+    src = (
+        "      SUBROUTINE FRXFR(A)\n"
+        "      USE multifloats\n"
+        f"      {_KK_SENTINEL} :: GAMMA\n"
+        "      TYPE(real64x2) :: X\n"
+        "      GAMMA = 2.0D0\n"
+        "      X = real64x2(GAMMA)\n"
+        "      END\n"
+    )
+    out = specialize_use_module(src, mf, fixed_form=True)
+    use_line = next(l for l in out.splitlines() if 'USE multifloats' in l)
+    assert ', only:' in use_line
+    # gamma is a keep-kind-masked local, not the generic — must be excluded.
+    assert 'gamma' not in use_line.lower()
+    # real64x2 is genuinely used and public — must survive.
+    assert 'real64x2' in use_line
 
 
 # ---------------------------------------------------------------------------

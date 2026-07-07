@@ -495,7 +495,7 @@ set(STAGED_LIBRARIES {staged_list})
         # executables. Stubs print a "should not be called" error if a
         # collective/comm primitive that requires multi-rank coordination
         # is invoked, so libseq is NPROCS=1-only by construction.
-        ('_mpiseq_src',    'MUMPS_5.8.2/libseq'),
+        ('_mpiseq_src',    'MUMPS_5.9.0/libseq'),
         # MUMPS upstream src/ + include/. The recipe (which is fortran-
         # only) skips every *MUMPS_C / MUMPS_C_TYPES header and every
         # *.c file, so the migrated qxmumps archive ships without a C
@@ -507,8 +507,8 @@ set(STAGED_LIBRARIES {staged_list})
         # type-agnostic and compile verbatim. Staging the whole src/
         # tree (including the .F siblings we don't need here) is
         # cheaper than per-file plumbing and matches the convention.
-        ('_mumps_upstream_src',     'MUMPS_5.8.2/src'),
-        ('_mumps_upstream_include', 'MUMPS_5.8.2/include'),
+        ('_mumps_upstream_src',     'MUMPS_5.9.0/src'),
+        ('_mumps_upstream_include', 'MUMPS_5.9.0/include'),
         # PORD nested-dissection ordering — ships in-tree with MUMPS and
         # is self-contained standard C (no MPI / external dep). Staging
         # its algorithm sources (PORD/lib) + headers (PORD/include) lets
@@ -516,8 +516,8 @@ set(STAGED_LIBRARIES {staged_list})
         # works; without it mumps_pord.c compiles as an inert stub.
         # Precision-agnostic (permutes the integer adjacency graph), so a
         # single build serves every migrated arithmetic.
-        ('_mumps_pord_src',         'MUMPS_5.8.2/PORD/lib'),
-        ('_mumps_pord_include',     'MUMPS_5.8.2/PORD/include'),
+        ('_mumps_pord_src',         'MUMPS_5.9.0/PORD/lib'),
+        ('_mumps_pord_include',     'MUMPS_5.9.0/PORD/include'),
         # METIS 5.1.0 nested-dissection / k-way ordering — vendored under
         # external/metis-5.1.0 with every public API symbol privately
         # namespaced (METIS_<X> → METIS_MUMPS_<X>, internal libmetis__ →
@@ -695,11 +695,11 @@ def _stage_baseline(args, target_name: str):
         ('_scalapack_src',        'scalapack-2.2.3/SRC',               'scalapack'),
         ('_scalapack_tools_src',  'scalapack-2.2.3/TOOLS',             None),
         ('_scalapack_redist_src', 'scalapack-2.2.3/REDIST/SRC',        None),
-        ('_mpiseq_src',           'MUMPS_5.8.2/libseq',                None),
-        ('_mumps_upstream_src',   'MUMPS_5.8.2/src',                   'mumps'),
-        ('_mumps_upstream_include', 'MUMPS_5.8.2/include',             None),
-        ('_mumps_pord_src',       'MUMPS_5.8.2/PORD/lib',              None),
-        ('_mumps_pord_include',   'MUMPS_5.8.2/PORD/include',          None),
+        ('_mpiseq_src',           'MUMPS_5.9.0/libseq',                None),
+        ('_mumps_upstream_src',   'MUMPS_5.9.0/src',                   'mumps'),
+        ('_mumps_upstream_include', 'MUMPS_5.9.0/include',             None),
+        ('_mumps_pord_src',       'MUMPS_5.9.0/PORD/lib',              None),
+        ('_mumps_pord_include',   'MUMPS_5.9.0/PORD/include',          None),
         ('_mumps_metis_gklib',    'metis-5.1.0/GKlib',                 None),
         ('_mumps_metis_lib',      'metis-5.1.0/libmetis',              None),
         ('_mumps_metis_include',  'metis-5.1.0/include',               None),
