@@ -55,8 +55,12 @@ if(NOT BASELINE_BUILD)
             # no ``Add_`` here. Its sources #include <space.h> etc. from
             # PORD/include (angle-bracket), hence the PUBLIC include dir,
             # which also reaches mumps_pord.c once the runtime links pord.
+            # The INSTALL_INTERFACE dir is where _install_ordering_package
+            # ships those headers, so find_package consumers can call the
+            # PORD API directly.
             target_include_directories(pord PUBLIC
-                $<BUILD_INTERFACE:${_mumps_pord_inc}>)
+                $<BUILD_INTERFACE:${_mumps_pord_inc}>
+                $<INSTALL_INTERFACE:include/pord_mumps>)
             set(MUMPS_HAVE_PORD TRUE)
             message(STATUS "MUMPS: PORD ordering enabled (ICNTL(7)=4)")
         endif()
@@ -94,11 +98,15 @@ if(NOT BASELINE_BUILD)
             # GKlib.h / metis.h / rename.h / defs.h … are angle-bracket
             # includes resolved from all three staged dirs; PUBLIC so the
             # public metis.h also reaches mumps_metis*.c once the runtime
-            # links metis.
+            # links metis. Only the public metis.h (already carrying the
+            # METIS_MUMPS_* renamed API) is installed — GKlib/libmetis
+            # headers are build-internal — via _install_ordering_package
+            # into the INSTALL_INTERFACE dir.
             target_include_directories(metis PUBLIC
                 $<BUILD_INTERFACE:${_mumps_metis_inc}>
                 $<BUILD_INTERFACE:${_mumps_metis_gklib}>
-                $<BUILD_INTERFACE:${_mumps_metis_lib}>)
+                $<BUILD_INTERFACE:${_mumps_metis_lib}>
+                $<INSTALL_INTERFACE:include/metis_mumps>)
             # Width macros: 32-bit idx / real — the header default and the
             # width mumps_metis.c's ``IDXTYPEWIDTH == 32`` path expects.
             # NDEBUG* match the upstream (non-ASSERT) GKlib build; the
@@ -203,9 +211,14 @@ if(NOT BASELINE_BUILD)
             # overrides the archive member, and nothing here swaps
             # handlers — one archive fewer to ship and order.
             add_library(scotch STATIC ${_scotch_lib_c} ${_scotch_err_c})
+            # The INSTALL_INTERFACE dir receives scotch.h/scotchf.h and
+            # scotch_rename_mumps.h (consumers calling bare SCOTCH_* must
+            # include the rename header to reach the _mumps-suffixed
+            # archive symbols) via _install_ordering_package.
             target_include_directories(scotch PUBLIC
                 $<BUILD_INTERFACE:${_mumps_scotch_inc}>
-                $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
+                $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>
+                $<INSTALL_INTERFACE:include/scotch_mumps>)
             target_compile_definitions(scotch PRIVATE ${_scotch_defs})
             set_target_properties(scotch PROPERTIES
                 C_STANDARD 99 POSITION_INDEPENDENT_CODE ON
@@ -213,7 +226,8 @@ if(NOT BASELINE_BUILD)
 
             add_library(esmumps STATIC ${_scotch_esm_c})
             target_include_directories(esmumps PUBLIC
-                $<BUILD_INTERFACE:${_mumps_scotch_inc}>)
+                $<BUILD_INTERFACE:${_mumps_scotch_inc}>
+                $<INSTALL_INTERFACE:include/scotch_mumps>)
             target_include_directories(esmumps PRIVATE
                 $<BUILD_INTERFACE:${_mumps_scotch_esmsrc}>
                 $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
@@ -332,9 +346,14 @@ if(NOT BASELINE_BUILD)
         # no duplicate definitions, mirroring upstream's -lptscotcherr
         # -lscotch -lscotcherr order with two fewer archives.
         add_library(ptscotch STATIC ${_ptscotch_lib_c} ${_scotch_err_c})
+        # ptscotch.h/ptscotchf.h are installed with the sequential Scotch
+        # headers (same include/scotch_mumps dir): they are pre-generated,
+        # MPI-ABI-independent files (see vendoring note above), so the
+        # untagged eplinalgOrdering package can carry them for every flavor.
         target_include_directories(ptscotch PUBLIC
             $<BUILD_INTERFACE:${_mumps_scotch_inc}>
-            $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>)
+            $<BUILD_INTERFACE:${_mumps_scotch_libsrc}>
+            $<INSTALL_INTERFACE:include/scotch_mumps>)
         target_compile_definitions(ptscotch PRIVATE ${_ptscotch_defs})
         # The distributed increment references the sequential SCOTCH_*_mumps
         # symbols but does not define them. Declaring the dependency PUBLIC
