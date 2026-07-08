@@ -27,7 +27,7 @@
 !   * residual   max|b - A x_solve|    / max|b|
 ! against the repo-standard O(n^3) eps tolerance.
 
-program test_noinit_seq
+program test_noinit_f
     use prec_kinds,      only: ep
     use prec_report,     only: report_init, report_case, report_finalize, &
                                report_check_status
@@ -46,7 +46,7 @@ program test_noinit_seq
     integer, parameter :: n = 8
     real(ep)           :: tol
 
-    call report_init('test_noinit_seq', target_name)
+    call report_init('test_noinit_f', target_name)
     tol = 16.0_ep * real(n, ep)**3 * target_eps
 
     call solve_real()
@@ -169,4 +169,4 @@ contains
         deallocate(A, x_true, b, x_solve, r, irn, jcn, A_trip)
     end subroutine solve_complex
 
-end program test_noinit_seq
+end program test_noinit_f

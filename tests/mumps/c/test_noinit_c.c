@@ -1,7 +1,7 @@
 /*
  * Sequential (libmpiseq) no-initialization solve check — C bridge side.
  *
- * Mirror of tests/mumps/fortran/test_noinit_seq.f90, driving the migrated
+ * Mirror of tests/mumps/fortran/test_noinit_f.f90, driving the migrated
  * MUMPS C bridge for BOTH supported types of this target (real +
  * complex) with NEITHER MPI_Init NOR the per-target MPI-handle
  * registration (test_target_mpi_init / multifloats_mpi_init /
@@ -66,7 +66,7 @@ static void report_case_c(const char *case_label, test_real max_rel, test_real t
             "      \"max_rel_err\": %s,\n      \"tolerance\":   %s,\n"
             "      \"digits\":      %s,\n      \"passed\":      %s\n    }\n",
             case_label, relbuf, tolbuf, digbuf, passed ? "true" : "false");
-    printf("  test_noinit_seq [%s] max_rel_err=%s  %s\n",
+    printf("  test_noinit_c [%s] max_rel_err=%s  %s\n",
            case_label, relbuf, passed ? "PASS" : "FAIL");
 }
 
@@ -244,7 +244,7 @@ static void solve_complex(void)
 
 int main(void)
 {
-    report_init_c("test_noinit_seq", TEST_TARGET_NAME);
+    report_init_c("test_noinit_c", TEST_TARGET_NAME);
     solve_real();
     solve_complex();
     report_finalize_c();
