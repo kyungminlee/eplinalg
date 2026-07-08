@@ -593,3 +593,47 @@ def _scan_complex_var_names(source: str) -> set[str]:
 
 def _scan_real_var_names(source: str) -> set[str]:
     return _scan_typed_var_names(source, _REAL_DECL_RE)
+
+
+# A derived-type *definition* opens with ``TYPE [, attrs] [::] name`` — a
+# bare type name, never ``TYPE(`` (that's a variable declaration) and never
+# ``TYPE IS (`` (a SELECT TYPE guard, which has no matching END TYPE and
+# would otherwise swallow the rest of the file).
+_TYPE_DEF_OPEN_RE = re.compile(
+    r'^\s*TYPE\b(?!\s*\()(?:\s*,[^:\n]*)?(?:\s*::)?\s*[A-Za-z_]\w*\s*(?:!.*)?$',
+    re.IGNORECASE,
+)
+_TYPE_DEF_CLOSE_RE = re.compile(r'^\s*END\s*TYPE\b', re.IGNORECASE)
+
+
+def _extract_derived_type_bodies(source: str) -> str:
+    """Return only the lines that sit *inside* ``TYPE name`` / ``END TYPE``
+    derived-type definition blocks. Component declarations there are what
+    a per-file oracle misses: they type the fields reached elsewhere as
+    ``id%FIELD`` (the retyped MUMPS statistics printed in diagnostics).
+    """
+    out: list[str] = []
+    inside = False
+    for line in source.splitlines():
+        if not inside:
+            if _TYPE_DEF_OPEN_RE.match(line):
+                inside = True
+            continue
+        if _TYPE_DEF_CLOSE_RE.match(line):
+            inside = False
+            continue
+        out.append(line)
+    return '\n'.join(out)
+
+
+def scan_type_component_names(source: str) -> tuple[set[str], set[str]]:
+    """``(real_components, complex_components)`` declared inside derived-type
+    definition blocks in ``source`` (uppercase names). Empty when the file
+    defines no derived types. Used to build a *global* component-type oracle
+    so formatted-output narrowing can recognise ``id%DKEEP(160)`` even in a
+    file that only ``USE``s the struct-definition module.
+    """
+    body = _extract_derived_type_bodies(source)
+    if not body:
+        return set(), set()
+    return _scan_real_var_names(body), _scan_complex_var_names(body)

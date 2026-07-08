@@ -81,6 +81,12 @@ from .fortran.mpi import (  # noqa: F401  (re-export)
 from .fortran.keepkind import (  # noqa: F401  (re-export)
     _KK_SENTINEL, _KK_DBLE_SENTINEL, _KK_DCMPLX_SENTINEL, _apply_keep_kind_sentinel, _restore_keep_kind_sentinel, _strip_roundup_lwork,
 )
+from .fortran.io_narrow import (  # noqa: F401  (re-export)
+    narrow_multifloats_io,
+    narrow_multifloats_io_open,
+    narrow_io_continuation,
+    is_fixed_io_continuation,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +113,9 @@ from .fortran.keepkind import (  # noqa: F401  (re-export)
 def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: TargetMode,
                         source_kind: int | None = None,
                         has_float_types: bool = True,
-                        has_real_literals: bool = True) -> str:
+                        has_real_literals: bool = True,
+                        comp_real: frozenset[str] = frozenset(),
+                        comp_complex: frozenset[str] = frozenset()) -> str:
     """Migrate one fixed-form source string.
 
     ``has_float_types`` / ``has_real_literals`` let the parser-guided
@@ -115,6 +123,12 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
     literal-promotion passes when the parse facts show the file contains
     no floating-point declarations / real literals. The parser-less path
     has no such evidence and runs every pass (the defaults).
+
+    ``comp_real`` / ``comp_complex`` are the global derived-type component
+    oracle (real64x2 / cmplx64x2 struct fields harvested across the whole
+    staged tree); formatted-output narrowing consults them for
+    ``%``-qualified references (e.g. ``id%DKEEP(160)``) whose type is
+    declared in a struct module this file only ``USE``s.
     """
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
@@ -129,6 +143,13 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
     physical = source.splitlines(keepends=True)
     statements = _segment_fixed_form_statements(physical)
     result = []
+    # Tracks a formatted WRITE/PRINT whose output list spills across
+    # cpp-broken continuation fragments (see io_narrow docstring): the
+    # segmenter splits the statement at each ``#if``/``#endif``, so the
+    # fragment carrying the real64x2 item has no WRITE keyword and must be
+    # narrowed by continuation. Reset the moment a non-continuation
+    # statement begins.
+    io_list_open = False
     for kind, lines, terms, joined in statements:
         if kind == 'blank':
             result.append(lines[0] + terms[0])
@@ -170,6 +191,19 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
         s = _rewrite_int_kind_on_real64x2(s, target_mode, real_names=real_names)
         s = _wrap_bare_complex_literals(s, target_mode)
         s = _unwrap_redundant_constructors(s, target_mode, real_names=real_names)
+        if is_fixed_io_continuation(lines[0]):
+            # Headless continuation fragment of a cpp-broken statement.
+            # Narrow it only while a formatted output list is still open;
+            # leave its open/closed state to the statement that owns it.
+            if io_list_open:
+                s = narrow_io_continuation(s, real_names, complex_names,
+                                           comp_real, comp_complex)
+        else:
+            # A new logical statement begins: close any open output list,
+            # then re-open if this statement is itself a formatted WRITE.
+            io_list_open = False
+            s, io_list_open = narrow_multifloats_io_open(
+                s, real_names, complex_names, comp_real, comp_complex)
         if len(lines) > 1 and s == joined:
             # Multi-line statement, no transforms applied — emit the
             # original physical lines verbatim to avoid reformat churn.
@@ -194,7 +228,9 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
 
 def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: TargetMode,
                        source_kind: int | None = None,
-                       nuke_mf_params: bool = True) -> str:
+                       nuke_mf_params: bool = True,
+                       comp_real: frozenset[str] = frozenset(),
+                       comp_complex: frozenset[str] = frozenset()) -> str:
     """Migrate one free-form source string.
 
     ``nuke_mf_params`` controls the heuristic pass that comments out
@@ -202,6 +238,8 @@ def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: Targ
     supplies as ``DD_*`` constants. The parser-guided caller
     (:func:`_migrate_with_flang`) has never applied that pass and
     disables it; the parser-less path keeps it (the default).
+
+    ``comp_real`` / ``comp_complex``: see :func:`migrate_fixed_form`.
     """
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
@@ -301,6 +339,8 @@ def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: Targ
             stripped = _rewrite_int_kind_on_real64x2(stripped, target_mode, real_names=real_names)
             stripped = _wrap_bare_complex_literals(stripped, target_mode)
             stripped = _unwrap_redundant_constructors(stripped, target_mode, real_names=real_names)
+            stripped = narrow_multifloats_io(stripped, real_names, complex_names,
+                                             comp_real, comp_complex)
         result.append(stripped + nl)
 
     source = ''.join(result)
@@ -393,7 +433,7 @@ def _apply_local_passes(source: str, passes, *, fixed_form: bool) -> str:
     return ''.join(out)
 
 
-def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mode: TargetMode, parser: str | None = None, parser_cmd: str | None = None, keep_kind_lines: frozenset[int] | None = None) -> tuple[str, str] | None:
+def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mode: TargetMode, parser: str | None = None, parser_cmd: str | None = None, keep_kind_lines: frozenset[int] | None = None, comp_real: frozenset[str] = frozenset(), comp_complex: frozenset[str] = frozenset()) -> tuple[str, str] | None:
     ext, source = src_path.suffix.lower(), src_path.read_text(errors='replace')
     facts = None
     if parser == 'flang':
@@ -410,9 +450,9 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
 
     source_kind = _source_kind_from_filename(src_path.name)
 
-    if facts is not None: migrated = _migrate_with_flang(source, ext, rename_map, target_mode, facts, source_kind=source_kind)
-    elif ext in ('.f', '.for', '.h'): migrated = migrate_fixed_form(source, rename_map, target_mode, source_kind=source_kind)
-    elif ext in ('.f90', '.f95', '.F90'): migrated = migrate_free_form(source, rename_map, target_mode, source_kind=source_kind)
+    if facts is not None: migrated = _migrate_with_flang(source, ext, rename_map, target_mode, facts, source_kind=source_kind, comp_real=comp_real, comp_complex=comp_complex)
+    elif ext in ('.f', '.for', '.h'): migrated = migrate_fixed_form(source, rename_map, target_mode, source_kind=source_kind, comp_real=comp_real, comp_complex=comp_complex)
+    elif ext in ('.f90', '.f95', '.F90'): migrated = migrate_free_form(source, rename_map, target_mode, source_kind=source_kind, comp_real=comp_real, comp_complex=comp_complex)
     else: return None
 
     if keep_kind_lines:
@@ -502,7 +542,9 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
 
 
 def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], target_mode: TargetMode, facts,
-                         source_kind: int | None = None) -> str:
+                         source_kind: int | None = None,
+                         comp_real: frozenset[str] = frozenset(),
+                         comp_complex: frozenset[str] = frozenset()) -> str:
     # Also include USE-statement module names + every variable's type
     # spec (where the type is precision-prefixed, e.g.
     # ``TYPE(DMUMPS_INTR_STRUC)``). The gfortran parser doesn't surface
@@ -570,8 +612,10 @@ def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], targe
     if ext in ('.f90', '.f95', '.F90'):
         return migrate_free_form(source, file_rename_map, target_mode,
                                  source_kind=source_kind,
-                                 nuke_mf_params=False)
+                                 nuke_mf_params=False,
+                                 comp_real=comp_real, comp_complex=comp_complex)
     return migrate_fixed_form(source, file_rename_map, target_mode,
                               source_kind=source_kind,
                               has_float_types=has_float_types,
-                              has_real_literals=has_real_literals)
+                              has_real_literals=has_real_literals,
+                              comp_real=comp_real, comp_complex=comp_complex)
