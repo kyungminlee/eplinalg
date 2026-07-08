@@ -93,6 +93,7 @@ from .prefix_classifier import classify_symbols
 from .fortran.lex import (
     _find_inline_bang, is_comment_line, is_continuation_line,
 )
+from .fortran.decls import scan_type_component_names
 from .fortran_migrator import (
     migrate_file_to_string,
     target_filename,
@@ -690,6 +691,43 @@ def _canonicalize_for_compare(text: str) -> str:
     )
     return text
 
+def _build_component_oracle(
+    paths, target_mode: TargetMode,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Global derived-type component-type oracle for formatted-output
+    narrowing.
+
+    Harvests real/complex component names from every ``TYPE...END TYPE``
+    block across ``paths`` (the whole staged set), unions them, and drops
+    the real∩complex intersection. That intersection is the family of
+    ambiguous data-array components (``A``, ``S``, ``RHS``, ``SCHUR`` — real
+    in the d/s struct, complex in the c/z struct) which are never emitted
+    through a single real edit descriptor and so must not be narrowed. What
+    survives in ``comp_real`` are the statistics that are real in *every*
+    arithmetic (``CNTL``, ``RINFO``, ``RINFOG``, ``DKEEP``) — exactly the
+    fields printed as ``id%DKEEP(160)`` in the diagnostics, which a per-file
+    oracle cannot see because the struct is defined in a ``USE``d module.
+
+    Component names are only ever consulted for ``%``-qualified references
+    (see :func:`io_narrow._narrow_items`), so a bare local of the same name
+    is unaffected. Returns empty sets for kind-based targets (real64x2 /
+    cmplx64x2 narrowing does not apply there)."""
+    if target_mode is None or target_mode.is_kind_based:
+        return frozenset(), frozenset()
+    comp_real: set[str] = set()
+    comp_complex: set[str] = set()
+    for p in paths:
+        try:
+            text = p.read_text(errors='replace')
+        except OSError:
+            continue
+        r, c = scan_type_component_names(text)
+        comp_real |= r
+        comp_complex |= c
+    ambiguous = comp_real & comp_complex
+    return frozenset(comp_real - ambiguous), frozenset(comp_complex - ambiguous)
+
+
 def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
                           output_dir: Path, target_mode: TargetMode,
                           dry_run: bool = False,
@@ -806,12 +844,14 @@ def run_fortran_migration(config: RecipeConfig, rename_map: dict[str, str],
     # We reduce results in canonical-first order so D/Z output is
     # the one written to disk.
     workers = max(1, (os.cpu_count() or 4))
+    comp_real, comp_complex = _build_component_oracle(to_migrate, target_mode)
     results: dict[Path, tuple[str, str] | None] = {}
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futures = {
             ex.submit(migrate_file_to_string, p, rename_map, target_mode,
                       parser, parser_cmd,
-                      config.keep_kind_lines.get(p.name)): p
+                      config.keep_kind_lines.get(p.name),
+                      comp_real, comp_complex): p
             for p in to_migrate
         }
         for fut in tqdm(as_completed(futures), total=len(futures),
@@ -977,11 +1017,13 @@ def run_divergence_report(recipe_path: Path, target_mode=None,
     texts: dict[Path, str] = {}
     workers = max(1, (os.cpu_count() or 4))
     module_rename_pairs = _build_module_rename_pairs(config)
+    comp_real, comp_complex = _build_component_oracle(all_paths, target_mode)
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futures = {
             ex.submit(migrate_file_to_string, p, rename_map, target_mode,
                       parser, parser_cmd,
-                      config.keep_kind_lines.get(p.name)): p
+                      config.keep_kind_lines.get(p.name),
+                      comp_real, comp_complex): p
             for p in all_paths
         }
         for fut in tqdm(as_completed(futures), total=len(futures),
