@@ -677,6 +677,16 @@ function(add_mumps_fortran_test test_src)
         if(variant STREQUAL "_seq" AND name MATCHES "ptscotch")
             continue()
         endif()
+        # The *_noinit drivers deliberately skip MPI_Init and the per-target
+        # MPI-handle registration to prove a plain sequential (libmpiseq)
+        # consumer solves with neither. That contract is only meaningful under
+        # the ``_seq`` variant; the real-MPI variant legitimately requires
+        # MPI_Init, so a no-init driver there would be a false negative. Build
+        # them seq-only. (When libmpiseq isn't built ``_seq`` is absent from
+        # _mumps_test_variants, so the driver is simply skipped everywhere.)
+        if(NOT variant STREQUAL "_seq" AND name MATCHES "noinit")
+            continue()
+        endif()
         set(tgt ${name}${variant})
         add_executable(${tgt} ${test_src})
         _mumps_attach_link_group(${tgt} "${variant}" FALSE)
@@ -700,6 +710,13 @@ function(add_mumps_c_test test_src)
             set(variant "")
         else()
             set(variant "${_vkey}")
+        endif()
+        # Seq-only: the *_noinit drivers prove a plain libmpiseq consumer
+        # solves without MPI_Init or the per-target MPI-handle registration —
+        # a contract that only holds under the ``_seq`` variant. Mirrors the
+        # Fortran guard in add_mumps_fortran_test.
+        if(NOT variant STREQUAL "_seq" AND name MATCHES "noinit")
+            continue()
         endif()
         set(tgt ${name}${variant})
         add_executable(${tgt} ${test_src})

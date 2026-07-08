@@ -90,6 +90,27 @@ contains
         call ${prefix_complex}$(id)
     end subroutine target_xmumps
 
+    ! No-initialization variants: invoke the migrated solver DIRECTLY,
+    ! deliberately WITHOUT multifloats_mpi_init / quad_mpi_init (and, in
+    ! the drivers that use them, without MPI_Init). They exist so the
+    ! sequential (libmpiseq) no-init driver can prove a plain seq consumer
+    ! solves with none of that setup: on multifloats the custom-datatype
+    ! handles now default to the libmpiseq derived-type sentinel (see
+    ! runtime/multifloats-mpi/multifloats_mpi.cpp), and at a single rank
+    ! MUMPS never invokes the custom reduce ops, so the registration
+    ! target_qmumps/target_xmumps perform is unnecessary. These are a thin
+    ! passthrough — no init, nothing else — kept target-agnostic so one
+    ! driver covers every precision.
+    subroutine target_qmumps_noinit(id)
+        type(dmumps_struc), intent(inout) :: id
+        call ${prefix_real}$(id)
+    end subroutine target_qmumps_noinit
+
+    subroutine target_xmumps_noinit(id)
+        type(zmumps_struc), intent(inout) :: id
+        call ${prefix_complex}$(id)
+    end subroutine target_xmumps_noinit
+
     subroutine check_dmumps_input(id, code)
         type(dmumps_struc), intent(in)  :: id
         integer,            intent(out) :: code

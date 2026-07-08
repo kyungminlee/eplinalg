@@ -26,9 +26,25 @@ MPI_Op MPI_ZZ_AMN = MPI_OP_NULL;
  * surfaced to Fortran via multifloats_mpi_f.f90 using bind(c, name=...).
  * MUMPS calls MPI from Fortran directly with names like
  * ``MPI_FLOAT64X2`` and ``MPI_ZZ_SUM``, which need INTEGER Fortran
- * handles rather than the C-side MPI_Datatype / MPI_Op opaque types. */
-MPI_Fint mf_mpi_float64x2_f   = 0;
-MPI_Fint mf_mpi_complex64x2_f = 0;
+ * handles rather than the C-side MPI_Datatype / MPI_Op opaque types.
+ *
+ * The two *datatype* handles default to the libmpiseq derived-type
+ * sentinel (0x10000000 | total_bytes) rather than 0, so a sequential
+ * (libmpiseq) consumer can drive MUMPS with NEITHER MPI_Init NOR
+ * multifloats_mpi_init(): the handle already carries the value that
+ * libseq's patched MUMPS_COPY dispatches on (float64x2 -> 16 bytes ->
+ * 268435472; complex64x2 -> 32 bytes -> 268435488). Without this a
+ * skipped init leaves them 0, and any non-in-place reduction STOPs in
+ * MUMPS_COPY (DATATYPE=0 matches no branch). In a real-MPI build these
+ * defaults are overwritten by multifloats_mpi_init() with the genuine
+ * MPI_Type_c2f handles before first use, so the seq default is inert
+ * there. The encoding mirrors MPISEQ_DTYPE_TAG in
+ * runtime/mpiseq/mpiseq_c_stubs.c and the MUMPS_COPY cases added by
+ * src/migrator/libseq_patch.py -- keep the three in sync. */
+#define MF_MPISEQ_DTYPE_TAG        0x10000000
+#define MF_MPISEQ_SENTINEL(bytes)  (MF_MPISEQ_DTYPE_TAG | (bytes))
+MPI_Fint mf_mpi_float64x2_f   = MF_MPISEQ_SENTINEL(16);  /* 268435472 */
+MPI_Fint mf_mpi_complex64x2_f = MF_MPISEQ_SENTINEL(32);  /* 268435488 */
 MPI_Fint mf_mpi_dd_sum_f      = 0;
 MPI_Fint mf_mpi_dd_amx_f      = 0;
 MPI_Fint mf_mpi_dd_amn_f      = 0;

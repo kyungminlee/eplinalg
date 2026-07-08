@@ -8,11 +8,14 @@
 ! C++ at runtime, not by mpif.h, so Fortran needs an explicit module
 ! that exposes them. Each public name below is a default-INTEGER
 ! (matching MPI_Fint on Linux/x86_64) bound to the C symbol
-! multifloats_mpi.cpp populates via MPI_Type_c2f / MPI_Op_c2f. Values
-! are 0 until ``multifloats_mpi_init`` runs — that happens
-! automatically the first time BLACS bootstraps MPI, and can be
-! triggered explicitly via ``CALL multifloats_mpi_init`` for consumers
-! (like MUMPS) that don't go through BLACS.
+! multifloats_mpi.cpp populates via MPI_Type_c2f / MPI_Op_c2f. The
+! reduction-op handles are 0 until ``multifloats_mpi_init`` runs;
+! trigger it explicitly via ``CALL multifloats_mpi_init`` after
+! MPI_Init for consumers (like MUMPS) under real MPI. The two datatype
+! handles (MPI_FLOAT64X2 / MPI_COMPLEX64X2) instead default to the
+! libmpiseq derived-type sentinel, so a sequential (libmpiseq) MUMPS
+! consumer works with neither MPI_Init nor multifloats_mpi_init() — see
+! the note in multifloats_mpi.cpp. Real-MPI init overwrites them.
 !
 module multifloats_mpi_f
    use, intrinsic :: iso_c_binding, only: c_int
