@@ -60,7 +60,7 @@ jobs:
               fi
               echo "### ${lib}"
               echo '```'
-              uv run python -m migrator converge "$RECIPE" "$OUTDIR" \
+              uv run python -m migrator diverge "$RECIPE" \
                 --target ${{ matrix.target }} --full 2>&1 || true
               echo '```'
               echo ""
