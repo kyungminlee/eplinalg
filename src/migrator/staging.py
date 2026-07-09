@@ -28,6 +28,137 @@ _DUAL_ENTRY_C_RE = re.compile(
 )
 
 
+# --- Shared C struct ABI guard -------------------------------------------
+#
+# The migrator produces two copies of every shared C header: a verbatim
+# type-generic reference under ``_X_src/`` (never migrated) and a typed
+# copy under ``X/src/``. Both are linked into the same address space as MKL
+# in an MKL-first flatten build, so every struct they define MUST keep a
+# byte-identical layout. A single regression already happened: the
+# case-insensitive rename conflated the PBTYP_T field ``Cgesd2d`` with the
+# BLACS routine ``cgesd2d_``, and the header-duplication pass injected a dead
+# ``Wgesd2d`` twin into the typed struct *definition*, shifting the following
+# function-pointer slots and NULL-dispatching at runtime (SIGSEGV in
+# ``PB_CpaxpbyNN`` at np>=2). Link time cannot catch this — the symbol names
+# still match. So we assert it structurally right after staging: every
+# aggregate defined in a reference header must survive member-for-member in
+# the typed copy. New typedefs the KIND path legitimately adds (QCOMPLEX) are
+# ignored — the check only flags reference structs that changed or vanished.
+
+def _decomment_c(text: str) -> str:
+    """Blank out C comments and string/char literals so brace-matching and
+    struct-body comparison are not fooled by braces or ``struct`` keywords
+    inside comments or literals."""
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '/' and i + 1 < n and text[i + 1] == '*':
+            j = text.find('*/', i + 2)
+            i = n if j == -1 else j + 2
+            out.append(' ')
+            continue
+        if c == '/' and i + 1 < n and text[i + 1] == '/':
+            j = text.find('\n', i)
+            i = n if j == -1 else j
+            continue
+        if c in '"\'':
+            q = c
+            i += 1
+            while i < n:
+                if text[i] == '\\':
+                    i += 2
+                    continue
+                if text[i] == q:
+                    i += 1
+                    break
+                i += 1
+            out.append(' ')
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
+def _extract_c_aggregates(text: str) -> dict:
+    """Map ``struct|union|enum <name>`` -> whitespace-normalized member body
+    for every *named* aggregate definition (one carrying a ``{...}`` body) in
+    a C header. Anonymous aggregates are skipped: they cannot be matched
+    across the two copies (their only key would be a source offset, which the
+    typed copy's inserted bridge-include shifts) and they are not part of any
+    cross-TU ABI anyway."""
+    code = _decomment_c(text)
+    aggregates = {}
+    for m in re.finditer(
+        r'\b(struct|union|enum)\b[ \t]*([A-Za-z_]\w*)?[ \t\n]*\{', code
+    ):
+        kind = m.group(1)
+        tag = m.group(2) or ''
+        brace = m.end() - 1
+        depth = 0
+        k = brace
+        while k < len(code):
+            if code[k] == '{':
+                depth += 1
+            elif code[k] == '}':
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+        body = code[brace + 1:k]
+        semi = code.find(';', k)
+        trailer = code[k + 1:semi] if semi != -1 else ''
+        names = ([tag] if tag else []) + re.findall(r'[A-Za-z_]\w*', trailer)
+        if not names:
+            continue  # anonymous aggregate — cannot match reliably, skip
+        norm = re.sub(r'\s+', ' ', body).strip()
+        for name in names:
+            aggregates[f'{kind} {name}'] = norm
+    return aggregates
+
+
+def _assert_shared_struct_abi(staging_dir: Path) -> None:
+    """Post-stage guard: every C aggregate defined in a reference ``_X_src``
+    header must appear member-for-member identical in the typed ``X/src``
+    copy. A divergence means the case-insensitive rename rewrote a shared
+    struct layout (the PBTYP_T W-field class of bug) — which links cleanly but
+    crashes at runtime. Abort staging loudly instead."""
+    violations = []
+    for ref_dir in sorted(staging_dir.glob('_*_src')):
+        typ_dir = staging_dir / ref_dir.name[1:].removesuffix('_src') / 'src'
+        if not typ_dir.is_dir():
+            continue
+        for ref_h in sorted(ref_dir.glob('*.h')):
+            typ_h = typ_dir / ref_h.name
+            if not typ_h.is_file():
+                continue
+            ref_aggs = _extract_c_aggregates(ref_h.read_text(errors='replace'))
+            typ_aggs = _extract_c_aggregates(typ_h.read_text(errors='replace'))
+            for name, ref_body in ref_aggs.items():
+                typ_body = typ_aggs.get(name)
+                if typ_body is None:
+                    violations.append(
+                        f'  {typ_h}: `{name}` present in reference '
+                        f'{ref_dir.name}/{ref_h.name} but missing/renamed in '
+                        f'typed copy')
+                elif typ_body != ref_body:
+                    violations.append(
+                        f'  {typ_h}: `{name}` layout diverged from '
+                        f'{ref_dir.name}/{ref_h.name}\n'
+                        f'      reference: {ref_body}\n'
+                        f'      typed:     {typ_body}')
+    if violations:
+        raise SystemExit(
+            'staging aborted: shared C struct ABI diverged between the '
+            'type-generic reference headers and the migrated typed copies '
+            '(PBTYP_T W-field class of bug).\n'
+            'A case-insensitive rename likely rewrote a struct member whose '
+            'Titlecase spelling collides with a routine name; the typed '
+            'archive would link cleanly against MKL/reference plumbing but '
+            'NULL-dispatch at runtime. Protect the member in c_migrator.py '
+            '(see _PBTYP_C_BINDING_FIELDS).\n\n' + '\n'.join(violations))
+
+
 def _collect_source_files(src_dir: Path, language: str) -> list[Path]:
     """Discover migrated source files in ``src_dir`` for the given language.
 
@@ -564,6 +695,10 @@ set(STAGED_LIBRARIES {staged_list})
     mpiseq_dst = staging_dir / '_mpiseq_src' / 'mpi.f'
     if mpiseq_dst.is_file():
         _patch_libseq_mpi_f(mpiseq_dst)
+
+    # Fail loudly if a case-insensitive rename corrupted any shared C struct
+    # layout (raises SystemExit on violation; see the guard's docstring).
+    _assert_shared_struct_abi(staging_dir)
 
     print(f'\n{"=" * 60}')
     print(f'  Staging complete: {len(staged)} libraries')
