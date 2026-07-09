@@ -135,17 +135,32 @@ static void xx_amn_fn(void *in, void *inout, int *len, MPI_Datatype *dt) {
 
 /* ---- One-time registration --------------------------------------- */
 
+/* Under Intel MPI the ops are declared non-commutative even though
+ * sum/abs-max/abs-min are commutative: its shm-optimized reduce for
+ * commutative user-defined ops hands the callback an 8-byte-aligned
+ * pointer into the shm cell payload above the short-message cutoff;
+ * these ops load __float128 with aligned SSE instructions and fault on
+ * it (#GP -> SIGSEGV, si_addr=0; observed with 2021.18). Non-commutative
+ * ops take the sound rank-ordered path through properly aligned buffers.
+ * Other MPIs are unaffected (OpenMPI 4.1.6 verified clean) and keep the
+ * commutative declaration and its cheaper reduction algorithms. Intel
+ * MPI's mpi.h also defines the MPICH_* macros, so key on I_MPI_* only. */
+#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
+#  define EP_MPI_OP_COMMUTE 0
+#else
+#  define EP_MPI_OP_COMMUTE 1
+#endif
+
 void quad_mpi_init(void) {
     static int initialized = 0;
     if (initialized) return;
 
-    /* commute = 1: sum and abs-max/abs-min are all commutative. */
-    MPI_Op_create(qq_sum_fn, 1, &MPI_QQ_SUM);
-    MPI_Op_create(qq_amx_fn, 1, &MPI_QQ_AMX);
-    MPI_Op_create(qq_amn_fn, 1, &MPI_QQ_AMN);
-    MPI_Op_create(xx_sum_fn, 1, &MPI_XX_SUM);
-    MPI_Op_create(xx_amx_fn, 1, &MPI_XX_AMX);
-    MPI_Op_create(xx_amn_fn, 1, &MPI_XX_AMN);
+    MPI_Op_create(qq_sum_fn, EP_MPI_OP_COMMUTE, &MPI_QQ_SUM);
+    MPI_Op_create(qq_amx_fn, EP_MPI_OP_COMMUTE, &MPI_QQ_AMX);
+    MPI_Op_create(qq_amn_fn, EP_MPI_OP_COMMUTE, &MPI_QQ_AMN);
+    MPI_Op_create(xx_sum_fn, EP_MPI_OP_COMMUTE, &MPI_XX_SUM);
+    MPI_Op_create(xx_amx_fn, EP_MPI_OP_COMMUTE, &MPI_XX_AMX);
+    MPI_Op_create(xx_amn_fn, EP_MPI_OP_COMMUTE, &MPI_XX_AMN);
 
     q_mpi_qq_sum_f = MPI_Op_c2f(MPI_QQ_SUM);
     q_mpi_qq_amx_f = MPI_Op_c2f(MPI_QQ_AMX);

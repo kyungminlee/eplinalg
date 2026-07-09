@@ -1,0 +1,192 @@
+diff -urN a/dgamn2d_.c b/dgamn2d_.c
+--- a/dgamn2d_.c	2026-07-09 15:58:48.787094146 -0700
++++ b/dgamn2d_.c	2026-07-09 18:24:18.972967998 -0700
+@@ -263,7 +263,28 @@
+    switch(ttop)
+    {
+    case ' ':         /* use MPI's reduction by default */
++/*
++ *    Under Intel MPI the combine op is declared non-commutative (flag
++ *    0): its shm-optimized reduce path for commutative user-defined ops
++ *    hands the op callback a pointer into the shared-memory cell
++ *    payload that is only 8-byte aligned once the message exceeds the
++ *    short-message cutoff (count<=2 stays on a safe path).  A callback
++ *    whose element type wants 16-byte alignment (e.g. __float128) is
++ *    compiled with aligned SSE loads and faults on that pointer (#GP ->
++ *    SIGSEGV with si_addr=0; observed with Intel MPI 2021.18,
++ *    disassembly-verified).  A non-commutative op is excluded from that
++ *    path and reduces in rank order through properly aligned buffers,
++ *    which is always correct (and makes the summation order
++ *    deterministic).  Other MPI implementations are unaffected (OpenMPI
++ *    4.1.6 verified clean) and keep the commutative declaration and its
++ *    cheaper reduction algorithms.  Intel MPI's mpi.h also defines the
++ *    MPICH_* macros, so the guard keys on I_MPI_* only.
++ */
++#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
++      i = 0;
++#else
+       i = 1;
++#endif
+       if (Mpval(ldia) == -1)
+       {
+          ierr=MPI_Op_create(BI_dMPI_amn2, i, &BlacComb);
+diff -urN a/dgamx2d_.c b/dgamx2d_.c
+--- a/dgamx2d_.c	2026-07-09 15:58:48.787066842 -0700
++++ b/dgamx2d_.c	2026-07-09 18:24:18.972481983 -0700
+@@ -263,7 +263,28 @@
+    switch(ttop)
+    {
+    case ' ':         /* use MPI's reduction by default */
++/*
++ *    Under Intel MPI the combine op is declared non-commutative (flag
++ *    0): its shm-optimized reduce path for commutative user-defined ops
++ *    hands the op callback a pointer into the shared-memory cell
++ *    payload that is only 8-byte aligned once the message exceeds the
++ *    short-message cutoff (count<=2 stays on a safe path).  A callback
++ *    whose element type wants 16-byte alignment (e.g. __float128) is
++ *    compiled with aligned SSE loads and faults on that pointer (#GP ->
++ *    SIGSEGV with si_addr=0; observed with Intel MPI 2021.18,
++ *    disassembly-verified).  A non-commutative op is excluded from that
++ *    path and reduces in rank order through properly aligned buffers,
++ *    which is always correct (and makes the summation order
++ *    deterministic).  Other MPI implementations are unaffected (OpenMPI
++ *    4.1.6 verified clean) and keep the commutative declaration and its
++ *    cheaper reduction algorithms.  Intel MPI's mpi.h also defines the
++ *    MPICH_* macros, so the guard keys on I_MPI_* only.
++ */
++#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
++      i = 0;
++#else
+       i = 1;
++#endif
+       if (Mpval(ldia) == -1)
+       {
+          ierr=MPI_Op_create(BI_dMPI_amx2, i, &BlacComb);
+diff -urN a/dgsum2d_.c b/dgsum2d_.c
+--- a/dgsum2d_.c	2026-07-09 15:58:48.899243823 -0700
++++ b/dgsum2d_.c	2026-07-09 18:24:18.972187049 -0700
+@@ -192,7 +192,28 @@
+    switch(ttop)
+    {
+    case ' ':         /* use MPI's reduction by default */
++/*
++ *    Under Intel MPI the combine op is declared non-commutative (flag
++ *    0): its shm-optimized reduce path for commutative user-defined ops
++ *    hands the op callback a pointer into the shared-memory cell
++ *    payload that is only 8-byte aligned once the message exceeds the
++ *    short-message cutoff (count<=2 stays on a safe path).  A callback
++ *    whose element type wants 16-byte alignment (e.g. __float128) is
++ *    compiled with aligned SSE loads and faults on that pointer (#GP ->
++ *    SIGSEGV with si_addr=0; observed with Intel MPI 2021.18,
++ *    disassembly-verified).  A non-commutative op is excluded from that
++ *    path and reduces in rank order through properly aligned buffers,
++ *    which is always correct (and makes the summation order
++ *    deterministic).  Other MPI implementations are unaffected (OpenMPI
++ *    4.1.6 verified clean) and keep the commutative declaration and its
++ *    cheaper reduction algorithms.  Intel MPI's mpi.h also defines the
++ *    MPICH_* macros, so the guard keys on I_MPI_* only.
++ */
++#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
++      length = 0;
++#else
+       length = 1;
++#endif
+       ierr=MPI_Op_create(BI_dMPI_sum, length, &BlacComb);
+       if (dest != -1)
+       {
+diff -urN a/zgamn2d_.c b/zgamn2d_.c
+--- a/zgamn2d_.c	2026-07-09 15:58:48.787150119 -0700
++++ b/zgamn2d_.c	2026-07-09 18:24:18.974258564 -0700
+@@ -263,7 +263,28 @@
+    switch(ttop)
+    {
+    case ' ':         /* use MPI's reduction by default */
++/*
++ *    Under Intel MPI the combine op is declared non-commutative (flag
++ *    0): its shm-optimized reduce path for commutative user-defined ops
++ *    hands the op callback a pointer into the shared-memory cell
++ *    payload that is only 8-byte aligned once the message exceeds the
++ *    short-message cutoff (count<=2 stays on a safe path).  A callback
++ *    whose element type wants 16-byte alignment (e.g. __float128) is
++ *    compiled with aligned SSE loads and faults on that pointer (#GP ->
++ *    SIGSEGV with si_addr=0; observed with Intel MPI 2021.18,
++ *    disassembly-verified).  A non-commutative op is excluded from that
++ *    path and reduces in rank order through properly aligned buffers,
++ *    which is always correct (and makes the summation order
++ *    deterministic).  Other MPI implementations are unaffected (OpenMPI
++ *    4.1.6 verified clean) and keep the commutative declaration and its
++ *    cheaper reduction algorithms.  Intel MPI's mpi.h also defines the
++ *    MPICH_* macros, so the guard keys on I_MPI_* only.
++ */
++#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
++      i = 0;
++#else
+       i = 1;
++#endif
+       if (Mpval(ldia) == -1)
+       {
+          ierr=MPI_Op_create(BI_zMPI_amn2, i, &BlacComb);
+diff -urN a/zgamx2d_.c b/zgamx2d_.c
+--- a/zgamx2d_.c	2026-07-09 15:58:48.787120195 -0700
++++ b/zgamx2d_.c	2026-07-09 18:24:18.973473019 -0700
+@@ -263,7 +263,28 @@
+    switch(ttop)
+    {
+    case ' ':         /* use MPI's reduction by default */
++/*
++ *    Under Intel MPI the combine op is declared non-commutative (flag
++ *    0): its shm-optimized reduce path for commutative user-defined ops
++ *    hands the op callback a pointer into the shared-memory cell
++ *    payload that is only 8-byte aligned once the message exceeds the
++ *    short-message cutoff (count<=2 stays on a safe path).  A callback
++ *    whose element type wants 16-byte alignment (e.g. __float128) is
++ *    compiled with aligned SSE loads and faults on that pointer (#GP ->
++ *    SIGSEGV with si_addr=0; observed with Intel MPI 2021.18,
++ *    disassembly-verified).  A non-commutative op is excluded from that
++ *    path and reduces in rank order through properly aligned buffers,
++ *    which is always correct (and makes the summation order
++ *    deterministic).  Other MPI implementations are unaffected (OpenMPI
++ *    4.1.6 verified clean) and keep the commutative declaration and its
++ *    cheaper reduction algorithms.  Intel MPI's mpi.h also defines the
++ *    MPICH_* macros, so the guard keys on I_MPI_* only.
++ */
++#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
++      i = 0;
++#else
+       i = 1;
++#endif
+       if (Mpval(ldia) == -1)
+       {
+          ierr=MPI_Op_create(BI_zMPI_amx2, i, &BlacComb);
+diff -urN a/zgsum2d_.c b/zgsum2d_.c
+--- a/zgsum2d_.c	2026-07-09 15:58:48.787042799 -0700
++++ b/zgsum2d_.c	2026-07-09 18:24:18.973228234 -0700
+@@ -161,7 +161,28 @@
+    switch(ttop)
+    {
+    case ' ':         /* use MPI's reduction by default */
++/*
++ *    Under Intel MPI the combine op is declared non-commutative (flag
++ *    0): its shm-optimized reduce path for commutative user-defined ops
++ *    hands the op callback a pointer into the shared-memory cell
++ *    payload that is only 8-byte aligned once the message exceeds the
++ *    short-message cutoff (count<=2 stays on a safe path).  A callback
++ *    whose element type wants 16-byte alignment (e.g. __float128) is
++ *    compiled with aligned SSE loads and faults on that pointer (#GP ->
++ *    SIGSEGV with si_addr=0; observed with Intel MPI 2021.18,
++ *    disassembly-verified).  A non-commutative op is excluded from that
++ *    path and reduces in rank order through properly aligned buffers,
++ *    which is always correct (and makes the summation order
++ *    deterministic).  Other MPI implementations are unaffected (OpenMPI
++ *    4.1.6 verified clean) and keep the commutative declaration and its
++ *    cheaper reduction algorithms.  Intel MPI's mpi.h also defines the
++ *    MPICH_* macros, so the guard keys on I_MPI_* only.
++ */
++#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
++      length = 0;
++#else
+       length = 1;
++#endif
+       ierr=MPI_Op_create(BI_zMPI_sum, length, &BlacComb);
+       if (dest != -1)
+       {
