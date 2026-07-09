@@ -124,6 +124,20 @@ function(install_library_headers lib_name)
     install(DIRECTORY ${_src}/
         DESTINATION include/${lib_name}
         FILES_MATCHING PATTERN "*.h")
+
+    # Multifloats (m/w) prefixed sibling headers (e.g. ``mwpblas.h``)
+    # #include "multifloats_bridge.h" for the float64x2 / cmplxDD element
+    # types. Ship the bridge next to them so an installed ``mw*`` header
+    # resolves for a C++ consumer. (The ``<multifloats.h>`` the bridge
+    # pulls in comes from the separately-installed ``multifloats``
+    # package.) Guarded on the presence of an ``mw*`` sibling so the
+    # bridge only lands in the mw build's include dirs.
+    file(GLOB _mw_siblings ${_src}/mw*.h)
+    set(_mf_bridge
+        ${CMAKE_CURRENT_SOURCE_DIR}/runtime/multifloats-mpi/multifloats_bridge.h)
+    if(_mw_siblings AND EXISTS ${_mf_bridge})
+        install(FILES ${_mf_bridge} DESTINATION include/${lib_name})
+    endif()
 endfunction()
 
 # Install the standard-precision archive ``lib_name`` (e.g. ``blas``,

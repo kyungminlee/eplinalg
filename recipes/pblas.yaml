@@ -311,11 +311,6 @@ overrides:
     files:
       - pb_cmtypeset.c
       - pb_cwtypeset.c
-      # C++ bridge header providing type aliases and operators.
-      # Copied to output_dir so -include pblas_mf_bridge.h resolves.
-      - pblas_mf_bridge.h
-      # Overlay header (fallback for pure-C compilation path).
-      - pblas_mf_overlay.h
 
 # Patches that touch only one half of the S/D ↔ C/Z precision pair.
 # S04 fixes the D/Z halves of patrmv (real upstream bug); S/C halves

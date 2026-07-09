@@ -304,12 +304,26 @@ def migrate_c_directory(src_dir: Path, output_dir: Path,
     # forward declarations agree with the wrapped definitions. Run
     # this *after* ``_apply_overrides`` so hand-written replacements
     # are wrapped too.
+    split_headers = result.get('split_headers') if isinstance(result, dict) \
+        else None
     if target_mode is not None and not target_mode.is_kind_based:
-        _wrap_extern_c_after_last_include(output_dir)
+        _wrap_extern_c_after_last_include(output_dir, split_headers)
+    # Point every migrated translation unit at the precision-prefixed
+    # sibling headers produced by the split step (see
+    # ``_migrate_generic_c_directory``). Runs last so it also rewrites
+    # hand-written override sources and the prefixed siblings' own
+    # cross-includes; pristine restored originals are left untouched.
+    if split_headers:
+        targets = list(output_dir.glob('*.c'))
+        targets += [output_dir / s for s in split_headers.values()]
+        for t in targets:
+            _rewrite_split_includes(t, split_headers)
     return result
 
 
-def _wrap_extern_c_after_last_include(output_dir: Path) -> None:
+def _wrap_extern_c_after_last_include(
+        output_dir: Path,
+        split_headers: dict[str, str] | None = None) -> None:
     """Give every Fortran-callable function definition C linkage when
     the source is compiled as C++.
 
@@ -331,17 +345,33 @@ def _wrap_extern_c_after_last_include(output_dir: Path) -> None:
 
     Idempotent.
     """
+    # Guard every migrated *translation unit* uniformly — no hardcoded
+    # per-file special-casing. The target set is driven by the migration
+    # mechanism:
+    #
+    #   * every ``.c`` body (Fortran-callable / C-callable entry points
+    #     defined there);
+    #   * every precision-prefixed *sibling* header produced by the split
+    #     step (``split_headers.values()``) — these carry the transformed,
+    #     non-pristine content, including template-instantiated definitions
+    #     such as ``mwlamov.h``'s ``LAMOV``/``LACPY``;
+    #   * ``Bdef.h`` when present — the BLACS path patches it in place
+    #     (it is not installed and not split), so its forward declarations
+    #     must agree with the wrapped definitions.
+    #
+    # Deliberately NOT wrapped: restored-pristine split originals and any
+    # unchanged Netlib header (e.g. ``tools.h``, which is pure macros and
+    # typedefs with no C-linkage symbol). Their bytes must stay identical
+    # to the upstream reference, and they need no guard. Because the set is
+    # exactly {.c} ∪ {siblings} ∪ {Bdef.h}, a byte-pristine public header is
+    # never a target — the pristineness constraint holds by construction,
+    # not by a short-circuit. (Headers that already carry their own
+    # ``extern "C"`` are still skipped by the check below.)
     targets = list(output_dir.glob('*.c'))
-    # Header files that contain function *definitions* (not just
-    # declarations) need the wrap too, otherwise the migrated entry
-    # point inherits C++ name-mangling. Currently:
-    #   - Bdef.h (BLACS — kept for historical compatibility)
-    #   - lamov.h (scalapack_c — defines the LAMOV/LACPY templates
-    #     instantiated by ddlamov.c, dlamov.c, …)
-    for hdr_name in ('Bdef.h', 'lamov.h'):
-        hdr = output_dir / hdr_name
-        if hdr.exists():
-            targets.append(hdr)
+    targets += [output_dir / s for s in (split_headers or {}).values()]
+    bdef = output_dir / 'Bdef.h'
+    if bdef.exists():
+        targets.append(bdef)
     open_block = '#ifdef __cplusplus\nextern "C" {\n#endif\n'
     close_block = '#ifdef __cplusplus\n} /* extern "C" */\n#endif\n'
     for f in sorted(targets):
@@ -390,6 +420,30 @@ def _apply_overrides(output_dir: Path,
         shutil.copy2(src_path, dst)
         applied.append(dst_name)
     return applied
+
+
+def _rewrite_split_includes(path: Path,
+                            split_headers: dict[str, str]) -> None:
+    """Rewrite ``#include "name.h"`` → ``#include "<prefix>name.h"``.
+
+    ``split_headers`` maps an original Netlib header name to the
+    precision-prefixed sibling that carries this precision's transformed
+    content. Migrated sources (and prefixed siblings that cross-include
+    another split header) must reference the sibling, never the restored-
+    pristine original. Both quote and angle-bracket include forms are
+    rewritten (the delimiter is preserved). Idempotent: already-rewritten
+    includes no longer match the original name.
+    """
+    text = path.read_text(errors='replace')
+    new = text
+    for orig, sibling in split_headers.items():
+        esc = re.escape(orig)
+        new = re.sub(r'(#\s*include\s*")' + esc + r'(")',
+                     r'\1' + sibling + r'\2', new)
+        new = re.sub(r'(#\s*include\s*<)' + esc + r'(>)',
+                     r'\1' + sibling + r'\2', new)
+    if new != text:
+        path.write_text(new)
 
 
 # C identifier tokenizer used by the rename substituter. Cheap DFA
@@ -1016,6 +1070,18 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
                         c_pointer_cast_aliases)
             (output_dir / f.name).write_text(text)
 
+    # Snapshot the pristine (staged, pre-transform) bytes of every
+    # copied header. Any header the transforms below modify is emitted
+    # under a precision-prefixed sibling name (see the split step before
+    # the return) and the original is restored to these bytes, so every
+    # installed public Netlib-named header stays byte-identical to the
+    # upstream reference across all precisions.
+    _pristine_headers = {
+        h.name: h.read_bytes()
+        for h in output_dir.iterdir()
+        if h.suffix.lower() == '.h'
+    }
+
     # Apply recipe-declared header patches to the copied originals so
     # later clones can reference the newly introduced typedefs.
     if header_patches:
@@ -1165,10 +1231,60 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
                 f'{f.name} vs {canonical_source[new_name]} → {new_name}'
             )
 
+    # --- split transformed headers into precision-prefixed siblings ---
+    # Every header the migrator changed above (recipe patches, prototype
+    # duplication, precision typedefs) is written to a sibling named
+    # ``<pair>name.h`` (pair = real+complex prefix, e.g. ``qx``/``ey``/
+    # ``mw``); the original ``name.h`` is restored to its pristine
+    # upstream bytes. The include-rewrite (in ``migrate_c_directory``,
+    # after overrides + the C++ extern-wrap) points migrated sources at
+    # the sibling. Result: the installed public ``name.h`` is exactly the
+    # Netlib reference, while this precision's build sees the sibling.
+    #
+    # The split set is closed under the ``#include`` relation: a header
+    # that includes a split header must itself be split, otherwise a
+    # migrated TU that reaches it (e.g. ``blas_extended.h`` including
+    # ``blas_extended_proto.h``) would see the restored-pristine original,
+    # which has lost the transforms (missing ``extern "C"`` / typedefs) and
+    # fails to compile. Walk the relation to a fixed point.
+    pair = template_vars['RP'] + template_vars['CP']
+    # Guard idempotency: a prior stage into this tree may have left the
+    # precision-prefixed siblings behind. Never treat an already-prefixed
+    # sibling as a splittable original, else re-staging doubles the prefix
+    # (mwblas_extended.h -> mwmwblas_extended.h).
+    split_names = {
+        name for name, pristine in _pristine_headers.items()
+        if not name.startswith(pair)
+        and (output_dir / name).read_bytes() != pristine
+    }
+    grew = True
+    while grew:
+        grew = False
+        for name in _pristine_headers:
+            if name in split_names or name.startswith(pair):
+                continue
+            text = (output_dir / name).read_text(errors='replace')
+            for target in split_names:
+                esc = re.escape(target)
+                if re.search(r'#\s*include\s*("' + esc + r'"|<' + esc + r'>)',
+                             text):
+                    split_names.add(name)
+                    grew = True
+                    break
+    split_headers: dict[str, str] = {}
+    for name in split_names:
+        sibling = pair + name
+        # Read the current (transformed for changed headers, pristine for
+        # pulled-in intermediates) content before restoring the original.
+        (output_dir / sibling).write_bytes((output_dir / name).read_bytes())
+        (output_dir / name).write_bytes(_pristine_headers[name])
+        split_headers[name] = sibling
+
     return {
         'cloned': cloned,
         'divergences': divergences,
         'template_vars': template_vars,
+        'split_headers': split_headers,
     }
 
 
