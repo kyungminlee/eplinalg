@@ -9,6 +9,12 @@
 #!   prefix_real     migrated entry-point prefix for the D family (e.g. 'pq')
 #!   prefix_complex  migrated entry-point prefix for the Z family (e.g. 'px')
 
+#! Task 44: extended targets link the ep_-privatized
+#! BLACS/ScaLAPACK-common engine, so its family-independent entry
+#! points carry an ep_ prefix there; baseline targets keep the
+#! pristine Netlib names.
+#:set bl = '' if target in ('kind4', 'kind8') else 'ep_'
+
 #:set R = prefix_real
 #:set C = prefix_complex
 
@@ -698,7 +704,7 @@ contains
         integer, intent(in) :: desc(9)
         integer :: sz
         integer :: nprow, npcol, myrow, mycol, locn
-        call blacs_gridinfo(desc(2), nprow, npcol, myrow, mycol)
+        call ${bl}$blacs_gridinfo(desc(2), nprow, npcol, myrow, mycol)
         locn = numroc_local(desc(4), desc(6), mycol, desc(8), npcol)
         sz = desc(9) * max(1, locn)
     end function desc_buf_size

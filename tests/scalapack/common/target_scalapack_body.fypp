@@ -9,6 +9,12 @@
 #!   prefix_real     migrated entry-point prefix for the D family (e.g. 'pq')
 #!   prefix_complex  migrated entry-point prefix for the Z family (e.g. 'px')
 
+#! Task 44: extended targets link the ep_-privatized
+#! BLACS/ScaLAPACK-common engine, so its family-independent entry
+#! points carry an ep_ prefix there; baseline targets keep the
+#! pristine Netlib names.
+#:set bl = '' if target in ('kind4', 'kind8') else 'ep_'
+
 #:set R = prefix_real
 #:set C = prefix_complex
 
@@ -123,7 +129,7 @@ module target_scalapack
     real(ep),         parameter :: target_eps  = ${target_eps}$
 
     interface
-        subroutine blacs_gridinfo(icontxt, nprow, npcol, myrow, mycol)
+        subroutine ${bl}$blacs_gridinfo(icontxt, nprow, npcol, myrow, mycol)
             integer, intent(in)  :: icontxt
             integer, intent(out) :: nprow, npcol, myrow, mycol
         end subroutine
@@ -2144,14 +2150,14 @@ contains
     function loccols(desc) result(lc)
         integer, intent(in) :: desc(9)
         integer :: lc, nprow, npcol, myrow, mycol
-        call blacs_gridinfo(desc(2), nprow, npcol, myrow, mycol)
+        call ${bl}$blacs_gridinfo(desc(2), nprow, npcol, myrow, mycol)
         lc = numroc_local(desc(4), desc(6), mycol, desc(8), npcol)
     end function
 
     function locrows(desc) result(lr)
         integer, intent(in) :: desc(9)
         integer :: lr, nprow, npcol, myrow, mycol
-        call blacs_gridinfo(desc(2), nprow, npcol, myrow, mycol)
+        call ${bl}$blacs_gridinfo(desc(2), nprow, npcol, myrow, mycol)
         lr = numroc_local(desc(3), desc(5), myrow, desc(7), nprow)
     end function
 
@@ -4269,7 +4275,7 @@ contains
         nz = nloc(descZ)
         block
             integer :: nprow, npcol, myrow, mycol
-            call blacs_gridinfo(descZ(2), nprow, npcol, myrow, mycol)
+            call ${bl}$blacs_gridinfo(descZ(2), nprow, npcol, myrow, mycol)
             np = max(1, nprow * npcol)
         end block
         if (lwork == -1) then
@@ -4312,7 +4318,7 @@ contains
         nz = nloc(descZ)
         block
             integer :: nprow, npcol, myrow, mycol
-            call blacs_gridinfo(descZ(2), nprow, npcol, myrow, mycol)
+            call ${bl}$blacs_gridinfo(descZ(2), nprow, npcol, myrow, mycol)
             np = max(1, nprow * npcol)
         end block
         if (lwork == -1) then
@@ -4527,7 +4533,7 @@ contains
         na = nloc(desca); nzz = nloc(descZ)
         block
             integer :: nprow, npcol, myrow, mycol
-            call blacs_gridinfo(desca(2), nprow, npcol, myrow, mycol)
+            call ${bl}$blacs_gridinfo(desca(2), nprow, npcol, myrow, mycol)
             np = max(1, nprow * npcol)
         end block
         if (lwork == -1) then
@@ -4580,7 +4586,7 @@ contains
         na = nloc(desca); nzz = nloc(descZ)
         block
             integer :: nprow, npcol, myrow, mycol
-            call blacs_gridinfo(desca(2), nprow, npcol, myrow, mycol)
+            call ${bl}$blacs_gridinfo(desca(2), nprow, npcol, myrow, mycol)
             np = max(1, nprow * npcol)
         end block
         if (lwork == -1) then

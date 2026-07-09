@@ -191,6 +191,17 @@ class RecipeConfig:
     # its own future patch with a different fix" — periodically review
     # entries to see whether the sibling situation has changed.
     asymmetric_patches: list[str] = field(default_factory=list)
+    # Symbol-privatization manifest: exact linker-level symbol names to
+    # rename ``name`` → ``ep_name`` throughout the migrated output at
+    # the end of the migration pass (see ``privatize.py``). Loaded from
+    # the recipe-relative file named by the ``privatize_symbols:`` YAML
+    # key (one name per line, ``#`` comments) — the shared manifest is
+    # ``recipes/privatize_ep_symbols.txt``. Gives the extended-precision
+    # stack a hermetic support engine whose symbols never collide with
+    # MKL's identically-named, ABI-incompatible BLACS/PBLAS/ScaLAPACK
+    # internals (task 44). Baseline stagings never run the migration
+    # pipeline, so they are unaffected by construction.
+    privatize_symbols: frozenset[str] = frozenset()
     # Patches that close a D↔S or Z↔C *cosmetic* asymmetry by stripping
     # upstream dead code (unused PARAMETER blocks, redundant CMPLX
     # casts, dead INTRINSIC entries, literal-style mismatches). The
@@ -308,6 +319,18 @@ def load_recipe(recipe_path: Path,
             keep_kind_lines.setdefault(basename, set()).add(int(lineno_str))
     keep_kind_frozen = {k: frozenset(v) for k, v in keep_kind_lines.items()}
 
+    # Load the symbol-privatization manifest if specified: one exact
+    # linker-level symbol name per line, ``#`` starts a comment line.
+    privatize_names: set[str] = set()
+    privatize_rel = data.get('privatize_symbols')
+    if privatize_rel:
+        privatize_path = recipe_path.parent / privatize_rel
+        for entry in privatize_path.read_text().splitlines():
+            entry = entry.strip()
+            if not entry or entry.startswith('#'):
+                continue
+            privatize_names.add(entry)
+
     return RecipeConfig(
         library=data['library'],
         language=data['language'],
@@ -348,4 +371,5 @@ def load_recipe(recipe_path: Path,
         defer_all_divergences=bool(data.get('defer_all_divergences', False)),
         asymmetric_patches=list(data.get('asymmetric_patches') or []),
         one_sided_cleanup=list(data.get('one_sided_cleanup') or []),
+        privatize_symbols=frozenset(privatize_names),
     )

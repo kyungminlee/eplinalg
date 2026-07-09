@@ -91,6 +91,15 @@ target_sources(mpiseq PRIVATE
 # is no overlap either way).
 target_sources(mpiseq PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/mpiseq_ptscotch_stubs.f90)
+# ep_-privatized twins of mpi.f's BLACS / DESCINIT abort stubs. The
+# migrated extended-precision MUMPS archives bind the privatized
+# ep_ BLACS engine names (recipes/mumps.yaml extra_renames), so a
+# libmpiseq link must supply the same never-executed abort stubs
+# under the ep_ spelling. Always folded in like the C stubs:
+# baseline kind4/kind8 consumers never reference ep_* and the
+# archive member stays unpulled.
+target_sources(mpiseq PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/mpiseq_ep_stubs.f)
 target_include_directories(mpiseq PUBLIC
     $<BUILD_INTERFACE:${_mpiseq_upstream}>
 )

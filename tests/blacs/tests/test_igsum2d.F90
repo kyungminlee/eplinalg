@@ -1,4 +1,6 @@
 ! Test BLACS igsum2d, igamx2d, igamn2d — integer reductions.
+#include "../../common/privatized_blacs_names.h"
+
 program test_igsum2d
     use prec_kinds,        only: ep
     use blacs_prec_report, only: report_init, report_case, report_finalize

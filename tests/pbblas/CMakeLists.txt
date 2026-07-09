@@ -55,7 +55,7 @@ add_library(pbblas_test_common STATIC
     common/prec_report.f90
     ../common/test_data.f90
     common/ref_quad_blas.f90
-    common/pblas_grid.f90
+    common/pblas_grid.F90
     ../common/pblas_distrib.f90
 )
 set_target_properties(pbblas_test_common PROPERTIES

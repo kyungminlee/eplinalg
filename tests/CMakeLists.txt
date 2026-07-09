@@ -44,6 +44,17 @@ if(FORTRAN_COMPILER_FAMILY STREQUAL "gfortran"
         $<$<COMPILE_LANGUAGE:Fortran>:-ffree-line-length-none>)
 endif()
 
+# Task 44: extended stagings link the ep_-privatized BLACS/ScaLAPACK-
+# common engine, whose family-independent entry points are ep_-prefixed
+# so they never collide with an MKL in the same consumer. Preprocessed
+# test sources (.F90) include tests/common/privatized_blacs_names.h,
+# which maps the pristine names onto the ep_ twins when this macro is
+# defined. Baseline stagings write an empty PRIVATIZED_LIBRARIES and
+# keep pristine names.
+if("blacs" IN_LIST PRIVATIZED_LIBRARIES)
+    add_compile_definitions(EPLINALG_TEST_EP_BLACS)
+endif()
+
 # Per-target conversion library shared by every framework's test wrappers.
 add_subdirectory(common)
 

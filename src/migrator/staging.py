@@ -264,6 +264,7 @@ def cmd_stage(args):
     lib_prefix_complex = pmap['C'].lower()
 
     staged = []
+    privatized = []
     for lib_name, recipe_file in libraries:
         recipe_path = recipes_dir / recipe_file
         if not recipe_path.exists():
@@ -435,6 +436,8 @@ set({lib_name}_LANGUAGE {config.language})
         print(f'  Manifest: {len(common_files)} common, '
               f'{len(precision_files)} precision files')
         staged.append(lib_name)
+        if config.privatize_symbols:
+            privatized.append(lib_name)
 
     # Copy MF helper modules into staging so it's self-contained
     needs_mf = target_mode.module_name is not None
@@ -451,29 +454,41 @@ set({lib_name}_LANGUAGE {config.language})
     )
 
     # Re-stage with a subset of --libraries must not shrink the unified
-    # build's library list. Read STAGED_LIBRARIES from any prior
+    # build's library list. Read STAGED_LIBRARIES (and the parallel
+    # PRIVATIZED_LIBRARIES flag list) from any prior
     # target_config.cmake, keep entries whose lib_dir still exists on
     # disk, and union them with this run's freshly-staged set so the
     # rewritten config reflects everything currently present in the
     # staging tree.
-    prior_staged: list[str] = []
-    prior_config = staging_dir / 'target_config.cmake'
-    if prior_config.exists():
-        m = re.search(
-            r'^\s*set\s*\(\s*STAGED_LIBRARIES\s+([^)]*)\)',
-            prior_config.read_text(),
-            re.MULTILINE,
-        )
-        if m:
-            for tok in m.group(1).replace(';', ' ').split():
-                tok = tok.strip().strip('"')
-                if tok and (staging_dir / tok).is_dir():
-                    prior_staged.append(tok)
-    merged: list[str] = []
-    for n in prior_staged + staged:
-        if n not in merged:
-            merged.append(n)
-    staged_list = ';'.join(merged)
+    def _prior_list(var_name: str) -> list[str]:
+        prior: list[str] = []
+        prior_config = staging_dir / 'target_config.cmake'
+        if prior_config.exists():
+            m = re.search(
+                r'^\s*set\s*\(\s*' + var_name + r'\s+([^)]*)\)',
+                prior_config.read_text(),
+                re.MULTILINE,
+            )
+            if m:
+                for tok in m.group(1).replace(';', ' ').split():
+                    tok = tok.strip().strip('"')
+                    if tok and (staging_dir / tok).is_dir():
+                        prior.append(tok)
+        return prior
+
+    def _merged_list(prior: list[str], fresh: list[str]) -> str:
+        merged: list[str] = []
+        for n in prior + fresh:
+            if n not in merged:
+                merged.append(n)
+        return ';'.join(merged)
+
+    staged_list = _merged_list(_prior_list('STAGED_LIBRARIES'), staged)
+    # A prior privatized entry survives only if the lib was NOT restaged
+    # this run (a restage recomputes the flag from its recipe).
+    privatized_list = _merged_list(
+        [n for n in _prior_list('PRIVATIZED_LIBRARIES') if n not in staged],
+        privatized)
 
     if needs_mf:
         # Copy the first-party multifloats-mpi bridge library wholesale.
@@ -519,6 +534,11 @@ set(NEEDS_MULTIFLOATS {'TRUE' if needs_mf else 'FALSE'})
 set(NEEDS_QUAD_MPI {'TRUE' if needs_quad_mpi else 'FALSE'})
 set(C_AS_CXX {'TRUE' if needs_mf else 'FALSE'})
 set(STAGED_LIBRARIES {staged_list})
+# Libraries whose migrated sources went through the ep_ symbol-
+# privatization pass (task 44): their shared ``_common`` archives carry
+# the hermetic ep_ engine and install under ep-prefixed filenames /
+# packages (see EplinalgInstall.cmake).
+set(PRIVATIZED_LIBRARIES {privatized_list})
 """
     (staging_dir / 'target_config.cmake').write_text(target_config)
 
@@ -530,6 +550,8 @@ set(STAGED_LIBRARIES {staged_list})
                        'EplinalgLibraryHelpers.cmake',
                        'EplinalgMumps.cmake',
                        'EplinalgInstall.cmake',
+                       'EplinalgPrivatizeGate.cmake',
+                       'EplinalgPrivatizeGateCheck.cmake',
                        'FortranCompiler.cmake',
                        'DetectExtendedPrecision.cmake',
                        'CMakePresets.json']:
@@ -538,6 +560,19 @@ set(STAGED_LIBRARIES {staged_list})
             shutil.copy2(src, staging_dir / cmake_file)
         else:
             print(f'Warning: {src} not found')
+
+    # The privatize gate audits each PRIVATIZED_LIBRARIES archive against
+    # the same checked-in manifest the migrator's rename pass consumed;
+    # both copies come from this one staging run, so pass and gate can
+    # never disagree within a staged tree.
+    if privatized_list:
+        manifest_src = proj_root / 'recipes' / 'privatize_ep_symbols.txt'
+        if manifest_src.exists():
+            shutil.copy2(manifest_src,
+                         staging_dir / 'privatize_ep_symbols.txt')
+        else:
+            print(f'Warning: {manifest_src} not found — the privatize '
+                  'gate will fail at configure time')
 
     # Plant the refblas_quad / reflapack_quad symbol-rename helper
     # alongside the other build-time scripts so tests/blas/refblas and
@@ -745,6 +780,7 @@ def _stage_baseline(args, target_name: str):
         'set(NEEDS_MULTIFLOATS FALSE)\n'
         'set(C_AS_CXX FALSE)\n'
         'set(STAGED_LIBRARIES )\n'
+        'set(PRIVATIZED_LIBRARIES )\n'
     )
     (staging_dir / 'target_config.cmake').write_text(target_config)
 
@@ -756,6 +792,8 @@ def _stage_baseline(args, target_name: str):
                        'EplinalgLibraryHelpers.cmake',
                        'EplinalgMumps.cmake',
                        'EplinalgInstall.cmake',
+                       'EplinalgPrivatizeGate.cmake',
+                       'EplinalgPrivatizeGateCheck.cmake',
                        'FortranCompiler.cmake',
                        'DetectExtendedPrecision.cmake',
                        'CMakePresets.json']:

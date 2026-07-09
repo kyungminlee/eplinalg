@@ -9,6 +9,8 @@
 !   - pcoord(rank) inverts pnum(prow,pcol) for every grid cell,
 !   - blacs_barrier returns on every rank in scope='A',
 !   - blacs_set with a no-op SGET param doesn't error.
+#include "../../common/privatized_blacs_names.h"
+
 program test_grid_info
     use prec_kinds,       only: ep
     use blacs_prec_report, only: report_init, report_case, report_finalize

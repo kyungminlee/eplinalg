@@ -99,6 +99,7 @@ from .fortran_migrator import (
     target_filename,
 )
 from .c_migrator import migrate_c_directory, _build_sub_vars, _expand_template
+from .privatize import privatize_tree
 from .target_mode import TargetMode
 
 from tqdm import tqdm
@@ -1260,5 +1261,28 @@ def run_migration(recipe_path: Path, output_dir: Path,
                     print(f'    ... ({len(result["divergences"]) - 10} more)')
     else:
         raise ValueError(f'Unsupported language: {config.language}')
+
+    # Symbol privatization (task 44): recipes that opt in via
+    # ``privatize_symbols:`` get every manifest name renamed
+    # ``name`` → ``ep_name`` across the full migrated output —
+    # strictly after clones, header patches, extern-"C" wrapping and
+    # override copies, so nothing regenerates a pristine name behind
+    # the pass. Only migrated (extended-precision) stagings ever reach
+    # this point; baseline stagings copy sources verbatim.
+    if config.privatize_symbols and not dry_run:
+        # The header-split step restores each split original (PBblacs.h,
+        # pblas.h, …) to its pristine Netlib bytes and points every
+        # migrated TU at the ``<pair>``-prefixed sibling; the pass must
+        # leave those originals byte-identical and rename only the
+        # siblings, which carry the extended stack's public C surface.
+        split = result.get('split_headers') if isinstance(result, dict) \
+            else None
+        pristine_originals = frozenset(
+            output_dir / name for name in (split or {}))
+        n_privatized = privatize_tree(output_dir, config.privatize_symbols,
+                                      skip=pristine_originals)
+        print(f'  Privatized: {n_privatized} files rewritten with '
+              f'ep_-prefixed symbols '
+              f'({len(config.privatize_symbols)} manifest names)')
 
     return result

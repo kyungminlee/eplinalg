@@ -1,6 +1,8 @@
 ! Test BLACS igesd2d / igerv2d — integer point-to-point send/recv.
 ! Integer BLACS routines are NOT migrated per-target; they always link
 ! against the original i-prefix entries (no precision conversion).
+#include "../../common/privatized_blacs_names.h"
+
 program test_igesd2d
     use prec_kinds,        only: ep
     use blacs_prec_report, only: report_init, report_case, report_finalize

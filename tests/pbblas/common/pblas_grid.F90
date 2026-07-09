@@ -11,6 +11,8 @@
 ! migrated ScaLAPACK library being present (tests/pblas only depends
 ! on ${LIB_PREFIX}blacs + ${LIB_PREFIX}pblas, not scalapack).
 
+#include "../../common/privatized_blacs_names.h"
+
 module pblas_grid
     use mpi
     implicit none

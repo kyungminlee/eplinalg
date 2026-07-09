@@ -310,7 +310,7 @@ endfunction()
 # generated only once per export set.
 # ---------------------------------------------------------------------------
 function(fortran_install_library target)
-  cmake_parse_arguments(PARSE_ARGV 1 ARG "MPI;KEEP_OUTPUT_NAME" "NAMESPACE;EXPORT;DESTINATION" "DEPENDS")
+  cmake_parse_arguments(PARSE_ARGV 1 ARG "MPI;KEEP_OUTPUT_NAME" "NAMESPACE;EXPORT;DESTINATION;OUTPUT_BASE" "DEPENDS")
   if(ARG_UNPARSED_ARGUMENTS)
     message(FATAL_ERROR "fortran_install_library: unexpected arguments: ${ARG_UNPARSED_ARGUMENTS}")
   endif()
@@ -389,19 +389,31 @@ function(fortran_install_library target)
   # base: migrated precision targets are pair-prefixed (eylapack →
   # libeylapack-<tag>.a), so name, filename and package agree. An
   # untagged target keeps its default output name (libeypblas.a).
-  # KEEP_OUTPUT_NAME preserves an OUTPUT_NAME already baked at target
-  # creation (vendored archives like libptscotch_mumps-<tag>.a carry a
-  # _mumps suffix plus their own flavor tag) — only the cmake package
-  # machinery applies, not the rename.
+  # OUTPUT_BASE substitutes a different archive base while the target
+  # keeps its generic name (the ep_-privatized ``*_common`` archives
+  # install as libep<lib>_common-<tag>.a but stay ``<lib>_common`` in
+  # CMake). KEEP_OUTPUT_NAME preserves an OUTPUT_NAME already baked at
+  # target creation (vendored archives like libptscotch_mumps-<tag>.a
+  # carry a _mumps suffix plus their own flavor tag) — only the cmake
+  # package machinery applies, not the rename.
+  set(_output_base "${target}")
+  if(ARG_OUTPUT_BASE)
+    set(_output_base "${ARG_OUTPUT_BASE}")
+  endif()
   if(_full_tag)
     set(_targets_file "${ARG_EXPORT}-${_full_tag}.cmake")
     if(NOT ARG_KEEP_OUTPUT_NAME)
       set_target_properties(${target} PROPERTIES
-        OUTPUT_NAME "${target}-${_full_tag}"
+        OUTPUT_NAME "${_output_base}-${_full_tag}"
       )
     endif()
   else()
     set(_targets_file "${ARG_EXPORT}.cmake")
+    if(ARG_OUTPUT_BASE AND NOT ARG_KEEP_OUTPUT_NAME)
+      set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME "${_output_base}"
+      )
+    endif()
   endif()
 
   # Add target to the export set

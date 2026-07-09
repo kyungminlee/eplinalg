@@ -211,6 +211,11 @@ function(add_migrated_fortran_library lib_name)
                 $<BUILD_INTERFACE:multifloatsf>)
         endif()
     endif()
+
+    if(lib_name IN_LIST PRIVATIZED_LIBRARIES)
+        eplinalg_privatize_gate(${_common_target})
+        eplinalg_privatize_gate(${_precision_target})
+    endif()
 endfunction()
 
 
@@ -363,5 +368,10 @@ function(add_migrated_c_library lib_name)
                 target_link_libraries(${_common_target} PUBLIC multifloats_mpi)
             endif()
         endif()
+    endif()
+
+    if(lib_name IN_LIST PRIVATIZED_LIBRARIES)
+        eplinalg_privatize_gate(${_common_target})
+        eplinalg_privatize_gate(${_precision_target})
     endif()
 endfunction()

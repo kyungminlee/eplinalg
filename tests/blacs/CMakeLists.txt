@@ -38,7 +38,7 @@ add_library(blacs_test_common STATIC
     ../common/compare.f90
     common/blacs_prec_report.f90
     ../common/test_data.f90
-    common/pblas_grid.f90
+    common/pblas_grid.F90
 )
 set_target_properties(blacs_test_common PROPERTIES
     Fortran_MODULE_DIRECTORY "${_bl_moddir}"
@@ -109,7 +109,8 @@ function(add_blacs_precision_test test_src)
 endfunction()
 
 file(GLOB _tests CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.f90)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.f90
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.F90)
 foreach(_t ${_tests})
     add_blacs_precision_test(${_t})
 endforeach()

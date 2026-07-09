@@ -69,7 +69,7 @@ add_library(scalapack_test_common STATIC
     common/ref_quad_blas.f90
     common/ref_quad_lapack.f90
     common/cond_helpers.f90
-    common/pblas_grid.f90
+    common/pblas_grid.F90
     ../common/pblas_distrib.f90
 )
 set_target_properties(scalapack_test_common PROPERTIES

@@ -15,6 +15,12 @@
 #!   prefix_real     real prefix at the migrated symbol (e.g. 'q')
 #!   prefix_complex  complex prefix at the migrated symbol (e.g. 'x')
 
+#! Task 44: extended targets link the ep_-privatized
+#! BLACS/ScaLAPACK-common engine, so its family-independent entry
+#! points carry an ep_ prefix there; baseline targets keep the
+#! pristine Netlib names.
+#:set bl = '' if target in ('kind4', 'kind8') else 'ep_'
+
 #:set R = prefix_real
 #:set C = prefix_complex
 
@@ -195,37 +201,38 @@ $:IMPORT_C()
             integer, intent(inout) :: rA(*), cA(*)
         end subroutine
 
-        ! ── Integer (no per-target rename — always igesd2d etc.) ────
-        subroutine igesd2d(icontxt, m, n, A, lda, rdest, cdest)
+        ! ── Integer (no per-target precision rename; ${bl}$ binds the
+        !    privatized engine on extended targets) ────
+        subroutine ${bl}$igesd2d(icontxt, m, n, A, lda, rdest, cdest)
             integer, intent(in) :: icontxt, m, n, lda, rdest, cdest
             integer, intent(in) :: A(lda, *)
         end subroutine
-        subroutine igerv2d(icontxt, m, n, A, lda, rsrc, csrc)
+        subroutine ${bl}$igerv2d(icontxt, m, n, A, lda, rsrc, csrc)
             integer, intent(in)  :: icontxt, m, n, lda, rsrc, csrc
             integer, intent(out) :: A(lda, *)
         end subroutine
-        subroutine igebs2d(icontxt, scope, top, m, n, A, lda)
+        subroutine ${bl}$igebs2d(icontxt, scope, top, m, n, A, lda)
             character, intent(in) :: scope, top
             integer, intent(in)   :: icontxt, m, n, lda
             integer, intent(in)   :: A(lda, *)
         end subroutine
-        subroutine igebr2d(icontxt, scope, top, m, n, A, lda, rsrc, csrc)
+        subroutine ${bl}$igebr2d(icontxt, scope, top, m, n, A, lda, rsrc, csrc)
             character, intent(in) :: scope, top
             integer, intent(in)   :: icontxt, m, n, lda, rsrc, csrc
             integer, intent(out)  :: A(lda, *)
         end subroutine
-        subroutine igsum2d(icontxt, scope, top, m, n, A, lda, rdest, cdest)
+        subroutine ${bl}$igsum2d(icontxt, scope, top, m, n, A, lda, rdest, cdest)
             character, intent(in) :: scope, top
             integer, intent(in)    :: icontxt, m, n, lda, rdest, cdest
             integer, intent(inout) :: A(lda, *)
         end subroutine
-        subroutine igamx2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
+        subroutine ${bl}$igamx2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
             character, intent(in) :: scope, top
             integer, intent(in)    :: icontxt, m, n, lda, ldia, rdest, cdest
             integer, intent(inout) :: A(lda, *)
             integer, intent(inout) :: rA(*), cA(*)
         end subroutine
-        subroutine igamn2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
+        subroutine ${bl}$igamn2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
             character, intent(in) :: scope, top
             integer, intent(in)    :: icontxt, m, n, lda, ldia, rdest, cdest
             integer, intent(inout) :: A(lda, *)
@@ -458,34 +465,34 @@ contains
     subroutine target_igesd2d(icontxt, m, n, A, lda, rdest, cdest)
         integer, intent(in) :: icontxt, m, n, lda, rdest, cdest
         integer, intent(in) :: A(lda, *)
-        call igesd2d(icontxt, m, n, A, lda, rdest, cdest)
+        call ${bl}$igesd2d(icontxt, m, n, A, lda, rdest, cdest)
     end subroutine
 
     subroutine target_igerv2d(icontxt, m, n, A, lda, rsrc, csrc)
         integer, intent(in)  :: icontxt, m, n, lda, rsrc, csrc
         integer, intent(out) :: A(lda, *)
-        call igerv2d(icontxt, m, n, A, lda, rsrc, csrc)
+        call ${bl}$igerv2d(icontxt, m, n, A, lda, rsrc, csrc)
     end subroutine
 
     subroutine target_igebs2d(icontxt, scope, top, m, n, A, lda)
         character, intent(in) :: scope, top
         integer, intent(in)   :: icontxt, m, n, lda
         integer, intent(in)   :: A(lda, *)
-        call igebs2d(icontxt, scope, top, m, n, A, lda)
+        call ${bl}$igebs2d(icontxt, scope, top, m, n, A, lda)
     end subroutine
 
     subroutine target_igebr2d(icontxt, scope, top, m, n, A, lda, rsrc, csrc)
         character, intent(in) :: scope, top
         integer, intent(in)   :: icontxt, m, n, lda, rsrc, csrc
         integer, intent(out)  :: A(lda, *)
-        call igebr2d(icontxt, scope, top, m, n, A, lda, rsrc, csrc)
+        call ${bl}$igebr2d(icontxt, scope, top, m, n, A, lda, rsrc, csrc)
     end subroutine
 
     subroutine target_igsum2d(icontxt, scope, top, m, n, A, lda, rdest, cdest)
         character, intent(in)  :: scope, top
         integer, intent(in)    :: icontxt, m, n, lda, rdest, cdest
         integer, intent(inout) :: A(lda, *)
-        call igsum2d(icontxt, scope, top, m, n, A, lda, rdest, cdest)
+        call ${bl}$igsum2d(icontxt, scope, top, m, n, A, lda, rdest, cdest)
     end subroutine
 
     subroutine target_igamx2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
@@ -493,7 +500,7 @@ contains
         integer, intent(in)    :: icontxt, m, n, lda, ldia, rdest, cdest
         integer, intent(inout) :: A(lda, *)
         integer, intent(inout) :: rA(*), cA(*)
-        call igamx2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
+        call ${bl}$igamx2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
     end subroutine
 
     subroutine target_igamn2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
@@ -501,7 +508,7 @@ contains
         integer, intent(in)    :: icontxt, m, n, lda, ldia, rdest, cdest
         integer, intent(inout) :: A(lda, *)
         integer, intent(inout) :: rA(*), cA(*)
-        call igamn2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
+        call ${bl}$igamn2d(icontxt, scope, top, m, n, A, lda, rA, cA, ldia, rdest, cdest)
     end subroutine
 
 end module target_blacs
