@@ -603,7 +603,7 @@ def _add_target_args(p):
     p.add_argument('--target', type=str, default='kind16',
                    help='Target name (e.g. "multifloats", "kind16") or path to a target .yaml file')
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
         prog='migrator',
         description='General-purpose type migration for numerical libraries'
@@ -702,6 +702,11 @@ def main():
     _add_parser_args(p)
     p.set_defaults(func=cmd_stage)
 
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     rc = args.func(args)
     if isinstance(rc, int) and rc != 0:

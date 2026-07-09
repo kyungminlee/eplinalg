@@ -427,6 +427,27 @@ def _build_rename_regex(rename_map: dict[str, str]) -> tuple[re.Pattern, dict[st
     return _C_IDENT_RE, combined
 
 
+# PBTYP_T C-callable BLACS binding pointers (pblas.h). Their Titlecase
+# spellings collide *case-insensitively* with the complex-single BLACS
+# Fortran routines ``cgesd2d_`` / ``CGESD2D`` (the leading ``C`` reads as
+# precision letter ``c``), so the case-insensitive rename would rewrite
+# ``Cgesd2d`` → ``Wgesd2d`` and — via the header-duplication pass — inject
+# a dead ``W*`` twin field into the PBTYP_T struct *definition*. That
+# grows the struct by 8 bytes per field, shifting every pointer after it
+# and desyncing the typed pblas/src/pblas.h layout from the reference
+# _pblas_src/pblas.h (and from MKL's stock ScaLAPACK PBTYP_T), so the
+# type-generic PTOOLS (PB_CpaxpbyNN, …) read ``TYPE->Cgerv2d`` as NULL and
+# SIGSEGV. The struct-member *access* form (``TYPE->Cgesd2d``) is already
+# protected by the ``.``/``>`` lookbehind; this guards the bare member
+# *declaration*. These exact Titlecase spellings never appear as a BLACS
+# call site (those are all-lower ``cgesd2d_`` or all-upper ``CGESD2D``),
+# so protecting them case-sensitively leaves the genuine routine renames
+# untouched.
+_PBTYP_C_BINDING_FIELDS = frozenset({
+    'Cgesd2d', 'Cgerv2d', 'Cgebs2d', 'Cgebr2d', 'Cgsum2d',
+})
+
+
 def _make_rename_substituter(pattern: re.Pattern, combined: dict[str, str]):
     """Return a callback for ``pattern.sub`` that renames case-preservingly.
 
@@ -455,6 +476,12 @@ def _make_rename_substituter(pattern: re.Pattern, combined: dict[str, str]):
         # tokens preceded by ``.`` or ``->`` (struct field access).
         start = m.start()
         if start > 0 and m.string[start - 1] in '.>':
+            return src
+        # PBTYP_T BLACS binding fields: protect the bare member
+        # declaration (see _PBTYP_C_BINDING_FIELDS above). Matched
+        # case-sensitively so genuine ``cgesd2d_`` / ``CGESD2D`` renames
+        # still fire.
+        if src in _PBTYP_C_BINDING_FIELDS:
             return src
         new_lower = combined.get(src.lower())
         if new_lower is None:

@@ -200,64 +200,233 @@ if(MPI_LIB_TAG AND NOT "${MPI_LIB_TAG}" STREQUAL "${MPI_TAG}")
 endif()
 
 # ── Multifloats (conditional) ────────────────────────────────────────
-if(NEEDS_MULTIFLOATS)
-    find_program(FYPP_EXECUTABLE fypp REQUIRED)
+# _multifloats_use_binary_release() — default acquisition path. Downloads the
+# upstream multifloats binary release and wires up the same two targets the
+# source build produced, so nothing downstream changes:
+#   * multifloats::multifloats  — imported C++ core, pinned to the portable
+#     non-LTO archive (the only core whose weak/COMDAT template ops fold
+#     against our non-LTO -O2 m/w archives).
+#   * multifloatsf              — Fortran module, compiled HERE from the
+#     release's shipped, pre-expanded source (a .mod is version-locked, so it
+#     must be produced by our exact Fortran toolchain), keeping the
+#     eplinalg::multifloatsf install/export path identical to the source build.
+# A macro (not a function) so the imported/normal targets and the
+# MULTIFLOATS_BINARY_PREFIX signal land in this directory scope directly.
+#
+# Knobs (all optional):
+#   MULTIFLOATS_VERSION  release tag, default the pinned latest; "latest"
+#                        resolves live via the GitHub API (falls back to pin).
+#   MULTIFLOATS_ARCHIVE  local path / custom URL to a prefetched bundle
+#                        (offline builds); overrides the GitHub asset URL.
+macro(_multifloats_use_binary_release)
+    include(FetchContent)
+    include(CheckFortranSourceCompiles)
 
-    # Use the multifloats top-level directory (not src/ and fsrc/
-    # separately): upstream's src/CMakeLists.txt uses CMAKE_SOURCE_DIR
-    # which is only correct when multifloats is the top-level project.
-    #
-    # We deliberately do NOT pass EXCLUDE_FROM_ALL. The C++ core ``multifloats``
-    # is a genuine runtime dependency of the m/w stack (its extern "C" adddd /
-    # cadddd / … are called by the Fortran module procedures and are not baked
-    # into any archive), so a find_package consumer must be able to link it and
-    # resolve ``multifloats::multifloats`` (referenced by multifloatsfTargets).
-    # The sub-build already installs it as package ``multifloats`` (namespace
-    # ``multifloats::``); EXCLUDE_FROM_ALL suppresses that install *action* while
-    # still registering the export set, which both hides the archive from the
-    # prefix and, if we add our own, trips CMake's "target in multiple export
-    # sets" error. Letting the sub-build install is the clean path. Its own
-    # multifloatsf install stays gated off (MULTIFLOATSF_INSTALL_PRECOMPILED_MOD),
-    # so we still install multifloatsf ourselves below with no conflict.
-    #
-    # BUILD_TESTING/MULTIFLOATS_BUILD_BENCH are set as plain (non-cache)
-    # variables so they only suppress tests/benches *inside* the multifloats
-    # sub-build (leaving just the two libraries) — without EXCLUDE_FROM_ALL these
-    # gates are what keep the sub-build lean. A `CACHE … FORCE` here would also
-    # disable our own `tests/` directory at the end of this file.
-    set(BUILD_TESTING OFF)
-    set(MULTIFLOATS_BUILD_BENCH OFF)
-    # Build the C++ core WITHOUT LTO. With LTO on (upstream default), the core
-    # installs as libmultifloats-<cxx-tag>.a (e.g. -gcc-13) with a Config
-    # selector that requires the *consumer* to expose a matching C++ compiler
-    # tag; a find_package consumer built with a different (or no) C++ compiler
-    # is rejected ("no build matching compiler '-'"). A non-LTO build installs
-    # the portable, untagged libmultifloats.a, so any consumer resolves
-    # multifloats::multifloats regardless of its toolchain. Plain (non-cache)
-    # set() → CMP0077 lets it win over the sub-build's option() default.
-    set(MULTIFLOATS_USE_LTO OFF)
-    if(DEFINED MULTIFLOATS_DIR)
-        message(STATUS "Using local multifloats: ${MULTIFLOATS_DIR}")
-        add_subdirectory(${MULTIFLOATS_DIR}
-            ${CMAKE_CURRENT_BINARY_DIR}/_mf)
+    # 1. Resolve the release version.
+    set(_mf_pinned "v0.8.2")   # latest known good — bump as releases land
+    if(NOT DEFINED MULTIFLOATS_VERSION OR MULTIFLOATS_VERSION STREQUAL "")
+        set(MULTIFLOATS_VERSION "${_mf_pinned}"
+            CACHE STRING "multifloats binary-release tag ('latest' to auto-resolve)")
+    endif()
+    if(MULTIFLOATS_VERSION STREQUAL "latest")
+        set(_mf_json "${CMAKE_CURRENT_BINARY_DIR}/_mf_latest.json")
+        file(DOWNLOAD
+            "https://api.github.com/repos/kyungminlee/multifloats/releases/latest"
+            "${_mf_json}" STATUS _mf_dl_status TIMEOUT 20)
+        list(GET _mf_dl_status 0 _mf_dl_rc)
+        set(_mf_resolved "")
+        if(_mf_dl_rc EQUAL 0)
+            file(READ "${_mf_json}" _mf_json_body)
+            string(JSON _mf_resolved ERROR_VARIABLE _mf_json_err
+                GET "${_mf_json_body}" tag_name)
+        endif()
+        if(_mf_resolved AND NOT _mf_resolved STREQUAL "tag_name-NOTFOUND")
+            set(MULTIFLOATS_VERSION "${_mf_resolved}")
+            message(STATUS "multifloats: resolved latest release = ${MULTIFLOATS_VERSION}")
+        else()
+            set(MULTIFLOATS_VERSION "${_mf_pinned}")
+            message(WARNING "multifloats: could not resolve 'latest' "
+                "(offline?); falling back to pin ${_mf_pinned}")
+        endif()
+    endif()
+
+    # 2. Resolve the platform asset (linux-x86_64 | darwin-arm64).
+    string(TOLOWER "${CMAKE_SYSTEM_NAME}" _mf_os)
+    set(_mf_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    if(_mf_arch MATCHES "^(x86_64|amd64|AMD64)$")
+        set(_mf_arch "x86_64")
+    elseif(_mf_arch MATCHES "^(arm64|aarch64|ARM64)$")
+        set(_mf_arch "arm64")
+    endif()
+    set(_mf_asset "libmultifloats-${MULTIFLOATS_VERSION}-${_mf_os}-${_mf_arch}.tar.gz")
+
+    # 3. Locate the archive (local override or GitHub asset URL).
+    if(DEFINED MULTIFLOATS_ARCHIVE AND NOT MULTIFLOATS_ARCHIVE STREQUAL "")
+        set(_mf_url "${MULTIFLOATS_ARCHIVE}")
     else()
-        include(FetchContent)
-        set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
-            CACHE STRING "Git URL for the multifloats library")
-        # v0.6.0 is the floor: earlier tags leak ${CMAKE_SOURCE_DIR}
-        # include paths when add_subdirectory'd (upstream issue #23) and
-        # are not supported here.
-        set(MULTIFLOATS_GIT_TAG "v0.6.0"
-            CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
-        message(STATUS "Fetching multifloats from ${MULTIFLOATS_GIT_REPO} (${MULTIFLOATS_GIT_TAG})")
-        FetchContent_Declare(multifloats_fetch
-            GIT_REPOSITORY ${MULTIFLOATS_GIT_REPO}
-            GIT_TAG        ${MULTIFLOATS_GIT_TAG}
-        )
-        FetchContent_Populate(multifloats_fetch)
-        add_subdirectory(
-            ${multifloats_fetch_SOURCE_DIR}
-            ${CMAKE_CURRENT_BINARY_DIR}/_mf)
+        set(_mf_url "https://github.com/kyungminlee/multifloats/releases/download/${MULTIFLOATS_VERSION}/${_mf_asset}")
+    endif()
+    message(STATUS "multifloats: binary release ${MULTIFLOATS_VERSION} — ${_mf_url}")
+
+    # 4. Download + extract into the build tree. DOWNLOAD_EXTRACT_TIMESTAMP
+    #    stamps extracted files with the archive's own mtimes (CMP0135) — it
+    #    silences the dev warning and is harmless here since we key off content,
+    #    not timestamps.
+    FetchContent_Declare(multifloats_bin URL "${_mf_url}"
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_Populate(multifloats_bin)
+    set(_mf_prefix "${multifloats_bin_SOURCE_DIR}")
+
+    # 5. C++ core: force the portable non-LTO build. The core Config prefers an
+    #    LTO-tagged archive when the consumer compiler matches, but LTO-IR
+    #    COMDAT sections can't fold against our non-LTO m/w objects → include
+    #    the nolto targets file directly to pin libmultifloats-nolto.a.
+    set(_mf_core_nolto
+        "${_mf_prefix}/lib/cmake/multifloats/multifloatsTargets-nolto.cmake")
+    if(NOT EXISTS "${_mf_core_nolto}")
+        message(FATAL_ERROR
+            "multifloats binary release ${MULTIFLOATS_VERSION} ships no portable "
+            "non-LTO core (${_mf_core_nolto}); its LTO cores cannot link against "
+            "our non-LTO m/w archives. Pick another MULTIFLOATS_VERSION or build "
+            "from source (-DMULTIFLOATS_FROM_SOURCE=ON).")
+    endif()
+    include("${_mf_core_nolto}")
+
+    # Existing eplinalg targets link the header-only C++ core by its BARE name
+    # via $<BUILD_INTERFACE:multifloats> (e.g. runtime/multifloats-mpi's bridge
+    # includes <multifloats.h>). The source build creates that bare
+    # `multifloats` target directly; the release ships only the namespaced
+    # imported `multifloats::multifloats`. Provide a bare INTERFACE target
+    # forwarding to it so those references resolve (include dirs + link)
+    # unchanged. BUILD_INTERFACE-only usage → never leaks into an install export.
+    if(NOT TARGET multifloats)
+        add_library(multifloats INTERFACE)
+        target_link_libraries(multifloats INTERFACE multifloats::multifloats)
+    endif()
+
+    # 6. Fortran module: compile from the shipped, pre-expanded source. Mirror
+    #    the release Config's own source-build branch (quad/noquad by REAL(16)
+    #    support; strict IEEE / no FMA contraction — the DD error-free
+    #    transforms require it).
+    check_fortran_source_compiles("
+        program t
+          real(16) :: x
+          x = 1.0_16
+        end program
+    " _MF_HAS_REAL16 SRC_EXT f90)
+    if(_MF_HAS_REAL16)
+        set(_mf_src "${_mf_prefix}/share/multifloatsf/src/multifloats-quad.f90")
+    else()
+        set(_mf_src "${_mf_prefix}/share/multifloatsf/src/multifloats-noquad.f90")
+    endif()
+    if(NOT EXISTS "${_mf_src}")
+        message(FATAL_ERROR
+            "multifloats binary release: Fortran source not found at ${_mf_src} "
+            "(the bundle may be incomplete).")
+    endif()
+
+    add_library(multifloatsf STATIC "${_mf_src}")
+    set_target_properties(multifloatsf PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    # Private module dir (NOT the shared fmod tree): fortran_install_modules
+    # installs the target's whole Fortran_MODULE_DIRECTORY, so a private dir
+    # keeps the multifloatsf package to just multifloats.mod. INSTALL_INTERFACE
+    # points at the shared install location every eplinalg Fortran package uses.
+    set(_mf_moddir "${PROJECT_BINARY_DIR}/_mf_fmod/${FORTRAN_MOD_COMPAT_TAG}")
+    file(MAKE_DIRECTORY "${_mf_moddir}")
+    set_target_properties(multifloatsf PROPERTIES
+        Fortran_MODULE_DIRECTORY "${_mf_moddir}")
+    _fc_make_relative_installdir(_mf_rel_libdir "${CMAKE_INSTALL_LIBDIR}")
+    target_include_directories(multifloatsf PUBLIC
+        $<BUILD_INTERFACE:${_mf_moddir}>
+        $<INSTALL_INTERFACE:${_mf_rel_libdir}/fmod/${FORTRAN_MOD_COMPAT_TAG}>)
+    target_link_libraries(multifloatsf PUBLIC multifloats::multifloats)
+    if(CMAKE_Fortran_COMPILER_ID STREQUAL "IntelLLVM")
+        target_compile_options(multifloatsf PRIVATE -fp-model=precise)
+    elseif(CMAKE_Fortran_COMPILER_ID MATCHES "GNU|LLVMFlang|Flang")
+        target_compile_options(multifloatsf PRIVATE -ffp-contract=off)
+    endif()
+
+    # Signal EplinalgInstall to install a nolto-only passthrough of the core
+    # (the sub-build used to self-install it; the binary release does not).
+    set(MULTIFLOATS_BINARY_PREFIX "${_mf_prefix}" CACHE INTERNAL
+        "Extracted multifloats binary-release prefix (core passthrough install)")
+endmacro()
+
+if(NEEDS_MULTIFLOATS)
+    # ── How the multifloats double-double dependency is obtained ─────────
+    # Three modes, in priority order:
+    #   1. MULTIFLOATS_DIR defined      → local source checkout (add_subdirectory)
+    #   2. MULTIFLOATS_FROM_SOURCE=ON   → git FetchContent source build (legacy)
+    #   3. (default) binary release     → download the upstream prebuilt bundle
+    #
+    # The binary release is the DEFAULT. It ships the C++ double-double core as
+    # the portable, untagged non-LTO libmultifloats-nolto.a — the only core
+    # build whose weak/COMDAT template ops (float64x2 operators, deduped into
+    # every m/w archive we compile non-LTO -O2) fold cleanly at link time. An
+    # LTO core archive carries LTO-IR COMDAT sections that ld cannot fold
+    # against our native objects → "defined in discarded section". We consume
+    # that core as a binary and compile the Fortran module `multifloatsf`
+    # ourselves from the release's shipped, pre-expanded source, so its
+    # version-locked .mod stays under our exact toolchain and the
+    # eplinalg::multifloatsf install/export path is unchanged.
+    if(DEFINED MULTIFLOATS_DIR OR MULTIFLOATS_FROM_SOURCE)
+        find_program(FYPP_EXECUTABLE fypp REQUIRED)
+        # Use the multifloats top-level directory (not src/ and fsrc/
+        # separately): upstream's src/CMakeLists.txt uses CMAKE_SOURCE_DIR
+        # which is only correct when multifloats is the top-level project.
+        #
+        # We deliberately do NOT pass EXCLUDE_FROM_ALL. The C++ core
+        # ``multifloats`` is a genuine runtime dependency of the m/w stack (its
+        # extern "C" adddd / cadddd / … are called by the Fortran module
+        # procedures and are not baked into any archive), so a find_package
+        # consumer must be able to link it and resolve ``multifloats::multifloats``
+        # (referenced by multifloatsfTargets). The sub-build already installs it
+        # as package ``multifloats`` (namespace ``multifloats::``);
+        # EXCLUDE_FROM_ALL suppresses that install *action* while still
+        # registering the export set, which both hides the archive from the
+        # prefix and, if we add our own, trips CMake's "target in multiple
+        # export sets" error. Letting the sub-build install is the clean path.
+        # Its own multifloatsf install stays gated off
+        # (MULTIFLOATSF_INSTALL_PRECOMPILED_MOD), so we still install
+        # multifloatsf ourselves below with no conflict.
+        #
+        # BUILD_TESTING/MULTIFLOATS_BUILD_BENCH are set as plain (non-cache)
+        # variables so they only suppress tests/benches *inside* the multifloats
+        # sub-build (leaving just the two libraries) — without EXCLUDE_FROM_ALL
+        # these gates keep the sub-build lean. A `CACHE … FORCE` here would also
+        # disable our own `tests/` directory at the end of this file.
+        set(BUILD_TESTING OFF)
+        set(MULTIFLOATS_BUILD_BENCH OFF)
+        # Build the C++ core WITHOUT LTO (see the COMDAT note above; a non-LTO
+        # build installs the portable, untagged libmultifloats.a so any consumer
+        # resolves multifloats::multifloats regardless of its toolchain). Plain
+        # (non-cache) set() → CMP0077 lets it win over the sub-build's option().
+        set(MULTIFLOATS_USE_LTO OFF)
+        if(DEFINED MULTIFLOATS_DIR)
+            message(STATUS "Using local multifloats: ${MULTIFLOATS_DIR}")
+            add_subdirectory(${MULTIFLOATS_DIR}
+                ${CMAKE_CURRENT_BINARY_DIR}/_mf)
+        else()
+            include(FetchContent)
+            set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
+                CACHE STRING "Git URL for the multifloats library")
+            # v0.6.0 is the floor: earlier tags leak ${CMAKE_SOURCE_DIR}
+            # include paths when add_subdirectory'd (upstream issue #23) and
+            # are not supported here.
+            set(MULTIFLOATS_GIT_TAG "v0.6.0"
+                CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
+            message(STATUS "Fetching multifloats from ${MULTIFLOATS_GIT_REPO} (${MULTIFLOATS_GIT_TAG})")
+            FetchContent_Declare(multifloats_fetch
+                GIT_REPOSITORY ${MULTIFLOATS_GIT_REPO}
+                GIT_TAG        ${MULTIFLOATS_GIT_TAG}
+            )
+            FetchContent_Populate(multifloats_fetch)
+            add_subdirectory(
+                ${multifloats_fetch_SOURCE_DIR}
+                ${CMAKE_CURRENT_BINARY_DIR}/_mf)
+        endif()
+    else()
+        _multifloats_use_binary_release()
     endif()
 
     # multifloats_mpi / multifloats_mpi_f — first-party MPI bridge for the

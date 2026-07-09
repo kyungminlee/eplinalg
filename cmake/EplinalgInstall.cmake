@@ -538,6 +538,29 @@ if(NEEDS_MULTIFLOATS)
     # its dependency to live in exactly one. We only wire multifloatsf's Config
     # to find it (below).
 
+    # When the C++ core came from the binary release, the sub-build that used
+    # to self-install it is gone — so WE install it into our prefix, otherwise
+    # downstream find_package(multifloats) (emitted as find_dependency by
+    # multifloatsfConfig below) finds nothing. Install ONLY the portable
+    # non-LTO core and a nolto-only Config (omit the lto-* target files) so
+    # every consumer resolves multifloats::multifloats to the COMDAT-foldable
+    # libmultifloats-nolto.a regardless of its compiler — matching how we
+    # linked it here. DESTINATION is the literal ``lib`` the release's own
+    # Targets file hardcodes for _IMPORT_PREFIX (not CMAKE_INSTALL_LIBDIR),
+    # and ``lib/cmake`` is always on CMake's find_package search path.
+    if(MULTIFLOATS_BINARY_PREFIX)
+        install(FILES "${MULTIFLOATS_BINARY_PREFIX}/lib/libmultifloats-nolto.a"
+            DESTINATION lib)
+        install(DIRECTORY "${MULTIFLOATS_BINARY_PREFIX}/include/"
+            DESTINATION include)
+        install(FILES
+            "${MULTIFLOATS_BINARY_PREFIX}/lib/cmake/multifloats/multifloatsConfig.cmake"
+            "${MULTIFLOATS_BINARY_PREFIX}/lib/cmake/multifloats/multifloatsConfigVersion.cmake"
+            "${MULTIFLOATS_BINARY_PREFIX}/lib/cmake/multifloats/multifloatsTargets-nolto.cmake"
+            "${MULTIFLOATS_BINARY_PREFIX}/lib/cmake/multifloats/multifloatsTargets-nolto-release.cmake"
+            DESTINATION lib/cmake/multifloats)
+    endif()
+
     if(TARGET multifloatsf)
         # multifloatsf's exported interface references multifloats::multifloats
         # (PUBLIC-linked C++ core), so emit find_dependency(multifloats) into its
