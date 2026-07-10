@@ -599,7 +599,23 @@ function(_mumps_attach_link_group tgt variant want_c)
             # MUMPS uses at np=1. Mirrors the multifloats branch above.
             list(APPEND _archives quad_mpi_f quad_mpi)
         endif()
-        add_dependencies(${tgt} ${_archives})
+        # Under the binary-release acquisition the bare ``multifloats``
+        # target is an INTERFACE wrapper over the imported
+        # ``multifloats::multifloats`` core (cmake/CMakeLists.txt) —
+        # $<TARGET_FILE:> can't resolve an INTERFACE library, and
+        # add_dependencies() rejects imported targets. Swap in the
+        # imported core for the link line and drop it from the
+        # dependency list (imported archives are always up to date).
+        set(_dep_archives ${_archives})
+        if("multifloats" IN_LIST _archives AND TARGET multifloats)
+            get_target_property(_mf_type multifloats TYPE)
+            if(_mf_type STREQUAL "INTERFACE_LIBRARY")
+                list(TRANSFORM _archives REPLACE "^multifloats$"
+                     "multifloats::multifloats")
+                list(REMOVE_ITEM _dep_archives multifloats)
+            endif()
+        endif()
+        add_dependencies(${tgt} ${_dep_archives})
         # target_link_libraries (vs. target_link_options) places these
         # AFTER the .o files in the link line — required so ld can
         # resolve test_*.o symbols against the group.

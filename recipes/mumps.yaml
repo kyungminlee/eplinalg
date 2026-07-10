@@ -232,6 +232,23 @@ call_arg_casts:
 # match via mumps_c_types_extended.h (see cmake/CMakeLists.txt). {RPU}
 # = real prefix upper (E/Q/M ← upstream d), {CPU} = complex (Y/X/W ← z).
 extra_renames:
+  # Task 44: the extended stack's BLACS/ScaLAPACK-common engine is
+  # privatized under ep_ so it never shares a symbol (or state) with an
+  # MKL linked into the same consumer. The migrated MUMPS trees call
+  # four family-independent routines by their pristine names
+  # (?fac/?sol_root_parallel.F, ?type3_root.F, ?end_driver.F,
+  # ?mumps_save_restore.F); left untouched they would bind to MKL's
+  # engine while the pm*/pw* ScaLAPACK routines operate on grids from
+  # the ep engine — the exact cross-engine mix behind the np>=2
+  # SIGSEGV. Redirect them to the ep twins (defined in
+  # libepblacs_common / libepscalapack_common). The genuine s/d/c/z
+  # MUMPS build stages these files verbatim (no migration), so it
+  # keeps pristine names and MKL compatibility.
+  BLACS_GRIDINIT: EP_BLACS_GRIDINIT
+  BLACS_GRIDINFO: EP_BLACS_GRIDINFO
+  BLACS_GRIDEXIT: EP_BLACS_GRIDEXIT
+  DESCINIT:       EP_DESCINIT
+
   DMUMPS_ASSIGN_COLSCA:          "{RPU}MUMPS_ASSIGN_COLSCA"
   DMUMPS_ASSIGN_COLSCA_LOC:      "{RPU}MUMPS_ASSIGN_COLSCA_LOC"
   DMUMPS_ASSIGN_RHSINTR:         "{RPU}MUMPS_ASSIGN_RHSINTR"

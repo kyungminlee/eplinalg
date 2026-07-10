@@ -1,5 +1,7 @@
 ! Test BLACS igebs2d / igebr2d — integer broadcast with scope='A',
 ! 'R', 'C'.
+#include "../../common/privatized_blacs_names.h"
+
 program test_igebs2d
     use prec_kinds,        only: ep
     use blacs_prec_report, only: report_init, report_case, report_finalize

@@ -11,12 +11,14 @@
 ! migrated ScaLAPACK library being present (tests/pblas only depends
 ! on ${LIB_PREFIX}blacs + ${LIB_PREFIX}pblas, not scalapack).
 
+#include "../../common/privatized_blacs_names.h"
+
 module pblas_grid
     use mpi
     implicit none
     private
 
-    public :: grid_init, grid_exit
+    public :: grid_init, grid_init_shape, grid_exit
     public :: my_context, my_nprow, my_npcol, my_row, my_col
     public :: my_rank, my_nproc
     public :: pick_grid_shape
@@ -79,6 +81,41 @@ contains
         call blacs_gridinit(my_context, 'R', my_nprow, my_npcol)
         call blacs_gridinfo(my_context, my_nprow, my_npcol, my_row, my_col)
     end subroutine grid_init
+
+    ! Like grid_init but with an explicit (nprow, npcol) shape. Used
+    ! by tests that want a non-square grid (e.g. 4×1 / 1×4 to exercise
+    ! LCMP > 1 / LCMQ > 1 paths in pbdtrnv) on the same nproc the
+    ! launcher provides. nprow*npcol must equal the MPI world size; if
+    ! the assertion fails the call returns my_context = -1 and leaves
+    ! my_row / my_col at -1 so callers can detect the mismatch and
+    ! skip cleanly.
+    subroutine grid_init_shape(nprow_req, npcol_req)
+        integer, intent(in) :: nprow_req, npcol_req
+        integer :: ierr, ctxt0
+        logical :: mpi_started
+
+        call mpi_initialized(mpi_started, ierr)
+        if (.not. mpi_started) call mpi_init(ierr)
+
+        call blacs_pinfo(my_rank, my_nproc)
+        if (my_nproc < 1) call mpi_comm_size(mpi_comm_world, my_nproc, ierr)
+
+        if (nprow_req * npcol_req /= my_nproc) then
+            my_context = -1
+            my_nprow   = nprow_req
+            my_npcol   = npcol_req
+            my_row     = -1
+            my_col     = -1
+            return
+        end if
+
+        my_nprow = nprow_req
+        my_npcol = npcol_req
+        call blacs_get(-1, 0, ctxt0)
+        my_context = ctxt0
+        call blacs_gridinit(my_context, 'R', my_nprow, my_npcol)
+        call blacs_gridinfo(my_context, my_nprow, my_npcol, my_row, my_col)
+    end subroutine grid_init_shape
 
     subroutine grid_exit()
         if (my_row >= 0 .and. my_col >= 0) then

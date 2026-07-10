@@ -11,6 +11,8 @@
 ! migrated ScaLAPACK library being present (tests/pblas only depends
 ! on ${LIB_PREFIX}blacs + ${LIB_PREFIX}pblas, not scalapack).
 
+#include "../../common/privatized_blacs_names.h"
+
 module pblas_grid
     use mpi
     implicit none
@@ -81,16 +83,6 @@ contains
     end subroutine grid_init
 
     subroutine grid_exit()
-        integer :: ierr
-        ! Sync all ranks before destroying the BLACS context. Some
-        ! tests use embarassingly-parallel PBLAS routines (e.g. PEAXPY)
-        ! that don't synchronize ranks internally; without this barrier
-        ! a fast rank reaches grid_exit while peers are still inside
-        ! the test loop, the early caller starts the collective
-        ! MPI_Comm_free inside blacs_gridexit, and ranks still in the
-        ! loop see Cblacs_gridinfo return -1 (context destroyed) on
-        ! their next PEAXPY argument check.
-        call mpi_barrier(mpi_comm_world, ierr)
         if (my_row >= 0 .and. my_col >= 0) then
             call blacs_gridexit(my_context)
         end if

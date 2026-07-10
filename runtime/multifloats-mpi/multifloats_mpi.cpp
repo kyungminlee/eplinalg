@@ -106,6 +106,23 @@ static void zz_amn_fn(void *in, void *inout, int *len, MPI_Datatype *) {
 
 /* ---- One-time registration -------------------------------------- */
 
+/* Under Intel MPI the ops are declared non-commutative even though
+ * sum/abs-max/abs-min are commutative: its shm-optimized reduce for
+ * commutative user-defined ops hands the callback an 8-byte-aligned
+ * pointer into the shm cell payload above the short-message cutoff; a
+ * callback whose element type wants 16-byte alignment is compiled with
+ * aligned SSE loads and faults on it (#GP -> SIGSEGV, si_addr=0;
+ * observed with 2021.18). Non-commutative ops take the sound
+ * rank-ordered path through properly aligned buffers. Other MPIs are
+ * unaffected (OpenMPI 4.1.6 verified clean) and keep the commutative
+ * declaration and its cheaper reduction algorithms. Intel MPI's mpi.h
+ * also defines the MPICH_* macros, so key on I_MPI_* only. */
+#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
+#  define EP_MPI_OP_COMMUTE 0
+#else
+#  define EP_MPI_OP_COMMUTE 1
+#endif
+
 extern "C" void multifloats_mpi_init(void) {
     static int initialized = 0;
     if (initialized) return;
@@ -115,12 +132,12 @@ extern "C" void multifloats_mpi_init(void) {
     MPI_Type_contiguous(4, MPI_DOUBLE, &MPI_COMPLEX64X2);
     MPI_Type_commit(&MPI_COMPLEX64X2);
 
-    MPI_Op_create(dd_sum_fn, 1, &MPI_DD_SUM);
-    MPI_Op_create(zz_sum_fn, 1, &MPI_ZZ_SUM);
-    MPI_Op_create(dd_amx_fn, 1, &MPI_DD_AMX);
-    MPI_Op_create(dd_amn_fn, 1, &MPI_DD_AMN);
-    MPI_Op_create(zz_amx_fn, 1, &MPI_ZZ_AMX);
-    MPI_Op_create(zz_amn_fn, 1, &MPI_ZZ_AMN);
+    MPI_Op_create(dd_sum_fn, EP_MPI_OP_COMMUTE, &MPI_DD_SUM);
+    MPI_Op_create(zz_sum_fn, EP_MPI_OP_COMMUTE, &MPI_ZZ_SUM);
+    MPI_Op_create(dd_amx_fn, EP_MPI_OP_COMMUTE, &MPI_DD_AMX);
+    MPI_Op_create(dd_amn_fn, EP_MPI_OP_COMMUTE, &MPI_DD_AMN);
+    MPI_Op_create(zz_amx_fn, EP_MPI_OP_COMMUTE, &MPI_ZZ_AMX);
+    MPI_Op_create(zz_amn_fn, EP_MPI_OP_COMMUTE, &MPI_ZZ_AMN);
 
     mf_mpi_float64x2_f   = MPI_Type_c2f(MPI_FLOAT64X2);
     mf_mpi_complex64x2_f = MPI_Type_c2f(MPI_COMPLEX64X2);

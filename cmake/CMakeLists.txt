@@ -463,6 +463,9 @@ endif()
 # ── Helper functions ─────────────────────────────────────────────────
 # add_standard_*/add_migrated_* library assembly plus the small shared
 # helpers (fortran_relax_line_length, compile_c_as_cxx, link_if_present).
+# The privatize gate must be defined before the helpers call it from
+# add_migrated_* for PRIVATIZED_LIBRARIES entries.
+include(${CMAKE_CURRENT_SOURCE_DIR}/EplinalgPrivatizeGate.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/EplinalgLibraryHelpers.cmake)
 
 # ── Libraries in dependency order ────────────────────────────────────
@@ -714,6 +717,15 @@ endif()
 if(TARGET scalapack)
     file(GLOB _scalapack_c_std
          CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/_scalapack_src/*.c)
+    # SRC/pzaxpy.c, pzdotc.c, pzdotu.c are PBLAS-v1-era leftovers that
+    # upstream ScaLAPACK never compiles (its SRC/CMakeLists.txt only builds
+    # pcrot.c/pzrot.c from the C files). Modern ANSI C definitions of
+    # pzaxpy_/pzdotc_/pzdotu_ live in PBLAS/SRC (libpblas); the SRC/ copies
+    # are older K&R duplicates that reference pberror_/ptop, which exist
+    # only in PBLAS TESTING/TIMING and would shadow the good definitions
+    # from inside the same archive. Mirrors recipes/scalapack_c.yaml
+    # skip_files.
+    list(FILTER _scalapack_c_std EXCLUDE REGEX "/(pzaxpy|pzdotc|pzdotu)\\.c$")
     file(GLOB _scalapack_c_redist
          CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/_scalapack_redist_src/*.c)
     file(GLOB _scalapack_c_tools

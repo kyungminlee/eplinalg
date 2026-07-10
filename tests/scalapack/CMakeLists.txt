@@ -69,7 +69,7 @@ add_library(scalapack_test_common STATIC
     common/ref_quad_blas.f90
     common/ref_quad_lapack.f90
     common/cond_helpers.f90
-    common/pblas_grid.f90
+    common/pblas_grid.F90
     ../common/pblas_distrib.f90
 )
 set_target_properties(scalapack_test_common PROPERTIES
@@ -208,6 +208,18 @@ foreach(_group linear_solve factorization eigenvalue svd auxiliary)
     file(GLOB _tests CONFIGURE_DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/${_group}/test_*.f90)
     foreach(_t ${_tests})
+        # test_pdlaiect asserts the recipe-override semantics of the
+        # p?laiect IEEE helpers (recipes/scalapack/*c_overrides return
+        # IEFLAG=1 unconditionally and make the b/l variants aliases of
+        # one portable Sturm body). kind4/kind8 bind upstream
+        # pdlaiect.c, where IEFLAG is legitimately 2 on little-endian
+        # and the b/l variants are only correct through the IEFLAG
+        # dispatch — the override contract simply doesn't exist there.
+        # Baseline coverage of the d Sturm path comes from the
+        # pdsyevx/pdstebz solve tests.
+        if(BASELINE_BUILD AND _t MATCHES "test_pdlaiect")
+            continue()
+        endif()
         add_scalapack_precision_test(${_t})
     endforeach()
 endforeach()

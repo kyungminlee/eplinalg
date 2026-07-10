@@ -55,6 +55,30 @@ function(_eplinalg_pkg_name kind lib_name out_var)
     set(${out_var} "eplinalg${kind}${_first}${_rest}" PARENT_SCOPE)
 endfunction()
 
+# _eplinalg_common_pkg(<lib_name> <pkg_var> <base_var>): package name
+# and archive base for the shared ``<lib_name>_common`` install. For
+# libraries whose migrated sources went through the ep_ symbol-
+# privatization pass (PRIVATIZED_LIBRARIES, emitted by ``migrator
+# stage`` into target_config.cmake — task 44), the commons carry the
+# hermetic ep_ engine: they install as ``libep<lib>_common-<tag>.a``
+# under package ``eplinalgCommonEp<Lib>`` so they can never be mistaken
+# for a pristine Netlib commons. The CMake target itself keeps its
+# generic ``<lib>_common`` name (and thus the exported
+# ``eplinalg::<lib>_common`` target name) — no pristine commons package
+# exists to collide with, since the std stack's pristine engine is
+# folded whole into the std archives. <base_var> is set to "" for the
+# non-privatized (pristine-named) case.
+function(_eplinalg_common_pkg lib_name pkg_var base_var)
+    if("${lib_name}" IN_LIST PRIVATIZED_LIBRARIES)
+        _eplinalg_pkg_name(CommonEp ${lib_name} _pkg)
+        set(${base_var} "ep${lib_name}_common" PARENT_SCOPE)
+    else()
+        _eplinalg_pkg_name(Common ${lib_name} _pkg)
+        set(${base_var} "" PARENT_SCOPE)
+    endif()
+    set(${pkg_var} "${_pkg}" PARENT_SCOPE)
+endfunction()
+
 # _return_if_already_installed(<key>): once-per-configure latch for the
 # shared-package installers — several precision libs can trigger the
 # same shared install in one configure; only the first wins. A macro,
@@ -212,8 +236,13 @@ function(_install_shared_common lib_name)
     if(NOT TARGET ${_ct})
         return()
     endif()
-    _eplinalg_pkg_name(Common ${lib_name} _pkg)
+    _eplinalg_common_pkg(${lib_name} _pkg _out_base)
     _return_if_already_installed(_FC_COMMON_INSTALLED_${_pkg})
+
+    set(_base_arg "")
+    if(_out_base)
+        set(_base_arg OUTPUT_BASE ${_out_base})
+    endif()
 
     set(_mpi_arg "")
     if("${lib_name}" IN_LIST _MPI_ABI_LIBS)
@@ -239,6 +268,7 @@ function(_install_shared_common lib_name)
         EXPORT ${_pkg}Targets
         NAMESPACE eplinalg::
         ${_mpi_arg}
+        ${_base_arg}
         DEPENDS ${_deps})
 endfunction()
 
@@ -446,9 +476,10 @@ function(_install_library_pair lib_name)
     _append_linked_bridge_deps(${_precision_target} _precision_deps)
 
     # The precision archive PUBLIC-links its ``_common`` (factored into
-    # eplinalgCommon<Lib>), so its Config find_dependency's it.
+    # eplinalgCommon<Lib>, or eplinalgCommonEp<Lib> for the privatized
+    # ep commons), so its Config find_dependency's it.
     if(TARGET ${_common_target})
-        _eplinalg_pkg_name(Common ${lib_name} _common_pkg)
+        _eplinalg_common_pkg(${lib_name} _common_pkg _unused_base)
         list(APPEND _precision_deps ${_common_pkg})
     endif()
 

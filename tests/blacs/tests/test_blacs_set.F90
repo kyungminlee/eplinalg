@@ -10,6 +10,8 @@
 !   14 SGET_NB_CO        combine nbranches  (note: stored as val+1)
 !   15 SGET_TOPSREPEAT   tops-repeat flag
 !   16 SGET_TOPSCOHRNT   tops-coherent flag
+#include "../../common/privatized_blacs_names.h"
+
 program test_blacs_set
     use prec_kinds,        only: ep
     use blacs_prec_report, only: report_init, report_case, report_finalize

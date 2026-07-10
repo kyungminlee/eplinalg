@@ -20,6 +20,8 @@
 ! returns the MPI Fortran handle of the context's process-scope
 ! communicator. We exercise it here mostly for completeness; it
 ! returns a non-MPI_COMM_NULL handle for a valid context.
+#include "../../common/privatized_blacs_names.h"
+
 program test_blacs_pinfo
     use prec_kinds,        only: ep
     use blacs_prec_report, only: report_init, report_case, report_finalize

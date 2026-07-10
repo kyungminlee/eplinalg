@@ -133,15 +133,47 @@ force_common:
 #                     (analogous to upstream ``BI_zMPI_sum.c``); the
 #                     d→prefix clone pipeline produces ``BI_qMPI_sum.c`` /
 #                     ``BI_eMPI_sum.c`` / ``BI_mMPI_sum.c`` automatically.
+#   B02 (d/z gsum2d_.c, gamx2d_.c, gamn2d_.c) -- second half of the
+#                     Intel MPI reduce workaround. B01 routes the math
+#                     through a user op, but Intel MPI's shm-optimized
+#                     Reduce/Allreduce mishandles *commutative*
+#                     user-defined ops: above the short-message cutoff
+#                     (count<=2 stays on a safe path, which is why small
+#                     smoke tests pass) the op callback receives a
+#                     pointer into the shm cell payload that is only
+#                     8-byte aligned. A callback whose element type
+#                     wants 16-byte alignment (__float128) is compiled
+#                     with aligned SSE loads and faults on it (#GP ->
+#                     SIGSEGV with si_addr=0; observed with Intel MPI
+#                     2021.18, disassembly-verified) in the qx MUMPS
+#                     type-3 root solve. The fix is to flip the
+#                     MPI_Op_create commute flag to 0 at every BLACS
+#                     reduce site: a non-commutative op is excluded from
+#                     the optimized path and reduces in rank order
+#                     through properly aligned buffers (always correct,
+#                     and it makes the summation order deterministic).
+#                     This covers gsum2d and both gamx2d/gamn2d branches
+#                     (the ldia != -1 struct-type path is equally
+#                     exposed). The flip is guarded on I_MPI_VERSION/
+#                     I_MPI_NUMVERSION so only Intel MPI builds get
+#                     commute=0; other MPIs are unaffected by the bug
+#                     (OpenMPI 4.1.6 verified clean) and keep the
+#                     commutative declaration.
 patches:
   - B01__user-mpi-sum-reducer.patch
+  - B02__noncommutative-reduce-ops.patch
 
-# Convergence whitelist (Phase D). DGSUM2D_'s S sibling lacks the
-# user-MPI-op patch by design (the kind16 retarget triggers the
-# MPI_REAL16 path only on the migrated D-derived archive); the diff
-# is cosmetic and accepted.
+# Convergence whitelist (Phase D). These stems' S/C siblings lack the
+# user-MPI-op / non-commutative-op patches by design (the kind16/kind10
+# retarget triggers the broken Intel MPI reduce paths only on the
+# migrated D/Z-derived archives); the diffs are cosmetic and accepted.
 expected_divergences:
   - DGSUM2D_
+  - ZGSUM2D_
+  - DGAMX2D_
+  - DGAMN2D_
+  - ZGAMX2D_
+  - ZGAMN2D_
 
 # Multifloats target: patch blacs_pinfo_.c to call multifloats_mpi_init()
 # so the custom MPI datatypes and ops are registered before any BLACS
@@ -175,8 +207,21 @@ overrides:
     files:
       - blacs_pinfo_.c
 
-# Symmetric-patch CI escape hatch (Phase D). The D-half-only
-# user-MPI-op patch is a workaround triggered by the kind16
-# retarget; the S half is unaffected. See B01 description above.
+# Symmetric-patch CI escape hatch (Phase D). The D/Z-half-only
+# user-MPI-op and non-commutative-op patches are workarounds triggered
+# by the kind16/kind10 retarget; the S/C halves are unaffected. See
+# the B01/B02 descriptions above.
 asymmetric_patches:
   - B01__user-mpi-sum-reducer.patch
+  - B02__noncommutative-reduce-ops.patch
+
+# Task 44: privatize the MKL-colliding, family-independent support
+# symbols (blacs_*/Cblacs_*/BI_*, PB_C*, TOOLS/REDIST helpers, sltimer,
+# pxerbla, ...) by renaming them name -> ep_name in the migrated output.
+# eplinalg's Netlib-derived engine and MKL export identical names with
+# incompatible internal ABIs (BLACBUFF 48 vs 56 bytes); one process-wide
+# definition per name collapses the two engines and SIGSEGVs at np>=2 in
+# either link order. The manifest is shared across the whole extended
+# stack (uniform prefix keeps the commons byte-identical across
+# mw/qx/ey) and the nm audit gate reads the same file.
+privatize_symbols: privatize_ep_symbols.txt
