@@ -15,6 +15,46 @@
 #include "PBblas.h"
 #include "multifloats_bridge.h"
 
+
+/*
+*  Hidden-CHARACTER-length ABI trampolines.  Each F<slot> callback
+*  below is reached by the type-generic drivers through a C prototype
+*  that passes NO Fortran CHARACTER lengths; the migrated gfortran
+*  leaf expects them and spills scratch into the (unprovisioned)
+*  hidden-length slots, clobbering the caller frame.  These
+*  trampolines carry the driver's no-length signature inward and
+*  append the lengths (all 1) outward.  See PBcharshim.h.
+*/
+#include "PBcharshim.h"
+
+EP_MK_TZPAD(tzpad, mtzpad_)
+EP_MK_TZPADCPY(tzpadcpy, mtzpadcpy_)
+EP_MK_TZSCAL(tzscal, mtzscal_)
+EP_MK_TZSCAL(hescal, mtzscal_)
+EP_MK_TZSCAL(tzcnjg, mtzscal_)
+EP_MK_GEMV(gemv, mgemv_)
+EP_MK_SYMV(symv, msymv_)
+EP_MK_SYMV(hemv, msymv_)
+EP_MK_TRMV(trmv, mtrmv_)
+EP_MK_TRMV(trsv, mtrsv_)
+EP_MK_GEMV(agemv, magemv_)
+EP_MK_SYMV(asymv, masymv_)
+EP_MK_SYMV(ahemv, masymv_)
+EP_MK_ATRMV(atrmv, matrmv_)
+EP_MK_SYR(syr, msyr_)
+EP_MK_SYR(her, msyr_)
+EP_MK_SYR2(syr2, msyr2_)
+EP_MK_SYR2(her2, msyr2_)
+EP_MK_GEMM(gemm, mgemm_)
+EP_MK_SYMM(symm, msymm_)
+EP_MK_SYMM(hemm, msymm_)
+EP_MK_SYRK(syrk, msyrk_)
+EP_MK_SYRK(herk, msyrk_)
+EP_MK_SYR2K(syr2k, msyr2k_)
+EP_MK_SYR2K(her2k, msyr2k_)
+EP_MK_TRMM(trmm, mtrmm_)
+EP_MK_TRMM(trsm, mtrsm_)
+
 PBTYP_T * PB_Cmtypeset(void)
 {
    static Int     setup = 0;
@@ -59,42 +99,42 @@ PBTYP_T * PB_Cmtypeset(void)
 
    TypeStruct.Fset      = mset_;
 
-   TypeStruct.Ftzpad    = mtzpad_;
-   TypeStruct.Ftzpadcpy = mtzpadcpy_;
-   TypeStruct.Ftzscal   = mtzscal_;
-   TypeStruct.Fhescal   = mtzscal_;
-   TypeStruct.Ftzcnjg   = mtzscal_;
+   TypeStruct.Ftzpad    = (TZPAD_T) EP_SHIM(tzpad);
+   TypeStruct.Ftzpadcpy = (TZPADCPY_T) EP_SHIM(tzpadcpy);
+   TypeStruct.Ftzscal   = (TZSCAL_T) EP_SHIM(tzscal);
+   TypeStruct.Fhescal   = (TZSCAL_T) EP_SHIM(hescal);
+   TypeStruct.Ftzcnjg   = (TZSCAL_T) EP_SHIM(tzcnjg);
 
    TypeStruct.Faxpy     = maxpy_;
    TypeStruct.Fcopy     = mcopy_;
    TypeStruct.Fswap     = mswap_;
 
-   TypeStruct.Fgemv     = mgemv_;
-   TypeStruct.Fsymv     = msymv_;
-   TypeStruct.Fhemv     = msymv_;
-   TypeStruct.Ftrmv     = mtrmv_;
-   TypeStruct.Ftrsv     = mtrsv_;
-   TypeStruct.Fagemv    = magemv_;
-   TypeStruct.Fasymv    = masymv_;
-   TypeStruct.Fahemv    = masymv_;
-   TypeStruct.Fatrmv    = matrmv_;
+   TypeStruct.Fgemv     = (GEMV_T) EP_SHIM(gemv);
+   TypeStruct.Fsymv     = (SYMV_T) EP_SHIM(symv);
+   TypeStruct.Fhemv     = (HEMV_T) EP_SHIM(hemv);
+   TypeStruct.Ftrmv     = (TRMV_T) EP_SHIM(trmv);
+   TypeStruct.Ftrsv     = (TRSV_T) EP_SHIM(trsv);
+   TypeStruct.Fagemv    = (AGEMV_T) EP_SHIM(agemv);
+   TypeStruct.Fasymv    = (ASYMV_T) EP_SHIM(asymv);
+   TypeStruct.Fahemv    = (AHEMV_T) EP_SHIM(ahemv);
+   TypeStruct.Fatrmv    = (ATRMV_T) EP_SHIM(atrmv);
 
    TypeStruct.Fgerc     = mger_;
    TypeStruct.Fgeru     = mger_;
-   TypeStruct.Fsyr      = msyr_;
-   TypeStruct.Fher      = msyr_;
-   TypeStruct.Fsyr2     = msyr2_;
-   TypeStruct.Fher2     = msyr2_;
+   TypeStruct.Fsyr      = (SYR_T) EP_SHIM(syr);
+   TypeStruct.Fher      = (HER_T) EP_SHIM(her);
+   TypeStruct.Fsyr2     = (SYR2_T) EP_SHIM(syr2);
+   TypeStruct.Fher2     = (HER2_T) EP_SHIM(her2);
 
-   TypeStruct.Fgemm     = mgemm_;
-   TypeStruct.Fsymm     = msymm_;
-   TypeStruct.Fhemm     = msymm_;
-   TypeStruct.Fsyrk     = msyrk_;
-   TypeStruct.Fherk     = msyrk_;
-   TypeStruct.Fsyr2k    = msyr2k_;
-   TypeStruct.Fher2k    = msyr2k_;
-   TypeStruct.Ftrmm     = mtrmm_;
-   TypeStruct.Ftrsm     = mtrsm_;
+   TypeStruct.Fgemm     = (GEMM_T) EP_SHIM(gemm);
+   TypeStruct.Fsymm     = (SYMM_T) EP_SHIM(symm);
+   TypeStruct.Fhemm     = (HEMM_T) EP_SHIM(hemm);
+   TypeStruct.Fsyrk     = (SYRK_T) EP_SHIM(syrk);
+   TypeStruct.Fherk     = (HERK_T) EP_SHIM(herk);
+   TypeStruct.Fsyr2k    = (SYR2K_T) EP_SHIM(syr2k);
+   TypeStruct.Fher2k    = (HER2K_T) EP_SHIM(her2k);
+   TypeStruct.Ftrmm     = (TRMM_T) EP_SHIM(trmm);
+   TypeStruct.Ftrsm     = (TRSM_T) EP_SHIM(trsm);
 
    return( &TypeStruct );
 }

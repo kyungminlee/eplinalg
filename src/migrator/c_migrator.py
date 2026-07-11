@@ -14,6 +14,11 @@ from pathlib import Path
 
 from .prefix_classifier import target_prefix, SymbolClassification
 from .target_mode import TargetMode
+from .pbcharshim import (
+    is_typeset_stem,
+    transform_typeset,
+    pbcharshim_header_text,
+)
 
 
 # Default C type substitution rules.
@@ -1216,6 +1221,21 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
         text = _rename(text)
         text = _apply_c_type_subs(text, template_vars, c_type_aliases,
                                   target_mode=target_mode)
+
+        # PBLAS typesets assign the type-generic drivers' BLAS callbacks
+        # (PBTYP_T.F<slot>) to migrated gfortran leaves. The generic C
+        # drivers call these through prototypes that pass NO hidden Fortran
+        # CHARACTER lengths, but the gfortran leaves spill scratch into
+        # those (unprovisioned) slots and corrupt the caller frame. Route
+        # every char-taking callback through a hidden-length trampoline and
+        # drop the shared PBcharshim.h substrate alongside the clone. The
+        # MKL-backed s/c/d/z typesets are never cloned, so they never see
+        # this pass.
+        if is_typeset_stem(new_stem):
+            text, _shim_changed = transform_typeset(text)
+            if _shim_changed:
+                (output_dir / 'PBcharshim.h').write_text(
+                    pbcharshim_header_text())
 
         normalized = _normalize_for_compare(text)
         prior = canonical_normalized.get(new_name)
