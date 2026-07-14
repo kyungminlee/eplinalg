@@ -33,6 +33,12 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
 include(FortranCompiler)
 
 # ── Global compiler flags ────────────────────────────────────────────
+# Compile every object -fPIC so the static archives can be repackaged
+# as shared libraries (--whole-archive). Default-PIE toolchains emit
+# -fPIE objects whose direct PC32 references to global data (Fortran
+# module variables, BLACS/MPI-op state) are rejected when linking a
+# .so. Negligible cost on x86-64; .a consumers are unaffected.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
 # Pin C standard to gnu17. The migrated ScaLAPACK C sources retain

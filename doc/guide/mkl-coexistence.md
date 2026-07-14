@@ -55,6 +55,36 @@ engine that created it.
   shared libraries placed before the objects that reference them; wrap the
   MKL group in `-Wl,--push-state,--no-as-needed … -Wl,--pop-state`.
 
+## Repackaging archives as shared libraries
+
+Every object is compiled `-fPIC`, so any extended-family archive can be
+relinked into a `.so` with `-Wl,--whole-archive`. Rules:
+
+- Pass `-Wl,--no-define-common` on **every** shared-library link. The
+  Fortran objects declare COMMON blocks they do not own — most critically
+  Intel MPI's `mpif.h` sentinels (`mpipriv*`/`mpifcmb*`, which hold
+  `MPI_BOTTOM`/`MPI_IN_PLACE`/`MPI_STATUS_IGNORE`). Without the flag, ld
+  allocates a private copy of each block into every `.so` it links,
+  forking sentinel state across library boundaries; Intel MPI's address
+  identity checks then fail (symptom: MUMPS PT-Scotch parallel analysis,
+  `ICNTL(28)=2`/`ICNTL(29)=1`, aborts with "Internal error empty
+  subgraph", `INFOG(1) = -9980`). With the flag, the blocks resolve as
+  dynamic imports of their real definer (`libmpifort.so.12`, or the
+  quad/multifloats MPI bridge libraries).
+- Exception: a link that is the designated owner of a COMMON with no
+  definer elsewhere must *omit* the flag so its `.so` allocates the block
+  (`ep_sltimer00_` in `libepscalapack_common`). Note ld's `-d` cannot
+  cancel an earlier `--no-define-common`; the owning link simply must not
+  pass it.
+- Do **not** convert the standard-precision Netlib archives (`libblas`,
+  `liblapack`, `libscalapack`, `libdzmumps`, `libscmumps`, …) to shared
+  libraries in an MKL build — exporting `dgemm_` etc. would interpose
+  against MKL. Leave them static; MKL provides those symbols.
+
+Executables linking the archives (or the resulting `.so`s) need none of
+this — the default executable link already yields a single authoritative
+copy of every COMMON.
+
 ## What is *not* supported
 
 Calling the generic BLACS names (`blacs_gridinit`, `Cblacs_get`, …) and
