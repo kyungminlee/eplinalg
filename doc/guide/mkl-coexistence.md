@@ -76,6 +76,19 @@ relinked into a `.so` with `-Wl,--whole-archive`. Rules:
   (`ep_sltimer00_` in `libepscalapack_common`). Note ld's `-d` cannot
   cancel an earlier `--no-define-common`; the owning link simply must not
   pass it.
+- Pass `-Wl,-z,now` (eager PLT binding) on **every** shared-library link.
+  With default lazy binding, glibc's first-call PLT resolver
+  (`_dl_runtime_resolve`) can corrupt live floating-point state in calls
+  whose arguments or by-value returns travel in vector registers — the
+  multifloats families return `real64x2`/`cmplx64x2` in `xmm0:xmm1`.
+  Observed (glibc 2.39, Intel MPI): with `libmultifloatsf.so` lazily
+  bound, `w`-family MUMPS solves at np=4 intermittently deliver solutions
+  whose double-double correction limbs are wrong (~1e-19 instead of
+  ~1e-32, growing to O(1) error) while analysis/factorization statistics
+  stay bit-identical; the outcome is deterministic per address-space
+  layout (ASLR). `-Wl,-z,now` on the library (or `LD_BIND_NOW=1` in the
+  environment) suppresses it completely. Eager binding costs only load
+  time and is the right default for numeric libraries.
 - Do **not** convert the standard-precision Netlib archives (`libblas`,
   `liblapack`, `libscalapack`, `libdzmumps`, `libscmumps`, …) to shared
   libraries in an MKL build — exporting `dgemm_` etc. would interpose
