@@ -86,9 +86,17 @@ relinked into a `.so` with `-Wl,--whole-archive`. Rules:
   whose double-double correction limbs are wrong (~1e-19 instead of
   ~1e-32, growing to O(1) error) while analysis/factorization statistics
   stay bit-identical; the outcome is deterministic per address-space
-  layout (ASLR). `-Wl,-z,now` on the library (or `LD_BIND_NOW=1` in the
-  environment) suppresses it completely. Eager binding costs only load
-  time and is the right default for numeric libraries.
+  layout (ASLR). Eager binding costs only load time and is the right
+  default for numeric libraries.
+
+  This flag is the **library producer's** responsibility, not the
+  consumer's: the vulnerable relocations are the library's *own* PLT
+  slots (ELF interposition routes gfortran's intra-module calls to
+  exported functions through the library's PLT), so an executable linked
+  `-z now` — the default on current Ubuntu/Debian/Fedora — still fails
+  against a lazily-built library. Only baking `DF_BIND_NOW` into the
+  `.so` itself (or setting `LD_BIND_NOW=1` in the environment as a
+  runtime rescue for already-built libraries) closes it.
 - Do **not** convert the standard-precision Netlib archives (`libblas`,
   `liblapack`, `libscalapack`, `libdzmumps`, `libscmumps`, …) to shared
   libraries in an MKL build — exporting `dgemm_` etc. would interpose
@@ -96,7 +104,9 @@ relinked into a `.so` with `-Wl,--whole-archive`. Rules:
 
 Executables linking the archives (or the resulting `.so`s) need none of
 this — the default executable link already yields a single authoritative
-copy of every COMMON.
+copy of every COMMON, and mainstream distro toolchains already link
+executables `-z now` (full RELRO). The flags above are packaging-side
+obligations; a consumer link line cannot substitute for them.
 
 ## What is *not* supported
 
