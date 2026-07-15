@@ -7,7 +7,10 @@ User- and contributor-facing reference for the migration tool itself.
 - [architecture.md](guide/architecture.md) — system overview, components, data flow
 - [usage.md](guide/usage.md) — running the `migrator` CLI
 - [recipes.md](guide/recipes.md) — writing library recipes (YAML)
-- [developer.md](guide/developer.md) — contributing, build, repo layout
+- [developer.md](guide/developer.md) — migrator internals: transforms, edge cases, testing strategy
+- [development-workflow.md](guide/development-workflow.md) — configure, build, test, debug, release
+- [binary-releases.md](guide/binary-releases.md) — consuming the prebuilt release archives (variants, find_package, link lines, runtime contract)
+- [mkl-coexistence.md](guide/mkl-coexistence.md) — coexisting with MKL LP64 in one executable; shared-library repackaging rules
 - [intrinsics.md](guide/intrinsics.md) — Fortran intrinsics reference for KIND=16
 
 ## Migrator output

@@ -11,12 +11,13 @@ Three targets ship out of the box:
 |---------------|------------------------|------------------------|-------------|----------------|
 | `kind10`      | `REAL(KIND=10)`        | `COMPLEX(KIND=10)`     | `e`         | `y`            |
 | `kind16`      | `REAL(KIND=16)`        | `COMPLEX(KIND=16)`     | `q`         | `x`            |
-| `multifloats` | `TYPE(float64x2)`      | `TYPE(complex64x2)`    | `m`         | `w`            |
+| `multifloats` | `TYPE(real64x2)`       | `TYPE(cmplx64x2)`      | `m`         | `w`            |
 
 `kind10` / `kind16` rely on the compiler's native extended-precision modes
 (`__float80` / `__float128` via gfortran). `multifloats` uses the
 double-double library at <https://github.com/kyungminlee/multifloats>,
-fetched via CMake `FetchContent`.
+fetched via CMake `FetchContent`; its C/C++ bridge exposes the same
+types as `float64x2` / `complex64x2`.
 
 All three retain the co-family structure of the original source: where
 upstream has `dgemm.f` and `zgemm.f`, the migrator emits a single
@@ -24,7 +25,16 @@ upstream has `dgemm.f` and `zgemm.f`, the migrator emits a single
 of which half of the family it came from. Divergences — files where
 `s/d` and `c/z` halves disagree after migration — are reported.
 
-## Quick start
+## Binary releases
+
+If you just want the libraries, skip the migration pipeline: every
+tagged release ships prebuilt Linux x86-64 static archives (per
+target × compiler × MPI, plus a combined archive) with Fortran modules
+and CMake package configs (`find_package(qxmumps)` →
+`eplinalg::qxmumps_full`, etc.). See
+[doc/guide/binary-releases.md](doc/guide/binary-releases.md).
+
+## Quick start (from source)
 
 ```bash
 # Install deps (Python 3.11+, gfortran ≥ 11, MPI, CMake ≥ 3.20)
@@ -39,12 +49,13 @@ cmake --build /tmp/stage-q/build -j8
 ### MPI: use the `linux-impi` preset
 
 The canonical MPI for builds and tests is Intel oneAPI MPI. `cmake/CMakePresets.json`
-ships two presets:
+ships three presets:
 
-| preset             | when to use                                                          |
-|--------------------|----------------------------------------------------------------------|
-| `linux-impi`       | default — points CMake at `/opt/intel/oneapi/mpi/latest` wrappers    |
-| `linux-system-mpi` | CI / machines without Intel MPI; uses whatever `find_package(MPI)` finds (OpenMPI, MPICH) |
+| preset                      | when to use                                                          |
+|-----------------------------|----------------------------------------------------------------------|
+| `linux-impi`                | default — points CMake at `/opt/intel/oneapi/mpi/latest` wrappers    |
+| `archlinux-impi-gfortran15` | Intel MPI with pinned gfortran-15                                    |
+| `linux-system-mpi`          | CI / machines without Intel MPI; uses whatever `find_package(MPI)` finds (OpenMPI, MPICH) |
 
 The staging tree includes the preset file, so:
 
@@ -142,7 +153,7 @@ for the sidecar conventions.
 | item                   | source                                      |
 |------------------------|---------------------------------------------|
 | LAPACK 3.12.1          | vendored under `external/lapack-3.12.1/`    |
-| MUMPS 5.8.2            | vendored under `external/MUMPS_5.8.2/`      |
+| MUMPS 5.9.0            | vendored under `external/MUMPS_5.9.0/`      |
 | ScaLAPACK 2.2.3        | vendored under `external/scalapack-2.2.3/`  |
 | Intel MPI headers      | vendored under `external/impi-headers/` (compile-time only — link/run against Intel oneAPI MPI via the `linux-impi` preset; other MPIs are best-effort) |
 | multifloats            | fetched at CMake time from GitHub (`FetchContent`) |
@@ -160,8 +171,10 @@ uv run pytest
 ```
 
 The fast unit tests cover the migrator's regex/AST transforms per target.
-The end-to-end build-and-link path is exercised manually via `migrator
-stage` + CMake (see **Quick start**).
+The end-to-end build-and-link path is exercised via `migrator stage` +
+CMake + `ctest` — see
+[doc/guide/development-workflow.md](doc/guide/development-workflow.md)
+for the full configure/build/test/release workflow.
 
 ## Status
 
@@ -173,10 +186,19 @@ stage` + CMake (see **Quick start**).
   closed by extending the upstream `PDDBTRS`/`PZDBTRS` `LWMIN`
   override to the `*trsv` oracle call site (commit `eec88b3`).
   See `tests/REPORT.md` for the per-target breakdown.
-- MUMPS kind10 / kind16 build and pass all 26 MUMPS tests
-  (Fortran drivers + C-bridge parity / basic / sym). Keep-kind
-  manifest + EP bridge modules handle the DP-stable shared modules;
-  see `recipes/README.md` for the mechanism.
+- MUMPS builds for all six extended arithmetics (q/x, e/y, m/w) plus
+  the genuine dz/sc solvers, and passes a 774-configuration solver
+  sweep (arithmetics × orderings × ICNTL options × np ≤ 4, MPFR
+  backward-error check at each family's epsilon) under MKL LP64 +
+  Intel MPI — in both static-archive and repackaged shared-library
+  form. Keep-kind manifest + EP bridge modules handle the DP-stable
+  shared modules; see `recipes/README.md`.
+- MKL coexistence: the family-independent BLACS/PBLAS/ScaLAPACK engine
+  is source-privatized under `ep_` names, so extended stacks and a
+  full MKL link cleanly into one executable in either link order. See
+  [doc/guide/mkl-coexistence.md](doc/guide/mkl-coexistence.md).
+- Prebuilt archives are published per release (since v0.13) — see
+  [doc/guide/binary-releases.md](doc/guide/binary-releases.md).
 
 ## License
 

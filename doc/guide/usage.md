@@ -105,6 +105,36 @@ Runs the full pipeline: migrate → converge → verify → build.
 uv run python -m migrator run ../recipes/blas.yaml work/ --target kind16
 ```
 
+### `stage`
+Migrates **all** libraries into one staging directory with a unified
+CMake build — the usual entry point for building the full stack.
+
+```bash
+uv run python -m migrator stage /tmp/stage-q --target kind16
+```
+*   `--libraries`: Subset of libraries to migrate (default: all).
+*   `--parser` / `--parser-cmd`: As for `migrate`.
+*   The staging tree is self-contained (sources, CMake system, presets,
+    tests); build it with plain CMake. Note it *snapshots*
+    `tests/CMakeLists.txt` and the presets — re-stage after editing them.
+
+### `prepare`
+Stages upstream sources for a recipe and applies its patch list
+(normally run implicitly by the other commands).
+
+```bash
+uv run python -m migrator prepare ../recipes/mumps.yaml
+```
+*   `--rebuild`: Wipe and re-stage even if the cache stamp is fresh.
+
+### `verify-patches`
+CI check: every patch touching a precision-prefixed file must touch all
+four siblings, unless listed under `asymmetric_patches:` in the recipe.
+
+```bash
+uv run python -m migrator verify-patches ../recipes/mumps.yaml
+```
+
 ## Convergence Testing
 
 Convergence testing leverages the dual-origin nature of numerical libraries. Almost every routine exists in both single-precision (S/C) and double-precision (D/Z) variants. When both are migrated to the same target, the output should be identical:
