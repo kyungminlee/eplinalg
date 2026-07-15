@@ -58,7 +58,13 @@ engine that created it.
 ## Repackaging archives as shared libraries
 
 Every object is compiled `-fPIC`, so any extended-family archive can be
-relinked into a `.so` with `-Wl,--whole-archive`. Rules:
+relinked into a `.so` with `-Wl,--whole-archive`. A reference
+implementation of everything below is
+`scripts/repackage_shared_libs.sh <pair> <install-lib-dir> <output-dir>`
+(one `.so` per archive, ordering engines folded into
+`libmumps_common.so` behind a generated version script, plus post-link
+checks for duplicate exports, sentinel-COMMON allocation, and
+`BIND_NOW`). Rules:
 
 - Pass `-Wl,--no-define-common` on **every** shared-library link. The
   Fortran objects declare COMMON blocks they do not own — most critically
