@@ -58,7 +58,13 @@ engine that created it.
 ## Repackaging archives as shared libraries
 
 Every object is compiled `-fPIC`, so any extended-family archive can be
-relinked into a `.so` with `-Wl,--whole-archive`. Rules:
+relinked into a `.so` with `-Wl,--whole-archive`. A reference
+implementation of everything below is
+`scripts/repackage_shared_libs.sh <pair> <install-lib-dir> <output-dir>`
+(one `.so` per archive, ordering engines folded into
+`libmumps_common.so` behind a generated version script, plus post-link
+checks for duplicate exports, sentinel-COMMON allocation, and
+`BIND_NOW`). Rules:
 
 - Pass `-Wl,--no-define-common` on **every** shared-library link. The
   Fortran objects declare COMMON blocks they do not own — most critically
@@ -76,6 +82,27 @@ relinked into a `.so` with `-Wl,--whole-archive`. Rules:
   (`ep_sltimer00_` in `libepscalapack_common`). Note ld's `-d` cannot
   cancel an earlier `--no-define-common`; the owning link simply must not
   pass it.
+- Pass `-Wl,-z,now` (eager PLT binding) on **every** shared-library link.
+  With default lazy binding, glibc's first-call PLT resolver
+  (`_dl_runtime_resolve`) can corrupt live floating-point state in calls
+  whose arguments or by-value returns travel in vector registers — the
+  multifloats families return `real64x2`/`cmplx64x2` in `xmm0:xmm1`.
+  Observed (glibc 2.39, Intel MPI): with `libmultifloatsf.so` lazily
+  bound, `w`-family MUMPS solves at np=4 intermittently deliver solutions
+  whose double-double correction limbs are wrong (~1e-19 instead of
+  ~1e-32, growing to O(1) error) while analysis/factorization statistics
+  stay bit-identical; the outcome is deterministic per address-space
+  layout (ASLR). Eager binding costs only load time and is the right
+  default for numeric libraries.
+
+  This flag is the **library producer's** responsibility, not the
+  consumer's: the vulnerable relocations are the library's *own* PLT
+  slots (ELF interposition routes gfortran's intra-module calls to
+  exported functions through the library's PLT), so an executable linked
+  `-z now` — the default on current Ubuntu/Debian/Fedora — still fails
+  against a lazily-built library. Only baking `DF_BIND_NOW` into the
+  `.so` itself (or setting `LD_BIND_NOW=1` in the environment as a
+  runtime rescue for already-built libraries) closes it.
 - Do **not** convert the standard-precision Netlib archives (`libblas`,
   `liblapack`, `libscalapack`, `libdzmumps`, `libscmumps`, …) to shared
   libraries in an MKL build — exporting `dgemm_` etc. would interpose
@@ -83,7 +110,9 @@ relinked into a `.so` with `-Wl,--whole-archive`. Rules:
 
 Executables linking the archives (or the resulting `.so`s) need none of
 this — the default executable link already yields a single authoritative
-copy of every COMMON.
+copy of every COMMON, and mainstream distro toolchains already link
+executables `-z now` (full RELRO). The flags above are packaging-side
+obligations; a consumer link line cannot substitute for them.
 
 ## What is *not* supported
 
