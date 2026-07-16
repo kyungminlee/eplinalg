@@ -14,18 +14,18 @@ extern "C" {
 MPI_Datatype MPI_FLOAT64X2    = MPI_DATATYPE_NULL;
 MPI_Datatype MPI_COMPLEX64X2 = MPI_DATATYPE_NULL;
 
-MPI_Op MPI_DD_SUM = MPI_OP_NULL;
-MPI_Op MPI_ZZ_SUM = MPI_OP_NULL;
-MPI_Op MPI_DD_AMX = MPI_OP_NULL;
-MPI_Op MPI_DD_AMN = MPI_OP_NULL;
-MPI_Op MPI_ZZ_AMX = MPI_OP_NULL;
-MPI_Op MPI_ZZ_AMN = MPI_OP_NULL;
+MPI_Op MPI_MM_SUM = MPI_OP_NULL;
+MPI_Op MPI_WW_SUM = MPI_OP_NULL;
+MPI_Op MPI_MM_AMX = MPI_OP_NULL;
+MPI_Op MPI_MM_AMN = MPI_OP_NULL;
+MPI_Op MPI_WW_AMX = MPI_OP_NULL;
+MPI_Op MPI_WW_AMN = MPI_OP_NULL;
 
 /* Fortran-side handles. Populated by multifloats_mpi_init() via
  * MPI_Type_c2f / MPI_Op_c2f after the C-side handles are ready, and
  * surfaced to Fortran via multifloats_mpi_f.f90 using bind(c, name=...).
  * MUMPS calls MPI from Fortran directly with names like
- * ``MPI_FLOAT64X2`` and ``MPI_ZZ_SUM``, which need INTEGER Fortran
+ * ``MPI_FLOAT64X2`` and ``MPI_WW_SUM``, which need INTEGER Fortran
  * handles rather than the C-side MPI_Datatype / MPI_Op opaque types.
  *
  * The two *datatype* handles default to the libmpiseq derived-type
@@ -45,12 +45,12 @@ MPI_Op MPI_ZZ_AMN = MPI_OP_NULL;
 #define MF_MPISEQ_SENTINEL(bytes)  (MF_MPISEQ_DTYPE_TAG | (bytes))
 MPI_Fint mf_mpi_float64x2_f   = MF_MPISEQ_SENTINEL(16);  /* 268435472 */
 MPI_Fint mf_mpi_complex64x2_f = MF_MPISEQ_SENTINEL(32);  /* 268435488 */
-MPI_Fint mf_mpi_dd_sum_f      = 0;
-MPI_Fint mf_mpi_dd_amx_f      = 0;
-MPI_Fint mf_mpi_dd_amn_f      = 0;
-MPI_Fint mf_mpi_zz_sum_f      = 0;
-MPI_Fint mf_mpi_zz_amx_f      = 0;
-MPI_Fint mf_mpi_zz_amn_f      = 0;
+MPI_Fint mf_mpi_mm_sum_f      = 0;
+MPI_Fint mf_mpi_mm_amx_f      = 0;
+MPI_Fint mf_mpi_mm_amn_f      = 0;
+MPI_Fint mf_mpi_ww_sum_f      = 0;
+MPI_Fint mf_mpi_ww_amx_f      = 0;
+MPI_Fint mf_mpi_ww_amn_f      = 0;
 
 } /* extern "C" */
 
@@ -61,13 +61,13 @@ MPI_Fint mf_mpi_zz_amn_f      = 0;
  * 8-byte aligned) — true for every caller, since the buffers originate
  * as Fortran TYPE(real64x2)/TYPE(cmplx64x2) arrays or their C mirrors. */
 
-static void dd_sum_fn(void *in, void *inout, int *len, MPI_Datatype *) {
+static void mm_sum_fn(void *in, void *inout, int *len, MPI_Datatype *) {
     auto *a = static_cast<float64x2 *>(in);
     auto *b = static_cast<float64x2 *>(inout);
     for (int i = 0; i < *len; ++i) b[i] = b[i] + a[i];
 }
 
-static void zz_sum_fn(void *in, void *inout, int *len, MPI_Datatype *) {
+static void ww_sum_fn(void *in, void *inout, int *len, MPI_Datatype *) {
     auto *a = static_cast<complex64x2 *>(in);
     auto *b = static_cast<complex64x2 *>(inout);
     for (int i = 0; i < *len; ++i) {
@@ -76,28 +76,28 @@ static void zz_sum_fn(void *in, void *inout, int *len, MPI_Datatype *) {
     }
 }
 
-static void dd_amx_fn(void *in, void *inout, int *len, MPI_Datatype *) {
+static void mm_amx_fn(void *in, void *inout, int *len, MPI_Datatype *) {
     auto *a = static_cast<float64x2 *>(in);
     auto *b = static_cast<float64x2 *>(inout);
     for (int i = 0; i < *len; ++i)
         if (mf_abs(a[i]) > mf_abs(b[i])) b[i] = a[i];
 }
 
-static void dd_amn_fn(void *in, void *inout, int *len, MPI_Datatype *) {
+static void mm_amn_fn(void *in, void *inout, int *len, MPI_Datatype *) {
     auto *a = static_cast<float64x2 *>(in);
     auto *b = static_cast<float64x2 *>(inout);
     for (int i = 0; i < *len; ++i)
         if (mf_abs(a[i]) < mf_abs(b[i])) b[i] = a[i];
 }
 
-static void zz_amx_fn(void *in, void *inout, int *len, MPI_Datatype *) {
+static void ww_amx_fn(void *in, void *inout, int *len, MPI_Datatype *) {
     auto *a = static_cast<complex64x2 *>(in);
     auto *b = static_cast<complex64x2 *>(inout);
     for (int i = 0; i < *len; ++i)
         if (mf_cabs1(a[i]) > mf_cabs1(b[i])) b[i] = a[i];
 }
 
-static void zz_amn_fn(void *in, void *inout, int *len, MPI_Datatype *) {
+static void ww_amn_fn(void *in, void *inout, int *len, MPI_Datatype *) {
     auto *a = static_cast<complex64x2 *>(in);
     auto *b = static_cast<complex64x2 *>(inout);
     for (int i = 0; i < *len; ++i)
@@ -132,21 +132,51 @@ extern "C" void multifloats_mpi_init(void) {
     MPI_Type_contiguous(4, MPI_DOUBLE, &MPI_COMPLEX64X2);
     MPI_Type_commit(&MPI_COMPLEX64X2);
 
-    MPI_Op_create(dd_sum_fn, EP_MPI_OP_COMMUTE, &MPI_DD_SUM);
-    MPI_Op_create(zz_sum_fn, EP_MPI_OP_COMMUTE, &MPI_ZZ_SUM);
-    MPI_Op_create(dd_amx_fn, EP_MPI_OP_COMMUTE, &MPI_DD_AMX);
-    MPI_Op_create(dd_amn_fn, EP_MPI_OP_COMMUTE, &MPI_DD_AMN);
-    MPI_Op_create(zz_amx_fn, EP_MPI_OP_COMMUTE, &MPI_ZZ_AMX);
-    MPI_Op_create(zz_amn_fn, EP_MPI_OP_COMMUTE, &MPI_ZZ_AMN);
+    MPI_Op_create(mm_sum_fn, EP_MPI_OP_COMMUTE, &MPI_MM_SUM);
+    MPI_Op_create(ww_sum_fn, EP_MPI_OP_COMMUTE, &MPI_WW_SUM);
+    MPI_Op_create(mm_amx_fn, EP_MPI_OP_COMMUTE, &MPI_MM_AMX);
+    MPI_Op_create(mm_amn_fn, EP_MPI_OP_COMMUTE, &MPI_MM_AMN);
+    MPI_Op_create(ww_amx_fn, EP_MPI_OP_COMMUTE, &MPI_WW_AMX);
+    MPI_Op_create(ww_amn_fn, EP_MPI_OP_COMMUTE, &MPI_WW_AMN);
 
     mf_mpi_float64x2_f   = MPI_Type_c2f(MPI_FLOAT64X2);
     mf_mpi_complex64x2_f = MPI_Type_c2f(MPI_COMPLEX64X2);
-    mf_mpi_dd_sum_f      = MPI_Op_c2f(MPI_DD_SUM);
-    mf_mpi_dd_amx_f      = MPI_Op_c2f(MPI_DD_AMX);
-    mf_mpi_dd_amn_f      = MPI_Op_c2f(MPI_DD_AMN);
-    mf_mpi_zz_sum_f      = MPI_Op_c2f(MPI_ZZ_SUM);
-    mf_mpi_zz_amx_f      = MPI_Op_c2f(MPI_ZZ_AMX);
-    mf_mpi_zz_amn_f      = MPI_Op_c2f(MPI_ZZ_AMN);
+    mf_mpi_mm_sum_f      = MPI_Op_c2f(MPI_MM_SUM);
+    mf_mpi_mm_amx_f      = MPI_Op_c2f(MPI_MM_AMX);
+    mf_mpi_mm_amn_f      = MPI_Op_c2f(MPI_MM_AMN);
+    mf_mpi_ww_sum_f      = MPI_Op_c2f(MPI_WW_SUM);
+    mf_mpi_ww_amx_f      = MPI_Op_c2f(MPI_WW_AMX);
+    mf_mpi_ww_amn_f      = MPI_Op_c2f(MPI_WW_AMN);
 
     initialized = 1;
 }
+
+/* ---- Deprecated pre-v0.14 names ---------------------------------- */
+
+/* The multifloats ops were originally named after the arithmetic
+ * (MPI_DD_* double-double real, MPI_ZZ_* complex) instead of after the
+ * m/w family prefixes the kind16 ops use (MPI_QQ_* / MPI_XX_*). They
+ * are now MPI_MM_* / MPI_WW_*; the old symbols survive one release
+ * cycle as ELF aliases of the new ones (same storage, so old binaries
+ * and the deprecated Fortran publics keep working). Declared
+ * deprecated in multifloats_bridge.h. Remove after v0.14. */
+extern "C" {
+
+/* ``extern`` + alias is the C++ spelling of an alias definition: a bare
+ * ``MPI_Op MPI_DD_SUM`` at namespace scope would itself be a definition
+ * (no tentative definitions in C++) and clash with the attribute. */
+extern MPI_Op MPI_DD_SUM __attribute__((alias("MPI_MM_SUM")));
+extern MPI_Op MPI_DD_AMX __attribute__((alias("MPI_MM_AMX")));
+extern MPI_Op MPI_DD_AMN __attribute__((alias("MPI_MM_AMN")));
+extern MPI_Op MPI_ZZ_SUM __attribute__((alias("MPI_WW_SUM")));
+extern MPI_Op MPI_ZZ_AMX __attribute__((alias("MPI_WW_AMX")));
+extern MPI_Op MPI_ZZ_AMN __attribute__((alias("MPI_WW_AMN")));
+
+extern MPI_Fint mf_mpi_dd_sum_f __attribute__((alias("mf_mpi_mm_sum_f")));
+extern MPI_Fint mf_mpi_dd_amx_f __attribute__((alias("mf_mpi_mm_amx_f")));
+extern MPI_Fint mf_mpi_dd_amn_f __attribute__((alias("mf_mpi_mm_amn_f")));
+extern MPI_Fint mf_mpi_zz_sum_f __attribute__((alias("mf_mpi_ww_sum_f")));
+extern MPI_Fint mf_mpi_zz_amx_f __attribute__((alias("mf_mpi_ww_amx_f")));
+extern MPI_Fint mf_mpi_zz_amn_f __attribute__((alias("mf_mpi_ww_amn_f")));
+
+} /* extern "C" */

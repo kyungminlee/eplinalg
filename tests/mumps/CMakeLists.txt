@@ -310,7 +310,7 @@ target_link_libraries(mumps_test_target PUBLIC mumps_test_common target_conv)
 if(NEEDS_MULTIFLOATS AND TARGET multifloats_mpi_f)
     # On multifloats, target_qmumps / target_xmumps lazily call
     # ``multifloats_mpi_init`` to register the custom MPI datatypes /
-    # ops that MUMPS uses internally (MPI_FLOAT64X2, MPI_DD_SUM, ...).
+    # ops that MUMPS uses internally (MPI_FLOAT64X2, MPI_MM_SUM, ...).
     target_link_libraries(mumps_test_target PUBLIC
         $<BUILD_INTERFACE:multifloats_mpi_f>)
 endif()

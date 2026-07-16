@@ -1,7 +1,7 @@
 """MPI datatype / reduce-op rewriting for extended-precision reductions (Cluster L).
 
 Rewrites the standard MPI datatype and MPI_SUM handles to the custom ops the
-migrated archives need (MPI_QQ_* / MPI_DD_* / ...) and injects the matching
+migrated archives need (MPI_QQ_* / MPI_MM_* / ...) and injects the matching
 ``USE ..._mpi_f`` clause. Extracted verbatim from ``fortran_migrator.py``.
 """
 import re
@@ -76,7 +76,7 @@ def _rewrite_mpi_datatypes(source: str, target_mode: TargetMode) -> str:
 
 
 # Token-context MPI reduction-op rewriter for multifloats. The target
-# ships user-defined ops (MPI_DD_SUM / MPI_DD_AMX / MPI_DD_AMN, plus
+# ships user-defined ops (MPI_MM_SUM / MPI_MM_AMX / MPI_MM_AMN, plus
 # the ZZ-prefixed complex variants) that operate on the user-defined
 # float64x2 / complex64x2 datatypes; the stock MPI_SUM / MPI_MAX /
 # MPI_MIN are undefined for those datatypes and the runtime aborts.

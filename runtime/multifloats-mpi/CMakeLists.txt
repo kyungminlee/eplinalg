@@ -36,7 +36,7 @@ else()
 endif()
 
 # multifloats_mpi_f — Fortran module exposing the C-side MPI_FLOAT64X2
-# / MPI_DD_SUM / etc. handles to Fortran callers (MUMPS calls MPI
+# / MPI_MM_SUM / etc. handles to Fortran callers (MUMPS calls MPI
 # from Fortran directly with these tokens; without the module they
 # have no IMPLICIT type at compile time). Linking into multifloats_mpi
 # ensures the C++ runtime that defines mf_mpi_*_f globals is pulled

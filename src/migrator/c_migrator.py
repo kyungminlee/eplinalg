@@ -45,7 +45,7 @@ from .pbcharshim import (
 #
 # {MPI_SUM_REAL}/{MPI_SUM_COMPLEX} are textual no-ops for KIND targets
 # (both expand to ``MPI_SUM``); multifloats expands them to its
-# user-defined ops (``MPI_DD_SUM`` / the zz variant) registered by libmfc.
+# user-defined ops (``MPI_MM_SUM`` / the zz variant) registered by libmfc.
 
 
 def _real_clone_subs(real_keyword: str, src_letter: str) -> list[tuple[str, str]]:

@@ -24,7 +24,7 @@ module target_mumps
     use ${complex_struc_mod}$, only: zmumps_struc
 #:if target == 'multifloats'
     ! On multifloats, MUMPS calls MPI_BCAST/REDUCE with custom datatypes
-    ! (MPI_FLOAT64X2 / MPI_COMPLEX64X2 / MPI_DD_SUM / etc.) that must be
+    ! (MPI_FLOAT64X2 / MPI_COMPLEX64X2 / MPI_MM_SUM / etc.) that must be
     ! registered via ``multifloats_mpi_init`` before the first MUMPS call.
     ! The wrapper below calls it lazily so test drivers don't need a
     ! per-target init step.
