@@ -746,7 +746,7 @@ def test_end_to_end_free_form_pattern_b(mf):
 
 def test_rewrite_mpi_sum_real_call_site():
     """A reduce call whose arglist contains the rewritten real datatype
-    token gets MPI_SUM swapped for MPI_DD_SUM."""
+    token gets MPI_SUM swapped for MPI_MM_SUM."""
     mf = load_target('multifloats')
     src = (
         "      CALL MPI_ALLREDUCE(SBUF, RBUF, 1, MPI_DOUBLE_PRECISION,\n"
@@ -754,12 +754,12 @@ def test_rewrite_mpi_sum_real_call_site():
     )
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
     assert 'MPI_FLOAT64X2' in out
-    assert 'MPI_DD_SUM' in out
+    assert 'MPI_MM_SUM' in out
     assert 'MPI_SUM' not in out
 
 
 def test_rewrite_mpi_sum_complex_call_site():
-    """Same but for a complex-typed reduce: MPI_SUM → MPI_ZZ_SUM."""
+    """Same but for a complex-typed reduce: MPI_SUM → MPI_WW_SUM."""
     mf = load_target('multifloats')
     src = (
         "      CALL MPI_REDUCE(ZB, ZA, N, MPI_DOUBLE_COMPLEX, MPI_SUM,\n"
@@ -767,12 +767,12 @@ def test_rewrite_mpi_sum_complex_call_site():
     )
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
     assert 'MPI_COMPLEX64X2' in out
-    assert 'MPI_ZZ_SUM' in out
+    assert 'MPI_WW_SUM' in out
     assert 'MPI_SUM' not in out
 
 
 def test_rewrite_mpi_sum_integer_call_site_untouched():
-    """Integer reductions stay MPI_SUM — MPI_DD_SUM is undefined for
+    """Integer reductions stay MPI_SUM — MPI_MM_SUM is undefined for
     MPI_INTEGER. This is the whole reason for token-context dispatch."""
     mf = load_target('multifloats')
     src = (
@@ -781,8 +781,8 @@ def test_rewrite_mpi_sum_integer_call_site_untouched():
     )
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
     assert 'MPI_SUM' in out
-    assert 'MPI_DD_SUM' not in out
-    assert 'MPI_ZZ_SUM' not in out
+    assert 'MPI_MM_SUM' not in out
+    assert 'MPI_WW_SUM' not in out
 
 
 def test_rewrite_mpi_sum_mixed_arith_in_one_file():
@@ -796,11 +796,11 @@ def test_rewrite_mpi_sum_mixed_arith_in_one_file():
     )
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
     lines = out.splitlines()
-    assert 'MPI_DD_SUM' in lines[0] and 'MPI_FLOAT64X2' in lines[0]
-    assert 'MPI_ZZ_SUM' in lines[1] and 'MPI_COMPLEX64X2' in lines[1]
+    assert 'MPI_MM_SUM' in lines[0] and 'MPI_FLOAT64X2' in lines[0]
+    assert 'MPI_WW_SUM' in lines[1] and 'MPI_COMPLEX64X2' in lines[1]
     assert 'MPI_SUM' in lines[2] and 'MPI_INTEGER' in lines[2]
-    assert 'MPI_DD_SUM' not in lines[2]
-    assert 'MPI_ZZ_SUM' not in lines[2]
+    assert 'MPI_MM_SUM' not in lines[2]
+    assert 'MPI_WW_SUM' not in lines[2]
 
 
 def test_rewrite_mpi_sum_kind16_uses_custom_quad_ops():
@@ -835,7 +835,7 @@ def test_rewrite_mpi_sum_kind10_is_noop():
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, k10), k10)
     assert 'MPI_LONG_DOUBLE' in out
     assert 'MPI_SUM' in out
-    assert 'MPI_DD_SUM' not in out
+    assert 'MPI_MM_SUM' not in out
 
 
 def test_rewrite_mpi_sum_does_not_touch_non_reduce_calls():
@@ -852,7 +852,7 @@ def test_rewrite_mpi_sum_does_not_touch_non_reduce_calls():
 
 
 def test_rewrite_mpi_max_real_call_site():
-    """MPI_MAX on a float-typed reduce becomes MPI_DD_AMX (multifloats
+    """MPI_MAX on a float-typed reduce becomes MPI_MM_AMX (multifloats
     bridge ships AMX, not a stock-MPI-compatible MAX)."""
     mf = load_target('multifloats')
     src = (
@@ -860,7 +860,7 @@ def test_rewrite_mpi_max_real_call_site():
         "     &                MPI_MAX, MASTER, COMM, IERR)\n"
     )
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
-    assert 'MPI_DD_AMX' in out
+    assert 'MPI_MM_AMX' in out
     assert 'MPI_MAX' not in out
 
 
@@ -892,7 +892,7 @@ def test_rewrite_mpi_min_complex_call_site():
         "      CALL MPI_ALLREDUCE(Z, W, 1, MPI_DOUBLE_COMPLEX, MPI_MIN, C, I)\n"
     )
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
-    assert 'MPI_ZZ_AMN' in out
+    assert 'MPI_WW_AMN' in out
     assert 'MPI_MIN' not in out
 
 
@@ -905,7 +905,7 @@ def test_rewrite_mpi_max_integer_call_site_untouched():
     )
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
     assert 'MPI_MAX' in out
-    assert 'MPI_DD_AMX' not in out
+    assert 'MPI_MM_AMX' not in out
 
 
 def test_rewrite_mpi_sum_handles_mpi_reduce_scatter():
@@ -916,5 +916,5 @@ def test_rewrite_mpi_sum_handles_mpi_reduce_scatter():
         "     &                        MPI_SUM, COMM, IERR)\n"
     )
     out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
-    assert 'MPI_DD_SUM' in out
+    assert 'MPI_MM_SUM' in out
     assert 'MPI_SUM' not in out

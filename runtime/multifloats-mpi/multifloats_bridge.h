@@ -131,12 +131,27 @@ extern "C" {
 extern MPI_Datatype MPI_FLOAT64X2;
 extern MPI_Datatype MPI_COMPLEX64X2;
 
-extern MPI_Op MPI_DD_SUM;
-extern MPI_Op MPI_ZZ_SUM;
-extern MPI_Op MPI_DD_AMX;
-extern MPI_Op MPI_DD_AMN;
-extern MPI_Op MPI_ZZ_AMX;
-extern MPI_Op MPI_ZZ_AMN;
+extern MPI_Op MPI_MM_SUM;
+extern MPI_Op MPI_WW_SUM;
+extern MPI_Op MPI_MM_AMX;
+extern MPI_Op MPI_MM_AMN;
+extern MPI_Op MPI_WW_AMX;
+extern MPI_Op MPI_WW_AMN;
+
+/* Deprecated pre-v0.14 names, kept one release cycle as aliases of the
+ * MPI_MM_* / MPI_WW_* handles above (defined in multifloats_mpi.cpp). */
+#if defined(__GNUC__) || defined(__clang__)
+#  define MF_MPI_DEPRECATED(new_name) \
+     __attribute__((deprecated("renamed to " #new_name " in v0.14")))
+#else
+#  define MF_MPI_DEPRECATED(new_name)
+#endif
+extern MPI_Op MPI_DD_SUM MF_MPI_DEPRECATED(MPI_MM_SUM);
+extern MPI_Op MPI_DD_AMX MF_MPI_DEPRECATED(MPI_MM_AMX);
+extern MPI_Op MPI_DD_AMN MF_MPI_DEPRECATED(MPI_MM_AMN);
+extern MPI_Op MPI_ZZ_SUM MF_MPI_DEPRECATED(MPI_WW_SUM);
+extern MPI_Op MPI_ZZ_AMX MF_MPI_DEPRECATED(MPI_WW_AMX);
+extern MPI_Op MPI_ZZ_AMN MF_MPI_DEPRECATED(MPI_WW_AMN);
 
 void multifloats_mpi_init(void);
 

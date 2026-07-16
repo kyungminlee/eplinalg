@@ -4,7 +4,7 @@ These cover the c_migrator changes that unblock multifloats:
 - _build_sub_vars produces the right template variables for both
   KIND and multifloats targets;
 - the BLACS regex substitution rules emit DD/ZZ-prefixed names plus
-  the new MPI_SUM->MPI_DD_SUM/MPI_ZZ_SUM rule;
+  the new MPI_SUM->MPI_MM_SUM/MPI_WW_SUM rule;
 - _patch_bdef_header for multifloats emits an #include of the libmfc
   header instead of the legacy __float128 typedef block;
 - the override_files post-pass copies hand-written replacement files
@@ -49,8 +49,8 @@ def test_build_sub_vars_multifloats_struct_types():
     assert v['C_REAL_TYPE'] == 'float64x2'
     assert v['MPI_REAL'] == 'MPI_FLOAT64X2'
     assert v['MPI_COMPLEX'] == 'MPI_COMPLEX64X2'
-    assert v['MPI_SUM_REAL'] == 'MPI_DD_SUM'
-    assert v['MPI_SUM_COMPLEX'] == 'MPI_ZZ_SUM'
+    assert v['MPI_SUM_REAL'] == 'MPI_MM_SUM'
+    assert v['MPI_SUM_COMPLEX'] == 'MPI_WW_SUM'
     assert v['RP'] == _RP
     assert v['CP'] == _CP
     assert v['RPU'] == _RPU
@@ -119,7 +119,7 @@ def test_blacs_real_clone_multifloats(tmp_path):
     assert 'MPI_FLOAT64X2' in text
     assert 'MPI_DOUBLE' not in text
     # MPI_SUM must be rewritten to the user-defined op
-    assert 'MPI_DD_SUM' in text
+    assert 'MPI_MM_SUM' in text
     assert 'MPI_SUM,' not in text  # the old constant is gone
     # Routine name renames cover both Cd* and BI_d* prefixes
     assert f'C{_RP}gebs2d_aux' in text
@@ -179,7 +179,7 @@ def test_blacs_complex_clone_multifloats(tmp_path):
     assert 'float64x2 *r1' in text
     assert 'MPI_COMPLEX64X2' in text
     # Complex files use the zz reduction op
-    assert 'MPI_ZZ_SUM' in text
+    assert 'MPI_WW_SUM' in text
     assert 'MPI_SUM,' not in text
     assert f'C{_CP}gebs2d_aux' in text
 

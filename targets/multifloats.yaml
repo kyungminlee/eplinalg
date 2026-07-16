@@ -157,16 +157,16 @@ c_interop:
   c_real_type: float64x2
   mpi_real: MPI_FLOAT64X2
   mpi_complex: MPI_COMPLEX64X2
-  mpi_sum_real: MPI_DD_SUM
-  mpi_sum_complex: MPI_ZZ_SUM
+  mpi_sum_real: MPI_MM_SUM
+  mpi_sum_complex: MPI_WW_SUM
   # MUMPS issues MPI_Allreduce(..., MPI_FLOAT64X2, MPI_MAX, ...) when
   # collecting per-rank scaling extrema; stock MPI_MAX is undefined for
   # the user-defined datatype. The bridge ships AMX/AMN ops; MIN is
   # listed for symmetry though MUMPS only actually uses MAX today.
-  mpi_max_real: MPI_DD_AMX
-  mpi_max_complex: MPI_ZZ_AMX
-  mpi_min_real: MPI_DD_AMN
-  mpi_min_complex: MPI_ZZ_AMN
+  mpi_max_real: MPI_MM_AMX
+  mpi_max_complex: MPI_WW_AMX
+  mpi_min_real: MPI_MM_AMN
+  mpi_min_complex: MPI_WW_AMN
   # Fortran module (bind-c) that surfaces the custom datatype + op
   # handles above to migrated MUMPS. Was formerly hardcoded in the
   # migrator; now target-driven so KIND targets (kind16 -> quad_mpi_f)

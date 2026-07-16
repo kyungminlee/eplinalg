@@ -36,7 +36,7 @@ c_interop:
   # So we keep the datatypes but route the reduction ops through custom
   # MPI_Op_create handles registered by quad_mpi_init() and surfaced to
   # Fortran via the ``quad_mpi_f`` module — mirroring how multifloats
-  # uses MPI_DD_SUM / MPI_DD_AMX. The migrator rewrites MPI_SUM / MPI_MAX
+  # uses MPI_MM_SUM / MPI_MM_AMX. The migrator rewrites MPI_SUM / MPI_MAX
   # / MPI_MIN to these only inside reduce calls that carry the quad
   # datatype, so integer reductions (MPI_INTEGER8, ...) are untouched.
   mpi_real: MPI_REAL16

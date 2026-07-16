@@ -9,7 +9,7 @@
  * segfault the moment MUMPS issues MPI_REDUCE(..., MPI_REAL16, MPI_SUM,
  * ...) at np >= 2. So we keep the datatypes but register user-defined
  * combine ops via MPI_Op_create and route every migrated reduction
- * through them -- mirroring how multifloats uses MPI_DD_SUM / MPI_DD_AMX.
+ * through them -- mirroring how multifloats uses MPI_MM_SUM / MPI_MM_AMX.
  *
  * Compiled as plain C (kind16 BLACS/PBLAS also compile as C, using the
  * __float128 native operators). The exported symbols are ordinary C
@@ -49,7 +49,7 @@ MPI_Fint q_mpi_xx_amn_f = 0;
  * MUMPS reduces non-negative norms / scaling factors, so abs-max and
  * abs-min coincide with true max/min there; taking the magnitude keeps
  * the op well defined for any input and matches the multifloats sibling
- * (MPI_DD_AMX / MPI_DD_AMN).
+ * (MPI_MM_AMX / MPI_MM_AMN).
  *
  * ALIGNMENT: __float128 arithmetic uses SSE aligned moves (movaps),
  * which fault on operands that are not 16-byte aligned. MPI hands the

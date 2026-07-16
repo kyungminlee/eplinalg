@@ -223,7 +223,7 @@ else()
 endif()
 
 # multifloats_mpi_f.f90: Fortran module exposing the C-side MPI
-# datatype handles (MPI_FLOAT64X2 / MPI_DD_SUM / ...) via bind(c).
+# datatype handles (MPI_FLOAT64X2 / MPI_MM_SUM / ...) via bind(c).
 # MUMPS's migrated source `USE multifloats_mpi_f` requires the .mod;
 # other libraries route MPI through C and don't need this target.
 set(MF_MPI_DIR "{_mf_mpi_dir}"
