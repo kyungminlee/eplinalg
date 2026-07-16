@@ -1,0 +1,1263 @@
+#! Per-framework XBLAS test wrapper, parameterized by target.
+#!
+#! Each per-target shim sets:
+#!   target          'kind10' | 'kind16' | 'multifloats'
+#!   target_name     human-readable label string (for reports)
+#!   target_eps      Fortran expression giving the target's epsilon as REAL(KIND=ep)
+#!   target_real     Fortran type-spec for the target's real type
+#!   target_complex  Fortran type-spec for the target's complex type
+#!   prefix_real     migrated entry-point prefix for the D family ('e' / 'q' / 'm')
+#!   prefix_complex  migrated entry-point prefix for the Z family ('y' / 'x' / 'w')
+#!
+#! XBLAS calling convention:
+#!   The migrated archive ships C entry points (BLAS_<P>...) plus
+#!   Fortran-callable bridges named ``blas_<P>..._`` (compiled with
+#!   -DCONFIG_FC_UNDERSCORE). The bridge takes integer arguments by
+#!   reference, hardcodes ``blas_colmajor``, and forwards a trailing
+#!   ``int *prec`` enumerator. We always pass ``blas_prec_extra``.
+
+#:set R = prefix_real
+#:set C = prefix_complex
+
+#:def IMPORT_R()
+#:if target == 'multifloats'
+            import :: real64x2
+#:elif target == 'kind16'
+            import :: ep
+#:endif
+#:enddef
+
+#:def IMPORT_C()
+#:if target == 'multifloats'
+            import :: cmplx64x2
+#:elif target == 'kind16'
+            import :: ep
+#:endif
+#:enddef
+
+module target_xblas
+    use prec_kinds, only: ep
+    use target_conv, only: q2t_r, t2q_r, q2t_c, t2q_c
+#:if target == 'multifloats'
+    use multifloats, only: real64x2, cmplx64x2
+#:endif
+    implicit none
+    private
+
+    public :: target_name, target_eps
+    public :: blas_prec_extra
+    public :: blas_conj, blas_no_conj, blas_conj_k
+    public :: blas_no_trans, blas_trans_k, blas_conj_trans
+    public :: blas_upper, blas_lower
+    public :: blas_non_unit_diag, blas_unit_diag
+    public :: blas_left_side, blas_right_side
+    ! Level 1
+    public :: target_blas_daxpby_x, target_blas_zaxpby_x
+    public :: target_blas_ddot_x,   target_blas_zdot_x
+    public :: target_blas_dsum_x,   target_blas_zsum_x
+    public :: target_blas_dwaxpby_x, target_blas_zwaxpby_x
+    ! Level 2
+    public :: target_blas_dgemv_x,  target_blas_zgemv_x
+    public :: target_blas_dgemv2_x, target_blas_zgemv2_x
+    public :: target_blas_dgbmv_x,  target_blas_zgbmv_x
+    public :: target_blas_dgbmv2_x, target_blas_zgbmv2_x
+    public :: target_blas_dsymv_x,  target_blas_zsymv_x
+    public :: target_blas_dsymv2_x, target_blas_zsymv2_x
+    public :: target_blas_dsbmv_x,  target_blas_zsbmv_x
+    public :: target_blas_dspmv_x,  target_blas_zspmv_x
+    public :: target_blas_zhemv_x,  target_blas_zhemv2_x
+    public :: target_blas_zhbmv_x,  target_blas_zhpmv_x
+    public :: target_blas_dge_sum_mv_x, target_blas_zge_sum_mv_x
+    public :: target_blas_dtrmv_x,  target_blas_ztrmv_x
+    public :: target_blas_dtpmv_x,  target_blas_ztpmv_x
+    public :: target_blas_dtbsv_x,  target_blas_ztbsv_x
+    public :: target_blas_dtrsv_x,  target_blas_ztrsv_x
+    ! Level 3
+    public :: target_blas_dgemm_x,  target_blas_zgemm_x
+    public :: target_blas_dsymm_x,  target_blas_zsymm_x
+    public :: target_blas_zhemm_x
+
+    character(len=*), parameter :: target_name = "${target_name}$"
+    real(ep),         parameter :: target_eps  = ${target_eps}$
+
+    ! XBLAS enum values (from extern/xblas-1.0.248/src/blas_enum.h).
+    integer, parameter :: blas_prec_extra   = 214
+    integer, parameter :: blas_conj         = 191
+    integer, parameter :: blas_no_conj      = 192
+    integer, parameter :: blas_conj_k       = blas_conj
+    integer, parameter :: blas_no_trans     = 111
+    integer, parameter :: blas_trans_k      = 112
+    integer, parameter :: blas_conj_trans   = 113
+    integer, parameter :: blas_upper        = 121
+    integer, parameter :: blas_lower        = 122
+    integer, parameter :: blas_non_unit_diag = 131
+    integer, parameter :: blas_unit_diag    = 132
+    integer, parameter :: blas_left_side    = 141
+    integer, parameter :: blas_right_side   = 142
+
+    interface
+
+        ! ── Level 1 ────────────────────────────────────────────────
+        subroutine blas_${R}$axpby_x(n, alpha, x, incx, beta, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in) :: n, incx, incy, prec
+            ${target_real}$, intent(in) :: alpha, beta, x(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$axpby_x(n, alpha, x, incx, beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in) :: n, incx, incy, prec
+            ${target_complex}$, intent(in) :: alpha, beta, x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        subroutine blas_${R}$dot_x(conj, n, alpha, x, incx, beta, y, incy, r, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: conj, n, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta, x(*), y(*)
+            ${target_real}$, intent(inout) :: r
+        end subroutine
+        subroutine blas_${C}$dot_x(conj, n, alpha, x, incx, beta, y, incy, r, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: conj, n, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, x(*), y(*)
+            ${target_complex}$, intent(inout) :: r
+        end subroutine
+
+        subroutine blas_${R}$sum_x(n, x, incx, s, prec)
+$:IMPORT_R()
+            integer,         intent(in)  :: n, incx, prec
+            ${target_real}$, intent(in)  :: x(*)
+            ${target_real}$, intent(out) :: s
+        end subroutine
+        subroutine blas_${C}$sum_x(n, x, incx, s, prec)
+$:IMPORT_C()
+            integer,            intent(in)  :: n, incx, prec
+            ${target_complex}$, intent(in)  :: x(*)
+            ${target_complex}$, intent(out) :: s
+        end subroutine
+
+        subroutine blas_${R}$waxpby_x(n, alpha, x, incx, beta, y, incy, w, incw, prec)
+$:IMPORT_R()
+            integer,         intent(in)  :: n, incx, incy, incw, prec
+            ${target_real}$, intent(in)  :: alpha, beta, x(*), y(*)
+            ${target_real}$, intent(out) :: w(*)
+        end subroutine
+        subroutine blas_${C}$waxpby_x(n, alpha, x, incx, beta, y, incy, w, incw, prec)
+$:IMPORT_C()
+            integer,            intent(in)  :: n, incx, incy, incw, prec
+            ${target_complex}$, intent(in)  :: alpha, beta, x(*), y(*)
+            ${target_complex}$, intent(out) :: w(*)
+        end subroutine
+
+        ! ── Level 2 — gemv ─────────────────────────────────────────
+        subroutine blas_${R}$gemv_x(trans, m, n, alpha, a, lda, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: trans, m, n, lda, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$gemv_x(trans, m, n, alpha, a, lda, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: trans, m, n, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        subroutine blas_${R}$gemv2_x(trans, m, n, alpha, a, lda, &
+                                    head_x, tail_x, incx, beta, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: trans, m, n, lda, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta
+            ${target_real}$, intent(in)    :: a(lda,*), head_x(*), tail_x(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$gemv2_x(trans, m, n, alpha, a, lda, &
+                                    head_x, tail_x, incx, beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: trans, m, n, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta
+            ${target_complex}$, intent(in)    :: a(lda,*), head_x(*), tail_x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        ! ── Level 2 — gbmv ─────────────────────────────────────────
+        subroutine blas_${R}$gbmv_x(trans, m, n, kl, ku, alpha, a, lda, &
+                                   x, incx, beta, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: trans, m, n, kl, ku, lda, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$gbmv_x(trans, m, n, kl, ku, alpha, a, lda, &
+                                   x, incx, beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: trans, m, n, kl, ku, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        subroutine blas_${R}$gbmv2_x(trans, m, n, kl, ku, alpha, a, lda, &
+                                    head_x, tail_x, incx, beta, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: trans, m, n, kl, ku, lda, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta
+            ${target_real}$, intent(in)    :: a(lda,*), head_x(*), tail_x(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$gbmv2_x(trans, m, n, kl, ku, alpha, a, lda, &
+                                    head_x, tail_x, incx, beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: trans, m, n, kl, ku, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta
+            ${target_complex}$, intent(in)    :: a(lda,*), head_x(*), tail_x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        ! ── Level 2 — symv (real & complex symmetric) ──────────────
+        subroutine blas_${R}$symv_x(uplo, n, alpha, a, lda, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: uplo, n, lda, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$symv_x(uplo, n, alpha, a, lda, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, n, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        subroutine blas_${R}$symv2_x(uplo, n, alpha, a, lda, &
+                                    x_head, x_tail, incx, beta, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: uplo, n, lda, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta
+            ${target_real}$, intent(in)    :: a(lda,*), x_head(*), x_tail(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$symv2_x(uplo, n, alpha, a, lda, &
+                                    x_head, x_tail, incx, beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, n, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta
+            ${target_complex}$, intent(in)    :: a(lda,*), x_head(*), x_tail(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        ! ── Level 2 — sbmv (symmetric banded) ──────────────────────
+        subroutine blas_${R}$sbmv_x(uplo, n, k, alpha, a, lda, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: uplo, n, k, lda, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$sbmv_x(uplo, n, k, alpha, a, lda, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, n, k, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        ! ── Level 2 — spmv (symmetric packed) ──────────────────────
+        subroutine blas_${R}$spmv_x(uplo, n, alpha, ap, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: uplo, n, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta, ap(*), x(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$spmv_x(uplo, n, alpha, ap, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, n, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, ap(*), x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        ! ── Level 2 — hemv (complex hermitian) ─────────────────────
+        subroutine blas_${C}$hemv_x(uplo, n, alpha, a, lda, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, n, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$hemv2_x(uplo, n, alpha, a, lda, &
+                                    x_head, x_tail, incx, beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, n, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta
+            ${target_complex}$, intent(in)    :: a(lda,*), x_head(*), x_tail(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        ! ── Level 2 — hbmv (hermitian banded) ──────────────────────
+        subroutine blas_${C}$hbmv_x(uplo, n, k, alpha, a, lda, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, n, k, lda, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, a(lda,*), x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        ! ── Level 2 — hpmv (hermitian packed) ──────────────────────
+        subroutine blas_${C}$hpmv_x(uplo, n, alpha, ap, x, incx, &
+                                   beta, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, n, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, ap(*), x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        ! ── Level 2 — ge_sum_mv (sum of two matvecs) ───────────────
+        subroutine blas_${R}$ge_sum_mv_x(m, n, alpha, a, lda, x, incx, &
+                                        beta, b, ldb, y, incy, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: m, n, lda, ldb, incx, incy, prec
+            ${target_real}$, intent(in)    :: alpha, beta
+            ${target_real}$, intent(in)    :: a(lda,*), b(ldb,*), x(*)
+            ${target_real}$, intent(inout) :: y(*)
+        end subroutine
+        subroutine blas_${C}$ge_sum_mv_x(m, n, alpha, a, lda, x, incx, &
+                                        beta, b, ldb, y, incy, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: m, n, lda, ldb, incx, incy, prec
+            ${target_complex}$, intent(in)    :: alpha, beta
+            ${target_complex}$, intent(in)    :: a(lda,*), b(ldb,*), x(*)
+            ${target_complex}$, intent(inout) :: y(*)
+        end subroutine
+
+        ! ── Level 2 — triangular ───────────────────────────────────
+        subroutine blas_${R}$trmv_x(uplo, trans, diag, n, alpha, t, ldt, &
+                                   x, incx, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: uplo, trans, diag, n, ldt, incx, prec
+            ${target_real}$, intent(in)    :: alpha, t(ldt,*)
+            ${target_real}$, intent(inout) :: x(*)
+        end subroutine
+        subroutine blas_${C}$trmv_x(uplo, trans, diag, n, alpha, t, ldt, &
+                                   x, incx, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, trans, diag, n, ldt, incx, prec
+            ${target_complex}$, intent(in)    :: alpha, t(ldt,*)
+            ${target_complex}$, intent(inout) :: x(*)
+        end subroutine
+
+        subroutine blas_${R}$tpmv_x(uplo, trans, diag, n, alpha, tp, &
+                                   x, incx, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: uplo, trans, diag, n, incx, prec
+            ${target_real}$, intent(in)    :: alpha, tp(*)
+            ${target_real}$, intent(inout) :: x(*)
+        end subroutine
+        subroutine blas_${C}$tpmv_x(uplo, trans, diag, n, alpha, tp, &
+                                   x, incx, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, trans, diag, n, incx, prec
+            ${target_complex}$, intent(in)    :: alpha, tp(*)
+            ${target_complex}$, intent(inout) :: x(*)
+        end subroutine
+
+        subroutine blas_${R}$tbsv_x(uplo, trans, diag, n, k, alpha, t, ldt, &
+                                   x, incx, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: uplo, trans, diag, n, k, ldt, incx, prec
+            ${target_real}$, intent(in)    :: alpha, t(ldt,*)
+            ${target_real}$, intent(inout) :: x(*)
+        end subroutine
+        subroutine blas_${C}$tbsv_x(uplo, trans, diag, n, k, alpha, t, ldt, &
+                                   x, incx, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, trans, diag, n, k, ldt, incx, prec
+            ${target_complex}$, intent(in)    :: alpha, t(ldt,*)
+            ${target_complex}$, intent(inout) :: x(*)
+        end subroutine
+
+        subroutine blas_${R}$trsv_x(uplo, trans, diag, n, alpha, t, ldt, &
+                                   x, incx, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: uplo, trans, diag, n, ldt, incx, prec
+            ${target_real}$, intent(in)    :: alpha, t(ldt,*)
+            ${target_real}$, intent(inout) :: x(*)
+        end subroutine
+        subroutine blas_${C}$trsv_x(uplo, trans, diag, n, alpha, t, ldt, &
+                                   x, incx, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: uplo, trans, diag, n, ldt, incx, prec
+            ${target_complex}$, intent(in)    :: alpha, t(ldt,*)
+            ${target_complex}$, intent(inout) :: x(*)
+        end subroutine
+
+        ! ── Level 3 — gemm ─────────────────────────────────────────
+        subroutine blas_${R}$gemm_x(transa, transb, m, n, k, alpha, &
+                                   a, lda, b, ldb, beta, c, ldc, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: transa, transb, m, n, k, lda, ldb, ldc, prec
+            ${target_real}$, intent(in)    :: alpha, beta, a(lda,*), b(ldb,*)
+            ${target_real}$, intent(inout) :: c(ldc,*)
+        end subroutine
+        subroutine blas_${C}$gemm_x(transa, transb, m, n, k, alpha, &
+                                   a, lda, b, ldb, beta, c, ldc, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: transa, transb, m, n, k, lda, ldb, ldc, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, a(lda,*), b(ldb,*)
+            ${target_complex}$, intent(inout) :: c(ldc,*)
+        end subroutine
+
+        ! ── Level 3 — symm / hemm ──────────────────────────────────
+        subroutine blas_${R}$symm_x(side, uplo, m, n, alpha, a, lda, &
+                                   b, ldb, beta, c, ldc, prec)
+$:IMPORT_R()
+            integer,         intent(in)    :: side, uplo, m, n, lda, ldb, ldc, prec
+            ${target_real}$, intent(in)    :: alpha, beta, a(lda,*), b(ldb,*)
+            ${target_real}$, intent(inout) :: c(ldc,*)
+        end subroutine
+        subroutine blas_${C}$symm_x(side, uplo, m, n, alpha, a, lda, &
+                                   b, ldb, beta, c, ldc, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: side, uplo, m, n, lda, ldb, ldc, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, a(lda,*), b(ldb,*)
+            ${target_complex}$, intent(inout) :: c(ldc,*)
+        end subroutine
+        subroutine blas_${C}$hemm_x(side, uplo, m, n, alpha, a, lda, &
+                                   b, ldb, beta, c, ldc, prec)
+$:IMPORT_C()
+            integer,            intent(in)    :: side, uplo, m, n, lda, ldb, ldc, prec
+            ${target_complex}$, intent(in)    :: alpha, beta, a(lda,*), b(ldb,*)
+            ${target_complex}$, intent(inout) :: c(ldc,*)
+        end subroutine
+
+    end interface
+
+contains
+
+    ! ── Conversion macro shorthand ─────────────────────────────────
+    ! Quad-domain wrappers convert ep → target via q2t_*, call the
+    ! migrated bridge with prec=blas_prec_extra, then convert the
+    ! result back to ep via t2q_*. q2t_* / t2q_* are elemental,
+    ! so they map naturally over arrays and slices.
+
+    ! ════════════════════════════════════════════════════════════════
+    ! Level 1
+    ! ════════════════════════════════════════════════════════════════
+
+    subroutine target_blas_daxpby_x(n, alpha_q, x_q, incx, beta_q, y_q, incy)
+        integer,  intent(in)    :: n, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, x_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: x_t(:), y_t(:)
+        integer :: lx, ly
+        lx = 1 + (n - 1) * abs(incx); ly = 1 + (n - 1) * abs(incy)
+        allocate(x_t(lx), y_t(ly))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        x_t = q2t_r(x_q(1:lx)); y_t = q2t_r(y_q(1:ly))
+        call blas_${R}$axpby_x(n, alpha_t, x_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:ly) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zaxpby_x(n, alpha_q, x_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: n, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: x_t(:), y_t(:)
+        integer :: lx, ly
+        lx = 1 + (n - 1) * abs(incx); ly = 1 + (n - 1) * abs(incy)
+        allocate(x_t(lx), y_t(ly))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        x_t = q2t_c(x_q(1:lx)); y_t = q2t_c(y_q(1:ly))
+        call blas_${C}$axpby_x(n, alpha_t, x_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:ly) = t2q_c(y_t)
+    end subroutine
+
+    subroutine target_blas_ddot_x(conj, n, alpha_q, x_q, incx, beta_q, y_q, incy, r_q)
+        integer,  intent(in)    :: conj, n, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, x_q(*), y_q(*)
+        real(ep), intent(inout) :: r_q
+        ${target_real}$ :: alpha_t, beta_t, r_t
+        ${target_real}$, allocatable :: x_t(:), y_t(:)
+        integer :: lx, ly
+        lx = 1 + (n - 1) * abs(incx); ly = 1 + (n - 1) * abs(incy)
+        allocate(x_t(lx), y_t(ly))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        x_t = q2t_r(x_q(1:lx)); y_t = q2t_r(y_q(1:ly)); r_t = q2t_r(r_q)
+        call blas_${R}$dot_x(conj, n, alpha_t, x_t, incx, beta_t, y_t, incy, r_t, blas_prec_extra)
+        r_q = t2q_r(r_t)
+    end subroutine
+
+    subroutine target_blas_zdot_x(conj, n, alpha_q, x_q, incx, beta_q, y_q, incy, r_q)
+        integer,     intent(in)    :: conj, n, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, x_q(*), y_q(*)
+        complex(ep), intent(inout) :: r_q
+        ${target_complex}$ :: alpha_t, beta_t, r_t
+        ${target_complex}$, allocatable :: x_t(:), y_t(:)
+        integer :: lx, ly
+        lx = 1 + (n - 1) * abs(incx); ly = 1 + (n - 1) * abs(incy)
+        allocate(x_t(lx), y_t(ly))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        x_t = q2t_c(x_q(1:lx)); y_t = q2t_c(y_q(1:ly)); r_t = q2t_c(r_q)
+        call blas_${C}$dot_x(conj, n, alpha_t, x_t, incx, beta_t, y_t, incy, r_t, blas_prec_extra)
+        r_q = t2q_c(r_t)
+    end subroutine
+
+    subroutine target_blas_dsum_x(n, x_q, incx, s_q)
+        integer,  intent(in)  :: n, incx
+        real(ep), intent(in)  :: x_q(*)
+        real(ep), intent(out) :: s_q
+        ${target_real}$ :: s_t
+        ${target_real}$, allocatable :: x_t(:)
+        integer :: lx
+        lx = 1 + (n - 1) * abs(incx)
+        allocate(x_t(lx))
+        x_t = q2t_r(x_q(1:lx))
+        call blas_${R}$sum_x(n, x_t, incx, s_t, blas_prec_extra)
+        s_q = t2q_r(s_t)
+    end subroutine
+
+    subroutine target_blas_zsum_x(n, x_q, incx, s_q)
+        integer,     intent(in)  :: n, incx
+        complex(ep), intent(in)  :: x_q(*)
+        complex(ep), intent(out) :: s_q
+        ${target_complex}$ :: s_t
+        ${target_complex}$, allocatable :: x_t(:)
+        integer :: lx
+        lx = 1 + (n - 1) * abs(incx)
+        allocate(x_t(lx))
+        x_t = q2t_c(x_q(1:lx))
+        call blas_${C}$sum_x(n, x_t, incx, s_t, blas_prec_extra)
+        s_q = t2q_c(s_t)
+    end subroutine
+
+    subroutine target_blas_dwaxpby_x(n, alpha_q, x_q, incx, beta_q, y_q, incy, w_q, incw)
+        integer,  intent(in)  :: n, incx, incy, incw
+        real(ep), intent(in)  :: alpha_q, beta_q, x_q(*), y_q(*)
+        real(ep), intent(out) :: w_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: x_t(:), y_t(:), w_t(:)
+        integer :: lx, ly, lw
+        lx = 1 + (n - 1) * abs(incx); ly = 1 + (n - 1) * abs(incy)
+        lw = 1 + (n - 1) * abs(incw)
+        allocate(x_t(lx), y_t(ly), w_t(lw))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        x_t = q2t_r(x_q(1:lx)); y_t = q2t_r(y_q(1:ly))
+        call blas_${R}$waxpby_x(n, alpha_t, x_t, incx, beta_t, y_t, incy, w_t, incw, blas_prec_extra)
+        w_q(1:lw) = t2q_r(w_t)
+    end subroutine
+
+    subroutine target_blas_zwaxpby_x(n, alpha_q, x_q, incx, beta_q, y_q, incy, w_q, incw)
+        integer,     intent(in)  :: n, incx, incy, incw
+        complex(ep), intent(in)  :: alpha_q, beta_q, x_q(*), y_q(*)
+        complex(ep), intent(out) :: w_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: x_t(:), y_t(:), w_t(:)
+        integer :: lx, ly, lw
+        lx = 1 + (n - 1) * abs(incx); ly = 1 + (n - 1) * abs(incy)
+        lw = 1 + (n - 1) * abs(incw)
+        allocate(x_t(lx), y_t(ly), w_t(lw))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        x_t = q2t_c(x_q(1:lx)); y_t = q2t_c(y_q(1:ly))
+        call blas_${C}$waxpby_x(n, alpha_t, x_t, incx, beta_t, y_t, incy, w_t, incw, blas_prec_extra)
+        w_q(1:lw) = t2q_c(w_t)
+    end subroutine
+
+    ! ════════════════════════════════════════════════════════════════
+    ! Level 2 — gemv / gemv2
+    ! ════════════════════════════════════════════════════════════════
+
+    subroutine target_blas_dgemv_x(trans, m, n, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,  intent(in)    :: trans, m, n, lda, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        if (trans == blas_no_trans) then; lenx = n; leny = m
+        else;                              lenx = m; leny = n; end if
+        lenx = 1 + (lenx - 1) * abs(incx)
+        leny = 1 + (leny - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:n))
+        x_t = q2t_r(x_q(1:lenx)); y_t = q2t_r(y_q(1:leny))
+        call blas_${R}$gemv_x(trans, m, n, alpha_t, a_t, lda, x_t, incx, &
+                             beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zgemv_x(trans, m, n, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: trans, m, n, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        if (trans == blas_no_trans) then; lenx = n; leny = m
+        else;                              lenx = m; leny = n; end if
+        lenx = 1 + (lenx - 1) * abs(incx)
+        leny = 1 + (leny - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        x_t = q2t_c(x_q(1:lenx)); y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$gemv_x(trans, m, n, alpha_t, a_t, lda, x_t, incx, &
+                             beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    subroutine target_blas_dgemv2_x(trans, m, n, alpha_q, a_q, lda, &
+                                    head_q, tail_q, incx, beta_q, y_q, incy)
+        integer,  intent(in)    :: trans, m, n, lda, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), head_q(*), tail_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), h_t(:), t_t(:), y_t(:)
+        integer :: lenx, leny
+        if (trans == blas_no_trans) then; lenx = n; leny = m
+        else;                              lenx = m; leny = n; end if
+        lenx = 1 + (lenx - 1) * abs(incx)
+        leny = 1 + (leny - 1) * abs(incy)
+        allocate(a_t(lda, n), h_t(lenx), t_t(lenx), y_t(leny))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:n))
+        h_t = q2t_r(head_q(1:lenx)); t_t = q2t_r(tail_q(1:lenx))
+        y_t = q2t_r(y_q(1:leny))
+        call blas_${R}$gemv2_x(trans, m, n, alpha_t, a_t, lda, &
+                              h_t, t_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zgemv2_x(trans, m, n, alpha_q, a_q, lda, &
+                                    head_q, tail_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: trans, m, n, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), head_q(*), tail_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), h_t(:), t_t(:), y_t(:)
+        integer :: lenx, leny
+        if (trans == blas_no_trans) then; lenx = n; leny = m
+        else;                              lenx = m; leny = n; end if
+        lenx = 1 + (lenx - 1) * abs(incx)
+        leny = 1 + (leny - 1) * abs(incy)
+        allocate(a_t(lda, n), h_t(lenx), t_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        h_t = q2t_c(head_q(1:lenx)); t_t = q2t_c(tail_q(1:lenx))
+        y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$gemv2_x(trans, m, n, alpha_t, a_t, lda, &
+                              h_t, t_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    ! ════════════════════════════════════════════════════════════════
+    ! Level 2 — gbmv / gbmv2
+    ! ════════════════════════════════════════════════════════════════
+
+    subroutine target_blas_dgbmv_x(trans, m, n, kl, ku, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,  intent(in)    :: trans, m, n, kl, ku, lda, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        if (trans == blas_no_trans) then; lenx = n; leny = m
+        else;                              lenx = m; leny = n; end if
+        lenx = 1 + (lenx - 1) * abs(incx)
+        leny = 1 + (leny - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:n))
+        x_t = q2t_r(x_q(1:lenx)); y_t = q2t_r(y_q(1:leny))
+        call blas_${R}$gbmv_x(trans, m, n, kl, ku, alpha_t, a_t, lda, &
+                             x_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zgbmv_x(trans, m, n, kl, ku, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: trans, m, n, kl, ku, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        if (trans == blas_no_trans) then; lenx = n; leny = m
+        else;                              lenx = m; leny = n; end if
+        lenx = 1 + (lenx - 1) * abs(incx)
+        leny = 1 + (leny - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        x_t = q2t_c(x_q(1:lenx)); y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$gbmv_x(trans, m, n, kl, ku, alpha_t, a_t, lda, &
+                             x_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    subroutine target_blas_dgbmv2_x(trans, m, n, kl, ku, alpha_q, a_q, lda, &
+                                    head_q, tail_q, incx, beta_q, y_q, incy)
+        integer,  intent(in)    :: trans, m, n, kl, ku, lda, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), head_q(*), tail_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), h_t(:), t_t(:), y_t(:)
+        integer :: lenx, leny
+        if (trans == blas_no_trans) then; lenx = n; leny = m
+        else;                              lenx = m; leny = n; end if
+        lenx = 1 + (lenx - 1) * abs(incx)
+        leny = 1 + (leny - 1) * abs(incy)
+        allocate(a_t(lda, n), h_t(lenx), t_t(lenx), y_t(leny))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:n))
+        h_t = q2t_r(head_q(1:lenx)); t_t = q2t_r(tail_q(1:lenx))
+        y_t = q2t_r(y_q(1:leny))
+        call blas_${R}$gbmv2_x(trans, m, n, kl, ku, alpha_t, a_t, lda, &
+                              h_t, t_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zgbmv2_x(trans, m, n, kl, ku, alpha_q, a_q, lda, &
+                                    head_q, tail_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: trans, m, n, kl, ku, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), head_q(*), tail_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), h_t(:), t_t(:), y_t(:)
+        integer :: lenx, leny
+        if (trans == blas_no_trans) then; lenx = n; leny = m
+        else;                              lenx = m; leny = n; end if
+        lenx = 1 + (lenx - 1) * abs(incx)
+        leny = 1 + (leny - 1) * abs(incy)
+        allocate(a_t(lda, n), h_t(lenx), t_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        h_t = q2t_c(head_q(1:lenx)); t_t = q2t_c(tail_q(1:lenx))
+        y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$gbmv2_x(trans, m, n, kl, ku, alpha_t, a_t, lda, &
+                              h_t, t_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    ! ════════════════════════════════════════════════════════════════
+    ! Level 2 — symv (real & complex), symv2, sbmv, spmv
+    ! ════════════════════════════════════════════════════════════════
+
+    subroutine target_blas_dsymv_x(uplo, n, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,  intent(in)    :: uplo, n, lda, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:n))
+        x_t = q2t_r(x_q(1:lenx)); y_t = q2t_r(y_q(1:leny))
+        call blas_${R}$symv_x(uplo, n, alpha_t, a_t, lda, x_t, incx, &
+                             beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zsymv_x(uplo, n, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: uplo, n, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        x_t = q2t_c(x_q(1:lenx)); y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$symv_x(uplo, n, alpha_t, a_t, lda, x_t, incx, &
+                             beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    subroutine target_blas_dsymv2_x(uplo, n, alpha_q, a_q, lda, &
+                                    head_q, tail_q, incx, beta_q, y_q, incy)
+        integer,  intent(in)    :: uplo, n, lda, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), head_q(*), tail_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), h_t(:), t_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(a_t(lda, n), h_t(lenx), t_t(lenx), y_t(leny))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:n))
+        h_t = q2t_r(head_q(1:lenx)); t_t = q2t_r(tail_q(1:lenx))
+        y_t = q2t_r(y_q(1:leny))
+        call blas_${R}$symv2_x(uplo, n, alpha_t, a_t, lda, &
+                              h_t, t_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zsymv2_x(uplo, n, alpha_q, a_q, lda, &
+                                    head_q, tail_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: uplo, n, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), head_q(*), tail_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), h_t(:), t_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(a_t(lda, n), h_t(lenx), t_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        h_t = q2t_c(head_q(1:lenx)); t_t = q2t_c(tail_q(1:lenx))
+        y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$symv2_x(uplo, n, alpha_t, a_t, lda, &
+                              h_t, t_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    subroutine target_blas_dsbmv_x(uplo, n, k, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,  intent(in)    :: uplo, n, k, lda, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:n))
+        x_t = q2t_r(x_q(1:lenx)); y_t = q2t_r(y_q(1:leny))
+        call blas_${R}$sbmv_x(uplo, n, k, alpha_t, a_t, lda, x_t, incx, &
+                             beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zsbmv_x(uplo, n, k, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: uplo, n, k, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        x_t = q2t_c(x_q(1:lenx)); y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$sbmv_x(uplo, n, k, alpha_t, a_t, lda, x_t, incx, &
+                             beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    subroutine target_blas_dspmv_x(uplo, n, alpha_q, ap_q, x_q, incx, beta_q, y_q, incy)
+        integer,  intent(in)    :: uplo, n, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, ap_q(*), x_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: ap_t(:), x_t(:), y_t(:)
+        integer :: lap, lenx, leny
+        lap = n * (n + 1) / 2
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(ap_t(lap), x_t(lenx), y_t(leny))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        ap_t = q2t_r(ap_q(1:lap))
+        x_t = q2t_r(x_q(1:lenx)); y_t = q2t_r(y_q(1:leny))
+        call blas_${R}$spmv_x(uplo, n, alpha_t, ap_t, x_t, incx, beta_t, y_t, incy, &
+                             blas_prec_extra)
+        y_q(1:leny) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zspmv_x(uplo, n, alpha_q, ap_q, x_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: uplo, n, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, ap_q(*), x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: ap_t(:), x_t(:), y_t(:)
+        integer :: lap, lenx, leny
+        lap = n * (n + 1) / 2
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(ap_t(lap), x_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        ap_t = q2t_c(ap_q(1:lap))
+        x_t = q2t_c(x_q(1:lenx)); y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$spmv_x(uplo, n, alpha_t, ap_t, x_t, incx, beta_t, y_t, incy, &
+                             blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    ! ════════════════════════════════════════════════════════════════
+    ! Level 2 — hemv / hemv2 / hbmv / hpmv (complex hermitian)
+    ! ════════════════════════════════════════════════════════════════
+
+    subroutine target_blas_zhemv_x(uplo, n, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: uplo, n, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        x_t = q2t_c(x_q(1:lenx)); y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$hemv_x(uplo, n, alpha_t, a_t, lda, x_t, incx, &
+                             beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    subroutine target_blas_zhemv2_x(uplo, n, alpha_q, a_q, lda, &
+                                    head_q, tail_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: uplo, n, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), head_q(*), tail_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), h_t(:), t_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(a_t(lda, n), h_t(lenx), t_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        h_t = q2t_c(head_q(1:lenx)); t_t = q2t_c(tail_q(1:lenx))
+        y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$hemv2_x(uplo, n, alpha_t, a_t, lda, &
+                              h_t, t_t, incx, beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    subroutine target_blas_zhbmv_x(uplo, n, k, alpha_q, a_q, lda, &
+                                   x_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: uplo, n, k, lda, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(a_t(lda, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        x_t = q2t_c(x_q(1:lenx)); y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$hbmv_x(uplo, n, k, alpha_t, a_t, lda, x_t, incx, &
+                             beta_t, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    subroutine target_blas_zhpmv_x(uplo, n, alpha_q, ap_q, x_q, incx, beta_q, y_q, incy)
+        integer,     intent(in)    :: uplo, n, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, ap_q(*), x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: ap_t(:), x_t(:), y_t(:)
+        integer :: lap, lenx, leny
+        lap = n * (n + 1) / 2
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (n - 1) * abs(incy)
+        allocate(ap_t(lap), x_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        ap_t = q2t_c(ap_q(1:lap))
+        x_t = q2t_c(x_q(1:lenx)); y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$hpmv_x(uplo, n, alpha_t, ap_t, x_t, incx, beta_t, y_t, incy, &
+                             blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    ! ════════════════════════════════════════════════════════════════
+    ! Level 2 — ge_sum_mv (y := alpha*A*x + beta*B*x)
+    ! ════════════════════════════════════════════════════════════════
+
+    subroutine target_blas_dge_sum_mv_x(m, n, alpha_q, a_q, lda, x_q, incx, &
+                                        beta_q, b_q, ldb, y_q, incy)
+        integer,  intent(in)    :: m, n, lda, ldb, incx, incy
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), b_q(ldb,*), x_q(*)
+        real(ep), intent(inout) :: y_q(*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), b_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (m - 1) * abs(incy)
+        allocate(a_t(lda, n), b_t(ldb, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:n))
+        b_t = q2t_r(b_q(1:ldb, 1:n))
+        x_t = q2t_r(x_q(1:lenx)); y_t = q2t_r(y_q(1:leny))
+        call blas_${R}$ge_sum_mv_x(m, n, alpha_t, a_t, lda, x_t, incx, &
+                                  beta_t, b_t, ldb, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_r(y_t)
+    end subroutine
+
+    subroutine target_blas_zge_sum_mv_x(m, n, alpha_q, a_q, lda, x_q, incx, &
+                                        beta_q, b_q, ldb, y_q, incy)
+        integer,     intent(in)    :: m, n, lda, ldb, incx, incy
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), b_q(ldb,*), x_q(*)
+        complex(ep), intent(inout) :: y_q(*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), b_t(:,:), x_t(:), y_t(:)
+        integer :: lenx, leny
+        lenx = 1 + (n - 1) * abs(incx); leny = 1 + (m - 1) * abs(incy)
+        allocate(a_t(lda, n), b_t(ldb, n), x_t(lenx), y_t(leny))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:n))
+        b_t = q2t_c(b_q(1:ldb, 1:n))
+        x_t = q2t_c(x_q(1:lenx)); y_t = q2t_c(y_q(1:leny))
+        call blas_${C}$ge_sum_mv_x(m, n, alpha_t, a_t, lda, x_t, incx, &
+                                  beta_t, b_t, ldb, y_t, incy, blas_prec_extra)
+        y_q(1:leny) = t2q_c(y_t)
+    end subroutine
+
+    ! ════════════════════════════════════════════════════════════════
+    ! Level 2 — triangular (trmv / tpmv / tbsv / trsv)
+    ! ════════════════════════════════════════════════════════════════
+
+    subroutine target_blas_dtrmv_x(uplo, trans, diag, n, alpha_q, t_q, ldt, x_q, incx)
+        integer,  intent(in)    :: uplo, trans, diag, n, ldt, incx
+        real(ep), intent(in)    :: alpha_q, t_q(ldt,*)
+        real(ep), intent(inout) :: x_q(*)
+        ${target_real}$ :: alpha_t
+        ${target_real}$, allocatable :: t_t(:,:), x_t(:)
+        integer :: lenx
+        lenx = 1 + (n - 1) * abs(incx)
+        allocate(t_t(ldt, n), x_t(lenx))
+        alpha_t = q2t_r(alpha_q)
+        t_t = q2t_r(t_q(1:ldt, 1:n))
+        x_t = q2t_r(x_q(1:lenx))
+        call blas_${R}$trmv_x(uplo, trans, diag, n, alpha_t, t_t, ldt, x_t, incx, &
+                             blas_prec_extra)
+        x_q(1:lenx) = t2q_r(x_t)
+    end subroutine
+
+    subroutine target_blas_ztrmv_x(uplo, trans, diag, n, alpha_q, t_q, ldt, x_q, incx)
+        integer,     intent(in)    :: uplo, trans, diag, n, ldt, incx
+        complex(ep), intent(in)    :: alpha_q, t_q(ldt,*)
+        complex(ep), intent(inout) :: x_q(*)
+        ${target_complex}$ :: alpha_t
+        ${target_complex}$, allocatable :: t_t(:,:), x_t(:)
+        integer :: lenx
+        lenx = 1 + (n - 1) * abs(incx)
+        allocate(t_t(ldt, n), x_t(lenx))
+        alpha_t = q2t_c(alpha_q)
+        t_t = q2t_c(t_q(1:ldt, 1:n))
+        x_t = q2t_c(x_q(1:lenx))
+        call blas_${C}$trmv_x(uplo, trans, diag, n, alpha_t, t_t, ldt, x_t, incx, &
+                             blas_prec_extra)
+        x_q(1:lenx) = t2q_c(x_t)
+    end subroutine
+
+    subroutine target_blas_dtpmv_x(uplo, trans, diag, n, alpha_q, tp_q, x_q, incx)
+        integer,  intent(in)    :: uplo, trans, diag, n, incx
+        real(ep), intent(in)    :: alpha_q, tp_q(*)
+        real(ep), intent(inout) :: x_q(*)
+        ${target_real}$ :: alpha_t
+        ${target_real}$, allocatable :: tp_t(:), x_t(:)
+        integer :: lap, lenx
+        lap = n * (n + 1) / 2
+        lenx = 1 + (n - 1) * abs(incx)
+        allocate(tp_t(lap), x_t(lenx))
+        alpha_t = q2t_r(alpha_q)
+        tp_t = q2t_r(tp_q(1:lap))
+        x_t = q2t_r(x_q(1:lenx))
+        call blas_${R}$tpmv_x(uplo, trans, diag, n, alpha_t, tp_t, x_t, incx, &
+                             blas_prec_extra)
+        x_q(1:lenx) = t2q_r(x_t)
+    end subroutine
+
+    subroutine target_blas_ztpmv_x(uplo, trans, diag, n, alpha_q, tp_q, x_q, incx)
+        integer,     intent(in)    :: uplo, trans, diag, n, incx
+        complex(ep), intent(in)    :: alpha_q, tp_q(*)
+        complex(ep), intent(inout) :: x_q(*)
+        ${target_complex}$ :: alpha_t
+        ${target_complex}$, allocatable :: tp_t(:), x_t(:)
+        integer :: lap, lenx
+        lap = n * (n + 1) / 2
+        lenx = 1 + (n - 1) * abs(incx)
+        allocate(tp_t(lap), x_t(lenx))
+        alpha_t = q2t_c(alpha_q)
+        tp_t = q2t_c(tp_q(1:lap))
+        x_t = q2t_c(x_q(1:lenx))
+        call blas_${C}$tpmv_x(uplo, trans, diag, n, alpha_t, tp_t, x_t, incx, &
+                             blas_prec_extra)
+        x_q(1:lenx) = t2q_c(x_t)
+    end subroutine
+
+    subroutine target_blas_dtbsv_x(uplo, trans, diag, n, k, alpha_q, t_q, ldt, x_q, incx)
+        integer,  intent(in)    :: uplo, trans, diag, n, k, ldt, incx
+        real(ep), intent(in)    :: alpha_q, t_q(ldt,*)
+        real(ep), intent(inout) :: x_q(*)
+        ${target_real}$ :: alpha_t
+        ${target_real}$, allocatable :: t_t(:,:), x_t(:)
+        integer :: lenx
+        lenx = 1 + (n - 1) * abs(incx)
+        allocate(t_t(ldt, n), x_t(lenx))
+        alpha_t = q2t_r(alpha_q)
+        t_t = q2t_r(t_q(1:ldt, 1:n))
+        x_t = q2t_r(x_q(1:lenx))
+        call blas_${R}$tbsv_x(uplo, trans, diag, n, k, alpha_t, t_t, ldt, x_t, incx, &
+                             blas_prec_extra)
+        x_q(1:lenx) = t2q_r(x_t)
+    end subroutine
+
+    subroutine target_blas_ztbsv_x(uplo, trans, diag, n, k, alpha_q, t_q, ldt, x_q, incx)
+        integer,     intent(in)    :: uplo, trans, diag, n, k, ldt, incx
+        complex(ep), intent(in)    :: alpha_q, t_q(ldt,*)
+        complex(ep), intent(inout) :: x_q(*)
+        ${target_complex}$ :: alpha_t
+        ${target_complex}$, allocatable :: t_t(:,:), x_t(:)
+        integer :: lenx
+        lenx = 1 + (n - 1) * abs(incx)
+        allocate(t_t(ldt, n), x_t(lenx))
+        alpha_t = q2t_c(alpha_q)
+        t_t = q2t_c(t_q(1:ldt, 1:n))
+        x_t = q2t_c(x_q(1:lenx))
+        call blas_${C}$tbsv_x(uplo, trans, diag, n, k, alpha_t, t_t, ldt, x_t, incx, &
+                             blas_prec_extra)
+        x_q(1:lenx) = t2q_c(x_t)
+    end subroutine
+
+    subroutine target_blas_dtrsv_x(uplo, trans, diag, n, alpha_q, t_q, ldt, x_q, incx)
+        integer,  intent(in)    :: uplo, trans, diag, n, ldt, incx
+        real(ep), intent(in)    :: alpha_q, t_q(ldt,*)
+        real(ep), intent(inout) :: x_q(*)
+        ${target_real}$ :: alpha_t
+        ${target_real}$, allocatable :: t_t(:,:), x_t(:)
+        integer :: lenx
+        lenx = 1 + (n - 1) * abs(incx)
+        allocate(t_t(ldt, n), x_t(lenx))
+        alpha_t = q2t_r(alpha_q)
+        t_t = q2t_r(t_q(1:ldt, 1:n))
+        x_t = q2t_r(x_q(1:lenx))
+        call blas_${R}$trsv_x(uplo, trans, diag, n, alpha_t, t_t, ldt, x_t, incx, &
+                             blas_prec_extra)
+        x_q(1:lenx) = t2q_r(x_t)
+    end subroutine
+
+    subroutine target_blas_ztrsv_x(uplo, trans, diag, n, alpha_q, t_q, ldt, x_q, incx)
+        integer,     intent(in)    :: uplo, trans, diag, n, ldt, incx
+        complex(ep), intent(in)    :: alpha_q, t_q(ldt,*)
+        complex(ep), intent(inout) :: x_q(*)
+        ${target_complex}$ :: alpha_t
+        ${target_complex}$, allocatable :: t_t(:,:), x_t(:)
+        integer :: lenx
+        lenx = 1 + (n - 1) * abs(incx)
+        allocate(t_t(ldt, n), x_t(lenx))
+        alpha_t = q2t_c(alpha_q)
+        t_t = q2t_c(t_q(1:ldt, 1:n))
+        x_t = q2t_c(x_q(1:lenx))
+        call blas_${C}$trsv_x(uplo, trans, diag, n, alpha_t, t_t, ldt, x_t, incx, &
+                             blas_prec_extra)
+        x_q(1:lenx) = t2q_c(x_t)
+    end subroutine
+
+    ! ════════════════════════════════════════════════════════════════
+    ! Level 3 — gemm / symm / hemm
+    ! ════════════════════════════════════════════════════════════════
+
+    subroutine target_blas_dgemm_x(transa, transb, m, n, k, alpha_q, &
+                                   a_q, lda, b_q, ldb, beta_q, c_q, ldc)
+        integer,  intent(in)    :: transa, transb, m, n, k, lda, ldb, ldc
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), b_q(ldb,*)
+        real(ep), intent(inout) :: c_q(ldc,*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), b_t(:,:), c_t(:,:)
+        integer :: a_cols, b_cols
+        if (transa == blas_no_trans) then; a_cols = k; else; a_cols = m; end if
+        if (transb == blas_no_trans) then; b_cols = n; else; b_cols = k; end if
+        allocate(a_t(lda, a_cols), b_t(ldb, b_cols), c_t(ldc, n))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:a_cols))
+        b_t = q2t_r(b_q(1:ldb, 1:b_cols))
+        c_t = q2t_r(c_q(1:ldc, 1:n))
+        call blas_${R}$gemm_x(transa, transb, m, n, k, alpha_t, &
+                             a_t, lda, b_t, ldb, beta_t, c_t, ldc, blas_prec_extra)
+        c_q(1:ldc, 1:n) = t2q_r(c_t)
+    end subroutine
+
+    subroutine target_blas_zgemm_x(transa, transb, m, n, k, alpha_q, &
+                                   a_q, lda, b_q, ldb, beta_q, c_q, ldc)
+        integer,     intent(in)    :: transa, transb, m, n, k, lda, ldb, ldc
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), b_q(ldb,*)
+        complex(ep), intent(inout) :: c_q(ldc,*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), b_t(:,:), c_t(:,:)
+        integer :: a_cols, b_cols
+        if (transa == blas_no_trans) then; a_cols = k; else; a_cols = m; end if
+        if (transb == blas_no_trans) then; b_cols = n; else; b_cols = k; end if
+        allocate(a_t(lda, a_cols), b_t(ldb, b_cols), c_t(ldc, n))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:a_cols))
+        b_t = q2t_c(b_q(1:ldb, 1:b_cols))
+        c_t = q2t_c(c_q(1:ldc, 1:n))
+        call blas_${C}$gemm_x(transa, transb, m, n, k, alpha_t, &
+                             a_t, lda, b_t, ldb, beta_t, c_t, ldc, blas_prec_extra)
+        c_q(1:ldc, 1:n) = t2q_c(c_t)
+    end subroutine
+
+    subroutine target_blas_dsymm_x(side, uplo, m, n, alpha_q, a_q, lda, &
+                                   b_q, ldb, beta_q, c_q, ldc)
+        integer,  intent(in)    :: side, uplo, m, n, lda, ldb, ldc
+        real(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), b_q(ldb,*)
+        real(ep), intent(inout) :: c_q(ldc,*)
+        ${target_real}$ :: alpha_t, beta_t
+        ${target_real}$, allocatable :: a_t(:,:), b_t(:,:), c_t(:,:)
+        integer :: a_cols
+        if (side == blas_left_side) then; a_cols = m; else; a_cols = n; end if
+        allocate(a_t(lda, a_cols), b_t(ldb, n), c_t(ldc, n))
+        alpha_t = q2t_r(alpha_q); beta_t = q2t_r(beta_q)
+        a_t = q2t_r(a_q(1:lda, 1:a_cols))
+        b_t = q2t_r(b_q(1:ldb, 1:n))
+        c_t = q2t_r(c_q(1:ldc, 1:n))
+        call blas_${R}$symm_x(side, uplo, m, n, alpha_t, a_t, lda, &
+                             b_t, ldb, beta_t, c_t, ldc, blas_prec_extra)
+        c_q(1:ldc, 1:n) = t2q_r(c_t)
+    end subroutine
+
+    subroutine target_blas_zsymm_x(side, uplo, m, n, alpha_q, a_q, lda, &
+                                   b_q, ldb, beta_q, c_q, ldc)
+        integer,     intent(in)    :: side, uplo, m, n, lda, ldb, ldc
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), b_q(ldb,*)
+        complex(ep), intent(inout) :: c_q(ldc,*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), b_t(:,:), c_t(:,:)
+        integer :: a_cols
+        if (side == blas_left_side) then; a_cols = m; else; a_cols = n; end if
+        allocate(a_t(lda, a_cols), b_t(ldb, n), c_t(ldc, n))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:a_cols))
+        b_t = q2t_c(b_q(1:ldb, 1:n))
+        c_t = q2t_c(c_q(1:ldc, 1:n))
+        call blas_${C}$symm_x(side, uplo, m, n, alpha_t, a_t, lda, &
+                             b_t, ldb, beta_t, c_t, ldc, blas_prec_extra)
+        c_q(1:ldc, 1:n) = t2q_c(c_t)
+    end subroutine
+
+    subroutine target_blas_zhemm_x(side, uplo, m, n, alpha_q, a_q, lda, &
+                                   b_q, ldb, beta_q, c_q, ldc)
+        integer,     intent(in)    :: side, uplo, m, n, lda, ldb, ldc
+        complex(ep), intent(in)    :: alpha_q, beta_q, a_q(lda,*), b_q(ldb,*)
+        complex(ep), intent(inout) :: c_q(ldc,*)
+        ${target_complex}$ :: alpha_t, beta_t
+        ${target_complex}$, allocatable :: a_t(:,:), b_t(:,:), c_t(:,:)
+        integer :: a_cols
+        if (side == blas_left_side) then; a_cols = m; else; a_cols = n; end if
+        allocate(a_t(lda, a_cols), b_t(ldb, n), c_t(ldc, n))
+        alpha_t = q2t_c(alpha_q); beta_t = q2t_c(beta_q)
+        a_t = q2t_c(a_q(1:lda, 1:a_cols))
+        b_t = q2t_c(b_q(1:ldb, 1:n))
+        c_t = q2t_c(c_q(1:ldc, 1:n))
+        call blas_${C}$hemm_x(side, uplo, m, n, alpha_t, a_t, lda, &
+                             b_t, ldb, beta_t, c_t, ldc, blas_prec_extra)
+        c_q(1:ldc, 1:n) = t2q_c(c_t)
+    end subroutine
+
+end module target_xblas

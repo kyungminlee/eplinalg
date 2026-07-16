@@ -103,7 +103,7 @@ if(_bad_defs OR _bad_refs)
     string(APPEND _msg
         "  The archive is NOT hermetic against an MKL-linked consumer. "
         "Re-stage after fixing the migrator's privatize pass, or "
-        "regenerate the manifest (recipes/privatize_ep_symbols.txt) if "
+        "regenerate the manifest (codegen/recipes/privatize_ep_symbols.txt) if "
         "the symbol surface legitimately changed.")
     message(FATAL_ERROR "${_msg}")
 endif()

@@ -4,7 +4,7 @@
 index, audit methodology, bug summary table, and how fixes are carried.*
 
 This file collects ScaLAPACK 2.2.3 bugs in the vendored
-`external/scalapack-2.2.3/` source (including PBLAS under
+`extern/scalapack-2.2.3/` source (including PBLAS under
 `PBLAS/SRC/`). LAPACK and MUMPS bugs are catalogued in
 [`lapack.md`](lapack.md) and [`mumps.md`](mumps.md) respectively.
 Bugs that span both LAPACK and ScaLAPACK (e.g. the XERBLA-string
@@ -83,8 +83,8 @@ correct call.
 surrounding context. `pcunml2.f:394-395` is correct.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pzungql.f` lines 292-293.
-- `external/scalapack-2.2.3/SRC/pzunml2.f` lines 394-395.
+- `extern/scalapack-2.2.3/SRC/pzungql.f` lines 292-293.
+- `extern/scalapack-2.2.3/SRC/pzunml2.f` lines 394-395.
 
 **Fix.** Change both `PB_TOPGET` calls at each site to `PB_TOPSET`.
 The `ROWBTOP` / `COLBTOP` arguments are already the saved values from
@@ -92,8 +92,8 @@ lines 247-248 / 332-333; the routine just needs to push them back
 out via `PB_TOPSET` instead of re-reading the current (still-
 temporary) values via `PB_TOPGET`.
 
-**Patches.** `recipes/scalapack/patches/pzungql.f.patch`,
-`recipes/scalapack/patches/pzunml2.f.patch`.
+**Patches.** `codegen/recipes/scalapack/patches/pzungql.f.patch`,
+`codegen/recipes/scalapack/patches/pzunml2.f.patch`.
 
 **Severity.** Caller-visible side effect: callers that rely on a
 specific broadcast topology after PZUNGQL / PZUNML2 returns get
@@ -152,14 +152,14 @@ via the PXERBLA path without populating `WORK(1)` / `IWORK(1)`.
 ```
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pdsyevd.f` line 225.
+- `extern/scalapack-2.2.3/SRC/pdsyevd.f` line 225.
 
 **Fix.** Replace `LQUERY = ( LWORK.EQ.-1 )` with `LQUERY = (
 LWORK.EQ.-1 .OR. LIWORK.EQ.-1 )`. This matches the S-half and the
 LAPACK convention: either workspace argument set to -1 indicates a
 size-query call.
 
-**Patch.** `recipes/scalapack/patches/pdsyevd.f.patch`.
+**Patch.** `codegen/recipes/scalapack/patches/pdsyevd.f.patch`.
 
 **Severity.** API contract violation. Standard LAPACK convention is
 that *either* LWORK = -1 *or* LIWORK = -1 signals a workspace query.
@@ -261,13 +261,13 @@ this is a memory-safety bug.
 ```
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pslaed3.f` lines 156 and 168-171.
+- `extern/scalapack-2.2.3/SRC/pslaed3.f` lines 156 and 168-171.
 
 **Fix.** (a) Replace `IINFO = 0` with `INFO = 0` at line 156. (b)
 Wrap the INDROW/INDCOL writes in `IF (I+J.LE.N) THEN ... END IF`.
 Both changes copy the D-half verbatim.
 
-**Patch.** `recipes/scalapack/patches/pslaed3.f.patch`.
+**Patch.** `codegen/recipes/scalapack/patches/pslaed3.f.patch`.
 
 **Severity.** (1) Uninitialized output parameter — undefined
 behavior in caller-visible state, although in practice many callers
@@ -318,10 +318,10 @@ EXTERNAL list but never calls it. Pure dead-EXTERNAL (D-class), not
 related to the LWK8 question but worth noting.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pslaqr3.f` lines 398-400 (LWK8
+- `extern/scalapack-2.2.3/SRC/pslaqr3.f` lines 398-400 (LWK8
   computation present); line 258 (TZROWS/TZCOLS declarations,
   used).
-- `external/scalapack-2.2.3/SRC/pdlaqr3.f` line 398 (LWK8=0
+- `extern/scalapack-2.2.3/SRC/pdlaqr3.f` line 398 (LWK8=0
   hardcoded); line 258 (TZROWS/TZCOLS declared but never used);
   line 273 (dead `MPI_WTIME` in EXTERNAL list).
 
@@ -361,7 +361,7 @@ ordering differs between halves). Patches added:
 The "Documented but not patched (S/C non-canonical)" subsections
 below — under the INFO=-N, PCHK?MAT, and pzheevd LIWORK entries —
 no longer apply: all of those S/C sibling files now carry their
-hand-translated patches. `recipes/scalapack.yaml`'s
+hand-translated patches. `codegen/recipes/scalapack.yaml`'s
 `asymmetric_patches:` list is correspondingly reduced to a single
 entry (`pzunmbr.f.patch` — `pcunmbr.f` already has the fix upstream
 so no sibling patch is needed).
@@ -488,8 +488,8 @@ variants in the family validate LIWORK correctly. This is a complex-
 half-only asymmetry.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pzheevd.f` (line 263 area).
-- `external/scalapack-2.2.3/SRC/pcheevd.f` (line 263 area, same bug).
+- `extern/scalapack-2.2.3/SRC/pzheevd.f` (line 263 area).
+- `extern/scalapack-2.2.3/SRC/pcheevd.f` (line 263 area, same bug).
 
 **Fix.** Insert the missing `ELSE IF (LIWORK.LT.LIWMIN .AND.
 LIWORK.NE.-1) INFO = -18` branch between the LWORK and LRWORK
@@ -555,11 +555,11 @@ later removed. Three call sites per routine.
 
 Already documented separately as the first PCHK2MAT bug found via
 convergence audit (caught earlier this session, patched at
-`recipes/scalapack/patches/pzheevd.f.patch`).
+`codegen/recipes/scalapack/patches/pzheevd.f.patch`).
 
 ### Patches in migrated archive
 
-D/Z-canonical halves patched at `recipes/scalapack/patches/`:
+D/Z-canonical halves patched at `codegen/recipes/scalapack/patches/`:
 - `pdsyevr.f` (DESCZ POS0 21→19)
 - `pzheevr.f` (DESCZ POS0 21→19)
 - `pdsygvx.f` (N POS0 4→5 in both calls; B/Z param indices left
@@ -568,7 +568,7 @@ D/Z-canonical halves patched at `recipes/scalapack/patches/`:
 - `pdtrord.f` (N POS0 5→4, DESCT POS0 9→8, DESCQ POS0 13→12 in all
   three calls)
 
-Wired in `recipes/scalapack.yaml` with matching `prefer_source` pins
+Wired in `codegen/recipes/scalapack.yaml` with matching `prefer_source` pins
 (`PDSYEVR`, `PZHEEVR`, `PDSYGVX`, `PZHEGVX`, `PDTRORD`) so the
 patched halves win convergence over the still-buggy C/S siblings.
 
@@ -576,7 +576,7 @@ patched halves win convergence over the still-buggy C/S siblings.
 
 `pssyevr.f`, `pcheevr.f`, `pssygvx.f`, `pchegvx.f`, `pstrord.f` were
 patched alongside their D/Z siblings in the original 2026-05-08
-sweep (see `recipes/scalapack/patches/` — sibling files share the
+sweep (see `codegen/recipes/scalapack/patches/` — sibling files share the
 same dataset of POS0 corrections). No further work in this entry.
 
 ### Severity
@@ -629,23 +629,23 @@ alpha) * |L_below^T * x_below|`.
 
 **Affected files.**
 
-* `external/scalapack-2.2.3/PBLAS/SRC/pdatrmv_.c` (line 573 — D-half).
-* `external/scalapack-2.2.3/PBLAS/SRC/pzatrmv_.c` (line 577 — Z-half;
+* `extern/scalapack-2.2.3/PBLAS/SRC/pdatrmv_.c` (line 573 — D-half).
+* `extern/scalapack-2.2.3/PBLAS/SRC/pzatrmv_.c` (line 577 — Z-half;
   same bug fires for both `TRANS='T'` and `TRANS='C'`).
-* `external/scalapack-2.2.3/PBLAS/SRC/p{s,c}atrmv_.c` carry the
+* `extern/scalapack-2.2.3/PBLAS/SRC/p{s,c}atrmv_.c` carry the
   byte-identical bug. Not exercised by us (we don't migrate single
   precision), so no override is wired for them.
 
 **Fix.** One-token change: pass `((char *) ALPHA)` instead of `one`
 to `?agemv_`. Carried in
-`recipes/pblas/patches/S04__atrmv-alpha-hardcoded-one.patch` and wired via
-`recipes/pblas.yaml`'s `patches:` list. The migrator's
+`codegen/recipes/pblas/patches/S04__atrmv-alpha-hardcoded-one.patch` and wired via
+`codegen/recipes/pblas.yaml`'s `patches:` list. The migrator's
 PBLAS pipeline applies the patched form for every extended-precision
 target.
 
 **Standard-precision archive still buggy.** Same caveat as the LAPACK
 `?orbdb3` entry above: the std `pblas` archive built directly from
-`external/` carries the upstream form. Standard-precision callers
+`extern/` carries the upstream form. Standard-precision callers
 of `PDATRMV` / `PZATRMV` see the same numerical shortfall.
 
 **Why upstream's tests miss it.** The PBLAS test driver's input
@@ -728,16 +728,16 @@ directly reduce the result by the missing fraction.
 **Affected files.** All four precision halves carry the identical
 buggy NPROW=1 path:
 
-* `external/scalapack-2.2.3/SRC/pdlanhs.f` (used by our migrated D-half)
-* `external/scalapack-2.2.3/SRC/pzlanhs.f` (used by our migrated Z-half)
-* `external/scalapack-2.2.3/SRC/pslanhs.f` (S-half — bug present but
+* `extern/scalapack-2.2.3/SRC/pdlanhs.f` (used by our migrated D-half)
+* `extern/scalapack-2.2.3/SRC/pzlanhs.f` (used by our migrated Z-half)
+* `extern/scalapack-2.2.3/SRC/pslanhs.f` (S-half — bug present but
   not exercised by our extended-precision targets, since migration
   picks D as canonical for the real family)
-* `external/scalapack-2.2.3/SRC/pclanhs.f` (C-half — same status)
+* `extern/scalapack-2.2.3/SRC/pclanhs.f` (C-half — same status)
 
 The single-precision halves remain buggy in our standard-precision
 archive (`libblas`, `liblapack`, …) since we link those directly
-from `external/`. Standard-precision callers see the upstream
+from `extern/`. Standard-precision callers see the upstream
 behavior. Only the migrated extended-precision archives carry the
 fix.
 
@@ -765,10 +765,10 @@ multifloats double-double.
 
 **Workaround in tree.**
 
-* `recipes/scalapack/patches/pdlanhs.f.patch`
-* `recipes/scalapack/patches/pzlanhs.f.patch`
+* `codegen/recipes/scalapack/patches/pdlanhs.f.patch`
+* `codegen/recipes/scalapack/patches/pzlanhs.f.patch`
 
-Wired via `recipes/scalapack.yaml`'s `patches:` list.
+Wired via `codegen/recipes/scalapack.yaml`'s `patches:` list.
 `PDLANHS` and `PZLANHS` are pinned in `prefer_source:` so the
 patched D/Z halves win convergence over the un-fixed C/S siblings.
 
@@ -778,12 +778,12 @@ generate random matrices and lean heavily on M-norm coverage; the
 exercised. The disagreement only surfaces when you generate a
 genuinely Hessenberg matrix (zero below the subdiagonal) and compare
 the sum-norms to a serial reference — exactly what
-`tests/scalapack/auxiliary/test_p[dz]lanhs.f90` do.
+`test/integration/scalapack/auxiliary/test_p[dz]lanhs.f90` do.
 
 **Test drivers.**
 
-* `tests/scalapack/auxiliary/test_pdlanhs.f90` — real Hessenberg, all four norms.
-* `tests/scalapack/auxiliary/test_pzlanhs.f90` — complex Hermitian-Hessenberg, all four norms.
+* `test/integration/scalapack/auxiliary/test_pdlanhs.f90` — real Hessenberg, all four norms.
+* `test/integration/scalapack/auxiliary/test_pzlanhs.f90` — complex Hermitian-Hessenberg, all four norms.
 
 Both PASS to full target precision on all three targets after the fix.
 
@@ -838,8 +838,8 @@ INXTROW = MOD( INXTROW + 1, NPROW )
 
 **Workaround in tree.** Same pair as the NPROW=1 fix:
 
-* `recipes/scalapack/patches/pdlanhs.f.patch`
-* `recipes/scalapack/patches/pzlanhs.f.patch`
+* `codegen/recipes/scalapack/patches/pdlanhs.f.patch`
+* `codegen/recipes/scalapack/patches/pzlanhs.f.patch`
 
 Both the NPROW=1 `II = II + JB` patch and this IAROW fix live in the
 same override file.
@@ -865,7 +865,7 @@ surface, which is what our `test_p[dz]lanhs.f90` drivers do.
 detection are computed per grid column instead of globally. For a
 2×2 grid, ranks `(_,0)` see a `COLCND` derived from columns 0..NB-1,
 2*NB..3*NB-1, ...; ranks `(_,1)` see `COLCND` from the other set.
-With our `tests/scalapack/auxiliary/test_p[dz]geequ.f90` random
+With our `test/integration/scalapack/auxiliary/test_p[dz]geequ.f90` random
 matrices the disagreement is typically ~5% on `COLCND` and on
 individual `C(j)` values that depend on the global RCMAX. The
 real-precision test passes by chance on the seeds we use; the
@@ -913,10 +913,10 @@ combine across `MYROW`, which is the right mirror.
 
 **Affected files.**
 
-* `external/scalapack-2.2.3/SRC/pdgeequ.f`
-* `external/scalapack-2.2.3/SRC/pzgeequ.f`
-* `external/scalapack-2.2.3/SRC/psgeequ.f` (same bug, untested by us)
-* `external/scalapack-2.2.3/SRC/pcgeequ.f` (same bug, untested by us)
+* `extern/scalapack-2.2.3/SRC/pdgeequ.f`
+* `extern/scalapack-2.2.3/SRC/pzgeequ.f`
+* `extern/scalapack-2.2.3/SRC/psgeequ.f` (same bug, untested by us)
+* `extern/scalapack-2.2.3/SRC/pcgeequ.f` (same bug, untested by us)
 
 Lines (in `pdgeequ.f`): 332, 334, 346 — the three calls to
 `DGAMX2D / DGAMN2D / IGAMX2D` after the C(JJA) accumulation block.
@@ -926,7 +926,7 @@ extrema in the complex routine).
 
 **Fix.** Change `'Columnwise'` to `'Rowwise'` and `COLCTOP` to
 `ROWCTOP` on those three calls. The patched override in
-`recipes/scalapack/patches/p[dz]geequ.f` carries the fix
+`codegen/recipes/scalapack/patches/p[dz]geequ.f` carries the fix
 plus an inline comment block explaining the mirror.
 
 **Why upstream's tests miss it.** The driver compares row/column
@@ -973,14 +973,14 @@ term — that part lives in `LRWMIN`) and `LWMIN_PZPORFS = 2*NPMOD`. The
 versus `LRWMIN_PZPOCON = 2*NQMOD` and `LRWMIN_PZPORFS = NPMOD`.
 
 **Files affected.**
-- `external/scalapack-2.2.3/SRC/pdposvx.f` (line 430).
-- `external/scalapack-2.2.3/SRC/pzposvx.f` (lines 429–430).
+- `extern/scalapack-2.2.3/SRC/pdposvx.f` (line 430).
+- `extern/scalapack-2.2.3/SRC/pzposvx.f` (lines 429–430).
 
 **Fix.** Patched overrides in
-`recipes/scalapack/patches/p[dz]posvx.f` recompute
+`codegen/recipes/scalapack/patches/p[dz]posvx.f` recompute
 `NPMOD`/`NQMOD` (PDPOCON's unadjusted NUMROCs), then set
 `LWMIN = MAX( PDPOCON_LWMIN, PDPORFS_LWMIN )` (and `LRWMIN` accordingly
-for the complex variant). `recipes/scalapack.yaml` declares the
+for the complex variant). `codegen/recipes/scalapack.yaml` declares the
 overrides plus the matching `prefer_source: PDPOSVX, PZPOSVX` pin to
 keep the canonical-rank picker from selecting the un-fixed S/C halves.
 
@@ -1036,14 +1036,14 @@ the end of its 1-element buffer.
 is `complex`).
 
 **Files affected.**
-- `external/scalapack-2.2.3/SRC/pdsyevx.f` (rank-0 broadcast block
+- `extern/scalapack-2.2.3/SRC/pdsyevx.f` (rank-0 broadcast block
   ahead of the LQUERY return).
-- `external/scalapack-2.2.3/SRC/pzheevx.f` — same shape on `RWORK`.
-- `external/scalapack-2.2.3/SRC/{ps,pc}{sy,he}evx.f` carry the
+- `extern/scalapack-2.2.3/SRC/pzheevx.f` — same shape on `RWORK`.
+- `extern/scalapack-2.2.3/SRC/{ps,pc}{sy,he}evx.f` carry the
   byte-identical pattern; not exercised by us (we don't migrate
   single precision).
 
-**Fix.** Wrapper-side, in `tests/scalapack/common/target_scalapack_body.fypp`:
+**Fix.** Wrapper-side, in `test/integration/scalapack/common/target_scalapack_body.fypp`:
 - `target_pdsyevx` / `target_pssyevx` / `target_p{q,e,m}syevx` allocate
   a local `work_t(3)` for the LQUERY branch and forward it to upstream
   instead of the caller's `WORK`; `work_t(1)` (= `LWMIN`) is copied
@@ -1053,7 +1053,7 @@ is `complex`).
 
 Same pattern as the `target_pdtrsen` `iwork_t(max(1,n))` fix
 documented in the next section. Both fixes live wrapper-side rather
-than as `recipes/scalapack/patches/` entries because they
+than as `codegen/recipes/scalapack/patches/` entries because they
 adjust caller workspace expectations rather than the algorithm; they
 don't need to ship into migrated builds the way an algorithm fix does.
 
@@ -1103,11 +1103,11 @@ caller passing `IWORK(1)` for the query (the documented contract) has
 `IWORK(2..N)` written past the end of its 1-element buffer.
 
 **Files affected.**
-- `external/scalapack-2.2.3/SRC/pdtrsen.f` (lines 499-538).
+- `extern/scalapack-2.2.3/SRC/pdtrsen.f` (lines 499-538).
 
 **Fix.** Wrapper-side, mirroring the `target_pdsyevx` `WORK_T(3)` bump
 for upstream `PDSYEVX`'s `WORK(1:3)` early-write. `target_pdtrsen` in
-`tests/scalapack/common/target_scalapack_body.fypp` now allocates a
+`test/integration/scalapack/common/target_scalapack_body.fypp` now allocates a
 local `iwork_t(max(1,n))` for the LQUERY branch and forwards it to
 upstream instead of the caller's `IWORK`; `iwork_t(1)` (= LIWMIN) is
 copied back to `iwork(1)` after the query returns.
@@ -1157,13 +1157,13 @@ shape with `mA <= nA`). Since `mC = K + L > L` for any non-trivial K,
 `LV < Np` and PBDTRAN refuses the call.
 
 **Files affected.**
-- `external/scalapack-2.2.3/SRC/pdlarzb.f` (lines 374-395).
-- `external/scalapack-2.2.3/PBLAS/SRC/PBBLAS/pbdtran.f` (lines 457-459).
+- `extern/scalapack-2.2.3/SRC/pdlarzb.f` (lines 374-395).
+- `extern/scalapack-2.2.3/PBLAS/SRC/PBBLAS/pbdtran.f` (lines 457-459).
 - Same shape for the complex variant `pzlarzb.f` / `pbztran.f` driving
   `pzunmrz`.
 
 **Fix (PARTIAL).** Patched overrides in
-`recipes/scalapack/patches/p[dz]larzb.f`. The repair is a
+`codegen/recipes/scalapack/patches/p[dz]larzb.f`. The repair is a
 one-line change to the SIDE='L' branch: PBDTRAN/PBZTRAN's N argument
 goes from `M+ICOFFV` to `L+ICOFFV` (and the matching `MQV0` line is
 adjusted likewise). Per `pdlarzb`'s comment "WORK(IPW) is K x MQV0 = [
@@ -1173,7 +1173,7 @@ only needs to operate on those L columns. The `MPC20`-sized IPV
 buffer (= local rows of L) then satisfies PBDTRAN's
 `LDC >= NUMROC(L+ICOFFV, NBV, MYROW, ICROW2, NPROW)` requirement
 under the alignment hypothesis `IROFFC2 = ICOFFV` (= `NB_V = MB_C`).
-`recipes/scalapack.yaml` declares the overrides plus matching
+`codegen/recipes/scalapack.yaml` declares the overrides plus matching
 `prefer_source: PDLARZB, PZLARZB` to keep the canonical-rank picker
 from choosing the un-fixed S/C halves.
 
@@ -1190,14 +1190,14 @@ only as a building block of higher-level GSVD/GELSY drivers, where the
 specific shape that triggers PBDTRAN's check apparently isn't hit.
 
 **Test drivers.**
-- `tests/scalapack/factorization/test_pdormrz.f90` — real, SIDE='R'
+- `test/integration/scalapack/factorization/test_pdormrz.f90` — real, SIDE='R'
   only (TRANS='N','T'), mA=32, mC=48, nC=nA=64.
-- `tests/scalapack/factorization/test_pzunmrz.f90` — complex
+- `test/integration/scalapack/factorization/test_pzunmrz.f90` — complex
   counterpart with TRANS in {'N','C'}.
 
 Both pass to ~target precision on kind16 / 2×2 grid after the fixes.
 SIDE='L' is currently disabled in the test drivers pending the
-remaining PDORMR3/PDLARZ investigation (see `tests/scalapack/TODO.md`).
+remaining PDORMR3/PDLARZ investigation (see `test/integration/scalapack/TODO.md`).
 
 **Upstream report.** Not yet filed.
 
@@ -1243,14 +1243,14 @@ $    ( LEFT .AND. NOTRAN ) ) THEN
 `pzunmrz.f:459-460`.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pdormrz.f` (lines 458-459).
-- `external/scalapack-2.2.3/SRC/pzunmrz.f` (lines 459-460).
+- `extern/scalapack-2.2.3/SRC/pdormrz.f` (lines 458-459).
+- `extern/scalapack-2.2.3/SRC/pzunmrz.f` (lines 459-460).
 - Same shape in `psormrz.f` / `pcunmrz.f` (untested by us).
 
 **Fix.** Patched overrides in
-`recipes/scalapack/patches/p[dz]ormrz.f` change the post-loop
+`codegen/recipes/scalapack/patches/p[dz]ormrz.f` change the post-loop
 condition to `(LEFT .AND. NOTRAN) .OR. (.NOT.LEFT .AND. .NOT.NOTRAN)`.
-Wired via `recipes/scalapack.yaml` plus matching `prefer_source:
+Wired via `codegen/recipes/scalapack.yaml` plus matching `prefer_source:
 PDORMRZ, PZUNMRZ` pins.
 
 **Upstream report.** Not yet filed.
@@ -1290,9 +1290,9 @@ NQV = NUMROC( L+ICOFFV, DESCV( NB_ ), MYCOL, IVCOL, NPCOL )
 ```
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pdlarz.f`, `pclarz.f`, `pslarz.f`,
+- `extern/scalapack-2.2.3/SRC/pdlarz.f`, `pclarz.f`, `pslarz.f`,
   `pzlarz.f` (lines ~288 and ~292).
-- `external/scalapack-2.2.3/SRC/pzlarzc.f` (and `pclarzc.f`) — the
+- `extern/scalapack-2.2.3/SRC/pzlarzc.f` (and `pclarzc.f`) — the
   Q**H variant called from `PZUNMR3` when `TRANS='C'` / `'H'`. Same
   byte-identical formulas.
 
@@ -1302,8 +1302,8 @@ SIDE='L'; `L+ICOFFC2` / `DESCC(NB_)` / `ICCOL2` for SIDE='R'). The
 upstream `LWMIN` already sizes the leading WORK region to `MPC0`
 (full sub(C) local rows), which dominates the new `MPV`, so no
 `LWMIN` change is needed. Wired via
-`recipes/scalapack/patches/p[dz]larz.f` and
-`recipes/scalapack/patches/pzlarzc.f`, with
+`codegen/recipes/scalapack/patches/p[dz]larz.f` and
+`codegen/recipes/scalapack/patches/pzlarzc.f`, with
 `prefer_source: PDLARZ, PZLARZ, PZLARZC` pins.
 
 
@@ -1333,9 +1333,9 @@ CALL DAXPY( N, -TAU, WORK, 1, C, LDC )
 ```
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/p[dscz]larz.f` (six pairs in the
+- `extern/scalapack-2.2.3/SRC/p[dscz]larz.f` (six pairs in the
   d/s variants, five pairs in the c/z and `pzlarzc` variants).
-- `external/scalapack-2.2.3/SRC/p[cz]larzc.f` (same shape).
+- `extern/scalapack-2.2.3/SRC/p[cz]larzc.f` (same shape).
 
 **Fix.** Override changes `INCY` from `MAX(1, NQC2)` to `1` in every
 AXPY into `WORK`. The `MAX(1, NQC2)` expression is retained where it
@@ -1352,7 +1352,7 @@ producing residuals on the order of 1.3–1.8× the input magnitude
 real-precision analogue (`PDORMRZ` SIDE='L') is unaffected.
 Reproduces bit-identically on 1, 2, and 4 ranks — pure local
 arithmetic, not a distribution issue. Surfaced by
-`tests/scalapack/factorization/test_pzunmrz.f90` after the
+`test/integration/scalapack/factorization/test_pzunmrz.f90` after the
 `MPV`/`NQV` and AXPY-stride fixes had been lifted.
 
 **Root cause.** Each SIDE='L' branch of `PZLARZ` / `PZLARZC`
@@ -1402,11 +1402,11 @@ which have no conj/no-conj distinction) and never bites SIDE='R'
 `H` from the right is `C := C - tau (Cv) v^H`).
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pzlarz.f` — 5 SIDE='L' MPV×NQC2
+- `extern/scalapack-2.2.3/SRC/pzlarz.f` — 5 SIDE='L' MPV×NQC2
   sites.
-- `external/scalapack-2.2.3/SRC/pzlarzc.f` — same 5 sites in the
+- `extern/scalapack-2.2.3/SRC/pzlarzc.f` — same 5 sites in the
   Q**H variant called from `PZUNMR3` when `TRANS='C'`.
-- `external/scalapack-2.2.3/SRC/pclarz.f` and `pclarzc.f` carry the
+- `extern/scalapack-2.2.3/SRC/pclarz.f` and `pclarzc.f` carry the
   byte-identical buggy formulas in single-complex; the same fix
   would apply but is not wired here (we don't migrate single-complex
   RZ).
@@ -1452,9 +1452,9 @@ case that surfaced the bug upstream is not in our test matrix
 (ctest runs at 4 ranks → 2×2 grid).
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pdlarz.f` (and `pslarz.f`).
-- `external/scalapack-2.2.3/SRC/pzlarz.f` (and `pclarz.f`).
-- `external/scalapack-2.2.3/SRC/pzlarzc.f` (and `pclarzc.f`).
+- `extern/scalapack-2.2.3/SRC/pdlarz.f` (and `pslarz.f`).
+- `extern/scalapack-2.2.3/SRC/pzlarz.f` (and `pclarz.f`).
+- `extern/scalapack-2.2.3/SRC/pzlarzc.f` (and `pclarzc.f`).
 
 **Fix.** Override changes the third argument of `PBxTRNV` from `M`
 (rowwise SIDE='L') / `N` (columnwise SIDE='R') to `L` in all four
@@ -1498,11 +1498,11 @@ writing the saved values back. `pzunml2.f` carries the same pattern
 on lines 394-395.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pzungql.f` (lines 292-293).
-- `external/scalapack-2.2.3/SRC/pzunml2.f` (lines 394-395).
-- `external/scalapack-2.2.3/SRC/pcungql.f` — *not* affected (uses
+- `extern/scalapack-2.2.3/SRC/pzungql.f` (lines 292-293).
+- `extern/scalapack-2.2.3/SRC/pzunml2.f` (lines 394-395).
+- `extern/scalapack-2.2.3/SRC/pcungql.f` — *not* affected (uses
   `PB_TOPSET` correctly).
-- `external/scalapack-2.2.3/SRC/pcunml2.f` — *not* affected.
+- `extern/scalapack-2.2.3/SRC/pcunml2.f` — *not* affected.
 
 The S/D halves (`psorgql.f` / `psormql.f` / `pdorgql.f` /
 `pdormql.f`) — checking is left to a follow-up; the immediate
@@ -1514,7 +1514,7 @@ correct. Recipe pins the C-half as canonical via
 `prefer_source: PCUNGQL / PCUNML2` so the convergence picker takes
 the C body and the migrator generates correct `Q`/`X`/`E`/`Y` clones
 with `PB_TOPSET` at the restore site. Standard-precision archive
-built from unmodified `external/` still has the bug.
+built from unmodified `extern/` still has the bug.
 
 **Why upstream's tests miss it.** The leak is silent on tests that
 don't observe BLACS topology between calls — most ScaLAPACK test
@@ -1554,13 +1554,13 @@ to forward to `PXERBLA` if `DESCB` (= `DESCZ` here) is invalid.
 `DESCZ`. `PZHEEVD` passes `11`.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pzheevd.f` (line 300, 16th arg of
+- `extern/scalapack-2.2.3/SRC/pzheevd.f` (line 300, 16th arg of
   `PCHK2MAT`).
 
 **Fix.** Single-token change `11 → 12` on the 16th argument of the
 `PCHK2MAT` call. Carried in
-`recipes/scalapack/patches/pzheevd.f.patch`. Wired via
-`recipes/scalapack.yaml`'s `patches:` list plus a matching
+`codegen/recipes/scalapack/patches/pzheevd.f.patch`. Wired via
+`codegen/recipes/scalapack.yaml`'s `patches:` list plus a matching
 `prefer_source: PZHEEVD` pin so the patched Z half wins convergence
 over the un-fixed `PCHEEVD` sibling (which carries the *correct* 12,
 but the migrator's canonical-rank picker doesn't know that and would
@@ -1596,11 +1596,11 @@ it's the wrong name: the C half's `pcunmbr.f:302` correctly lists
 `PCHK2MAT`. Pure copy-paste error in upstream's Z-half edit.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pzunmbr.f` (line 302).
+- `extern/scalapack-2.2.3/SRC/pzunmbr.f` (line 302).
 
 **Fix.** Replace `PCHK1MAT` with `PCHK2MAT` in the EXTERNAL list.
-Carried in `recipes/scalapack/patches/pzunmbr.f.patch`. Wired via
-`recipes/scalapack.yaml`'s `patches:` list plus a matching
+Carried in `codegen/recipes/scalapack/patches/pzunmbr.f.patch`. Wired via
+`codegen/recipes/scalapack.yaml`'s `patches:` list plus a matching
 `prefer_source: PZUNMBR` pin so the patched Z half wins convergence
 over the (already-correct) C half (canonical-rank picker would
 otherwise sort `pcunmbr.f` first).
@@ -1639,8 +1639,8 @@ A caller asking only for `LIWMIN` via `LIWORK = -1` therefore gets
 treated as a real call on the S half.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pssyevd.f` (LQUERY definition).
-- `external/scalapack-2.2.3/SRC/pcheevd.f` not affected (its LQUERY
+- `extern/scalapack-2.2.3/SRC/pssyevd.f` (LQUERY definition).
+- `extern/scalapack-2.2.3/SRC/pcheevd.f` not affected (its LQUERY
   guard is correct — only the real S-precision half drifts).
 
 **Fix.** None wired in-tree. The migrator picks `PDSYEVD` as canonical
@@ -1648,7 +1648,7 @@ for the real family (D-half over S-half by precision-rank policy), so
 every migrated extended-precision build (`PQSYEVD`/`PESYEVD`/
 `PMSYEVD`) gets the correct LQUERY guard automatically. The bug
 remains in the standard-precision archive built directly from
-`external/`. Documented here for completeness; no `source_override`
+`extern/`. Documented here for completeness; no `source_override`
 needed.
 
 **Why upstream's tests miss it.** Their test driver always passes
@@ -1681,15 +1681,15 @@ divide-and-conquer eigenvalue sub-step `PSLAED3`, both absent in
    nothing observable depending on what sat past `D(N)`.
 
 **Affected files.**
-- `external/scalapack-2.2.3/SRC/pslaed3.f` — both bugs.
-- `external/scalapack-2.2.3/SRC/pdlaed3.f` — clean (canonical for our
+- `extern/scalapack-2.2.3/SRC/pslaed3.f` — both bugs.
+- `extern/scalapack-2.2.3/SRC/pdlaed3.f` — clean (canonical for our
   migrated builds).
 
 **Fix.** None wired. The migrator picks `PDLAED3` as canonical for
 the real family, so every migrated extended-precision derivative
 inherits the correct `IINFO=0` and `IF(I+J.LE.N)` guard. The S-half
 bugs persist in the standard-precision archive built from
-`external/` unchanged. Documented here for completeness.
+`extern/` unchanged. Documented here for completeness.
 
 **Why upstream's tests miss it.** The eigenvalue test drivers report
 correctness via residuals computed against shipped reference

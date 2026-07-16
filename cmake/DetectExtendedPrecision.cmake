@@ -17,7 +17,7 @@
 # Two CMake driver paths include this file:
 #   - cmake/CMakeLists.txt           (shared, used by ``migrator stage``)
 #   - the generated per-library CMakeLists from ``migrator run``
-#     (``_generate_cmake`` in src/migrator/cmake_gen.py — copies this
+#     (``_generate_cmake`` in codegen/migrator/cmake_gen.py — copies this
 #     file alongside).
 include_guard(GLOBAL)
 

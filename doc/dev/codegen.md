@@ -12,7 +12,7 @@ All commands are run from `src/` with `uv` (see
 ## Target selection
 
 `--target` accepts a built-in name or a path to a target YAML
-(`targets/*.yaml`):
+(`codegen/targets/*.yaml`):
 
 | Target | Types | Prefix (Real/Complex) |
 | :--- | :--- | :--- |
@@ -33,13 +33,13 @@ uv run python -m migrator stage /tmp/stage-q --target kind16
 *   `--parser` / `--parser-cmd`: As for `migrate`.
 *   The staging tree is self-contained (sources, CMake system, presets,
     tests); build it with plain CMake. Note it *snapshots*
-    `tests/CMakeLists.txt` and the presets — re-stage after editing them.
+    `test/integration/CMakeLists.txt` and the presets — re-stage after editing them.
 
 ### `migrate`
 Source-to-source rewriting for one recipe.
 
 ```bash
-uv run python -m migrator migrate ../recipes/blas.yaml output/ --target kind16
+uv run python -m migrator migrate ../codegen/recipes/blas.yaml output/ --target kind16
 ```
 *   `recipe`: Path to the library's YAML recipe.
 *   `output_dir`: Where to write the migrated files.
@@ -62,7 +62,7 @@ Reports every co-family pair whose migrated text differs (both halves
 migrated in memory with a heavy canonicalizer). Preliminary exploration.
 
 ```bash
-uv run python -m migrator diverge ../recipes/blas.yaml --target kind16
+uv run python -m migrator diverge ../codegen/recipes/blas.yaml --target kind16
 ```
 *   `--grep` / `--exclude`: Regex filters on the diff text.
 *   `--context`: Max diff lines per entry (default: 8); `--full` for all.
@@ -74,7 +74,7 @@ normalizer. This is the **authoritative** convergence check. Same
 filtering options as `diverge`.
 
 ```bash
-uv run python -m migrator converge ../recipes/blas.yaml output/ --target kind16
+uv run python -m migrator converge ../codegen/recipes/blas.yaml output/ --target kind16
 ```
 
 Methodology: [convergence.md](convergence.md).
@@ -118,7 +118,7 @@ column layout exactly; only precision-bearing constructs change:
    values where the target defines them.
 4. **Intrinsics** — type-specific intrinsics become generic or
    KIND-explicit forms (`DBLE(x)` → `REAL(x, KIND=16)`, `DIMAG` →
-   `AIMAG`, `DABS` → `ABS`, …). Catalog: `src/migrator/intrinsics.py`
+   `AIMAG`, `DABS` → `ABS`, …). Catalog: `codegen/migrator/intrinsics.py`
    and [../user/api/intrinsics.md](../user/api/intrinsics.md).
 5. **Machine parameters** — `DLAMCH`-family routines are regenerated,
    not renamed: the constants they return are precision-dependent.
@@ -163,11 +163,11 @@ trampolines, `PBcharshim.h`).
 ## Modifying the migrator
 
 - Per-library file lists, patches, and exceptions: the recipe YAMLs
-  (`recipes/*.yaml`, schema in [recipes.md](recipes.md)).
+  (`codegen/recipes/*.yaml`, schema in [recipes.md](recipes.md)).
 - Per-target types, literals, name mappings, `c_interop` symbol maps:
-  `targets/*.yaml`.
-- Intrinsic conversion table: `src/migrator/intrinsics.py`.
-- Fortran rewrite passes: the `src/migrator/fortran/` package (one
+  `codegen/targets/*.yaml`.
+- Intrinsic conversion table: `codegen/migrator/intrinsics.py`.
+- Fortran rewrite passes: the `codegen/migrator/fortran/` package (one
   module per concern: declarations, literals, renames, MPI calls, …).
 - Run the unit suite (`uv run pytest`) and a `converge` pass after any
   transform change; see [test.md](test.md).

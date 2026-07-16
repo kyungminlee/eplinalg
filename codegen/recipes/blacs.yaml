@@ -1,0 +1,227 @@
+library: blacs
+language: c
+source_dir: extern/scalapack-2.2.3/BLACS/SRC
+extensions: [.c, .h]
+
+# The prefixed archive ``${LIB_PREFIX}blacs`` (e.g. libeyblacs) must
+# contain ONLY its own floating type's routines (the Q/X/E/Y/M/W clones:
+# qgesd2d_, xgebr2d_, egamx2d_, Cegamx2d, ...), so its symbols and MKL's
+# reference-BLACS are strictly disjoint (no --allow-multiple-definition,
+# link order irrelevant). Everything else is pushed elsewhere:
+#
+#   * Integer BLACS (igamx2d_, Cigamx2d, ...) is family-independent — one
+#     copy serves e/y, q/x, m/w — so it goes to the shared ``blacs_common``
+#     via ``force_common`` (below), NOT into the prefixed archive.
+#   * The type-agnostic driver the symbol scanner failed to tag as
+#     independent (blacs_init_, sys2blacs_, BI_GetBuff, k*id_, ...) also
+#     goes to ``blacs_common`` via ``force_common``.
+#   * Genuine S/C entry points (sgesd2d_, cgebr2d_, BI_s*, BI_c*, ...) are
+#     DROPPED from the migrated output via ``skip_files`` — MKL provides
+#     them with MKL, and the plain ``blacs`` standard archive (built
+#     directly from BLACS/SRC/) provides them without MKL. Keeping a copy
+#     here (or in blacs_common) would multiply-define against those.
+#
+# ``force_common`` and ``skip_files`` match on file stem (uppercased, no
+# extension); the C-callable ``C*`` variants ride the same source file
+# through the dual-interface compile, so they follow automatically.
+
+# Genuine S/C — dropped (MKL / plain ``blacs`` own them).
+# Names are the logical stem WITHOUT the trailing Fortran underscore
+# (the C migrator strips it before matching — see c_migrator.py).
+skip_files:
+  # single-real entry points
+  - sgamn2d
+  - sgamx2d
+  - sgebr2d
+  - sgebs2d
+  - sgerv2d
+  - sgesd2d
+  - sgsum2d
+  - strbr2d
+  - strbs2d
+  - strrv2d
+  - strsd2d
+  # single-complex entry points
+  - cgamn2d
+  - cgamx2d
+  - cgebr2d
+  - cgebs2d
+  - cgerv2d
+  - cgesd2d
+  - cgsum2d
+  - ctrbr2d
+  - ctrbs2d
+  - ctrrv2d
+  - ctrsd2d
+  # single-real BI internals (MPI reduce ops + copy/reduce kernels)
+  - BI_sMPI_amn
+  - BI_sMPI_amn2
+  - BI_sMPI_amx
+  - BI_sMPI_amx2
+  - BI_sMPI_sum
+  - BI_smvcopy
+  - BI_svmcopy
+  - BI_svvamn
+  - BI_svvamn2
+  - BI_svvamx
+  - BI_svvamx2
+  - BI_svvsum
+  # single-complex BI internals
+  - BI_cMPI_amn
+  - BI_cMPI_amn2
+  - BI_cMPI_amx
+  - BI_cMPI_amx2
+  - BI_cMPI_sum
+  - BI_cvvamn
+  - BI_cvvamn2
+  - BI_cvvamx
+  - BI_cvvamx2
+  - BI_cvvsum
+
+# Family-independent routines pinned to ``blacs_common`` (see header).
+force_common:
+  # integer BLACS entry points (one copy serves every extended family)
+  - igamn2d
+  - igamx2d
+  - igebr2d
+  - igebs2d
+  - igerv2d
+  - igesd2d
+  - igsum2d
+  - itrbr2d
+  - itrbs2d
+  - itrrv2d
+  - itrsd2d
+  # type-agnostic driver the scanner left in PRECISION
+  - BI_GetBuff
+  - BI_GlobalVars
+  - BI_Pack
+  - BI_TransUserComm
+  - blacs2sys
+  - blacs_barr
+  - blacs_free
+  - blacs_grid
+  - blacs_info
+  - blacs_init
+  - blacs_map
+  - free_handle
+  - kbrid
+  - kbsid
+  - krecvid
+  - ksendid
+  - sys2blacs
+
+# Patches applied to staged sources before migration. The patched body
+# goes through the BLACS d→{q,e,m} / z→{x,y,w} clone pipeline so a single
+# upstream-shape patch services every extended-precision target.
+#
+#   B01 (dgsum2d_.c + BI_dMPI_sum.c) -- replaces the stock ``MPI_SUM``
+#                     with a ``MPI_Op_create(BI_dMPI_sum, ...)`` user-op.
+#                     Intel MPI 2021.17's ``MPI_SUM`` is broken on
+#                     ``MPI_REAL16`` (segfault) and ``MPI_LONG_DOUBLE``
+#                     (returns nonsense), and MPICH ``mpiexec`` deadlocks
+#                     rank 0 on REAL16 — so every kind16/kind10 caller
+#                     hangs or crashes the moment a default-topology
+#                     PDSYEVR / PZHEEVR / PDSYEVX / PZHEEVX issues a
+#                     real-side gsum. The user-op routes the per-element
+#                     add through ``BI_dvvsum`` (target-promoted to
+#                     ``BI_qvvsum`` / ``BI_evvsum`` / ``BI_mvvsum`` by
+#                     the BLACS C migrator), which uses the native ``+=``
+#                     operator on the target's real type. Mirrors
+#                     upstream ``zgsum2d_.c``'s long-standing pattern.
+#                     ``BI_dMPI_sum.c`` has no upstream counterpart
+#                     (analogous to upstream ``BI_zMPI_sum.c``); the
+#                     d→prefix clone pipeline produces ``BI_qMPI_sum.c`` /
+#                     ``BI_eMPI_sum.c`` / ``BI_mMPI_sum.c`` automatically.
+#   B02 (d/z gsum2d_.c, gamx2d_.c, gamn2d_.c) -- second half of the
+#                     Intel MPI reduce workaround. B01 routes the math
+#                     through a user op, but Intel MPI's shm-optimized
+#                     Reduce/Allreduce mishandles *commutative*
+#                     user-defined ops: above the short-message cutoff
+#                     (count<=2 stays on a safe path, which is why small
+#                     smoke tests pass) the op callback receives a
+#                     pointer into the shm cell payload that is only
+#                     8-byte aligned. A callback whose element type
+#                     wants 16-byte alignment (__float128) is compiled
+#                     with aligned SSE loads and faults on it (#GP ->
+#                     SIGSEGV with si_addr=0; observed with Intel MPI
+#                     2021.18, disassembly-verified) in the qx MUMPS
+#                     type-3 root solve. The fix is to flip the
+#                     MPI_Op_create commute flag to 0 at every BLACS
+#                     reduce site: a non-commutative op is excluded from
+#                     the optimized path and reduces in rank order
+#                     through properly aligned buffers (always correct,
+#                     and it makes the summation order deterministic).
+#                     This covers gsum2d and both gamx2d/gamn2d branches
+#                     (the ldia != -1 struct-type path is equally
+#                     exposed). The flip is guarded on I_MPI_VERSION/
+#                     I_MPI_NUMVERSION so only Intel MPI builds get
+#                     commute=0; other MPIs are unaffected by the bug
+#                     (OpenMPI 4.1.6 verified clean) and keep the
+#                     commutative declaration.
+patches:
+  - B01__user-mpi-sum-reducer.patch
+  - B02__noncommutative-reduce-ops.patch
+
+# Convergence whitelist (Phase D). These stems' S/C siblings lack the
+# user-MPI-op / non-commutative-op patches by design (the kind16/kind10
+# retarget triggers the broken Intel MPI reduce paths only on the
+# migrated D/Z-derived archives); the diffs are cosmetic and accepted.
+expected_divergences:
+  - DGSUM2D_
+  - ZGSUM2D_
+  - DGAMX2D_
+  - DGAMN2D_
+  - ZGAMX2D_
+  - ZGAMN2D_
+
+# Multifloats target: patch blacs_pinfo_.c to call multifloats_mpi_init()
+# so the custom MPI datatypes and ops are registered before any BLACS
+# communication.  The BI_*vv* reduction kernels no longer need overrides:
+# Bdef.h is patched to redefine Rabs/Cabs as mf_abs/mf_cabs1, and
+# complex64x2 uses .r/.i members matching the BLACS convention.
+#
+# The BI_*Buff*.c / BI_Pack.c overrides add explicit ``(char *)`` casts
+# to their ``malloc`` calls. In multifloats mode the BLACS C sources
+# are compiled as C++ (to get operator overloading on the multifloats
+# type), and C++ does not allow the implicit ``void *`` -> ``char *``
+# conversion that C happily performs. clang++ rejects the implicit
+# cast outright and does not honor ``-fpermissive``, so the casts are
+# required for the flang-20 / clang-20 build to succeed.
+overrides:
+  multifloats:
+    src_dir: blacs/mfc_overrides
+    files:
+      # Lazy-init hook for multifloats MPI handles
+      - blacs_pinfo_.c
+      # Explicit (char *) casts on malloc() for C++ compilation
+      - BI_EmergencyBuff.c
+      - BI_GetBuff.c
+      - BI_Pack.c
+  # kind16 (__float128) needs only the lazy-init hook: BLACS stays plain
+  # C (no C++ malloc-cast overrides), and the hook registers the custom
+  # quad reduce ops via quad_mpi_init() the first time BLACS bootstraps
+  # MPI. See recipes/blacs/k16_overrides/blacs_pinfo_.c.
+  kind16:
+    src_dir: blacs/k16_overrides
+    files:
+      - blacs_pinfo_.c
+
+# Symmetric-patch CI escape hatch (Phase D). The D/Z-half-only
+# user-MPI-op and non-commutative-op patches are workarounds triggered
+# by the kind16/kind10 retarget; the S/C halves are unaffected. See
+# the B01/B02 descriptions above.
+asymmetric_patches:
+  - B01__user-mpi-sum-reducer.patch
+  - B02__noncommutative-reduce-ops.patch
+
+# Task 44: privatize the MKL-colliding, family-independent support
+# symbols (blacs_*/Cblacs_*/BI_*, PB_C*, TOOLS/REDIST helpers, sltimer,
+# pxerbla, ...) by renaming them name -> ep_name in the migrated output.
+# eplinalg's Netlib-derived engine and MKL export identical names with
+# incompatible internal ABIs (BLACBUFF 48 vs 56 bytes); one process-wide
+# definition per name collapses the two engines and SIGSEGVs at np>=2 in
+# either link order. The manifest is shared across the whole extended
+# stack (uniform prefix keeps the commons byte-identical across
+# mw/qx/ey) and the nm audit gate reads the same file.
+privatize_symbols: privatize_ep_symbols.txt

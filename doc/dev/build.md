@@ -13,8 +13,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ## Stage, then build
 
 ```bash
-# 1. codegen: migrate every library into a self-contained CMake tree
-cd src
+# 1. codegen (from the repo root): migrate every library into a self-contained CMake tree
 uv run python -m migrator stage /tmp/stage-q --target kind16
 
 # 2. configure + build (presets: see configure.md)
@@ -36,7 +35,7 @@ tag).
 
 ## Caveats
 
-- `stage` **snapshots** `tests/CMakeLists.txt` and the preset file into
+- `stage` **snapshots** the test-suite CMakeLists (`test/integration/CMakeLists.txt`) and the preset file into
   the staging tree. After editing them in the repo, re-stage —
   rebuilding an old tree silently uses the stale copies.
 - A full build tree per target is large; building all targets means

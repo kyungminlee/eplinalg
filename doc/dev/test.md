@@ -37,7 +37,7 @@ against Intel MPI.
 
 The suites are *differential*: migrated output is compared against
 Netlib reference results or overlay implementations at the target
-precision. Map of every test family: [../../tests/README.md](../../tests/README.md).
+precision. Map of every test family: [../../test/integration/README.md](../../test/integration/README.md).
 
 ## 4. Release validation coverage
 

@@ -1,0 +1,21 @@
+# Sphinx configuration template — configured by the root CMakeLists.txt
+# (version comes from the repo-root VERSION file).
+
+project = 'eplinalg'
+author = 'Kyungmin Lee'
+version = '@EPLINALG_VERSION@'
+release = '@EPLINALG_VERSION@'
+
+extensions = ['myst_parser']
+source_suffix = {'.md': 'markdown', '.rst': 'restructuredtext'}
+root_doc = 'index'
+
+# Historical surveys and timestamped reports are kept out of the
+# rendered tree; they remain browsable in the repo.
+exclude_patterns = ['archive/**', '_build/**']
+
+myst_heading_anchors = 3
+
+html_theme = 'alabaster'
+html_static_path = ['@CMAKE_CURRENT_SOURCE_DIR@/doc/_static']
+templates_path = ['@CMAKE_CURRENT_SOURCE_DIR@/doc/_templates']

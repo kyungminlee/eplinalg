@@ -9,11 +9,11 @@ __pycache__/
 .venv/
 
 # External source tarballs
-external/*.tar.gz
-external/*.tar.xz
-external/*.dsc
-external/openblas-*/
-external/openblas/
+extern/*.tar.gz
+extern/*.tar.xz
+extern/*.dsc
+extern/openblas-*/
+extern/openblas/
 
 # Bench JSON artifacts (run output, not source)
 /bench_*.json
@@ -37,7 +37,7 @@ workspace/
 # regenerable build output (`migrator stage staged --target kind10`) and
 # was drifting from the recipes. Treat like the other output dirs above.
 staged/
-external/multifloats/multifloats.f90
+extern/multifloats/multifloats.f90
 
 # Repro binaries (built locally)
 repro/*

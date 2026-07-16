@@ -48,7 +48,7 @@ cmake --build /tmp/stage-q/build -j8
 
 ### MPI: use the `linux-impi` preset
 
-The canonical MPI for builds and tests is Intel oneAPI MPI. `cmake/CMakePresets.json`
+The canonical MPI for builds and tests is Intel oneAPI MPI. `CMakePresets.json`
 ships three presets:
 
 | preset                      | when to use                                                          |
@@ -126,12 +126,17 @@ self-contained directory that builds with plain CMake.
 ## Repository layout
 
 ```
-recipes/           # per-library YAML recipes (blas.yaml, lapack.yaml, …)
-targets/           # per-target YAML configs (kind10, kind16, multifloats)
-src/migrator/      # the migrator
-external/          # vendored upstream sources (LAPACK, MUMPS, ScaLAPACK,
+codegen/migrator/  # the migrator (Python package)
+codegen/recipes/   # per-library YAML recipes (blas.yaml, lapack.yaml, …)
+codegen/targets/   # per-target YAML configs (kind10, kind16, multifloats)
+extern/            # vendored upstream sources (LAPACK, MUMPS, ScaLAPACK,
                    # Intel MPI headers, multifloats MPI-bridge companion)
+src/               # first-party runtime pieces (quad-mpi, multifloats-mpi, mpiseq)
+test/unit/         # pytest suite for the migrator
+test/integration/  # differential-precision test suites (staged as tests/)
 cmake/             # staging build system
+example/           # consumer examples
+VERSION            # single source of truth for the version
 ```
 
 ### recipes vs targets
@@ -143,22 +148,22 @@ and compile-time overlays (extra Fortran module helpers, C++ bridge
 header, MPI datatype names). The migrator is the cartesian product of
 the two.
 
-Recipes live in `recipes/*.yaml` with per-library sidecar directories
-(`recipes/<lib>/`) for line-level manifests and hand-written override
-modules too library-specific to put in YAML. See `recipes/README.md`
+Recipes live in `codegen/recipes/*.yaml` with per-library sidecar directories
+(`codegen/recipes/<lib>/`) for line-level manifests and hand-written override
+modules too library-specific to put in YAML. See `codegen/recipes/README.md`
 for the sidecar conventions.
 
 ### External dependencies
 
 | item                   | source                                      |
 |------------------------|---------------------------------------------|
-| LAPACK 3.12.1          | vendored under `external/lapack-3.12.1/`    |
-| MUMPS 5.9.0            | vendored under `external/MUMPS_5.9.0/`      |
-| ScaLAPACK 2.2.3        | vendored under `external/scalapack-2.2.3/`  |
-| Intel MPI headers      | vendored under `external/impi-headers/` (compile-time only — link/run against Intel oneAPI MPI via the `linux-impi` preset; other MPIs are best-effort) |
+| LAPACK 3.12.1          | vendored under `extern/lapack-3.12.1/`    |
+| MUMPS 5.9.0            | vendored under `extern/MUMPS_5.9.0/`      |
+| ScaLAPACK 2.2.3        | vendored under `extern/scalapack-2.2.3/`  |
+| Intel MPI headers      | vendored under `extern/impi-headers/` (compile-time only — link/run against Intel oneAPI MPI via the `linux-impi` preset; other MPIs are best-effort) |
 | multifloats            | fetched at CMake time from GitHub (`FetchContent`) |
-| `multifloats-mpi`      | first-party `runtime/multifloats-mpi/` — MPI bridge for real64x2 (datatype + reduction ops) |
-| `quad-mpi`             | first-party `runtime/quad-mpi/` — MPI reduce ops for kind16 (`MPI_REAL16` / `MPI_COMPLEX32`) |
+| `multifloats-mpi`      | first-party `src/multifloats-mpi/` — MPI bridge for real64x2 (datatype + reduction ops) |
+| `quad-mpi`             | first-party `src/quad-mpi/` — MPI reduce ops for kind16 (`MPI_REAL16` / `MPI_COMPLEX32`) |
 
 To pin a specific multifloats release, pass
 `-DMULTIFLOATS_GIT_TAG=v0.2.3` to CMake. For an offline build, pass
@@ -185,14 +190,14 @@ for the full configure/build/test/release workflow.
   the previously-persistent `pzdbtrsv` `MPI_Finalize` crash was
   closed by extending the upstream `PDDBTRS`/`PZDBTRS` `LWMIN`
   override to the `*trsv` oracle call site (commit `eec88b3`).
-  See `tests/REPORT.md` for the per-target breakdown.
+  See `test/integration/REPORT.md` for the per-target breakdown.
 - MUMPS builds for all six extended arithmetics (q/x, e/y, m/w) plus
   the genuine dz/sc solvers, and passes a 774-configuration solver
   sweep (arithmetics × orderings × ICNTL options × np ≤ 4, MPFR
   backward-error check at each family's epsilon) under MKL LP64 +
   Intel MPI — in both static-archive and repackaged shared-library
   form. Keep-kind manifest + EP bridge modules handle the DP-stable
-  shared modules; see `recipes/README.md`.
+  shared modules; see `codegen/recipes/README.md`.
 - MKL coexistence: the family-independent BLACS/PBLAS/ScaLAPACK engine
   is source-privatized under `ep_` names, so extended stacks and a
   full MKL link cleanly into one executable in either link order. See
@@ -203,5 +208,5 @@ for the full configure/build/test/release workflow.
 ## License
 
 Vendored upstream libraries retain their original licenses (see the
-`LICENSE*` files under `external/*/`). The migrator itself is
+`LICENSE*` files under `extern/*/`). The migrator itself is
 unlicensed for now.

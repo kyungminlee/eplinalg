@@ -10,7 +10,7 @@ generic intrinsics work on quad types out of the box". For the
 migrator's actual rewrite table — which type-specific names
 (`DABS` → `ABS`, `ZSQRT` → `SQRT`, `DBLE` → `REAL(..., KIND=16)`,
 etc.) get translated and whether each call site needs an explicit
-`KIND=…` argument — see `src/migrator/intrinsics.py`. The two
+`KIND=…` argument — see `codegen/migrator/intrinsics.py`. The two
 complement each other: this file describes the surface; the engine
 file is the migration rule table.
 
@@ -27,7 +27,7 @@ caveats:
   user-defined generic-name overloads for `ABS`, `SQRT`, `EXP`,
   `LOG`, the trigonometric and inverse trig functions, plus
   comparison and arithmetic operators (see
-  `targets/multifloats.yaml`'s `generic_names` and
+  `codegen/targets/multifloats.yaml`'s `generic_names` and
   `operator_generics` lists). The migrator's intrinsic-rewriter
   emits these in `wrap_constructor` form
   (`ABS(x)` → `real64x2(ABS(REAL(x)))`); the wrapper module makes
@@ -400,7 +400,7 @@ The migrator maps **type-specific intrinsic names** (which appear in
 upstream Netlib code as `DABS`, `DCONJG`, `DSQRT`, `CDABS`, `IDINT`,
 etc.) to **generic names** (`ABS`, `CONJG`, `SQRT`, …) that work on
 the target precision automatically. The mapping table is data-only,
-in `src/migrator/intrinsics.py:INTRINSIC_MAP`. As of 2026-04-30 it
+in `codegen/migrator/intrinsics.py:INTRINSIC_MAP`. As of 2026-04-30 it
 has ~140 entries. Each entry is keyed on the upstream type-specific
 name and stores `(generic_name, needs_kind_arg)`:
 
@@ -426,7 +426,7 @@ handful of GNU/IBM aliases (`CDABS`, `IDFIX`, `DREAL`, …). When a new
 upstream library introduces an intrinsic name not yet in the table,
 the migrator will leave the call unchanged — fix is to add the entry
 (one line) and re-run staging. Test with
-`tests/lapack/TODO.md`-tracked phases or the convergence report.
+`test/integration/lapack/TODO.md`-tracked phases or the convergence report.
 
 This file (`intrinsics.md`) is a Fortran-language reference; the
 engine table (`intrinsics.py`) is the migration ruleset. Both are

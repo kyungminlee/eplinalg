@@ -42,11 +42,11 @@ exactly the artifacts the migration pipeline produces:
 uv run python -m migrator stage /tmp/stage-q --target kind16
 
 # Per-library convergence against the staged outputs
-uv run python -m migrator converge recipes/lapack.yaml \
+uv run python -m migrator converge codegen/recipes/lapack.yaml \
     /tmp/stage-q/lapack --target kind16
 
 # Or, without needing an output dir, the in-memory pair check:
-uv run python -m migrator diverge recipes/lapack.yaml --target kind16
+uv run python -m migrator diverge codegen/recipes/lapack.yaml --target kind16
 ```
 
 `migrator run` chains migrate → converge → verify → build, so
@@ -56,7 +56,7 @@ disk. CI gates on the exit code.
 
 The reports themselves are returned as structured lists by
 `pipeline.run_convergence_report` / `pipeline.run_divergence_report` —
-see `src/migrator/pipeline.py` — so any custom rollup (per-target
+see `codegen/migrator/pipeline.py` — so any custom rollup (per-target
 matrix, per-library counts, machine-readable export) can be assembled
 from those return values without re-running the migration.
 

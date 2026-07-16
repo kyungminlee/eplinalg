@@ -1,4 +1,4 @@
-"""Sweep every s/d and c/z pair under external/MUMPS_5.9.0/src/ and
+"""Sweep every s/d and c/z pair under extern/MUMPS_5.9.0/src/ and
 classify DOUBLE PRECISION declarations as keep-kind or promote.
 
 Keep-kind rule (paired files only): a DP declaration in a d*/z* file is
@@ -19,7 +19,7 @@ Usage:
     python mumps_sweep_keep_kind.py [--manifest <path>] [--no-write] [--verbose]
 
 By default, the manifest is written to
-    recipes/mumps/keep-kind.manifest
+    codegen/recipes/mumps/keep-kind.manifest
 Re-run this script whenever the MUMPS source tree is updated.
 """
 

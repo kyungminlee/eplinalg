@@ -39,7 +39,7 @@ re-deriving it.
 - **Upstream-source bugs and workarounds**:
   [../upstream-bugs/](../upstream-bugs/README.md) — methodology and
   per-library catalogue. Workarounds are applied as recipe patches;
-  `external/` is never edited.
+  `extern/` is never edited.
 - **Minimal reproducers**: `repro/` holds standalone reproducers for
   the nastiest past bugs (Intel MPI alignment fault, PLT FP corruption,
   …) — useful as templates when isolating a new one.

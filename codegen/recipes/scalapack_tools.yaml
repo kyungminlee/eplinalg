@@ -1,0 +1,52 @@
+# Scalapack tools — precision-independent integer helpers
+# (NUMROC, ICEIL, ILCM) hoisted out of scalapack.yaml so PBBLAS can
+# reach them at link time without dragging in libqscalapack.
+#
+# Background: PBBLAS' pb*tran / pb*trsrt / pb*trget / pb*trst1 / pb*trnv
+# call NUMROC / ICEIL / ILCM. Those upstream sources live in
+# extern/scalapack-2.2.3/TOOLS/ — owned by ScaLAPACK, not PBBLAS.
+# scalapack.yaml previously listed them under extra_migrate_files,
+# which baked the symbols into ${LIB_PREFIX}scalapack only. Tests
+# under tests/pbblas link only ${LIB_PREFIX}pbblas / blacs / blas
+# (no scalapack), so they used to ship a hand-rolled shim
+# (tests/pbblas/common/scalapack_tools.f90).
+#
+# Hosting these three helpers in their own library and depending on
+# it from both pbblas.yaml and scalapack.yaml lets every downstream
+# pick them up via the normal dependency graph — no duplicate-symbol
+# collision when an executable links both archives, no test-side
+# shim. The symbols are integer-only (precision-independent), so
+# the migrator emits them under their original names (NUMROC, ICEIL,
+# ILCM) regardless of prefix style.
+#
+# source_dir is a deliberately empty placeholder; the three TOOLS
+# files come in via extra_migrate_files. The recipe pipeline scans
+# source_dir to classify symbols, but there is nothing to scan
+# here — the symbols are visible through extra_symbol_dirs and stay
+# precision-independent (no D/Z sibling) so they pass through
+# unrenamed.
+library: scalapack_tools
+language: fortran
+source_dir: recipes/scalapack_tools/source
+extensions: [.f]
+
+extra_symbol_dirs:
+  - extern/scalapack-2.2.3/TOOLS
+
+extra_migrate_files:
+  - extern/scalapack-2.2.3/TOOLS/iceil.f
+  - extern/scalapack-2.2.3/TOOLS/ilcm.f
+  - extern/scalapack-2.2.3/TOOLS/numroc.f
+
+skip_files: []
+
+# Task 44: privatize the MKL-colliding, family-independent support
+# symbols (blacs_*/Cblacs_*/BI_*, PB_C*, TOOLS/REDIST helpers, sltimer,
+# pxerbla, ...) by renaming them name -> ep_name in the migrated output.
+# eplinalg's Netlib-derived engine and MKL export identical names with
+# incompatible internal ABIs (BLACBUFF 48 vs 56 bytes); one process-wide
+# definition per name collapses the two engines and SIGSEGVs at np>=2 in
+# either link order. The manifest is shared across the whole extended
+# stack (uniform prefix keeps the commons byte-identical across
+# mw/qx/ey) and the nm audit gate reads the same file.
+privatize_symbols: privatize_ep_symbols.txt

@@ -2,16 +2,16 @@
 
 A **recipe** is a YAML file that describes the structure of a numerical library and provides the parameters for its migration. The `migrator` uses these recipes to identify source files, discover symbols, and apply the correct transformations.
 
-## Example: `recipes/blas.yaml`
+## Example: `codegen/recipes/blas.yaml`
 
 ```yaml
 library: blas
 language: fortran
-source_dir: external/lapack-3.12.1/BLAS/SRC
+source_dir: extern/lapack-3.12.1/BLAS/SRC
 extensions: [.f]
 ```
 
-Symbols are discovered by scanning `source_dir` for `SUBROUTINE`/`FUNCTION` definitions; the target prefix scheme comes from the target definition (`targets/*.yaml`), not the recipe.
+Symbols are discovered by scanning `source_dir` for `SUBROUTINE`/`FUNCTION` definitions; the target prefix scheme comes from the target definition (`codegen/targets/*.yaml`), not the recipe.
 
 ## Recipe Fields
 
@@ -53,7 +53,7 @@ depends:
 Extra directories to scan for symbols (resolved relative to project root). Used when symbols needed for renaming are defined outside the main `source_dir`:
 ```yaml
 extra_symbol_dirs:
-  - external/lapack-3.12.1/INSTALL
+  - extern/lapack-3.12.1/INSTALL
 ```
 
 ### Precision Family Control
@@ -115,12 +115,12 @@ overrides:
 ```
 
 #### `patches` (list of strings, optional)
-Unified-diff patch files (resolved relative to `recipes/<lib>/patches/`)
+Unified-diff patch files (resolved relative to `codegen/recipes/<lib>/patches/`)
 applied to the staged source tree before migration. The patched body
 goes through the normal migration pipeline — so a single upstream-shape
 patch produces correctly-renamed/promoted output for every target.
 Used to carry bug fixes for upstream sources without editing
-`external/`.
+`extern/`.
 
 ```yaml
 patches:

@@ -1,0 +1,8 @@
+# For first-party C/C++ under src/. Vendored code under extern/ and
+# generated/staged trees are out of scope.
+Checks: >
+  bugprone-*,
+  clang-analyzer-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions
+WarningsAsErrors: ''

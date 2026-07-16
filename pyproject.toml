@@ -1,8 +1,9 @@
 [project]
 name = "eplinalg"
-version = "0.4.2"
+dynamic = ["version"]
 description = "Automated type-migration tool for Fortran/C numerical libraries"
 requires-python = ">=3.11"
+license = "MIT"
 dependencies = [
     "pyyaml>=6.0.3",
     "tqdm>=4.67.3",
@@ -18,8 +19,16 @@ migrator = "migrator.__main__:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+# Single source of truth: the repo-root VERSION file.
+path = "VERSION"
+pattern = "^(?P<version>\\S+)"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/migrator"]
+packages = ["codegen/migrator"]
+
+[tool.pytest.ini_options]
+testpaths = ["test/unit"]
 
 [dependency-groups]
 dev = [

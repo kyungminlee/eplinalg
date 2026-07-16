@@ -24,7 +24,7 @@ Usage:
     python mumps_sweep_keep_kind_calls.py [--append] [--verbose]
 
 By default, prints additions to stdout. With ``--append``, merges them
-into ``recipes/mumps/keep-kind.manifest`` (de-duplicating against the
+into ``codegen/recipes/mumps/keep-kind.manifest`` (de-duplicating against the
 existing entries).
 """
 
@@ -36,7 +36,7 @@ REPO = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO / 'external' / 'MUMPS_5.9.0' / 'src'
 MANIFEST = REPO / 'recipes' / 'mumps' / 'keep-kind.manifest'
 
-# copy_files stems (must match recipes/mumps.yaml). Anything listed
+# copy_files stems (must match codegen/recipes/mumps.yaml). Anything listed
 # here contributes its SUBROUTINE / FUNCTION names to the "DP-stable"
 # set; callers of those names get their lines marked keep-kind.
 def _load_copy_files() -> set[str]:
@@ -163,7 +163,7 @@ def main() -> int:
 
     sites = find_call_sites(shared)
     entries = sorted(
-        f'external/MUMPS_5.9.0/src/{name}:{ln}'
+        f'extern/MUMPS_5.9.0/src/{name}:{ln}'
         for (name, ln) in sites
     )
 

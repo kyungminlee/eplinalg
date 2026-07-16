@@ -24,7 +24,7 @@ function(eplinalg_privatize_gate target)
         message(FATAL_ERROR
             "eplinalg_privatize_gate(${target}): manifest not found at "
             "${_manifest}. The staging step copies "
-            "recipes/privatize_ep_symbols.txt next to the staged "
+            "codegen/recipes/privatize_ep_symbols.txt next to the staged "
             "CMakeLists.txt; re-run `migrator stage`.")
     endif()
     set(_nm "${CMAKE_NM}")

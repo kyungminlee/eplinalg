@@ -3,9 +3,9 @@
 *Last catalogued: 2026-05-11*
 
 This document catalogues bugs found in the vendored upstream sources
-(`external/lapack-3.12.1/`, `external/scalapack-2.2.3/`,
-`external/MUMPS_5.8.2/`) that the migrator works around without
-editing `external/`. Each entry records the symptom, root cause, and
+(`extern/lapack-3.12.1/`, `extern/scalapack-2.2.3/`,
+`extern/MUMPS_5.8.2/`) that the migrator works around without
+editing `extern/`. Each entry records the symptom, root cause, and
 the in-tree workaround.
 
 Per-library catalogues:
@@ -153,13 +153,13 @@ Bugs surfaced via five distinct audit passes:
 
 ## How fixes are carried
 
-Recipes carry a ``patches:`` list (see ``recipes/README.md``) that
+Recipes carry a ``patches:`` list (see ``codegen/recipes/README.md``) that
 applies declarative diffs to a staged copy of the upstream sources
 before migration. Patches are written in upstream shape
 (``DOUBLE PRECISION`` types, ``pd*``/``pz*`` symbol names,
 ``dgemm`` call sites, …) so a single patch produces correctly
 renamed/promoted output for every target. The standard-precision
-archive built from the unmodified ``external/`` tree is unaffected
+archive built from the unmodified ``extern/`` tree is unaffected
 — only the migrated extended-precision archive carries the fix.
 
 When the convergence picker would otherwise pick the un-fixed C/S
@@ -192,8 +192,8 @@ sub-routines on inner-call errors; `?la_heamv` reporting the related
 | `dpttrsv.f` (ScaLAPACK) | 100 | `'DPTTRS'` — routine name is `DPTTRSV`, doesn't call DPTTRS internally | `'DPTTRSV'` |
 | `zpttrsv.f` (ScaLAPACK) | 115 | `'ZPTTRS'` | `'ZPTTRSV'` |
 
-Carried in `recipes/lapack/patches/{dorbdb,zunbdb}.f` and
-`recipes/scalapack/patches/{bdtrexc,dpttrsv,zpttrsv}.f`,
+Carried in `codegen/recipes/lapack/patches/{dorbdb,zunbdb}.f` and
+`codegen/recipes/scalapack/patches/{bdtrexc,dpttrsv,zpttrsv}.f`,
 wired in the matching recipe files.
 
 **Documented but not patched (S/C-half non-canonical, never reaches
@@ -221,7 +221,7 @@ read the diagnostic output.
 
 **Already documented separately:** `zla_syrfsx_extended.f:496` reports
 `'ZLA_HERFSX_EXTENDED'` (Hermitian) inside the symmetric routine —
-caught earlier and patched in `recipes/lapack/patches/`.
+caught earlier and patched in `codegen/recipes/lapack/patches/`.
 
 **Re-sweep with PXERBLA-aware regex (2026-05-09):** The earlier sweep
 matched `XERBLA('NAME', ...)` form only, missing ScaLAPACK's

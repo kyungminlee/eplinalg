@@ -10,12 +10,12 @@ end of an array and segfaults.
 These are **not** migration defects and **not** upstream bugs — they are
 documented (if easily-missed) requirements of the MUMPS API that the migrated
 `?mumps` archives honour exactly as Netlib does. They are recorded here because
-the `tests/mumps` harness tripped over each one when it moved from `mpiexec -n 1`
-to a genuine multi-rank default (see `tests/mumps/TODO.md`, and the drivers
+the `test/integration/mumps` harness tripped over each one when it moved from `mpiexec -n 1`
+to a genuine multi-rank default (see `test/integration/mumps/TODO.md`, and the drivers
 `fortran/test_?mumps_icntl_io.f90`).
 
 The reference line numbers below are into the vendored source
-`external/MUMPS_5.8.2/src/?sol_driver.F` (the `?` is `d`/`z`/… per arithmetic).
+`extern/MUMPS_5.8.2/src/?sol_driver.F` (the `?` is `d`/`z`/… per arithmetic).
 
 ---
 

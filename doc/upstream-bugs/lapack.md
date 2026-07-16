@@ -4,7 +4,7 @@
 index, audit methodology, bug summary table, and how fixes are carried.*
 
 This file collects LAPACK 3.12.1 bugs in the vendored
-`external/lapack-3.12.1/` source. ScaLAPACK and MUMPS bugs are
+`extern/lapack-3.12.1/` source. ScaLAPACK and MUMPS bugs are
 catalogued in [`scalapack.md`](scalapack.md) and
 [`mumps.md`](mumps.md) respectively. Bugs that span both LAPACK and
 ScaLAPACK (e.g. the XERBLA-string sweep) live in the index file.
@@ -14,7 +14,7 @@ ScaLAPACK (e.g. the XERBLA-string sweep) live in the index file.
 After the symmetric-fix sweep below cleared the asymmetric-patch
 backlog, an audit of the remaining 122 raw S↔D / C↔Z divergences
 surfaced 13 more upstream LAPACK bugs (and one ScaLAPACK / one
-migrator-side fix). All patches live under `recipes/lapack/patches/`
+migrator-side fix). All patches live under `codegen/recipes/lapack/patches/`
 unless noted otherwise.
 
 Numerical or correctness-affecting bugs:
@@ -65,7 +65,7 @@ re-numbering) moved into the diverge comparator.
 
 ### Migrator-side fix landed alongside
 
-`_strip_roundup_lwork` (`src/migrator/fortran_migrator.py:3300`)
+`_strip_roundup_lwork` (`codegen/migrator/fortran_migrator.py:3300`)
 extended to recognise the F90 attribute-list form
 ``REAL, EXTERNAL :: SROUNDUP_LWORK``. The existing F77 form
 ``REAL ... + EXTERNAL ...`` on separate lines was already handled;
@@ -181,12 +181,12 @@ Three independent bugs in its workspace-query path, all absent from
    ```
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/cgedmdq.f90` line 638 (LQUERY); lines
+- `extern/lapack-3.12.1/SRC/cgedmdq.f90` line 638 (LQUERY); lines
   700-701 (void-input quick-return missing ZWORK init); line 725
   (inner CGEDMD query call).
 
 **Fix.** Patch all three from the Z-half reference. See
-`recipes/lapack/patches/cgedmdq.f90.patch`.
+`codegen/recipes/lapack/patches/cgedmdq.f90.patch`.
 
 **Severity.** Workspace-query API contract violation. Callers
 following the LAPACK convention (either `LZWORK=-1` for a complex-
@@ -232,12 +232,12 @@ that escaped review. Without DMD-domain expertise we cannot tell
 which half is correct in either case.
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/cgedmd.f90:703, 916` (JOBR `'N'`).
-- `external/lapack-3.12.1/SRC/zgedmd.f90:704, 916` (JOBR `'R'`).
-- `external/lapack-3.12.1/SRC/cgedmd.f90:751` (OFL conservative).
-- `external/lapack-3.12.1/SRC/zgedmd.f90:751` (OFL raw).
-- `external/lapack-3.12.1/SRC/sgedmd.f90:772` (OFL raw, JOBR `'N'`).
-- `external/lapack-3.12.1/SRC/dgedmd.f90:772` (OFL raw, JOBR `'N'`).
+- `extern/lapack-3.12.1/SRC/cgedmd.f90:703, 916` (JOBR `'N'`).
+- `extern/lapack-3.12.1/SRC/zgedmd.f90:704, 916` (JOBR `'R'`).
+- `extern/lapack-3.12.1/SRC/cgedmd.f90:751` (OFL conservative).
+- `extern/lapack-3.12.1/SRC/zgedmd.f90:751` (OFL raw).
+- `extern/lapack-3.12.1/SRC/sgedmd.f90:772` (OFL raw, JOBR `'N'`).
+- `extern/lapack-3.12.1/SRC/dgedmd.f90:772` (OFL raw, JOBR `'N'`).
 
 **Severity.** Numerical accuracy / robustness, not memory safety
 or API contract. JOBR `'R'` vs `'N'` changes which singular values
@@ -267,7 +267,7 @@ have the context to decide which form is canonical for each.
 
 **Symptom.** Migrated extended-precision `?orbdb3` runs cleanly (the
 override carries the fix), but the kind4 / kind8 baseline ctest cycle
-— which links the unmodified `external/lapack-3.12.1/SRC/` archive —
+— which links the unmodified `extern/lapack-3.12.1/SRC/` archive —
 trips one of two heap-corruption manifestations. `lapack_test_zunbdb3`
 SIGSEGVs in `arena_for_chunk → __libc_free` during the wrapper's
 auto-deallocate. `lapack_test_dorbdb3` doesn't crash but reports
@@ -312,16 +312,16 @@ only whether the heap corruption surfaces immediately or silently.
 
 **Affected files.**
 
-* `external/lapack-3.12.1/SRC/dorbdb3.f` (used by our migrated D-half).
-* `external/lapack-3.12.1/SRC/zorbdb3.f` (used by our migrated Z-half).
-* `external/lapack-3.12.1/SRC/sorbdb3.f` (S-half — same bug, exercised
+* `extern/lapack-3.12.1/SRC/dorbdb3.f` (used by our migrated D-half).
+* `extern/lapack-3.12.1/SRC/zorbdb3.f` (used by our migrated Z-half).
+* `extern/lapack-3.12.1/SRC/sorbdb3.f` (S-half — same bug, exercised
   only under the kind4 baseline column).
-* `external/lapack-3.12.1/SRC/corbdb3.f` (C-half — same status).
+* `extern/lapack-3.12.1/SRC/corbdb3.f` (C-half — same status).
 
 **Fix.** One-character change: `LDX11` → `LDX21` on the `?ROT` `INCY`
 argument inside the `I .GT. 1` branch. Carried in
-`recipes/lapack/patches/{d,s,z,c}orbdb3.f` and wired via
-`recipes/lapack.yaml`'s `patches:` list. Every migrated target
+`codegen/recipes/lapack/patches/{d,s,z,c}orbdb3.f` and wired via
+`codegen/recipes/lapack.yaml`'s `patches:` list. Every migrated target
 (kind10, kind16, multifloats) builds against the patched form. The
 `prefer_source` pin isn't needed here — LAPACK's canonical-rank picker
 prefers D over the other halves by default, and the override matches
@@ -329,13 +329,13 @@ that choice.
 
 **Standard-precision archive still buggy.** The kind4 / kind8 baseline
 path (`migrator stage --target kind{4,8}`) skips migration and stages
-upstream `external/lapack-3.12.1/SRC/` verbatim into `_reflapack_src/`,
+upstream `extern/lapack-3.12.1/SRC/` verbatim into `_reflapack_src/`,
 so the std `lapack` archive that the baseline links against still has
 the typo. Two of the residual failures in
 `doc/archive/kind48-baseline-status-20260506.md` (`zunbdb3`, `dorbdb3`)
 trace to this
-gap and are parked under `tests/lapack/TODO.md` until the staging path
-overlays `recipes/lapack/patches/` on top of the upstream
+gap and are parked under `test/integration/lapack/TODO.md` until the staging path
+overlays `codegen/recipes/lapack/patches/` on top of the upstream
 copy. Confirmed both clear when the override is overlaid.
 
 **Why upstream's tests miss it.** Reference LAPACK's `?orbdb3` test
@@ -380,12 +380,12 @@ The same routine on the float side passes `LWORK-N`; the bug is in
 the D copy only.
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/dgejsv.f` (line 1175, 14th arg of the
+- `extern/lapack-3.12.1/SRC/dgejsv.f` (line 1175, 14th arg of the
   inner DGESVJ call).
 
 **Fix.** Single-token change `LWORK → LWORK-N` on the 14th argument.
-Carried in `recipes/lapack/patches/dgejsv.f`. Wired via
-`recipes/lapack.yaml`'s `patches:` list. (No `prefer_source`
+Carried in `codegen/recipes/lapack/patches/dgejsv.f`. Wired via
+`codegen/recipes/lapack.yaml`'s `patches:` list. (No `prefer_source`
 pin needed: D-half is canonical for the migrated archive by default,
 and the S-half value is already correct, so converge folds.)
 
@@ -434,16 +434,16 @@ unconditionally before the test block runs. (Note: `ZTRSYL3` /
 applies, and `LDSWORK` is at parameter position 14, not 16.)
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/dtrsyl3.f` (after line 287, before
+- `extern/lapack-3.12.1/SRC/dtrsyl3.f` (after line 287, before
   `END IF` at line 288).
-- `external/lapack-3.12.1/SRC/ztrsyl3.f` (after line 254, before
+- `extern/lapack-3.12.1/SRC/ztrsyl3.f` (after line 254, before
   `END IF` at line 256).
-- `external/lapack-3.12.1/SRC/ctrsyl3.f` (analogous; no override
+- `extern/lapack-3.12.1/SRC/ctrsyl3.f` (analogous; no override
   carried — C half is not canonical for the migrated archive).
 
 **Fix.** Insert the two `ELSE IF` branches into D's validation block;
 insert just the `LDSWORK` branch (at parameter position 14) into Z's.
-Carried in `recipes/lapack/patches/dtrsyl3.f` and
+Carried in `codegen/recipes/lapack/patches/dtrsyl3.f` and
 `ztrsyl3.f`.
 
 **Why upstream's tests miss it.** Reference LAPACK's `dchktz` /
@@ -476,8 +476,8 @@ at the top of this file) and the ScaLAPACK `pzunmbr.f`
 | `zlahef_aa.f:175` | declares stale `ZGEMM` — body never calls ZGEMM (only ZGEMV). clahef_aa correctly omits CGEMM. | drop `ZGEMM` |
 | `zgbrfsx.f:499` | missing `ILATRANS`. Body calls ILATRANS at lines 511 and 561 (`TRANS_TYPE = ILATRANS(TRANS)` and the `IF(TRANS_TYPE.EQ.-1)` test). The other three rfsx siblings (`sgbrfsx`, `dgbrfsx`, `cgbrfsx`) all declare ILATRANS in their EXTERNAL list. | add `ILATRANS` |
 
-**Carried in:** `recipes/lapack/patches/{dlaqp2,zlarf1f,zhetrf_aa,zlahef_aa,zgbrfsx}.f`,
-wired in `recipes/lapack.yaml`.
+**Carried in:** `codegen/recipes/lapack/patches/{dlaqp2,zlarf1f,zhetrf_aa,zlahef_aa,zgbrfsx}.f`,
+wired in `codegen/recipes/lapack.yaml`.
 
 **Other instances surfaced by the same audit, NOT patched** because
 the migrator picks D/Z as canonical and the sibling S/C bug never
@@ -572,7 +572,7 @@ different routine, ZDRSCL, which zrscl.f *calls* internally (line
 139). The actual routine in zrscl.f is ZRSCL. Auto-generated HTML
 docs at netlib.org would label ZRSCL's docs page as "ZDRSCL" or fail
 to find ZRSCL entirely. Fixed in
-`recipes/lapack/patches/zrscl.f`.
+`codegen/recipes/lapack/patches/zrscl.f`.
 
 **Upstream report.** Not yet filed.
 
@@ -597,8 +597,8 @@ files:
 | `dorgr2.f` | EXTERNAL declares `DLARF` (dead). Body calls `DLARF1L`. Fix: replace `DLARF` with `DLARF1L`. |
 | `zrscl.f` | EXTERNAL omits `ZSCAL`. Body calls `ZSCAL` 4×. Fix: add `ZSCAL`. |
 
-Carried as source overrides in `recipes/lapack/patches/`,
-wired in `recipes/lapack.yaml`.
+Carried as source overrides in `codegen/recipes/lapack/patches/`,
+wired in `codegen/recipes/lapack.yaml`.
 
 **Sibling halves with similar drift, NOT patched** (S/C non-canonical;
 documenting for upstream report only):
@@ -614,7 +614,7 @@ documenting for upstream report only):
 - `clarf1f.f` missing `CAXPY`, `CGERC` (already documented separately)
 - `dopmtr.f` declares dead `DLARF`, calls `DLARF1L`
 
-Plus four entries in `external/lapack-3.12.1/SRC/VARIANTS/lu/REC/` —
+Plus four entries in `extern/lapack-3.12.1/SRC/VARIANTS/lu/REC/` —
 `{c,d,s,z}getrf.f` all missing `?GEMM`. The VARIANTS subdirectory is
 not in the migrator's `source_dir` scan path, so these are out of
 scope for the migrated archive but worth filing upstream.
@@ -653,11 +653,11 @@ The single-precision validation is right; the double-precision
 validation lost the `=` somewhere during a sync.
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/dlaswlq.f` (line 220).
+- `extern/lapack-3.12.1/SRC/dlaswlq.f` (line 220).
 
 **Fix.** `NB.LT.0 → NB.LE.0`. Carried in
-`recipes/lapack/patches/dlaswlq.f`, wired in
-`recipes/lapack.yaml`.
+`codegen/recipes/lapack/patches/dlaswlq.f`, wired in
+`codegen/recipes/lapack.yaml`.
 
 **Why upstream's tests miss it.** Reference test drivers always pass
 NB > 0; the NB=0 path is only reachable via a malformed user call.
@@ -712,7 +712,7 @@ the way `cggev3` does), matching the real call. Only `sggev3.f` uses
 `ILVL` where it should use `ILV`.
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/sggev3.f` (workspace-query block ~line
+- `extern/lapack-3.12.1/SRC/sggev3.f` (workspace-query block ~line
   339).
 
 **Fix.** Restructure the query block to mirror `dggev3.f`:
@@ -785,7 +785,7 @@ matter, but the slarf1l form looks the wrong way around once the
 outer `LASTV.GT.0` guard is absent.
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/slarf1l.f` (lines 193, 197, 223, 227).
+- `extern/lapack-3.12.1/SRC/slarf1l.f` (lines 193, 197, 223, 227).
 
 **Fix.** Add `IF(LASTV.GT.0) THEN ... END IF` wrappers around both
 inner blocks; change `C(LASTV, 1)` and `C(1, LASTV)` to
@@ -833,7 +833,7 @@ causing the inner SSTEMR loop to stall or report convergence on a
 shifted-but-overlapping interval.
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/slarrf.f` (lines 277-278).
+- `extern/lapack-3.12.1/SRC/slarrf.f` (lines 277-278).
 
 **Fix.** Change `TWO * EPS` to `FOUR * EPS` on both lines. **NOT
 patched** — S-half non-canonical.
@@ -870,7 +870,7 @@ a leftover from an upstream debugging session; the comment placement
 suggests it was meant to be temporary.
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/slasq2.f` (lines 274-279).
+- `extern/lapack-3.12.1/SRC/slasq2.f` (lines 274-279).
 
 **Fix.** Uncomment the ILAENV call and remove the `IEEE = .FALSE.`
 override. **NOT patched** — S-half non-canonical and the migrator
@@ -915,7 +915,7 @@ LAPACK substitutes a different SGELQF whose workspace overhead is
 higher.
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/sgelss.f` (line 324).
+- `extern/lapack-3.12.1/SRC/sgelss.f` (line 324).
 
 **Fix.** Replace the `M*ILAENV(...)` formula with a proper SGELQF
 query, mirroring `dgelss.f:308-310, 328`. **NOT patched** — S-half
@@ -957,7 +957,7 @@ biased SVD result.
 the D and S copies: D got the `'L' → 'G'` fix, S didn't.
 
 **Affected files.**
-- `external/lapack-3.12.1/SRC/sgejsv.f` (line 1711, 1st arg of
+- `extern/lapack-3.12.1/SRC/sgejsv.f` (line 1711, 1st arg of
   SGESVJ).
 
 **Fix.** Single-token `'L' → 'G'`. **NOT patched** as a source

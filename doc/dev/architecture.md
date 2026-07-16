@@ -12,7 +12,7 @@ build.
 ## High-level pipeline
 
 ```
-recipes/<lib>.yaml           targets/<target>.yaml
+codegen/recipes/<lib>.yaml           codegen/targets/<target>.yaml
         │                            │
         └────────────┬───────────────┘
                      ▼
@@ -85,7 +85,7 @@ the well-conditioned upstream sources we use).
 
 ## Core components
 
-### Engine — `src/migrator/`
+### Engine — `codegen/migrator/`
 
 Acyclic, unidirectional dependency graph: lower-level modules
 (`intrinsics`, `target_mode`, `symbol_scanner`) have no upward
@@ -106,7 +106,7 @@ dependencies; higher-level modules (`pipeline`, `staging`,
 | `libseq_patch.py` | MUMPS libseq `mpi.f` staging patch (extended-datatype cases in `MUMPS_COPY`). |
 | `cmake_gen.py` | CMake project generation for the single-library `build` path (pure string templating). |
 | `cli_common.py` | Shared CLI helpers (target-mode construction, parser selection) used by both `__main__` and `staging`. |
-| `prefix_classifier.py` | The empirical S/D/C/Z family-discovery engine. `_find_families_single_pass` (lines 215-280) iterates **every** position in each upstream symbol where a precision letter could sit, then groups symbols by tagged-pattern equivalence. **Position-agnostic by construction**: as long as both the S-version and D-version of a name (or C and Z) exist in the symbol universe, the family is discovered regardless of where the precision letter sits. This is why `BLAS_SGBMV_X` ↔ `BLAS_DGBMV_X` (precision letter at position 5) renames cleanly without special handling — see `recipes/lapack.yaml`'s declared `xblas` dep. |
+| `prefix_classifier.py` | The empirical S/D/C/Z family-discovery engine. `_find_families_single_pass` (lines 215-280) iterates **every** position in each upstream symbol where a precision letter could sit, then groups symbols by tagged-pattern equivalence. **Position-agnostic by construction**: as long as both the S-version and D-version of a name (or C and Z) exist in the symbol universe, the family is discovered regardless of where the precision letter sits. This is why `BLAS_SGBMV_X` ↔ `BLAS_DGBMV_X` (precision letter at position 5) renames cleanly without special handling — see `codegen/recipes/lapack.yaml`'s declared `xblas` dep. |
 | `intrinsics.py` | Pure-data lookup table: `INTRINSIC_MAP` (~250 entries) maps type-specific intrinsic names (`DABS`, `DCONJG`, `DSQRT`, …) to their generic equivalents and flags whether a `KIND=…` argument is needed at the call site. Updated whenever a new generic appears in modern Fortran. |
 | `flang_parser.py` | Subprocess wrapper around `flang-new -fc1`'s JSON parse-tree dump. Extracts symbols, types, and call-site positions. |
 | `gfortran_parser.py` | Subprocess wrapper around `gfortran -fdump-fortran-original`'s text tree-dump. Used when LLVM Flang isn't available or when its parse fails. |
@@ -115,7 +115,7 @@ dependencies; higher-level modules (`pipeline`, `staging`,
 | `target_mode.py` | YAML target loader. `TargetMode` dataclass: prefix map, intrinsic mode (`add_kind` for kind10/kind16, `wrap_constructor` for multifloats), known constants, la_constants_map, module_type_names, MPI datatype names. |
 | `__init__.py` | Package marker. |
 
-### Recipes — `recipes/<lib>.yaml`
+### Recipes — `codegen/recipes/<lib>.yaml`
 
 Eleven libraries. Each recipe declares the source layout, file
 extensions, dependency chain, skip lists, patches, and
@@ -126,7 +126,7 @@ target-mode-specific knobs.
 | `blas.yaml` | (none) | BLAS Levels 1-3 from Netlib LAPACK 3.12.1's `BLAS/SRC/`. Two patches on `dnrm2`/`dznrm2` (multifloats safe-summation). |
 | `xblas.yaml` | blas | Extra-Precise BLAS from Netlib XBLAS 1.0.248. Auto-generated 402-entry `skip_files` list excludes mixed-precision variants unreachable from LAPACK. Header patches inject quad/multifloats typedefs into `blas_enum.h` (the umbrella header `blas_extended.h` and every `*-f2c.c` bridge transitively include it). |
 | `lapack.yaml` | blas, **xblas** | LAPACK 3.12.1 `SRC/`. Three `extra_renames` (ILAENV/ILAENV2STAGE/IPARAM2STAGE → `_EP` variants) route around the upstream gate-bug that returns uninitialized for migrated names. The xblas dep (added in commit `9938731`) brings `BLAS_{S,D,C,Z}*_X` symbols into the classifier's universe so position-5 precision-letter renames Just Work. |
-| `blacs.yaml` | (none) | BLACS C library from ScaLAPACK 2.2.3. Multifloats-specific overrides (compiled as C++ for operator overloading) live in `recipes/blacs/mfc_overrides/`. |
+| `blacs.yaml` | (none) | BLACS C library from ScaLAPACK 2.2.3. Multifloats-specific overrides (compiled as C++ for operator overloading) live in `codegen/recipes/blacs/mfc_overrides/`. |
 | `pblas.yaml` | blas, blacs | Parallel BLAS C library. Includes PBLAS PTOOLS sources via `extra_c_dirs`. |
 | `pbblas.yaml` | blas, blacs | Parallel-banded BLAS Fortran helpers. |
 | `ptzblas.yaml` | blas | Parallel transpose-on-demand BLAS Fortran helpers. Pulls `ZZDOTC`/`ZZDOTU` from `_scalapack_tools_src/` via `extra_symbol_dirs`. |
@@ -134,7 +134,7 @@ target-mode-specific knobs.
 | `scalapack_c.yaml` | lapack, blacs, pblas, scalapack | ScaLAPACK C-side wrappers. Mirrors `scalapack`'s `PDLAIECTB`/`PDLAIECTL` renames. |
 | `mumps.yaml` | blas, lapack, scalapack | MUMPS 5.9.0 sparse direct solver. 32-entry `skip_files` (C headers, GPU code), 8-entry `copy_files` (integer-only helpers), per-line `keep_kind_lines` manifest preserving `DOUBLE PRECISION` declarations that mean "wall-clock seconds" rather than "working precision". |
 
-### Targets — `targets/<target>.yaml`
+### Targets — `codegen/targets/<target>.yaml`
 
 Three precision modes. Each carries the type names, literal-form
 constructor, intrinsic-rewrite mode, prefix map, and C/MPI interop
@@ -162,7 +162,7 @@ or C↔Z produces a name that also exists in the universe, and
 reports both as a precision family. The rename map then maps the
 matched letter to the target's prefix at that exact position.
 
-This is why `recipes/lapack.yaml`'s `depends:` includes both
+This is why `codegen/recipes/lapack.yaml`'s `depends:` includes both
 `blas` and `xblas`: the LAPACK iterative-refinement routines
 (`*la_*rfsx_extended.f`) call XBLAS's extra-precise routines, and
 without xblas in the symbol universe the classifier would not
@@ -173,11 +173,11 @@ build: gfortran's `-freal-8-real-16` flag promotes `REAL(KIND=8)` and
 `DOUBLE PRECISION` to quad, but not the second argument of
 `CMPLX(real, imag, KIND=8)` — that intrinsic still truncates its
 output to `REAL(KIND=8)` even when the surrounding storage is 16
-bytes. Bugs of this shape live in `tests/lapack/reflapack/overrides/`
+bytes. Bugs of this shape live in `test/integration/lapack/reflapack/overrides/`
 and replace the upstream Netlib source in the **reference** library
 only (the migrated target, with explicit `KIND=16` everywhere, is
 unaffected). One override file — `zgedmd.f90` — currently exists;
-the mechanism is documented in `tests/lapack/reflapack/CMakeLists.txt`.
+the mechanism is documented in `test/integration/lapack/reflapack/CMakeLists.txt`.
 
 ## C migration
 
@@ -243,7 +243,7 @@ sections:
 
 ## Test infrastructure
 
-`tests/<lib>/` holds differential-precision suites. Each test
+`test/integration/<lib>/` holds differential-precision suites. Each test
 constructs the same input matrix at quad precision, runs both the
 **reference** (Netlib upstream compiled with `-freal-8-real-16`,
 producing `libreflapack_quad.a`) and the **migrated target** library
@@ -251,7 +251,7 @@ on it, and compares outputs. The reference and target should agree
 to within ~33-34 decimal digits for kind16, ~19 digits for kind10,
 ~30 digits for multifloats.
 
-Test wrappers (`tests/<lib>/common/target_*.fypp`) bridge between
+Test wrappers (`test/integration/<lib>/common/target_*.fypp`) bridge between
 the standard reference signature and the target-specific symbol
 names. The wrappers are emitted once per target and used by every
 test driver.
@@ -263,12 +263,12 @@ in `doc/upstream-bugs/{lapack,scalapack,mumps}.md`. Two mechanisms
 route around them:
 
 - `patches` (recipe field): a unified-diff `<basename>.patch` file
-  under `recipes/<lib>/patches/` is applied to the staged upstream
+  under `codegen/recipes/<lib>/patches/` is applied to the staged upstream
   source before migration. The patched body still goes through the
   normal pipeline so it emits the per-target migrated name. Used
   for ScaLAPACK `pdlanhs.f` / `pzlanhs.f` (NPROW=1 norm bug),
   LAPACK `cheevx.f` (LWKOPT min guard), and dozens of others.
-- `tests/lapack/reflapack/overrides/<file>.f90`: replace the
+- `test/integration/lapack/reflapack/overrides/<file>.f90`: replace the
   upstream source in the **reference** build only. Used for
   `zgedmd.f90` (gfortran `-freal-8-real-16` `CMPLX(…,KIND=8)`
   truncation).
@@ -294,16 +294,25 @@ Full validation coverage (including the off-CI MUMPS sweep):
 
 ```
 eplinalg/
-├── src/migrator/        # The migration engine
-├── recipes/             # 11 library recipes
-├── targets/             # 3 precision targets
-├── tests/               # 10 differential-precision suites (1051 tests)
-├── external/            # Vendored upstream: LAPACK 3.12.1, ScaLAPACK 2.2.3,
+├── VERSION              # Single source of truth for the version
+├── CMakeLists.txt       # Thin root project: version + Sphinx `doc` target
+├── CMakePresets.json    # Build presets (copied into every staged tree)
+├── codegen/             # Dev-only code generation (not released)
+│   ├── migrator/            # The migration engine (Python package)
+│   ├── recipes/             # 11 library recipes
+│   └── targets/             # 3 precision targets
+├── src/                 # Hand-written runtime pieces: quad-mpi, multifloats-mpi
+│                        # (custom MPI types/ops), mpiseq C stubs
+│                        # (staged into the build tree as runtime/)
+├── test/
+│   ├── unit/                # pytest suite for the migration engine
+│   └── integration/         # 10 differential-precision suites (1051 tests)
+│                            # (staged into the build tree as tests/)
+├── extern/              # Vendored upstream: LAPACK 3.12.1, ScaLAPACK 2.2.3,
 │                        # MUMPS 5.9.0 (5.8.2 kept for reference), XBLAS 1.0.248,
 │                        # METIS 5.1.0, Scotch 7.0.4, impi-headers
-├── runtime/             # Hand-written runtime pieces: quad-mpi, multifloats-mpi
-│                        # (custom MPI types/ops), mpiseq C stubs
-├── cmake/               # Shared CMake infrastructure
+├── example/             # Consumer examples (mmsolve)
+├── cmake/               # Shared CMake infrastructure (staged tree's build system)
 ├── doc/                 # Documentation
 │   ├── README.md            # Documentation index
 │   ├── user/                # Consumer guide (+ api/ reference)
@@ -334,7 +343,7 @@ eplinalg/
   rarely need to declare per-routine prefixes — the classifier
   finds them.
 - **Reference-side patches are a last resort.** The
-  `tests/lapack/reflapack/overrides/` mechanism exists for the
+  `test/integration/lapack/reflapack/overrides/` mechanism exists for the
   narrow class of bugs that surface only under
   `-freal-8-real-16` promotion of upstream code. The migrator's
   output is correct; the reference build is the one that needs

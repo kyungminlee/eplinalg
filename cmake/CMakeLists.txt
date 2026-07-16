@@ -26,7 +26,15 @@ else()
     set(BASELINE_BUILD FALSE)
 endif()
 
-project(${TARGET_NAME}_libraries Fortran C CXX)
+# Release version: staging copies the repo-root VERSION file (single
+# source of truth) into the staged tree; fall back for hand-rolled trees.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" EPLINALG_VERSION LIMIT_COUNT 1)
+else()
+    set(EPLINALG_VERSION 0.0.0)
+endif()
+
+project(${TARGET_NAME}_libraries VERSION ${EPLINALG_VERSION} LANGUAGES Fortran C CXX)
 
 # ── Compiler-aware install infrastructure ────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -890,7 +898,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/EplinalgMumps.cmake)
 # quad-mpi bridges. Its CMakeLists (runtime/mpiseq/) holds the full
 # ABI-matching story; the first-party stub sources live next to it.
 # The upstream libseq sources are staged into ``_mpiseq_src/`` by
-# ``migrator stage`` (see ``_std_dirs`` in ``src/migrator/staging.py``);
+# ``migrator stage`` (see ``_std_dirs`` in ``codegen/migrator/staging.py``);
 # the build silently skips when that directory is absent (e.g., a bare
 # repo with no upstream MUMPS vendored). Intel-MPI-only — see the
 # MPISEQ_IS_INTEL_MPI gate above.

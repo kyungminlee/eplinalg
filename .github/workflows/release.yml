@@ -32,28 +32,26 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Extract external sources
+      - name: Extract vendored sources
         run: |
-          cd external
+          cd extern
           [ -d lapack-3.12.1 ] || tar xzf lapack-3.12.1.tar.gz
           [ -d scalapack-2.2.3 ] || tar xzf scalapack-2.2.3.tar.gz
 
       - name: Stage ${{ matrix.target }}
         run: |
-          cd src
           uv run python -m migrator stage \
             ${{ github.workspace }}/staging-${{ matrix.target }} \
             --target ${{ matrix.target }}
 
       - name: Convergence report
         run: |
-          cd src
           RECIPES=(blas blacs lapack ptzblas pbblas pblas scalapack scalapack_c)
           {
             echo "## Convergence report: \`${{ matrix.target }}\`"
             echo ""
             for lib in "${RECIPES[@]}"; do
-              RECIPE="../recipes/${lib}.yaml"
+              RECIPE="codegen/recipes/${lib}.yaml"
               OUTDIR="${{ github.workspace }}/staging-${{ matrix.target }}/${lib}/src"
               if [ ! -d "$OUTDIR" ]; then
                 continue

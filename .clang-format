@@ -1,0 +1,6 @@
+# For first-party C/C++ under src/ (runtime support libraries) and the
+# migrator's C shims. Vendored code under extern/ is never reformatted.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 80
+SortIncludes: false

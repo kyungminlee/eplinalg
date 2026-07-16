@@ -1,0 +1,214 @@
+library: scalapack_c
+language: c
+source_dir: extern/scalapack-2.2.3/SRC
+extensions: [.c, .h]
+
+depends:
+  - lapack.yaml
+  - blacs.yaml
+  - pblas.yaml
+  - scalapack.yaml
+
+extra_symbol_dirs:
+  - extern/scalapack-2.2.3/TOOLS
+  - extern/scalapack-2.2.3/SRC
+  - extern/scalapack-2.2.3/REDIST/SRC   # pdgemr2d_, pztrmr2d_, pigemraux_, etc.
+
+# REDIST/SRC houses the C implementations of the matrix-redistribution
+# entry points (pdgemr2d, pztrmr2d, pigemr2d, …). TOOLS/ ships two
+# precision-independent C helpers (SL_gridreshape.c, reshape.c) called
+# from pdsyev's grid setup. Both directories are pulled in as extra C
+# sources so the cloned pq*/px* and untouched sl_gridreshape_ entry
+# points all live in libscalapack_c.
+extra_c_dirs:
+  - extern/scalapack-2.2.3/REDIST/SRC
+  - extern/scalapack-2.2.3/TOOLS
+
+# These routines already exist in PBLAS/SRC (modern ANSI C) and were
+# migrated as part of the PBLAS pipeline. The SRC/ copies are older
+# K&R-style duplicates — skip them to avoid symbol conflicts at link time.
+skip_files:
+  - PZAXPY
+  - PZDOTC
+  - PZDOTU
+
+# ScaLAPACK SRC uses complex16 (from pblas.h) for double-complex; map
+# it to {COMPLEX_TYPE}. The REDIST helpers (dgescanD0, dgedispmat,
+# dgesetmemory, dgefreememory, dgescan_intervals, Cdgelacpy and the
+# matching z-prefix complex variants) live behind ``#define X dgeY``
+# macros inside the source, so the symbol scanner never adds them to
+# the rename map; spell out the per-family substitution here using
+# {RP} (real prefix: q/e/dd) and {CP} (complex prefix: x/y/zz).
+c_type_aliases:
+  - from: [complex16]
+    to: '{COMPLEX_TYPE}'
+  - from: [dgescanD0]
+    to: '{RP}gescanD0'
+  - from: [zgescanD0]
+    to: '{CP}gescanD0'
+  - from: [dgedispmat]
+    to: '{RP}gedispmat'
+  - from: [zgedispmat]
+    to: '{CP}gedispmat'
+  - from: [dgesetmemory]
+    to: '{RP}gesetmemory'
+  - from: [zgesetmemory]
+    to: '{CP}gesetmemory'
+  - from: [dgefreememory]
+    to: '{RP}gefreememory'
+  - from: [zgefreememory]
+    to: '{CP}gefreememory'
+  - from: [dgescan_intervals]
+    to: '{RP}gescan_intervals'
+  - from: [zgescan_intervals]
+    to: '{CP}gescan_intervals'
+  - from: [Cdgelacpy]
+    to: 'C{RP}gelacpy'
+  - from: [Czgelacpy]
+    to: 'C{CP}gelacpy'
+  # Trapezoidal (tr) REDIST family — same macro-hidden helpers as the ge
+  # family above, in pXtrmr2.c / pXtrmr.c. The real clone comes from the
+  # double template ``d`` (dtr*), matching the ge side.
+  - from: [dtrscanD0]
+    to: '{RP}trscanD0'
+  - from: [dtrdispmat]
+    to: '{RP}trdispmat'
+  - from: [dtrsetmemory]
+    to: '{RP}trsetmemory'
+  - from: [dtrfreememory]
+    to: '{RP}trfreememory'
+  - from: [dtrscan_intervals]
+    to: '{RP}trscan_intervals'
+  - from: [Cdtrlacpy]
+    to: 'C{RP}trlacpy'
+  # The complex REDIST clones (both ge and tr) come from the single-complex
+  # template ``c`` (cge*/ctr*), NOT the double-complex ``z`` — so the z-prefix
+  # aliases above never fire for REDIST; these c-prefix ones are the live path.
+  - from: [cgescanD0]
+    to: '{CP}gescanD0'
+  - from: [cgedispmat]
+    to: '{CP}gedispmat'
+  - from: [cgesetmemory]
+    to: '{CP}gesetmemory'
+  - from: [cgefreememory]
+    to: '{CP}gefreememory'
+  - from: [cgescan_intervals]
+    to: '{CP}gescan_intervals'
+  - from: [Ccgelacpy]
+    to: 'C{CP}gelacpy'
+  - from: [ctrscanD0]
+    to: '{CP}trscanD0'
+  - from: [ctrdispmat]
+    to: '{CP}trdispmat'
+  - from: [ctrsetmemory]
+    to: '{CP}trsetmemory'
+  - from: [ctrfreememory]
+    to: '{CP}trfreememory'
+  - from: [ctrscan_intervals]
+    to: '{CP}trscan_intervals'
+  - from: [Cctrlacpy]
+    to: 'C{CP}trlacpy'
+
+# Integer / grid-topology REDIST + TOOLS C files carry no floating-point
+# arithmetic — they redistribute integer matrices (pigemr2d/pitrmr2d), do grid
+# reshaping and buffer bookkeeping, so their symbols are byte-identical to
+# MKL's. Fold them (by file stem) into scalapack_common, the drop-when-MKL
+# archive, so the migrated libscalapack_c stops re-defining what MKL provides.
+# Matched by STEM, uppercased: pgemraux (pgcd/ppcm/localindice/…), reshape
+# (Creshape/reshape_/mr2d_malloc), SL_gridreshape (sl_gridreshape*), getpbbuf,
+# and the integer redist driver/worker pairs pigemr/pigemr2 + pitrmr/pitrmr2.
+force_common:
+  - pgemraux
+  - reshape
+  - SL_gridreshape
+  - getpbbuf
+  - pigemr
+  - pigemr2
+  - pitrmr
+  - pitrmr2
+
+# copy_all_originals removed: the upstream S/D/C/Z entry points
+# (pdgemr2d_, pztrmr2d_, pdlaiectb_, ...) and precision-independent
+# helpers live in the standard-precision archive ``scalapack_c``
+# built directly from extern/scalapack-2.2.3/SRC/*.c +
+# REDIST/SRC/*.c + TOOLS/*.c. The migrated archive
+# ``${LIB_PREFIX}scalapack_c`` ships only the Q/X/E/Y/M/W clones plus
+# the precision-independent dispatchers (PB-style helpers whose
+# pointer-cast strides are widened to match the extended type) and
+# PUBLIC-links the standard archive so consumers resolve both symbol
+# families through one link line. The pdlaiectb_/pdlaiectl_ symbol
+# clash that previously affected RANGE-selector eigensolvers
+# (PDSYEVX / PZHEEVX / PDSTEBZ) dissolves naturally — those symbols
+# now live only in the standard archive, the migrated archive's
+# clones come out as pqlaiectb_/pqlaiectl_ and there is no longer
+# a duplicate definition.
+
+header_patches:
+  - file: pblas.h
+    when: multifloats
+    after: 'typedef struct { double re, im; } complex16;'
+    insert: |
+      #include "multifloats_bridge.h"
+  # REDIST/SRC sources include only ``redist.h`` and ``<stddef.h>`` —
+  # neither carries the ``QREAL``/``EREAL``/``float64x2`` typedefs the
+  # migrated bodies reference. Including pblas.h would conflict with
+  # the local ``typedef struct { float r, i; } complex;`` (different
+  # field names from pblas.h's ``re, im``), so just inject the primitive
+  # real-precision typedef.
+  - file: redist.h
+    when: kind
+    before: '#ifdef T3D'
+    insert: |
+      typedef {C_REAL_TYPE} {REAL_TYPE};
+  - file: redist.h
+    when: multifloats
+    before: '#ifdef T3D'
+    insert: |
+      #include "multifloats_bridge.h"
+
+# Force-rename pdlaiectb_/pdlaiectl_ in migrated output. The single-
+# precision sibling pslaiect.c only exports pslaiect_ (no b/l variants
+# — the IEEE big/little-endian sign-bit hack is double-precision only),
+# so the prefix classifier cannot pair the b/l variants into a family
+# and they would otherwise stay un-renamed in the migrated clone. The
+# upstream pdlaiectb_/pdlaiectl_ live in the standard archive
+# ``scalapack_c``; this rename makes the migrated clone export
+# pqlaiectb_/pqlaiectl_ (etc. for the other targets) so the migrated
+# Fortran callers (pqstebz/pqsyevx) reach the extended-precision body
+# instead of the standard-precision one.
+extra_renames:
+  PDLAIECTB: P{RPU}LAIECTB
+  PDLAIECTL: P{RPU}LAIECTL
+
+overrides:
+  kind10:
+    src_dir: scalapack/efc_overrides
+    files:
+      - pelaiect.c
+  kind16:
+    src_dir: scalapack/qfc_overrides
+    files:
+      - pqlaiect.c
+  multifloats:
+    src_dir: scalapack/mfc_overrides
+    files:
+      - pmlaiect.c
+
+
+# Convergence whitelist (Phase D). The single divergence
+# (clamov vs zlamov → xlamov) traces to a migrator-internal C-pass
+# gap: re-migration of the C-half emits ``# define TYPE complex``
+# while the canonical has ``QCOMPLEX``. Migrator-side fix tracked
+# separately. See doc/archive/convergence-20260507.md §scalapack_c.
+defer_all_divergences: true
+
+# Task 44: privatize the MKL-colliding, family-independent support
+# symbols (blacs_*/Cblacs_*/BI_*, PB_C*, TOOLS/REDIST helpers, sltimer,
+# pxerbla, ...) by renaming them name -> ep_name in the migrated output.
+# eplinalg's Netlib-derived engine and MKL export identical names with
+# incompatible internal ABIs (BLACBUFF 48 vs 56 bytes); one process-wide
+# definition per name collapses the two engines and SIGSEGVs at np>=2 in
+# either link order. The manifest is shared across the whole extended
+# stack (uniform prefix keeps the commons byte-identical across
+# mw/qx/ey) and the nm audit gate reads the same file.
+privatize_symbols: privatize_ep_symbols.txt

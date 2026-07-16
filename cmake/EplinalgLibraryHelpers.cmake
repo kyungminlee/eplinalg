@@ -4,7 +4,7 @@
 # scope — variables and targets defined here behave exactly as if the
 # content were inline). Staged flat next to CMakeLists.txt by
 # ``migrator stage`` (see the cmake-glue copy lists in
-# ``src/migrator/staging.py``).
+# ``codegen/migrator/staging.py``).
 
 # Relax the Fortran line-length limits on <target>. The migrator can
 # lengthen tokens (e.g. MPI_DOUBLE_COMPLEX → MPI_C_LONG_DOUBLE_COMPLEX

@@ -4,7 +4,7 @@
 index, audit methodology, bug summary table, and how fixes are carried.*
 
 This file collects MUMPS 5.8.2 bugs in the vendored
-`external/MUMPS_5.8.2/` source. LAPACK and ScaLAPACK bugs are
+`extern/MUMPS_5.8.2/` source. LAPACK and ScaLAPACK bugs are
 catalogued in [`lapack.md`](lapack.md) and
 [`scalapack.md`](scalapack.md) respectively.
 
@@ -48,18 +48,18 @@ indexing it's supposed to protect.
 **Affected files.** Symptom is observed at the `?MUMPS` driver
 entry point; the actual crashing site varies per case (analysis
 driver, IRN/JCN reformatter, pattern-set work-array sizing). All
-under `external/MUMPS_5.8.2/src/`. Not narrowed to a specific
+under `extern/MUMPS_5.8.2/src/`. Not narrowed to a specific
 file because the workaround sidesteps the issue at the caller
 rather than patching MUMPS internals.
 
 **Workaround (in-tree, not an override).** Per
-`tests/mumps/TODO.md` D1, the differential-precision wrapper at
-`tests/mumps/common/target_mumps_body.fypp` exports
+`test/integration/mumps/TODO.md` D1, the differential-precision wrapper at
+`test/integration/mumps/common/target_mumps_body.fypp` exports
 `check_dmumps_input` / `check_zmumps_input` that mirror the
 documented validation contract before any `?MUMPS` call. They
 return integer codes (`MIC_BAD_N`, `MIC_BAD_NNZ`, `MIC_BAD_IRN`,
 `MIC_BAD_JCN`, `MIC_SIZE_MISMATCH`, `MIC_OK`). Tests at
-`tests/mumps/fortran/test_{d,z}mumps_errors.f90` exercise each
+`test/integration/mumps/fortran/test_{d,z}mumps_errors.f90` exercise each
 class plus a final valid-input pass that reaches `MIC_OK` and
 factors via `JOB=6` to confirm the wrapper isn't over-rejecting.
 This is a *test-side* contract simulator — it lets us assert the

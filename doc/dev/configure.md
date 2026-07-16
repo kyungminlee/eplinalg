@@ -7,7 +7,7 @@ staging tree by `stage`.
 
 ## Presets
 
-`cmake/CMakePresets.json`:
+`CMakePresets.json`:
 
 | preset | use |
 |---|---|

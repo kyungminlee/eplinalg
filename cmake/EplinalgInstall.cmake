@@ -4,7 +4,7 @@
 # scope — variables and targets defined here behave exactly as if the
 # content were inline). Staged flat next to CMakeLists.txt by
 # ``migrator stage`` (see the cmake-glue copy lists in
-# ``src/migrator/staging.py``).
+# ``codegen/migrator/staging.py``).
 
 # ── Install ──────────────────────────────────────────────────────────
 # Each precision library gets its own export set and Config.cmake,

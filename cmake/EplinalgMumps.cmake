@@ -4,7 +4,7 @@
 # scope — variables and targets defined here behave exactly as if the
 # content were inline). Staged flat next to CMakeLists.txt by
 # ``migrator stage`` (see the cmake-glue copy lists in
-# ``src/migrator/staging.py``).
+# ``codegen/migrator/staging.py``).
 
 # 9. MUMPS (depends on LAPACK, BLAS, ScaLAPACK; needs MPI Fortran).
 #
@@ -71,7 +71,7 @@ if(NOT BASELINE_BUILD)
     endif()
 
     # ── METIS ordering library (privately namespaced) ───────────────
-    # METIS 5.1.0, vendored under external/metis-5.1.0 and staged into
+    # METIS 5.1.0, vendored under extern/metis-5.1.0 and staged into
     # _mumps_metis_{gklib,lib,include}. Every public API symbol was
     # renamed METIS_<X> → METIS_MUMPS_<X> (and internal libmetis__ →
     # libmetis_MUMPS_) so this private copy can never clash at link time
@@ -147,7 +147,7 @@ if(NOT BASELINE_BUILD)
     endif()
 
     # ── Scotch ordering library (privately namespaced) ──────────────
-    # Scotch 7.0.4, vendored under external/scotch-7.0.4 and staged into
+    # Scotch 7.0.4, vendored under extern/scotch-7.0.4 and staged into
     # _mumps_scotch_{libsrc,esmumps,include}. The archives are compiled
     # with -DSCOTCH_NAME_SUFFIX=_mumps so every public SCOTCH_* and
     # internal _SCOTCH* symbol carries a _mumps suffix — this private copy
