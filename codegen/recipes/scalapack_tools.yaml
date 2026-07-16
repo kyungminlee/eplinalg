@@ -27,7 +27,7 @@
 # unrenamed.
 library: scalapack_tools
 language: fortran
-source_dir: recipes/scalapack_tools/source
+source_dir: codegen/recipes/scalapack_tools/source
 extensions: [.f]
 
 extra_symbol_dirs:

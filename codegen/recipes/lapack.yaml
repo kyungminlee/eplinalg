@@ -43,9 +43,9 @@ extra_migrate_files:
   # files to the *_EP variants — sidestepping the upstream S/D/C/Z
   # precision-letter gate that returns uninitialised for migrated
   # routine names like 'EGEMM'/'PESYTTRD'/'YHETRD'.
-  - recipes/lapack/extras/ilaenv_ep.f
-  - recipes/lapack/extras/ilaenv2stage_ep.f
-  - recipes/lapack/extras/iparam2stage_ep.F
+  - codegen/recipes/lapack/extras/ilaenv_ep.f
+  - codegen/recipes/lapack/extras/ilaenv2stage_ep.f
+  - codegen/recipes/lapack/extras/iparam2stage_ep.F
 
 # Patches applied to staged sources before migration. Unified diffs
 # vs upstream Netlib LAPACK 3.12.1. See doc/upstream-bugs/lapack.md

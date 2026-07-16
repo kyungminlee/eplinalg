@@ -37,12 +37,12 @@ extra_migrate_files:
   # to PJLAENV are rerouted via patches below to call
   # PJLAENV_EP instead, sidestepping upstream PJLAENV's strict
   # S/D/C/Z precision-letter gate.
-  - recipes/scalapack/extras/pjlaenv_ep.f
+  - codegen/recipes/scalapack/extras/pjlaenv_ep.f
   # PILAENVX_EP is the QR/Hessenberg sibling of PJLAENV_EP — same
   # S/D/C/Z gate bug at extern/scalapack-2.2.3/SRC/pilaenvx.f:212-215
   # uninitialises the result for migrated names like 'PELAQR0' /
   # 'PELAQR5' / 'PESYTRD' that the QR eigensolver path passes in.
-  - recipes/scalapack/extras/pilaenvx_ep.f
+  - codegen/recipes/scalapack/extras/pilaenvx_ep.f
   - extern/scalapack-2.2.3/TOOLS/ccdotc.f
   - extern/scalapack-2.2.3/TOOLS/ccdotu.f
   - extern/scalapack-2.2.3/TOOLS/chk1mat.f
