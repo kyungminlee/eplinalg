@@ -4,6 +4,20 @@ Release notes live on the [GitHub releases page](https://github.com/kyungminlee/
 this file summarizes each tagged version. The current version is in
 [VERSION](VERSION).
 
+## v0.15.0
+
+- Repository restructured to the standard package layout: `extern/`
+  (was `external/`), `codegen/{migrator,recipes,targets}/`,
+  `src/` (first-party runtime, was `runtime/`),
+  `test/{unit,integration}/`, `example/`, root `CMakePresets.json`.
+  The staged-tree layout is unchanged, so consumers of the release
+  archives are unaffected.
+- Version single-sourced from the root `VERSION` file (read by
+  `pyproject.toml` and the staged CMake build).
+- New root files: `LICENSE` (MIT), `CHANGELOG.md`, `CONTRIBUTING.md`,
+  thin root `CMakeLists.txt` with an optional Sphinx `doc` target,
+  `.editorconfig`, `.clang-format`, `.clang-tidy`.
+
 ## v0.14.0
 
 - Multifloats MPI reduce ops renamed `MPI_MM_*` / `MPI_WW_*`
