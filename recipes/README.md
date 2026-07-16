@@ -4,7 +4,7 @@ One YAML recipe per library (BLAS, LAPACK, BLACS, PBLAS, ScaLAPACK, MUMPS,
 XBLAS, …), consumed by the migrator (`src/migrator/`) to retarget the
 double-precision sources under `external/` to the extended-precision
 targets defined in `targets/*.yaml`. The recipe schema is documented in
-`doc/guide/recipes.md`.
+`doc/dev/recipes.md`.
 
 ## Per-library sidecars
 
@@ -68,5 +68,5 @@ unchanged. The sweep script reports the list of shared files it detects
   un-prefixed file belong in `copy_files`).
 - *Routines* with no arithmetic variant — same, via `skip_files`.
 
-See `doc/guide/developer.md` §3 for the definition of divergence that motivates
+See `doc/dev/convergence.md` for the definition of divergence that motivates
 this mechanism.

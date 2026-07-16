@@ -107,7 +107,7 @@ returns to clean.
 
 ## Related
 
-- [`../guide/architecture.md`](../guide/architecture.md) — overall pipeline.
+- [`architecture.md`](architecture.md) — overall pipeline.
 - `pipeline._canonicalize_for_compare` / `pipeline._light_normalize` —
   the two normalization functions, with extensive in-source comments
   on every rule and why it exists.

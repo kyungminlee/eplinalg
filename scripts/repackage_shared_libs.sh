@@ -38,7 +38,7 @@
 #     NEEDED lists stay minimal.  NEVER --allow-multiple-definition.
 #
 # Two flags are MANDATORY on every .so link here and cannot be supplied by
-# a consumer link line afterwards (see doc/guide/mkl-coexistence.md,
+# a consumer link line afterwards (see doc/user/mkl-coexistence.md,
 # "Repackaging archives as shared libraries"):
 #   --no-define-common   never allocate Fortran COMMON blocks in a .so
 #   -z now               eager PLT binding; lazy resolution corrupts live

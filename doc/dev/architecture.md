@@ -87,17 +87,25 @@ the well-conditioned upstream sources we use).
 
 ### Engine — `src/migrator/`
 
-Twelve modules, ~9,000 LOC. Acyclic, unidirectional dependency
-graph: lower-level modules (`intrinsics`, `target_mode`,
-`symbol_scanner`) have no upward dependencies; higher-level
-modules (`pipeline`, `__main__`) orchestrate.
+Acyclic, unidirectional dependency graph: lower-level modules
+(`intrinsics`, `target_mode`, `symbol_scanner`) have no upward
+dependencies; higher-level modules (`pipeline`, `staging`,
+`__main__`) orchestrate.
 
 | Module | Purpose |
 |---|---|
-| `__main__.py` | CLI entry. Subcommands: `migrate`, `verify`, `stage`, `build`, `run`, `diverge`, `converge`. `cmd_stage` (305 lines) orchestrates the per-library staging into a build-ready directory; `_generate_cmake` (233 lines) produces the top-level `CMakeLists.txt` template wired to the multifloats `FetchContent`, optional MPI, and per-target prefix selection. |
+| `__main__.py` | CLI entry (argparse). Subcommands: `prepare`, `verify-patches`, `migrate`, `diverge`, `converge`, `verify`, `build`, `run`, `stage`; the heavy lifting lives in the modules below. |
+| `staging.py` | The `stage` subcommand: enumerates and migrates each library into the self-contained staging tree, patches the libseq MPI shim, classifies symbols, and lays down the CMake manifest a downstream build consumes. |
 | `pipeline.py` | Multi-file migration orchestration. `run_migration` is the entry; `_collect_all_symbols` walks the recipe's `depends:` graph to assemble the symbol universe; `_apply_extra_renames` is the single post-classification rename hook (called from four sites: `run_divergence_report`, `run_convergence_report`, `run_c_convergence_report`, `run_migration`). |
-| `fortran_migrator.py` | The Fortran source rewriter. Type-declaration rewriting (`DOUBLE PRECISION` → `REAL(KIND=16)` etc.), literal rewriting (`1.0D0` → `1.0E0_16`), intrinsic rewriting (`DBLE(x)` → `REAL(x, KIND=16)`), routine-name rewriting (case-preserving), `XERBLA('DGEMM ', …)` string rewriting, and fixed-form continuation handling. Largest module by far (~2,800 LOC) because the rules are many. |
-| `c_migrator.py` | The C source rewriter and clone-template engine, used for BLACS / PBLAS / PBBLAS / XBLAS / scalapack_c. Case-preserving multi-character prefix expansion (legacy DD/ZZ era); single-character rename in the current M/W era. Header-patch and pointer-cast machinery for kind-dependent C type aliasing. |
+| `prepare.py` | Stages upstream sources into `build/staged-sources/<library>/` and applies the recipe's unified-diff patch list. |
+| `fortran_migrator.py` | The Fortran source rewriter. Type-declaration rewriting (`DOUBLE PRECISION` → `REAL(KIND=16)` etc.), literal rewriting (`1.0D0` → `1.0E0_16`), intrinsic rewriting (`DBLE(x)` → `REAL(x, KIND=16)`), routine-name rewriting (case-preserving), `XERBLA('DGEMM ', …)` string rewriting, and fixed-form continuation handling. The largest component, together with the `fortran/` passes it drives. |
+| `fortran/` (package) | The individual Fortran rewrite passes, one module per concern: `lex`, `logical_lines`, `fixedform`, `decls`, `literals`, `renames`, `intrinsics_rw`, `complex_rw`, `params`, `keepkind`, `la_constants`, `mpi`, `io_narrow`, `use_inject`. |
+| `c_migrator.py` | The C source rewriter and clone-template engine, used for BLACS / PBLAS / PBBLAS / XBLAS / scalapack_c. Case-preserving prefix renames, header-patch and pointer-cast machinery for kind-dependent C type aliasing. |
+| `privatize.py` | Post-migration `ep_` symbol privatization of the family-independent `_common` archives — the MKL-coexistence mechanism. |
+| `pbcharshim.py` + `PBcharshim.h` | Hidden-CHARACTER-length ABI bridge: per-callback C trampolines for the `PBTYP_T` function-pointer tables. |
+| `libseq_patch.py` | MUMPS libseq `mpi.f` staging patch (extended-datatype cases in `MUMPS_COPY`). |
+| `cmake_gen.py` | CMake project generation for the single-library `build` path (pure string templating). |
+| `cli_common.py` | Shared CLI helpers (target-mode construction, parser selection) used by both `__main__` and `staging`. |
 | `prefix_classifier.py` | The empirical S/D/C/Z family-discovery engine. `_find_families_single_pass` (lines 215-280) iterates **every** position in each upstream symbol where a precision letter could sit, then groups symbols by tagged-pattern equivalence. **Position-agnostic by construction**: as long as both the S-version and D-version of a name (or C and Z) exist in the symbol universe, the family is discovered regardless of where the precision letter sits. This is why `BLAS_SGBMV_X` ↔ `BLAS_DGBMV_X` (precision letter at position 5) renames cleanly without special handling — see `recipes/lapack.yaml`'s declared `xblas` dep. |
 | `intrinsics.py` | Pure-data lookup table: `INTRINSIC_MAP` (~250 entries) maps type-specific intrinsic names (`DABS`, `DCONJG`, `DSQRT`, …) to their generic equivalents and flags whether a `KIND=…` argument is needed at the call site. Updated whenever a new generic appears in modern Fortran. |
 | `flang_parser.py` | Subprocess wrapper around `flang-new -fc1`'s JSON parse-tree dump. Extracts symbols, types, and call-site positions. |
@@ -124,7 +132,7 @@ target-mode-specific knobs.
 | `ptzblas.yaml` | blas | Parallel transpose-on-demand BLAS Fortran helpers. Pulls `ZZDOTC`/`ZZDOTU` from `_scalapack_tools_src/` via `extra_symbol_dirs`. |
 | `scalapack.yaml` | lapack, blacs, pblas | ScaLAPACK Fortran. Patches for `pdlanhs`/`pzlanhs` (NPROW=1 norm bug, see `doc/upstream-bugs/scalapack.md`). Four `extra_renames` (`PJLAENV`/`PILAENVX` and `PDLAIECTB`/`PDLAIECTL`). |
 | `scalapack_c.yaml` | lapack, blacs, pblas, scalapack | ScaLAPACK C-side wrappers. Mirrors `scalapack`'s `PDLAIECTB`/`PDLAIECTL` renames. |
-| `mumps.yaml` | blas, lapack, scalapack | MUMPS 5.8.2 sparse direct solver. 32-entry `skip_files` (C headers, GPU code), 8-entry `copy_files` (integer-only helpers), per-line `keep_kind_lines` manifest preserving `DOUBLE PRECISION` declarations that mean "wall-clock seconds" rather than "working precision". |
+| `mumps.yaml` | blas, lapack, scalapack | MUMPS 5.9.0 sparse direct solver. 32-entry `skip_files` (C headers, GPU code), 8-entry `copy_files` (integer-only helpers), per-line `keep_kind_lines` manifest preserving `DOUBLE PRECISION` declarations that mean "wall-clock seconds" rather than "working precision". |
 
 ### Targets — `targets/<target>.yaml`
 
@@ -205,9 +213,10 @@ sections:
 
 1. Compiler probes (KIND=10, KIND=16 support) and global flag
    setup.
-2. Multifloats `FetchContent` — pinned via `-DMULTIFLOATS_GIT_TAG=…`
-   or substituted with `-DMULTIFLOATS_DIR=/local/path` for offline
-   builds.
+2. Multifloats acquisition — by default the upstream binary release
+   is downloaded and pinned; `MULTIFLOATS_FROM_SOURCE` /
+   `MULTIFLOATS_DIR` opt into source builds
+   (see [configure.md](configure.md)).
 3. `add_standard_fortran_library` / `add_standard_c_library` — build
    the unmigrated upstream archive.
 4. `add_migrated_fortran_library` / `add_migrated_c_library` — build
@@ -219,7 +228,7 @@ sections:
    PBLAS, ScaLAPACK (its `scalapack_c` C-side clones are compiled as
    OBJECT libraries and folded into the ScaLAPACK archive, not built
    as a standalone library), MUMPS.
-6. **libmpiseq** — sequential MPI stub built from MUMPS 5.8.2's
+6. **libmpiseq** — sequential MPI stub built from MUMPS 5.9.0's
    `libseq/`. Provides `mpi_init_`, `mpi_send_`, `blacs_pinfo_`,
    etc. so single-rank tests can link cleanly without a real MPI.
    Conditionally compiled if `_mpiseq_src/` is present in the stage.
@@ -228,9 +237,9 @@ sections:
    stays a separate target wrapped in `$<BUILD_INTERFACE:>` generator
    expressions to avoid leaking into downstream consumers.
 8. Install rules — per-target export sets, Config.cmake files
-   keyed on compiler tag (gfortran-13, ifx-2024.x, etc.) so
-   downstream `find_package(qxlapack)` fails clearly when the
-   consumer's compiler doesn't match an installed build.
+   keyed on compiler and MPI ABI tags (gfortran-15, intelmpi, …) so
+   downstream `find_package(qxlapack)` loads the flavor matching the
+   consumer's toolchain.
 
 ## Test infrastructure
 
@@ -268,36 +277,37 @@ route around them:
 
 Triggered on `v*` tag push or manual dispatch. Three jobs:
 
-1. **stage** (per target) — runs `migrator stage` and uploads the
-   staged tree as an artifact.
-2. **build** (45 combinations: 3 targets × 5 compilers ×
-   3 MPI implementations, minus impossible combos like kind10+ifx
-   and kind16+flang) — downloads the staging artifact, configures
-   with CMake, builds, installs, packages a tarball.
-3. **release** — only on tag push; collects all build tarballs into
-   a GitHub Release.
+1. **stage** (per target) — runs `migrator stage`, emits a
+   convergence report, and uploads the staged tree as an artifact.
+2. **build** (3 targets × {gfortran-12, gfortran-15} ×
+   {openmpi, mpich, intelmpi, seq}) — downloads the staging
+   artifact, configures with CMake, builds, installs, packages a
+   tarball. `ctest` runs in one slot
+   (kind10 + gfortran-15 + intelmpi).
+3. **release** — only on tag push; publishes 25 assets (one combined
+   archive + 24 per-combo) with generated release notes.
 
-The CI pipeline does **not** currently run ctest. Migration
-correctness is verified only on developer machines via local
-ctest runs.
+Full validation coverage (including the off-CI MUMPS sweep):
+[test.md](test.md).
 
 ## Repository layout
 
 ```
 eplinalg/
-├── src/migrator/        # The migration engine (12 modules, ~9k LOC)
+├── src/migrator/        # The migration engine
 ├── recipes/             # 11 library recipes
 ├── targets/             # 3 precision targets
 ├── tests/               # 10 differential-precision suites (1051 tests)
 ├── external/            # Vendored upstream: LAPACK 3.12.1, ScaLAPACK 2.2.3,
-│                        # MUMPS 5.8.2, XBLAS 1.0.248, multifloats, multifloats-mpi,
-│                        # impi-headers
+│                        # MUMPS 5.9.0 (5.8.2 kept for reference), XBLAS 1.0.248,
+│                        # METIS 5.1.0, Scotch 7.0.4, impi-headers
+├── runtime/             # Hand-written runtime pieces: quad-mpi, multifloats-mpi
+│                        # (custom MPI types/ops), mpiseq C stubs
 ├── cmake/               # Shared CMake infrastructure
-├── doc/                 # User and architectural documentation
+├── doc/                 # Documentation
 │   ├── README.md            # Documentation index
-│   ├── guide/               # architecture.md (this), usage.md, recipes.md,
-│   │                        # developer.md, intrinsics.md
-│   ├── output/              # procedures.md, convergence.md, kind16-divergences.md
+│   ├── user/                # Consumer guide (+ api/ reference)
+│   ├── dev/                 # Developer guide, incl. architecture.md (this)
 │   ├── upstream-bugs/       # Tracked upstream bugs (lapack / scalapack / mumps)
 │   └── archive/             # Historical surveys and timestamped reports
 ├── scripts/             # Manual helpers (compile_*.sh, sweep tools, gen_procedures.py)

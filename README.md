@@ -32,7 +32,7 @@ tagged release ships prebuilt Linux x86-64 static archives (per
 target × compiler × MPI, plus a combined archive) with Fortran modules
 and CMake package configs (`find_package(qxmumps)` →
 `eplinalg::qxmumps_full`, etc.). See
-[doc/guide/binary-releases.md](doc/guide/binary-releases.md).
+[doc/user/installation.md](doc/user/installation.md).
 
 ## Quick start (from source)
 
@@ -173,7 +173,7 @@ uv run pytest
 The fast unit tests cover the migrator's regex/AST transforms per target.
 The end-to-end build-and-link path is exercised via `migrator stage` +
 CMake + `ctest` — see
-[doc/guide/development-workflow.md](doc/guide/development-workflow.md)
+[doc/dev/index.md](doc/dev/index.md)
 for the full configure/build/test/release workflow.
 
 ## Status
@@ -196,9 +196,9 @@ for the full configure/build/test/release workflow.
 - MKL coexistence: the family-independent BLACS/PBLAS/ScaLAPACK engine
   is source-privatized under `ep_` names, so extended stacks and a
   full MKL link cleanly into one executable in either link order. See
-  [doc/guide/mkl-coexistence.md](doc/guide/mkl-coexistence.md).
+  [doc/user/mkl-coexistence.md](doc/user/mkl-coexistence.md).
 - Prebuilt archives are published per release (since v0.13) — see
-  [doc/guide/binary-releases.md](doc/guide/binary-releases.md).
+  [doc/user/installation.md](doc/user/installation.md).
 
 ## License
 

@@ -1,55 +1,8 @@
 # eplinalg documentation
 
-## Guide
+- [user/](user/index.md) — using the produced libraries: install, link, call. Includes the [API reference](user/api/index.md).
+- [dev/](dev/index.md) — developing eplinalg: configure, build, codegen, test, debug, release.
+- [upstream-bugs/](upstream-bugs/README.md) — bugs in the vendored Netlib sources that the migrator works around without editing `external/`.
+- [archive/](archive/) — historical surveys and timestamped reports.
 
-User- and contributor-facing reference for the migration tool itself.
-
-- [architecture.md](guide/architecture.md) — system overview, components, data flow
-- [usage.md](guide/usage.md) — running the `migrator` CLI
-- [recipes.md](guide/recipes.md) — writing library recipes (YAML)
-- [developer.md](guide/developer.md) — migrator internals: transforms, edge cases, testing strategy
-- [development-workflow.md](guide/development-workflow.md) — configure, build, test, debug, release
-- [binary-releases.md](guide/binary-releases.md) — consuming the prebuilt release archives (variants, find_package, link lines, runtime contract)
-- [mkl-coexistence.md](guide/mkl-coexistence.md) — coexisting with MKL LP64 in one executable; shared-library repackaging rules
-- [intrinsics.md](guide/intrinsics.md) — Fortran intrinsics reference for KIND=16
-
-## Migrator output
-
-Catalogues describing what the migration pipeline emits.
-
-- [procedures.md](output/procedures.md) — auto-generated routine cross-reference (Netlib → kind10/kind16/multifloats), produced by `scripts/gen_procedures.py` from staged trees at `/tmp/stg-<target>` (see the script docstring for the staging commands)
-- [convergence.md](output/convergence.md) — what "convergence" means and how it's measured
-- [kind16-divergences.md](output/kind16-divergences.md) — per-routine KIND=16 divergence analysis
-
-## Upstream bugs
-
-Bugs in the vendored Netlib sources that the migrator works around without editing `external/`.
-
-- [upstream-bugs/](upstream-bugs/README.md) — index, methodology, cross-library summary
-  - [lapack.md](upstream-bugs/lapack.md)
-  - [scalapack.md](upstream-bugs/scalapack.md)
-  - [mumps.md](upstream-bugs/mumps.md)
-  - [lapack-nits.md](upstream-bugs/lapack-nits.md) — cosmetic dead declarations (catalogued, not patched)
-
-## Parallel BLAS overlay
-
-The hand-written extended-precision BLAS overlay moved to a separate
-project: [epblas-parallel](../../epblas-parallel/). Migrator-side, the public
-`${LIB_PREFIX}blas` target is now the plain serial migrated archive;
-the overlay-equipped composite (`epblas-parallel::eblas` and friends)
-ships from the epblas-parallel package.
-
-## Solver API notes
-
-Documented (but easily-missed) upstream API requirements — not bugs — that the
-migrated archives honour exactly as Netlib does.
-
-- [mumps-implicit-constraints.md](mumps-implicit-constraints.md) — MUMPS input/output conventions that only surface at `np ≥ 2` (host-only sparse RHS, distributed-solution `INFO(23)` slice)
-
-## Test suites
-
-- [`../tests/README.md`](../tests/README.md) — map of every test family (overlay-vs-migrated and migrated-vs-Netlib schemes)
-
-## Archive
-
-- [archive/](archive/) — historical surveys and timestamped reports
+Test-suite map: [../tests/README.md](../tests/README.md).

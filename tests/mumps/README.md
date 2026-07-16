@@ -53,7 +53,7 @@ The suite also runs at `np ≥ 2` (default `MUMPS_TEST_NPROCS=2`). Several
 MUMPS API conventions only bite once a slave rank exists — host-only sparse
 RHS, the distributed-solution `INFO(23)` slice size, and `-j1` serialization
 — documented in
-[`../../doc/mumps-implicit-constraints.md`](../../doc/mumps-implicit-constraints.md).
+[`../../doc/user/api/mumps.md`](../../doc/user/api/mumps.md).
 
 ## Layout
 
