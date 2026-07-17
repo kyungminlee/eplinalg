@@ -28,9 +28,9 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SRC = REPO / "external" / "MUMPS_5.9.0" / "src"
-INCLUDE = REPO / "external" / "MUMPS_5.9.0" / "include"
-DEFAULT_MANIFEST = REPO / "recipes" / "mumps" / "keep-kind.manifest"
+SRC = REPO / "extern" / "MUMPS_5.9.0" / "src"
+INCLUDE = REPO / "extern" / "MUMPS_5.9.0" / "include"
+DEFAULT_MANIFEST = REPO / "codegen" / "recipes" / "mumps" / "keep-kind.manifest"
 DP_RE = re.compile(r"^\s*DOUBLE\s+PRECISION\b", re.IGNORECASE)
 PAIRS = [("s", "d"), ("c", "z")]
 

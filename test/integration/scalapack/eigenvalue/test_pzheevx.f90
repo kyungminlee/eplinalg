@@ -4,7 +4,7 @@ program test_pzheevx
     !
     ! Previously blocked by the same heap-corruption bug as pdsyevx
     ! (PJLAENV uninitialised return on migrated names) — fixed by
-    ! recipes/scalapack/extras/pjlaenv_ep.f + extra_renames.
+    ! codegen/recipes/scalapack/extras/pjlaenv_ep.f + extra_renames.
     use prec_kinds,        only: ep
     use compare,           only: max_rel_err_vec
     use pblas_prec_report, only: report_init, report_case, report_finalize

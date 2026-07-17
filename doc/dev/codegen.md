@@ -59,23 +59,17 @@ uv run python -m migrator verify output/
 
 ### `diverge`
 Reports every co-family pair whose migrated text differs (both halves
-migrated in memory with a heavy canonicalizer). Preliminary exploration.
+migrated in memory with the merged heavy canonicalizer). Honors the
+recipe's `expected_divergences:` whitelist; `--no-whitelist` bypasses
+it. This is the authoritative convergence check — the earlier separate
+`converge` subcommand was merged into it.
 
 ```bash
 uv run python -m migrator diverge ../codegen/recipes/blas.yaml --target kind16
 ```
 *   `--grep` / `--exclude`: Regex filters on the diff text.
 *   `--context`: Max diff lines per entry (default: 8); `--full` for all.
-
-### `converge`
-Post-migration verification: reads each pair's canonical from disk,
-re-migrates the S/C sibling in memory, and compares with a light
-normalizer. This is the **authoritative** convergence check. Same
-filtering options as `diverge`.
-
-```bash
-uv run python -m migrator converge ../codegen/recipes/blas.yaml output/ --target kind16
-```
+*   `--no-whitelist`: Ignore `expected_divergences:` entries.
 
 Methodology: [convergence.md](convergence.md).
 
@@ -85,7 +79,7 @@ Compiles one recipe's migrated files into static archives
 Fortran compiler. Mostly superseded by `stage` + CMake.
 
 ### `run`
-Full single-recipe pipeline: migrate → converge → verify → build.
+Full single-recipe pipeline: migrate → diverge → verify → build.
 
 ### `prepare`
 Stages upstream sources for a recipe and applies its patch list
@@ -169,5 +163,5 @@ trampolines, `PBcharshim.h`).
 - Intrinsic conversion table: `codegen/migrator/intrinsics.py`.
 - Fortran rewrite passes: the `codegen/migrator/fortran/` package (one
   module per concern: declarations, literals, renames, MPI calls, …).
-- Run the unit suite (`uv run pytest`) and a `converge` pass after any
+- Run the unit suite (`uv run pytest`) and a `diverge` pass after any
   transform change; see [test.md](test.md).

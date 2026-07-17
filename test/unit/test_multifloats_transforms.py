@@ -54,7 +54,7 @@ def test_multifloats_target_basic_shape():
     assert mf.real_constructor == 'real64x2'
     assert mf.complex_constructor == 'cmplx64x2'
     assert mf.module_name == 'multifloats'
-    # Prefix letters are loaded from targets/multifloats.yaml. The
+    # Prefix letters are loaded from codegen/targets/multifloats.yaml. The
     # specific choice (currently M/W) was made after a per-file shadow
     # analysis ruling out same-translation-unit collisions; tests below
     # use the loaded values via _RP/_CP rather than hard-coded letters.
@@ -713,11 +713,7 @@ def test_canonicalize_for_compare_strips_multifloats(mf):
 def test_canonicalize_for_compare_normalizes_type_decl():
     from migrator.pipeline import _canonicalize_for_compare
     a = "      TYPE(real64x2) X"
-    b = "      DOUBLE PRECISION X"
-    # Both should canonicalize to the same form (REAL X after both
-    # type-name normalizations)
     ca = _canonicalize_for_compare(a)
-    cb = _canonicalize_for_compare(b)
     # The migrator only ever produces TYPE(real64x2) for multifloats,
     # so we just need to confirm `TYPE(real64x2)` doesn't survive
     # canonicalization.
@@ -787,7 +783,7 @@ def test_rewrite_mpi_sum_integer_call_site_untouched():
 
 def test_rewrite_mpi_sum_mixed_arith_in_one_file():
     """A single source with all three call sites — each judged
-    independently. Real → DD_SUM, complex → ZZ_SUM, integer untouched."""
+    independently. Real → MM_SUM, complex → WW_SUM, integer untouched."""
     mf = load_target('multifloats')
     src = (
         "      CALL MPI_ALLREDUCE(R, S, 1, MPI_DOUBLE_PRECISION, MPI_SUM, C, I)\n"

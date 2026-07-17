@@ -5,10 +5,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Version tag (e.g. v0.2.0)'
-        required: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -66,7 +62,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload staged sources
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: staging-${{ matrix.target }}
           path: staging-${{ matrix.target }}/
@@ -121,7 +117,7 @@ jobs:
             cmake/
 
       - name: Download staged sources
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: staging-${{ matrix.target }}
           path: staging/
@@ -155,13 +151,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y flang-20 clang-20 libomp-20-dev
 
-      - name: Install OpenMPI
-        if: matrix.mpi.name == 'openmpi'
-        run: sudo apt-get install -y libopenmpi-dev
-
-      - name: Install MPICH
-        if: matrix.mpi.name == 'mpich'
-        run: sudo apt-get install -y libmpich-dev
+      - name: Install MPI (apt)
+        if: matrix.mpi.pkg != ''
+        run: sudo apt-get install -y ${{ matrix.mpi.pkg }}
 
       - name: Install Intel MPI
         if: env.USES_INTEL_MPI == 'true' && !startsWith(matrix.compiler.name, 'ifx')
@@ -223,7 +215,7 @@ jobs:
 
       - name: Upload ctest log on failure
         if: failure() && env.IS_TEST_SLOT == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ctest-kind10-gfortran-15-intelmpi-LastTest
           path: |
@@ -242,7 +234,7 @@ jobs:
           echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARCHIVE }}
           path: ${{ env.ARCHIVE }}.tar.gz
@@ -255,7 +247,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           path: artifacts/
           pattern: '*-*-*-linux-x86_64'
@@ -288,7 +280,7 @@ jobs:
           ls -lh "release/${ARCHIVE}.tar.gz"
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release/*.tar.gz
           generate_release_notes: true

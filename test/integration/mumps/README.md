@@ -38,7 +38,7 @@ uv run python -m migrator stage /tmp/stg-q --target kind16 \
 
 (The default — no `--libraries` flag — stages everything and is fine.)
 
-The `recipes/` and `cmake/` trees live in this single repo
+The `codegen/recipes/` and `cmake/` trees live in this single repo
 (`eplinalg`) — the historical fm-mumps split was retired when
 the mumps work merged into `tests` (see the B7 entry in `CHANGELOG.md`).
 

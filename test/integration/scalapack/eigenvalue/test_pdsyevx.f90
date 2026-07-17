@@ -4,7 +4,7 @@ program test_pdsyevx
     !
     ! Previously blocked by a heap-corruption bug rooted in upstream
     ! PJLAENV's strict S/D/C/Z precision-letter gate; see the
-    ! recipes/scalapack/extras/pjlaenv_ep.f override.
+    ! codegen/recipes/scalapack/extras/pjlaenv_ep.f override.
     use prec_kinds,        only: ep
     use compare,           only: max_rel_err_vec
     use pblas_prec_report, only: report_init, report_case, report_finalize

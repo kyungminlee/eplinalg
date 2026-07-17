@@ -279,7 +279,7 @@ def test_rename_substituter_equal_length_prefix():
     """KIND-style single-char swap: D->Q, lengths match."""
     rename_map = {'PB_CDTYPESET': 'PB_CQTYPESET', 'DGEMM': 'QGEMM'}
     pattern, combined = _build_rename_regex(rename_map)
-    sub = _make_rename_substituter(pattern, combined)
+    sub = _make_rename_substituter(combined)
 
     # Lowercase identifier preserves case
     assert pattern.sub(sub, 'PB_Cdtypeset') == 'PB_Cqtypeset'
@@ -297,7 +297,7 @@ def test_rename_substituter_multichar_expansion():
     """
     rename_map = {'PB_CDTYPESET': 'PB_CDDTYPESET', 'DGEMM': 'DDGEMM'}
     pattern, combined = _build_rename_regex(rename_map)
-    sub = _make_rename_substituter(pattern, combined)
+    sub = _make_rename_substituter(combined)
 
     # Mixed-case PascalCase identifier: head case preserved, inserted
     # 'd' takes the case of the original precision letter (lowercase).
@@ -312,7 +312,7 @@ def test_rename_substituter_does_not_match_inside_longer_identifier():
     """\\b boundaries prevent DGER inside PDGER from being renamed."""
     rename_map = {'DGER': 'DDGER'}
     pattern, combined = _build_rename_regex(rename_map)
-    sub = _make_rename_substituter(pattern, combined)
+    sub = _make_rename_substituter(combined)
 
     assert pattern.sub(sub, 'pdger_') == 'pdger_'    # untouched
     assert pattern.sub(sub, 'dger_') == 'ddger_'

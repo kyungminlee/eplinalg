@@ -8,9 +8,10 @@
  *   - dense vectors:   banner "matrix array  real|complex general" (n x 1)
  *
  * Everything is stored internally as double (real part in `val`, imaginary in
- * `ival` when complex); the typed solve in mmsolve.c casts down to the MUMPS
- * working precision (float for s/c, double for d/z). Indices are kept 1-based,
- * exactly as Matrix Market stores them and as MUMPS expects.
+ * `ival` when complex); the typed solve in mmsolve.c converts to the selected
+ * MUMPS working precision (float/double for s/c/d/z, long double for e/y,
+ * __float128 for q/x, double-double {d,0} promotion for m/w). Indices are kept
+ * 1-based, exactly as Matrix Market stores them and as MUMPS expects.
  */
 #ifndef MMIO_MIN_H
 #define MMIO_MIN_H

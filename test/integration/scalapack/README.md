@@ -133,7 +133,7 @@ surfaced during that work and are worth keeping written down:
    pattern (`#define freememory dgefreememory`) hides
    `dgescanD0` / `dgedispmat` / `dgesetmemory` / `dgefreememory` /
    `dgescan_intervals` / `Cdgelacpy` from the symbol scanner.
-   `recipes/scalapack_c.yaml`'s `c_type_aliases` block spells out the
+   `codegen/recipes/scalapack_c.yaml`'s `c_type_aliases` block spells out the
    per-family substitution; do not rely on the rename map alone.
 
 3. **BLACS `BUFFALIGN=8` must become 16 for kind16 / multifloats.**

@@ -8,7 +8,7 @@ program test_pdlaiect
     ! The migrator's auto-clones for kind10 (EREAL = long double),
     ! kind16 (QREAL = __float128), and multifloats (float64x2)
     ! inherit that bit-twiddle, which is meaningless on those types.
-    ! The recipe overrides (recipes/scalapack/{e,q,mf}c_overrides/
+    ! The recipe overrides (codegen/recipes/scalapack/{e,q,m}fc_overrides/
     ! p{e,q,m}laiect.c) replace the body with native ``<`` comparison.
     !
     ! Two checks per routine:

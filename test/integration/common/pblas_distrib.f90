@@ -26,7 +26,7 @@ module pblas_distrib
     implicit none
     private
 
-    public :: gen_distrib_vector, gen_distrib_matrix, gen_distrib_vector_row
+    public :: gen_distrib_vector, gen_distrib_matrix
     public :: gather_vector, gather_matrix, gather_vector_row
     public :: gen_distrib_vector_z, gen_distrib_matrix_z
     public :: gather_vector_z, gather_matrix_z
@@ -60,29 +60,6 @@ contains
             end do
         end if
     end subroutine gen_distrib_vector
-
-    ! "Row-vector" layout: 1 × n matrix. Columns distributed across
-    ! `npcol` processes in `nb`-sized chunks; only row 0 holds data.
-    subroutine gen_distrib_vector_row(n, nb, x_loc, x_glob, seed)
-        integer,  intent(in) :: n, nb, seed
-        real(ep), intent(out), allocatable :: x_loc(:), x_glob(:)
-        integer :: loc_n, ig, owner_c, jl
-
-        call gen_vector_quad(n, x_glob, seed)
-        ! Allocate full LLD-size buffer regardless of my_row — see the
-        ! note in gen_distrib_vector for the rationale (descriptor's
-        ! LLD doesn't depend on my_row, so wrappers reading the buffer
-        ! on non-row-0 ranks must see the correct size).
-        loc_n = numroc_local(n, nb, my_col, 0, my_npcol)
-        allocate(x_loc(max(1, loc_n)))
-        x_loc = 0.0_ep
-        if (my_row == 0 .and. loc_n > 0) then
-            do ig = 1, n
-                call g2l(ig, nb, my_npcol, owner_c, jl)
-                if (owner_c == my_col) x_loc(jl) = x_glob(ig)
-            end do
-        end if
-    end subroutine gen_distrib_vector_row
 
     ! ── Real matrix ─────────────────────────────────────────────────
     subroutine gen_distrib_matrix(m, n, mb, nb, A_loc, A_glob, seed)

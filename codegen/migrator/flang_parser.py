@@ -35,22 +35,18 @@ class RoutineDef:
     """A subroutine or function definition."""
     kind: str               # 'subroutine' or 'function'
     name: str
-    return_type: str | None # For functions: the type spec
 
 
 @dataclass
 class CallSite:
     """A CALL statement or function reference."""
     name: str               # called routine name
-    is_call_stmt: bool      # True for CALL, False for function reference
 
 
 @dataclass
 class UseStmtInfo:
     """Information about a USE statement."""
     module_name: str
-    line_range: tuple[int, int]
-    only_list: list[str]
 
 
 # The Flang parse-tree dump emits ``Name = 'IDENT'`` markers on
@@ -84,8 +80,7 @@ def find_flang() -> str | None:
 
 
 def run_flang_parse_tree(source_path: Path,
-                         flang_cmd: str | None = None,
-                         use_sema: bool = False) -> str | None:
+                         flang_cmd: str | None = None) -> str | None:
     """Run Flang to get a parse tree dump.
 
     Returns the parse tree text, or None if Flang fails.
@@ -95,10 +90,8 @@ def run_flang_parse_tree(source_path: Path,
     if flang_cmd is None:
         return None
 
-    dump_flag = '-fdebug-dump-parse-tree' if use_sema else '-fdebug-dump-parse-tree-no-sema'
-    cmd = [flang_cmd, '-fc1', dump_flag, str(source_path)]
-    if use_sema:
-        cmd.append('-fdebug-resolve-names')
+    cmd = [flang_cmd, '-fc1', '-fdebug-dump-parse-tree-no-sema',
+           str(source_path)]
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=30
@@ -128,22 +121,14 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
             name = _extract_first_name(lines, i + 1)
             if name:
                 facts.routine_defs.append(
-                    RoutineDef('subroutine', name, None))
+                    RoutineDef('subroutine', name))
 
         # --- Function definition ---
         elif 'FunctionStmt' in line:
-            ret_type = None
-            # Check for return type prefix on the same line
-            if 'DoublePrecision' in line:
-                ret_type = 'DoublePrecision'
-            elif 'Complex' in line:
-                ret_type = 'Complex'
-            elif 'Real' in line and 'IntrinsicTypeSpec' in line:
-                ret_type = 'Real'
             name = _extract_first_name(lines, i + 1)
             if name:
                 facts.routine_defs.append(
-                    RoutineDef('function', name, ret_type))
+                    RoutineDef('function', name))
 
         # --- Type declaration ---
         elif 'TypeDeclarationStmt' in line:
@@ -161,20 +146,19 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                 m = _NAME_RE.search(lines[i + 1])
             if m:
                 mod_name = m.group(1).upper()
-                facts.use_stmt_ranges.append(
-                    UseStmtInfo(mod_name, (0, 0), []))
+                facts.use_stmt_ranges.append(UseStmtInfo(mod_name))
 
         # --- Call statement ---
         elif 'CallStmt' in line:
             name = _extract_procedure_name(lines, i)
             if name:
-                facts.call_sites.append(CallSite(name, True))
+                facts.call_sites.append(CallSite(name))
 
         # --- Function reference (not inside CallStmt) ---
         elif 'FunctionReference -> Call' in line and 'CallStmt' not in line:
             name = _extract_procedure_name(lines, i)
             if name:
-                facts.call_sites.append(CallSite(name, False))
+                facts.call_sites.append(CallSite(name))
 
         # --- External declaration ---
         elif 'ExternalStmt' in line:
@@ -206,7 +190,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
             if m:
                 name = m.group(1).upper()
                 if name not in seen_call_names:
-                    facts.call_sites.append(CallSite(name, False))
+                    facts.call_sites.append(CallSite(name))
                     seen_call_names.add(name)
 
     return facts
@@ -299,13 +283,12 @@ def _indent_level(line: str) -> int:
 
 
 def scan_file(source_path: Path,
-              flang_cmd: str | None = None,
-              use_sema: bool = False) -> ParseTreeFacts | None:
+              flang_cmd: str | None = None) -> ParseTreeFacts | None:
     """Scan a Fortran file using Flang and return extracted facts.
 
     Returns None if Flang is not available or fails.
     """
-    tree_text = run_flang_parse_tree(source_path, flang_cmd, use_sema)
+    tree_text = run_flang_parse_tree(source_path, flang_cmd)
     if tree_text is None:
         return None
     return parse_tree_facts(tree_text)

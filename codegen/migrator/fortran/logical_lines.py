@@ -129,7 +129,7 @@ def segment_free_form(
                 # stop here and let it segment on its own.
                 break
             content, had_leading = _strip_leading_amp(ntext)
-            ncode, ncont, nin_str = _code_and_cont(content)
+            ncode, ncont, _ = _code_and_cont(content)
             if in_str:
                 # String continues across the break — verbatim, tight.
                 joined = joined + ncode

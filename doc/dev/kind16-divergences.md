@@ -368,6 +368,10 @@ the Z-sourced canonical is kept on disk.
 
 ## Post-migration `converge` results
 
+> **Historical note:** the separate `converge` subcommand described
+> below was later merged into `diverge` (commit `90389a5d`); the
+> results in this section predate the merge.
+
 The `converge` subcommand is the authoritative post-migration
 verifier: it reads each D/Z canonical off disk, re-migrates its
 S/C sibling in memory, and compares the two under a light

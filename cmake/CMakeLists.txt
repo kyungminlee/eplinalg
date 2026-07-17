@@ -492,7 +492,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/EplinalgLibraryHelpers.cmake)
 # clones and PUBLIC-links the standard archive so downstreams resolve
 # the S/D/C/Z entry points (DGEMM_, ZGEMM_, ...) through one link line.
 # Cross-precision routines (dsdot, sdsdot) are excluded — the migrator
-# also skips them (see recipes/blas.yaml).
+# also skips them (see codegen/recipes/blas.yaml).
 add_standard_fortran_library(blas
     ${CMAKE_CURRENT_SOURCE_DIR}/_refblas_src
     EXCLUDE_REGEX "/(dsdot|sdsdot)\\.f9?0?$")
@@ -737,7 +737,7 @@ if(TARGET scalapack)
     # pzaxpy_/pzdotc_/pzdotu_ live in PBLAS/SRC (libpblas); the SRC/ copies
     # are older K&R duplicates that reference pberror_/ptop, which exist
     # only in PBLAS TESTING/TIMING and would shadow the good definitions
-    # from inside the same archive. Mirrors recipes/scalapack_c.yaml
+    # from inside the same archive. Mirrors codegen/recipes/scalapack_c.yaml
     # skip_files.
     list(FILTER _scalapack_c_std EXCLUDE REGEX "/(pzaxpy|pzdotc|pzdotu)\\.c$")
     file(GLOB _scalapack_c_redist

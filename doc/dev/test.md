@@ -16,7 +16,7 @@ Run after any migrator change.
 - **Patch symmetry** (CI check): `uv run python -m migrator
   verify-patches <recipe>` — every patch touching a precision-prefixed
   file must touch all four siblings unless declared asymmetric.
-- **Convergence**: `uv run python -m migrator converge <recipe> <out>
+- **Convergence**: `uv run python -m migrator diverge <recipe>
   --target <t>` — the authoritative dual-origin check: both precision
   halves of every routine must migrate to identical output. Methodology
   and current status: [convergence.md](convergence.md); command details:

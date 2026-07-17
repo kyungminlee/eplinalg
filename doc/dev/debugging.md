@@ -47,7 +47,7 @@ re-deriving it.
   first ([../user/api/mumps.md](../user/api/mumps.md)) — host-only
   sparse RHS and the distributed-solution `INFO(23)` slice are the
   classic false alarms.
-- **Convergence regressions**: `diverge`/`converge` output pinpoints
+- **Convergence regressions**: `diverge` output pinpoints
   the transform pass; see [codegen.md](codegen.md).
 
 ## Technique notes

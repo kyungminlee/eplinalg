@@ -149,7 +149,7 @@ la_constants_map:
 la_constants_suffix: _MW
 
 c_interop:
-  # Upstream multifloats v0.4.0 C names (no _t suffix; complex POD with
+  # Upstream multifloats C names (no _t suffix; complex POD with
   # .re/.im members of float64x2). The C++ bridge re-exports these as
   # operator-rich aliases of multifloats::float64x2 / complex64x2.
   real_type: float64x2

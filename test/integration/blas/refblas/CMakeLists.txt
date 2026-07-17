@@ -80,7 +80,7 @@ find_file(REFQUAD_RENAME_SCRIPT refquad_rename_archive.sh
     NO_DEFAULT_PATH)
 if(REFQUAD_RENAME_SCRIPT)
     # Common-archive excludes: their T/W defs are migrated-side
-    # helpers (la_constants_ep, iparam2stage_ patched, mumps_abort_,
+    # helpers (la_constants_ep, iparam2stage_ep_, mumps_abort_,
     # …). reflapack_quad references some of them; we must NOT rename
     # those references because the migrated link cycle expects them
     # under their original names.

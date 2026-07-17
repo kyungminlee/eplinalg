@@ -313,14 +313,15 @@ only whether the heap corruption surfaces immediately or silently.
 **Affected files.**
 
 * `extern/lapack-3.12.1/SRC/dorbdb3.f` (used by our migrated D-half).
-* `extern/lapack-3.12.1/SRC/zorbdb3.f` (used by our migrated Z-half).
+* `extern/lapack-3.12.1/SRC/zunbdb3.f` (used by our migrated Z-half).
 * `extern/lapack-3.12.1/SRC/sorbdb3.f` (S-half — same bug, exercised
   only under the kind4 baseline column).
-* `extern/lapack-3.12.1/SRC/corbdb3.f` (C-half — same status).
+* `extern/lapack-3.12.1/SRC/cunbdb3.f` (C-half — same status).
 
 **Fix.** One-character change: `LDX11` → `LDX21` on the `?ROT` `INCY`
 argument inside the `I .GT. 1` branch. Carried in
-`codegen/recipes/lapack/patches/{d,s,z,c}orbdb3.f` and wired via
+`codegen/recipes/lapack/patches/{d,s}orbdb3.f.patch` and
+`{z,c}unbdb3.f.patch` and wired via
 `codegen/recipes/lapack.yaml`'s `patches:` list. Every migrated target
 (kind10, kind16, multifloats) builds against the patched form. The
 `prefer_source` pin isn't needed here — LAPACK's canonical-rank picker

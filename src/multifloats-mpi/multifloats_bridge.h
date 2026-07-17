@@ -1,6 +1,6 @@
 /* multifloats_bridge.h -- C++ bridge for migrated BLACS / PBLAS sources.
  *
- * Exposes the upstream multifloats v0.4.0 names ``float64x2`` and
+ * Exposes the upstream multifloats names ``float64x2`` and
  * ``complex64x2`` (also the names emitted by the C migrator) at file
  * scope, and adds:
  *
@@ -12,7 +12,7 @@
  *
  * Usage: compile with  -include multifloats_bridge.h
  *
- * Requires: the multifloats v0.4.0 headers on the include path (either
+ * Requires: the multifloats (>= v0.6.0) headers on the include path (either
  * installed, or from a FetchContent'd checkout). The upstream POD
  * ``multifloats::float64x2`` is the operator-rich C++ class we re-export
  * as global ``float64x2``; ``multifloats::complex64x2`` is the matching
@@ -70,12 +70,10 @@ struct complex64x2 {
 /* PBLAS / BLACS C array form for double-double complex.
  * The migrator's ``c_type_aliases`` in pblas.yaml rewrites
  * ``cmplx`` / ``cmplx16`` to ``cmplx{RPU}`` (= ``cmplxM`` for the
- * current multifloats M-prefix; was ``cmplxT`` under the prior T/V
- * scheme and ``cmplxDD`` under the original DD/ZZ scheme).
- * All three names alias the same 2×float64x2 layout so existing
- * mfc_overrides referring to legacy spellings keep working. */
+ * current multifloats M-prefix). ``cmplxDD`` is the original
+ * DD/ZZ-era spelling, still used by codegen/recipes/pblas/
+ * mfc_overrides/pb_cwtypeset.c; both names alias the same 2×float64x2 layout. */
 typedef float64x2 cmplxM[2];
-typedef float64x2 cmplxT[2];
 typedef float64x2 cmplxDD[2];
 
 /* ------------------------------------------------------------------ */
@@ -137,21 +135,6 @@ extern MPI_Op MPI_MM_AMX;
 extern MPI_Op MPI_MM_AMN;
 extern MPI_Op MPI_WW_AMX;
 extern MPI_Op MPI_WW_AMN;
-
-/* Deprecated pre-v0.14 names, kept one release cycle as aliases of the
- * MPI_MM_* / MPI_WW_* handles above (defined in multifloats_mpi.cpp). */
-#if defined(__GNUC__) || defined(__clang__)
-#  define MF_MPI_DEPRECATED(new_name) \
-     __attribute__((deprecated("renamed to " #new_name " in v0.14")))
-#else
-#  define MF_MPI_DEPRECATED(new_name)
-#endif
-extern MPI_Op MPI_DD_SUM MF_MPI_DEPRECATED(MPI_MM_SUM);
-extern MPI_Op MPI_DD_AMX MF_MPI_DEPRECATED(MPI_MM_AMX);
-extern MPI_Op MPI_DD_AMN MF_MPI_DEPRECATED(MPI_MM_AMN);
-extern MPI_Op MPI_ZZ_SUM MF_MPI_DEPRECATED(MPI_WW_SUM);
-extern MPI_Op MPI_ZZ_AMX MF_MPI_DEPRECATED(MPI_WW_AMX);
-extern MPI_Op MPI_ZZ_AMN MF_MPI_DEPRECATED(MPI_WW_AMN);
 
 void multifloats_mpi_init(void);
 

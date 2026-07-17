@@ -209,7 +209,7 @@ foreach(_group linear_solve factorization eigenvalue svd auxiliary)
         ${CMAKE_CURRENT_SOURCE_DIR}/${_group}/test_*.f90)
     foreach(_t ${_tests})
         # test_pdlaiect asserts the recipe-override semantics of the
-        # p?laiect IEEE helpers (recipes/scalapack/*c_overrides return
+        # p?laiect IEEE helpers (codegen/recipes/scalapack/*c_overrides return
         # IEFLAG=1 unconditionally and make the b/l variants aliases of
         # one portable Sturm body). kind4/kind8 bind upstream
         # pdlaiect.c, where IEFLAG is legitimately 2 on little-endian

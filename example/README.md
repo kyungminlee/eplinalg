@@ -11,16 +11,20 @@ solves `A x = b` with MUMPS, and writes the solution. Precision is selected by a
 type prefix, and it runs under MPI.
 
 ```
-mmsolve -t <s|c|d|z|e|y> [-v] <matrix.mtx> <rhs.mtx> <solution.mtx>
+mmsolve -t <s|c|d|z|e|y|q|x|m|w> [-o <ordering>] [-v] <matrix.mtx> <rhs.mtx> <solution.mtx>
 
   -t   arithmetic:  s = single real         c = single complex
                     d = double real         z = double complex
                     e = long-double real    y = long-double complex
+                    q = __float128 real     x = __float128 complex
+                    m = double-double real  w = double-double complex
+  -o   ordering: default | pord | scotch | metis | ptscotch
   -v   leave MUMPS diagnostics on (default: silent)
 ```
 
-The genuine `s c d z` and the extended long-double `e y` **all live in this one
-binary** — see "How ten arithmetics share one binary" below.
+The genuine `s c d z` and the extended `e y` (kind10), `q x` (kind16), and
+`m w` (multifloats) families **all live in this one binary** — see "How ten
+arithmetics share one binary" below.
 
 - **matrix** — Matrix Market `coordinate` (sparse), `real` or `complex`,
   `general` or `symmetric`. A `symmetric` matrix stores only its lower triangle
@@ -34,25 +38,27 @@ MPI uses MUMPS' centralized-input model: rank 0 reads the files and owns the
 assembled matrix, RHS, and solution; every rank participates in the collective
 factor/solve. Run with `mpirun -n N ./mmsolve …`.
 
-### How six arithmetics share one binary (and why MKL)
+### How ten arithmetics share one binary (and why MKL)
 
 MUMPS ships four "genuine" arithmetics — `s c d z` — that coexist in one binary:
 they share the single `mumps_common` runtime and expose distinct `?mumps_c` entry
 points. Intel MKL provides a ScaLAPACK/BLACS/PBLAS backend for exactly those four,
 so MKL is a drop-in parallel backend for the genuine family.
 
-eplinalg's *extended* long-double precisions (`e y`, kind10) add two more `?mumps_c`
-entry points on the same shared runtime, backed by the in-tree migrated long-double
-ScaLAPACK/LAPACK/BLAS (MKL has no long double). This binary links **both** — the
-genuine `s c d z` on MKL and the extended `e y` on the in-tree stack — so a single
-`mmsolve` covers all six. The seam that makes this safe is symbol layering:
+eplinalg's *extended* precisions add six more `?mumps_c` entry points on the same
+shared runtime: `e y` (kind10 long double), `q x` (kind16 `__float128`), and
+`m w` (double-double multifloats), each backed by its own in-tree migrated
+ScaLAPACK/LAPACK/BLAS (MKL provides none of these precisions). This binary links
+**all of them** — the genuine `s c d z` on MKL and the extended families on their
+in-tree stacks — so a single `mmsolve` covers all ten. The seam that makes this
+safe is symbol layering:
 
 - **Genuine typed** routines (`pdgetrf_`, `pzpotrf_`, …) → **MKL**.
 - **Type-agnostic plumbing** (`blacs_gridinit_`, `descinit_`, `numroc_`,
   `Cblacs_gridinfo`) → **MKL** as well. There is exactly *one* copy of each in the
   process, and both the program and MKL's own `pdgetrf` internals use it.
-- **Long-double typed** routines (`pegetrf_`, `pypotrf_`, `Cegamx2d`, …) → the
-  in-tree e/y archives, which MKL cannot provide.
+- **Extended typed** routines (`pegetrf_`, `pqpotrf_`, `Cmgamx2d`, …) → the
+  in-tree e/y, q/x, and m/w archives, which MKL cannot provide.
 
 This works because MKL's `libmkl_blacs_openmpi_lp64` is the netlib **reference**
 BLACS recompiled — it exports the same `BI_*` context internals — so the in-tree
@@ -62,10 +68,10 @@ ABI clash, and no `-Wl,--allow-multiple-definition`.
 The one non-obvious requirement is **link order**: MKL must appear *ahead* of the
 in-tree archives so it wins the genuine + type-agnostic symbols (the in-tree
 reference ScaLAPACK also *defines* `pdgetrf_`, so if it came first it would
-capture them). The extended `q x` (kind16) and `m w` (multifloat) families are
-not included here — each is a separate migrated stack that re-emits the same
-`?mumps_*` symbols and would collide; adding them needs the same MKL-first
-layering against their own in-tree archives.
+capture them). The `q x` and `m w` families follow the same MKL-first layering
+against their own in-tree archives; their custom MPI reduction operators
+additionally require the `quad_mpi_init()` / `multifloats_mpi_init()` calls
+`mmsolve` makes right after `MPI_Init`.
 
 ### Building
 
@@ -114,7 +120,7 @@ mpirun -n 2 ../../build/mmsolve/mmsolve -t y data/A_cplx.mtx data/b_cplx.mtx xy.
 
 | file | role |
 |------|------|
-| `mmsolve.c`    | arg parsing, MPI orchestration, per-type MUMPS solve (macro-generated for s/c/d/z/e/y) |
+| `mmsolve.c`    | arg parsing, MPI orchestration, per-type MUMPS solve (macro-generated for s/c/d/z/e/y/q/x/m/w) |
 | `mmio_min.h/.c`| minimal self-contained Matrix Market reader/writer (no external mmio dependency) |
 | `CMakeLists.txt` | standalone consumer project |
 | `data/`        | small real + complex test systems with known solutions |

@@ -59,18 +59,16 @@ list(FILTER _reflap_srcs EXCLUDE REGEX "la_constants_(mf|ep|ey|qx|mw)")
 list(FILTER _reflap_srcs EXCLUDE REGEX "la_xisnan_(mf|ep|ey|qx|mw)")
 
 # Skip iparam2stage.F. It is a precision-independent INTEGER function
-# (no FP argument promotion), and the staged lapack/src/iparam2stage.F
-# already ships a patched copy via recipes/lapack/mf_overrides/ that
-# recognizes the migrator precision prefixes (Q / X / E / Y / M / W).
-# If we let reflapack_quad keep its own iparam2stage_ symbol the linker
-# resolves it from this archive first, which masks the patched copy in
-# liblapack_common — and qsyev_2stage / xheev_2stage / etc. then get
-# IPARAM2STAGE = -1 on the migrated path, undersized LWORK, and heap
-# corruption inside libc free. Excluding the upstream copy here lets
-# the linker pull the patched version from liblapack_common for both
-# the reference (D-prefix) and migrated (Q/E/M/X/Y/W-prefix) call
-# sites — they're ABI-compatible because iparam2stage takes only
-# INTEGER and CHARACTER arguments.
+# (no FP argument promotion). Migrated call sites don't use it at all:
+# codegen/recipes/lapack.yaml's extra_renames reroutes every
+# IPARAM2STAGE call to IPARAM2STAGE_EP, whose body (staged from
+# codegen/recipes/lapack/extras/iparam2stage_ep.F) recognizes the
+# migrator precision prefixes (Q / X / E / Y / M / W) — upstream
+# iparam2stage returns -1 for them, giving undersized LWORK and heap
+# corruption inside libc free. The reference (D-prefix) call sites
+# still resolve plain iparam2stage_ from the standard-precision lapack
+# archive; excluding the upstream copy here keeps reflapack_quad from
+# shadowing that resolution with a quad-promoted duplicate.
 list(FILTER _reflap_srcs EXCLUDE REGEX "/iparam2stage\\.F$")
 
 # Reference-source overrides. Files in overrides/ replace their
@@ -113,7 +111,7 @@ if(REFQUAD_RENAME_SCRIPT)
     # Pass refblas_quad as a sibling (its defs feed the rename set, so
     # reflapack_quad's U refs to dnrm2_ etc. get renamed in lockstep).
     # `-x` excludes flag the migrated `*_common` archives: their T/W
-    # defs (la_constants_ep, iparam2stage_ patched, mumps_abort_, …)
+    # defs (la_constants_ep, iparam2stage_ep_, mumps_abort_, …)
     # are referenced by reflapack_quad and must stay un-renamed so the
     # migrated link cycle resolves them under their original names.
     set(_refquad_excludes)

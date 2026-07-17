@@ -94,9 +94,9 @@ dependencies; higher-level modules (`pipeline`, `staging`,
 
 | Module | Purpose |
 |---|---|
-| `__main__.py` | CLI entry (argparse). Subcommands: `prepare`, `verify-patches`, `migrate`, `diverge`, `converge`, `verify`, `build`, `run`, `stage`; the heavy lifting lives in the modules below. |
+| `__main__.py` | CLI entry (argparse). Subcommands: `prepare`, `verify-patches`, `migrate`, `diverge`, `verify`, `build`, `run`, `stage`; the heavy lifting lives in the modules below. |
 | `staging.py` | The `stage` subcommand: enumerates and migrates each library into the self-contained staging tree, patches the libseq MPI shim, classifies symbols, and lays down the CMake manifest a downstream build consumes. |
-| `pipeline.py` | Multi-file migration orchestration. `run_migration` is the entry; `_collect_all_symbols` walks the recipe's `depends:` graph to assemble the symbol universe; `_apply_extra_renames` is the single post-classification rename hook (called from four sites: `run_divergence_report`, `run_convergence_report`, `run_c_convergence_report`, `run_migration`). |
+| `pipeline.py` | Multi-file migration orchestration. `run_migration` is the entry; `_collect_all_symbols` walks the recipe's `depends:` graph to assemble the symbol universe; `_apply_extra_renames` is the single post-classification rename hook (called from two sites: `run_divergence_report`, `run_migration`). |
 | `prepare.py` | Stages upstream sources into `build/staged-sources/<library>/` and applies the recipe's unified-diff patch list. |
 | `fortran_migrator.py` | The Fortran source rewriter. Type-declaration rewriting (`DOUBLE PRECISION` → `REAL(KIND=16)` etc.), literal rewriting (`1.0D0` → `1.0E0_16`), intrinsic rewriting (`DBLE(x)` → `REAL(x, KIND=16)`), routine-name rewriting (case-preserving), `XERBLA('DGEMM ', …)` string rewriting, and fixed-form continuation handling. The largest component, together with the `fortran/` passes it drives. |
 | `fortran/` (package) | The individual Fortran rewrite passes, one module per concern: `lex`, `logical_lines`, `fixedform`, `decls`, `literals`, `renames`, `intrinsics_rw`, `complex_rw`, `params`, `keepkind`, `la_constants`, `mpi`, `io_narrow`, `use_inject`. |
@@ -176,8 +176,11 @@ output to `REAL(KIND=8)` even when the surrounding storage is 16
 bytes. Bugs of this shape live in `test/integration/lapack/reflapack/overrides/`
 and replace the upstream Netlib source in the **reference** library
 only (the migrated target, with explicit `KIND=16` everywhere, is
-unaffected). One override file — `zgedmd.f90` — currently exists;
-the mechanism is documented in `test/integration/lapack/reflapack/CMakeLists.txt`.
+unaffected). One override of this shape — `zgedmd.f90` — currently
+exists; the directory also carries `dorbdb3.f` and `zunbdb3.f`, which
+instead route the upstream `?orbdb3` `?ROT` stride bug (L01,
+`doc/upstream-bugs/lapack.md`) around the reference build; the
+mechanism is documented in `test/integration/lapack/reflapack/CMakeLists.txt`.
 
 ## C migration
 
@@ -202,10 +205,12 @@ a clone-and-substitute pattern:
 ## Build system — `cmake/`
 
 The migrator does not ship CMakeLists.txt for individual libraries.
-Instead, `migrator stage` writes a top-level `CMakeLists.txt` (from
-the template in `__main__.py:_generate_cmake`) into the staging
-directory, plus a target-specific `target_config.cmake` that sets
-the prefix, type names, and MPI-datatype symbols.
+Instead, `migrator stage` copies the unified top-level
+`CMakeLists.txt` (and its helper modules) from the repo's `cmake/`
+directory into the staging tree, plus a generated
+`target_config.cmake` that sets the prefix, type names, and
+MPI-datatype symbols. (`_generate_cmake`, in `cmake_gen.py`, serves
+only the single-library `build` subcommand.)
 
 The shared infrastructure lives in `cmake/CMakeLists.txt` (~870
 lines) and `cmake/FortranCompiler.cmake` (~410 lines). The major
@@ -268,10 +273,11 @@ route around them:
   normal pipeline so it emits the per-target migrated name. Used
   for ScaLAPACK `pdlanhs.f` / `pzlanhs.f` (NPROW=1 norm bug),
   LAPACK `cheevx.f` (LWKOPT min guard), and dozens of others.
-- `test/integration/lapack/reflapack/overrides/<file>.f90`: replace the
-  upstream source in the **reference** build only. Used for
+- `test/integration/lapack/reflapack/overrides/<file>.{f,f90}`: replace
+  the upstream source in the **reference** build only. Used for
   `zgedmd.f90` (gfortran `-freal-8-real-16` `CMPLX(…,KIND=8)`
-  truncation).
+  truncation) and for `dorbdb3.f` / `zunbdb3.f` (upstream `?orbdb3`
+  `?ROT` stride bug, L01 in `doc/upstream-bugs/lapack.md`).
 
 ## CI — `.github/workflows/release.yml`
 
@@ -306,7 +312,7 @@ eplinalg/
 │                        # (staged into the build tree as runtime/)
 ├── test/
 │   ├── unit/                # pytest suite for the migration engine
-│   └── integration/         # 10 differential-precision suites (1051 tests)
+│   └── integration/         # 10 differential-precision suites (1125 tests)
 │                            # (staged into the build tree as tests/)
 ├── extern/              # Vendored upstream: LAPACK 3.12.1, ScaLAPACK 2.2.3,
 │                        # MUMPS 5.9.0 (5.8.2 kept for reference), XBLAS 1.0.248,

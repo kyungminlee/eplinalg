@@ -114,9 +114,8 @@ migrator migrate   <recipe> <out>   # migrate source files only
 migrator build     <recipe> <out>   # generate CMake + build one library
 migrator run       <recipe> <work>  # full: migrate + build + verify
 migrator stage     <dir>            # migrate all libraries into a unified CMake tree
-migrator diverge   <recipe> <out>   # report s/d vs c/z divergences
-migrator converge  <recipe> <out>   # whitespace-tolerant convergence check
-migrator verify    <recipe> <out>   # post-migration verification
+migrator diverge   <recipe>         # report s/d vs c/z divergences
+migrator verify    <out>            # post-migration verification
 ```
 
 All commands accept `--target {kind10,kind16,multifloats}` or a path to a
@@ -166,7 +165,9 @@ for the sidecar conventions.
 | `quad-mpi`             | first-party `src/quad-mpi/` — MPI reduce ops for kind16 (`MPI_REAL16` / `MPI_COMPLEX32`) |
 
 To pin a specific multifloats release, pass
-`-DMULTIFLOATS_GIT_TAG=v0.2.3` to CMake. For an offline build, pass
+`-DMULTIFLOATS_VERSION=<tag>` (or `-DMULTIFLOATS_ARCHIVE=<path/url>` for a
+prefetched bundle). Source builds via `-DMULTIFLOATS_FROM_SOURCE=ON` accept
+`-DMULTIFLOATS_GIT_TAG`. For an offline build, pass
 `-DMULTIFLOATS_DIR=/path/to/local/multifloats`.
 
 ## Tests
@@ -208,5 +209,6 @@ for the full configure/build/test/release workflow.
 ## License
 
 Vendored upstream libraries retain their original licenses (see the
-`LICENSE*` files under `extern/*/`). The migrator itself is
-unlicensed for now.
+`LICENSE*` files under `extern/*/`). Everything first-party — the
+migrator, recipes, runtime bridges, and build system — is MIT-licensed
+(see [LICENSE](LICENSE)).

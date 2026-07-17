@@ -38,7 +38,7 @@ The 402 mixed-input-precision variants (`BLAS_dgemv_d_s_x`,
 `BLAS_zaxpby_c`, ...) are skipped by the recipe — they're not
 expressible in a single extended-precision target. If a future caller
 needs one of these, the path is to add a hand-written override in
-`recipes/xblas/mfc_overrides/` rather than trying to push them through
+`codegen/recipes/xblas/mfc_overrides/` rather than trying to push them through
 the family classifier.
 
 ## Known XBLAS oddities to remember

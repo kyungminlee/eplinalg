@@ -150,33 +150,3 @@ extern "C" void multifloats_mpi_init(void) {
 
     initialized = 1;
 }
-
-/* ---- Deprecated pre-v0.14 names ---------------------------------- */
-
-/* The multifloats ops were originally named after the arithmetic
- * (MPI_DD_* double-double real, MPI_ZZ_* complex) instead of after the
- * m/w family prefixes the kind16 ops use (MPI_QQ_* / MPI_XX_*). They
- * are now MPI_MM_* / MPI_WW_*; the old symbols survive one release
- * cycle as ELF aliases of the new ones (same storage, so old binaries
- * and the deprecated Fortran publics keep working). Declared
- * deprecated in multifloats_bridge.h. Remove after v0.14. */
-extern "C" {
-
-/* ``extern`` + alias is the C++ spelling of an alias definition: a bare
- * ``MPI_Op MPI_DD_SUM`` at namespace scope would itself be a definition
- * (no tentative definitions in C++) and clash with the attribute. */
-extern MPI_Op MPI_DD_SUM __attribute__((alias("MPI_MM_SUM")));
-extern MPI_Op MPI_DD_AMX __attribute__((alias("MPI_MM_AMX")));
-extern MPI_Op MPI_DD_AMN __attribute__((alias("MPI_MM_AMN")));
-extern MPI_Op MPI_ZZ_SUM __attribute__((alias("MPI_WW_SUM")));
-extern MPI_Op MPI_ZZ_AMX __attribute__((alias("MPI_WW_AMX")));
-extern MPI_Op MPI_ZZ_AMN __attribute__((alias("MPI_WW_AMN")));
-
-extern MPI_Fint mf_mpi_dd_sum_f __attribute__((alias("mf_mpi_mm_sum_f")));
-extern MPI_Fint mf_mpi_dd_amx_f __attribute__((alias("mf_mpi_mm_amx_f")));
-extern MPI_Fint mf_mpi_dd_amn_f __attribute__((alias("mf_mpi_mm_amn_f")));
-extern MPI_Fint mf_mpi_zz_sum_f __attribute__((alias("mf_mpi_ww_sum_f")));
-extern MPI_Fint mf_mpi_zz_amx_f __attribute__((alias("mf_mpi_ww_amx_f")));
-extern MPI_Fint mf_mpi_zz_amn_f __attribute__((alias("mf_mpi_ww_amn_f")));
-
-} /* extern "C" */

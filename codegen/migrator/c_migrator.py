@@ -507,7 +507,7 @@ _PBTYP_C_BINDING_FIELDS = frozenset({
 })
 
 
-def _make_rename_substituter(pattern: re.Pattern, combined: dict[str, str]):
+def _make_rename_substituter(combined: dict[str, str]):
     """Return a callback for ``pattern.sub`` that renames case-preservingly.
 
     Renames performed by the migrator change the precision letter (e.g.
@@ -746,9 +746,9 @@ def migrate_c_file_to_string(
 
     Mirrors :func:`migrate_file_to_string` for Fortran: returns
     ``(target_filename, migrated_text)`` or ``None`` when the file is
-    precision-independent / not part of any family. Used by the
-    convergence report to re-derive the target from an S/C sibling and
-    compare with the D/Z-derived canonical already on disk.
+    precision-independent / not part of any family. Retained as the
+    in-memory single-file harness; exercised by
+    ``test/unit/test_c_migrator_multifloats.py``.
 
     Two modes, mirroring :func:`migrate_c_directory`:
 
@@ -781,7 +781,7 @@ def migrate_c_file_to_string(
         new_name = new_stem + src_path.suffix
 
         pattern, combined = _build_rename_regex(rename_map)
-        sub = _make_rename_substituter(pattern, combined)
+        sub = _make_rename_substituter(combined)
         text = src_path.read_text(errors='replace')
         text = pattern.sub(sub, text)
         text = _apply_c_type_subs(text, template_vars, c_type_aliases,
@@ -1094,7 +1094,7 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
                               target_mode=target_mode)
 
     rename_pattern, combined_map = _build_rename_regex(rename_map)
-    _rename_sub = _make_rename_substituter(rename_pattern, combined_map)
+    _rename_sub = _make_rename_substituter(combined_map)
 
     def _rename(text: str) -> str:
         return rename_pattern.sub(_rename_sub, text)

@@ -50,7 +50,7 @@ typedef struct { __float128 r, i; } mumps_float128_complex;
  * (F_SYM_ARITH(assign_colsca,ASSIGN_COLSCA) -> with -DAdd_ the pasted
  * token dmumps_assign_colsca_, and the zmumps_ analogues). The migrated
  * *.F now CALL these at the target prefix (qmumps_.../xmumps_...,
- * forced via recipes/mumps.yaml extra_renames), so retarget the bridge's
+ * forced via codegen/recipes/mumps.yaml extra_renames), so retarget the bridge's
  * own definitions to match -- otherwise the extended build would leak
  * plain-double d/z callback symbols and collide with the genuine
  * dmumps_c/zmumps_c bridge. A ## paste is re-scanned, so a plain #define

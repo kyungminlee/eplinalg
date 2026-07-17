@@ -102,7 +102,7 @@ endif()
 #     ``char *`` casts (e.g. BI_iMPI_amn.c:12) that C accepts and C++
 #     rejects. Tolerated on g++; clang++ does NOT honor this flag,
 #     so a clang-based multifloats build still needs the explicit-cast
-#     overrides in ``recipes/<lib>/mfc_overrides/``.
+#     overrides in ``codegen/recipes/<lib>/mfc_overrides/``.
 #   - -Wno-write-strings: silences `const char[]` -> `char *` literals.
 #   - MPICH_SKIP_MPICXX / OMPI_SKIP_MPICXX: keep mpicxx.h's templates
 #     out of the migrator-injected ``extern "C" {{ ... }}`` wrap.

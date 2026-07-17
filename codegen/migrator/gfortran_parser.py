@@ -46,8 +46,7 @@ def find_gfortran() -> str | None:
 # ---------------------------------------------------------------------------
 
 def run_gfortran_parse_tree(source_path: Path,
-                            gfortran_cmd: str | None = None,
-                            use_sema: bool = False) -> str | None:
+                            gfortran_cmd: str | None = None) -> str | None:
     """Run gfortran to get a parse tree dump.
 
     Returns the dump text, or None if gfortran is unavailable or fails.
@@ -207,7 +206,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
             if um:
                 mod_name = um.group(1).upper()
                 facts.use_stmt_ranges.append(
-                    UseStmtInfo(mod_name, (0, 0), []))
+                    UseStmtInfo(mod_name))
                 seen_use_modules.add(mod_name)
 
             # --- USE-ASSOC tag ---
@@ -222,7 +221,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                 mod_name = am.group(1).upper()
                 if mod_name not in seen_use_modules:
                     facts.use_stmt_ranges.append(
-                        UseStmtInfo(mod_name, (0, 0), []))
+                        UseStmtInfo(mod_name))
                     seen_use_modules.add(mod_name)
 
             # --- Symbol table entry ---
@@ -249,7 +248,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                         mod_name = am.group(1).upper()
                         if mod_name not in seen_use_modules:
                             facts.use_stmt_ranges.append(
-                                UseStmtInfo(mod_name, (0, 0), []))
+                                UseStmtInfo(mod_name))
                             seen_use_modules.add(mod_name)
                     j += 1
 
@@ -266,7 +265,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                 if 'DERIVED' in attrs and not any(
                         a.startswith('USE-ASSOC') for a in attrs):
                     facts.routine_defs.append(
-                        RoutineDef('type', sym_name.upper(), None))
+                        RoutineDef('type', sym_name.upper()))
                     i = j
                     continue
                 symbols[sym_name] = {
@@ -331,15 +330,15 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
 
         if 'SUBROUTINE' in attrs and (is_proc_sym or is_module_proc):
             facts.routine_defs.append(
-                RoutineDef('subroutine', sym_name.upper(), None))
+                RoutineDef('subroutine', sym_name.upper()))
         elif 'FUNCTION' in attrs and (is_proc_sym or is_module_proc):
             facts.routine_defs.append(
-                RoutineDef('function', sym_name.upper(), ts))
+                RoutineDef('function', sym_name.upper()))
         elif is_module_name:
             # Treat the module name itself like a routine_def so the
             # rename_map filter in _migrate_with_flang keeps the entry.
             facts.routine_defs.append(
-                RoutineDef('module', sym_name.upper(), None))
+                RoutineDef('module', sym_name.upper()))
 
         if 'EXTERNAL' in attrs and 'INTRINSIC' not in attrs:
             facts.external_names.append(sym_name.upper())
@@ -356,7 +355,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
 
     # --- Call sites from code section ---
     for name in sorted(call_names):
-        facts.call_sites.append(CallSite(name.upper(), True))
+        facts.call_sites.append(CallSite(name.upper()))
 
     seen_call_names = {cs.name for cs in facts.call_sites}
     for name in sorted(func_ref_names):
@@ -365,7 +364,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
         if uname.startswith('__'):
             continue
         if uname not in seen_call_names:
-            facts.call_sites.append(CallSite(uname, False))
+            facts.call_sites.append(CallSite(uname))
             seen_call_names.add(uname)
 
     return facts
@@ -391,13 +390,12 @@ def _parse_attributes(attrs_line: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 def scan_file(source_path: Path,
-              gfortran_cmd: str | None = None,
-              use_sema: bool = False) -> ParseTreeFacts | None:
+              gfortran_cmd: str | None = None) -> ParseTreeFacts | None:
     """Scan a Fortran file using gfortran and return extracted facts.
 
     Returns None if gfortran is not available or fails.
     """
-    tree_text = run_gfortran_parse_tree(source_path, gfortran_cmd, use_sema)
+    tree_text = run_gfortran_parse_tree(source_path, gfortran_cmd)
     if tree_text is None:
         return None
     return parse_tree_facts(tree_text)

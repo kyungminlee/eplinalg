@@ -4,6 +4,13 @@ Release notes live on the [GitHub releases page](https://github.com/kyungminlee/
 this file summarizes each tagged version. The current version is in
 [VERSION](VERSION).
 
+## Unreleased
+
+- Removed the deprecated `MPI_DD_*` / `MPI_ZZ_*` multifloats MPI op
+  aliases (and the matching `mf_mpi_dd_*` / `mf_mpi_zz_*` Fortran
+  bindings), as scheduled after the one-release deprecation cycle
+  announced in v0.14.0. Use `MPI_MM_*` / `MPI_WW_*`.
+
 ## v0.15.0
 
 - Repository restructured to the standard package layout: `extern/`

@@ -33,8 +33,8 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SRC_DIR = REPO / 'external' / 'MUMPS_5.9.0' / 'src'
-MANIFEST = REPO / 'recipes' / 'mumps' / 'keep-kind.manifest'
+SRC_DIR = REPO / 'extern' / 'MUMPS_5.9.0' / 'src'
+MANIFEST = REPO / 'codegen' / 'recipes' / 'mumps' / 'keep-kind.manifest'
 
 # copy_files stems (must match codegen/recipes/mumps.yaml). Anything listed
 # here contributes its SUBROUTINE / FUNCTION names to the "DP-stable"
@@ -45,7 +45,7 @@ def _load_copy_files() -> set[str]:
         import yaml  # type: ignore
     except ImportError:
         yaml = None
-    recipe = REPO / 'recipes' / 'mumps.yaml'
+    recipe = REPO / 'codegen' / 'recipes' / 'mumps.yaml'
     if yaml is None or not recipe.exists():
         # Fallback for environments without PyYAML: return nothing so
         # the sweep exits cleanly. The main migration is the real source

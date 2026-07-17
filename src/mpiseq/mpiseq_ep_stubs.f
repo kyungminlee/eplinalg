@@ -9,7 +9,7 @@ C     (m/w, q/x, e/y) reach those routines through the privatized
 C     ep_ BLACS engine names instead (doc/guide/mkl-coexistence.md),
 C     so a libmpiseq link needs the same abort stubs under the ep_
 C     spelling.  Exactly the four names extended MUMPS binds
-C     (codegen/codegen/recipes/mumps.yaml extra_renames).  Always folded into
+C     (codegen/recipes/mumps.yaml extra_renames).  Always folded into
 C     libmpiseq: baseline kind4/kind8 consumers never reference
 C     ep_* and the archive member stays unpulled.
 C***********************************************************************
