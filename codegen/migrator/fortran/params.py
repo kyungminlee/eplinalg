@@ -6,8 +6,42 @@ kind. Extracted verbatim from ``fortran_migrator.py``.
 import re
 
 from ..target_mode import TargetMode
-from .lex import _is_fp_value, _join_continued_lines, _scope_indices
+from .lex import (
+    _is_fp_value, _join_continued_lines, _scope_indices,
+    split_top_level_commas,
+)
 from .decls import _scan_complex_var_names
+
+
+def _is_complex_value(name: str, val: str, complex_names: set[str],
+                      target_mode: TargetMode, *,
+                      type_is_complex: bool = False) -> bool:
+    """True when a PARAMETER entry carries complex semantics: the value
+    is a complex literal / constructor call, the local declaration of
+    the name is COMPLEX, or (combined form) the declared type-spec is
+    complex. Such names must NOT be folded into the multifloats
+    real-constant rename map — they stay runtime assignments so the
+    variable retains its complex type."""
+    cx_ctor = (target_mode.complex_constructor or '').lower()
+    return (
+        type_is_complex
+        or ('(' in val and ',' in val)
+        or bool(cx_ctor and cx_ctor in val.lower())
+        or 'cmplx' in val.lower()
+        or 'dcmplx' in val.lower()
+        or name.upper() in complex_names
+    )
+
+
+def _wrap_in_cpp_guards(assn: str, cpp_stack: list[dict]) -> str:
+    """Wrap a runtime assignment in the effective ``#if``/``#endif``
+    guards so it stays in scope exactly when the original declaration
+    is in scope."""
+    if not cpp_stack:
+        return assn
+    pre = ''.join(f["wrap"] + '\n' for f in cpp_stack)
+    post = '#endif\n' * len(cpp_stack)
+    return pre + assn + post
 
 
 def convert_parameter_stmts(
@@ -130,18 +164,7 @@ def convert_parameter_stmts(
             items   = cm.group(3)
             comment = cm.group(4) or ''
 
-            entries: list[str] = []
-            cur, depth = '', 0
-            for ch in items:
-                if ch == '(': depth += 1; cur += ch
-                elif ch == ')': depth -= 1; cur += ch
-                elif ch == ',' and depth == 0:
-                    if cur.strip(): entries.append(cur.strip())
-                    cur = ''
-                else:
-                    cur += ch
-            if cur.strip():
-                entries.append(cur.strip())
+            entries = split_top_level_commas(items, strip=True)
 
             kept_names: list[str] = []
             line_assignments: list[str] = []
@@ -202,14 +225,9 @@ def convert_parameter_stmts(
                     kept_names = []
                     break
 
-                cx_ctor = (target_mode.complex_constructor or '').lower()
-                is_cx_value = (
-                    type_is_complex
-                    or ('(' in val and ',' in val)
-                    or (cx_ctor and cx_ctor in val.lower())
-                    or 'cmplx' in val.lower()
-                    or 'dcmplx' in val.lower()
-                    or name.upper() in complex_names
+                is_cx_value = _is_complex_value(
+                    name, val, complex_names, target_mode,
+                    type_is_complex=type_is_complex,
                 )
                 if (name.upper() in target_mode.known_constants
                         and not is_cx_value):
@@ -219,11 +237,8 @@ def convert_parameter_stmts(
                     continue
 
                 kept_names.append(name)
-                assn = f"{indent}{name} = {val}{comment}\n"
-                if cpp_stack:
-                    pre = ''.join(f["wrap"] + '\n' for f in cpp_stack)
-                    post = '#endif\n' * len(cpp_stack)
-                    assn = pre + assn + post
+                assn = _wrap_in_cpp_guards(
+                    f"{indent}{name} = {val}{comment}\n", cpp_stack)
                 line_assignments.append(assn)
             else:
                 # Loop completed without `break`: all entries were
@@ -247,15 +262,7 @@ def convert_parameter_stmts(
         m = param_re.match(joined)
         if m:
             indent, params_content, comment = m.group(1), m.group(2), m.group(3) or ''
-            parts, current, depth = [], [], 0
-            for char in params_content:
-                if char == '(': depth += 1
-                elif char == ')': depth -= 1
-                if char == ',' and depth == 0:
-                    parts.append(''.join(current))
-                    current = []
-                else: current.append(char)
-            if current: parts.append(''.join(current))
+            parts = split_top_level_commas(params_content)
 
             kept_parts = []
             line_assignments: list[str] = []
@@ -265,31 +272,14 @@ def convert_parameter_stmts(
                     name, val = part.split('=', 1)
                     name, val = name.strip(), val.strip()
                     if _is_fp_value(val, target_mode.known_constants):
-                        # A known-constant name carries complex
-                        # semantics if either (a) the value is a
-                        # complex literal / constructor, or (b) the
-                        # local declaration of the name is COMPLEX.
-                        # In either case it must NOT be folded into
-                        # the multifloats real-constant rename map —
-                        # we keep it as a runtime assignment so the
-                        # variable retains its complex type.
-                        cx_ctor = (target_mode.complex_constructor or '').lower()
-                        is_cx_value = (
-                            ('(' in val and ',' in val) or
-                            (cx_ctor and cx_ctor in val.lower()) or
-                            'cmplx' in val.lower() or
-                            'dcmplx' in val.lower() or
-                            name.upper() in complex_names
-                        )
+                        is_cx_value = _is_complex_value(
+                            name, val, complex_names, target_mode)
                         if (name.upper() in target_mode.known_constants
                                 and not is_cx_value):
                             line_dropped_known[name.upper()] = target_mode.known_constants[name.upper()]
                             continue
-                        assn = f"{indent}{name} = {val}{comment}\n"
-                        if cpp_stack:
-                            pre = ''.join(f["wrap"] + '\n' for f in cpp_stack)
-                            post = '#endif\n' * len(cpp_stack)
-                            assn = pre + assn + post
+                        assn = _wrap_in_cpp_guards(
+                            f"{indent}{name} = {val}{comment}\n", cpp_stack)
                         line_assignments.append(assn)
                     else: kept_parts.append(part)
                 else: kept_parts.append(part)
@@ -344,16 +334,7 @@ def convert_data_stmts(
             # heuristic; this is more discriminating than scanning the
             # whole vals_part for ``D``/``E`` substrings (which would
             # falsely match identifiers).
-            tmp_vals: list[str] = []
-            cur, depth = '', 0
-            for ch in vals_part:
-                if ch == '(': depth += 1
-                elif ch == ')': depth -= 1
-                if ch == ',' and depth == 0:
-                    tmp_vals.append(cur.strip()); cur = ''
-                else:
-                    cur += ch
-            if cur.strip(): tmp_vals.append(cur.strip())
+            tmp_vals = [v.strip() for v in split_top_level_commas(vals_part)]
             any_fp = any(_is_fp_value(v, target_mode.known_constants) for v in tmp_vals)
 
             if any_fp:
@@ -378,3 +359,63 @@ def convert_data_stmts(
         result.append(line)
         i += 1
     return "".join(result), fp_assignments, dropped_known
+
+
+# Names of free-form file-scope PARAMETER declarations that are
+# supplied as MF_* constants by the multifloats module. RTMIN and
+# RTMAX are intentionally excluded: in several LAPACK routines
+# they are local variables computed at runtime, not PARAMETERs.
+# The mapping mirrors la_constants_map but with explicit
+# multifloats target names for free-form Pattern A files (those
+# use ``USE multifloats`` directly, not ``USE LA_CONSTANTS_MW``).
+_MF_PARAM_NUKE_RENAMES = {
+    'zero': 'DD_ZERO', 'one': 'DD_ONE', 'czero': 'DD_ZERO',
+    'safmin': 'DD_SAFMIN', 'safmax': 'DD_SAFMAX',
+    'tsml': 'DD_TSML', 'tbig': 'DD_TBIG',
+    'ssml': 'DD_SSML', 'sbig': 'DD_SBIG',
+    # dnrm2.f90's local ``maxN = huge(0.0_wp)`` is equivalent to
+    # DD_SAFMAX (which is itself defined as huge(0.0_dp) packed
+    # into float64x2's high limb).
+    'maxn': 'DD_SAFMAX',
+}
+
+
+def nuke_multifloats_params(source: str, removed_known: dict[str, str]) -> str:
+    """Comment out free-form PARAMETER declarations the target supplies.
+
+    Heuristic pass over free-form source: declaration lines that mention
+    a name from ``_MF_PARAM_NUKE_RENAMES`` are commented out (including
+    ``&``-continued follow-on lines), and each dropped name is recorded
+    in *removed_known* (mutated in place) so
+    ``replace_known_constants`` later rewrites its uses to the ``DD_*``
+    constant.
+    """
+    lines_tmp = source.splitlines()
+    res_tmp = []
+    in_comment_block = False
+    nuke_names = set(_MF_PARAM_NUKE_RENAMES.keys())
+
+    for line in lines_tmp:
+        stripped = line.strip().lower()
+        is_decl_start = re.match(r'^\s*(?:real|complex|integer|type|parameter).*?::', line, re.IGNORECASE) or \
+                        re.match(r'^\s*parameter\s*\(', line, re.IGNORECASE)
+
+        contains_nuke = False
+        matched_names: list[str] = []
+        for n in nuke_names:
+            if re.search(rf'\b{n}\b', stripped):
+                contains_nuke = True
+                matched_names.append(n)
+
+        if not in_comment_block and is_decl_start and contains_nuke:
+            res_tmp.append('! ' + line)
+            if line.rstrip().endswith('&'): in_comment_block = True
+            for n in matched_names:
+                removed_known[n.upper()] = _MF_PARAM_NUKE_RENAMES[n]
+        elif in_comment_block:
+            res_tmp.append('! ' + line)
+            if not line.rstrip().endswith('&'): in_comment_block = False
+            for n in matched_names:
+                removed_known[n.upper()] = _MF_PARAM_NUKE_RENAMES[n]
+        else: res_tmp.append(line)
+    return '\n'.join(res_tmp)

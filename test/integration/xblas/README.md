@@ -85,11 +85,12 @@ matvec) the reference is hand-coded at REAL(KIND=16) in
 ## Layout
 
 ```
+../common/
+    prec_kinds.f90       – ep / dp kinds   (shared across suites)
+    compare.f90          – rel_err_*       (shared across suites)
+    prec_report.F90      – JSON reporter   (shared; strict-exact variant here)
+    test_data.f90        – random gens     (shared across suites)
 common/
-    prec_kinds.f90       – ep / dp kinds   (copied from tests/blas/common)
-    compare.f90          – rel_err_*       (copied from tests/blas/common)
-    prec_report.f90      – JSON reporter   (copied from tests/blas/common)
-    test_data.f90        – random gens     (copied from tests/blas/common)
     ref_quad_xblas.f90   – quad refs (BLAS interfaces + hand-coded extras)
     target_xblas_body.fypp – per-target wrapper module template
 target_kind10/target_xblas.fypp     – sets prefixes e/y for 80-bit reals

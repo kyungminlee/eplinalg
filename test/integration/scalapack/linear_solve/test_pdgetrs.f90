@@ -4,9 +4,10 @@ program test_pdgetrs
     use pblas_prec_report, only: report_init, report_case, report_finalize
     use ref_quad_lapack,  only: dgetrf, dgetrs
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
-                                my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix
+                                my_nprow, my_row, numroc_local, &
+                                descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix, &
+                                set_local_from_global
     use target_scalapack, only: target_name, target_eps, &
                                 target_pdgetrf, target_pdgetrs
     implicit none
@@ -22,7 +23,7 @@ program test_pdgetrs
     integer,  allocatable :: ipiv_got(:), ipiv_ref(:)
     real(ep) :: err, tol
     character(len=48) :: label
-    integer :: k, owner_r, owner_c, il, jl
+    integer :: k
 
     call grid_init()
     call report_init('pdgetrs', target_name, my_rank)
@@ -33,11 +34,7 @@ program test_pdgetrs
         call gen_distrib_matrix(n, nrhs, mb, nb, B_loc, B_glob, seed = 9311 + 31*i)
         do k = 1, n
             A_glob(k, k) = A_glob(k, k) + real(n, ep)
-            call g2l(k, mb, my_nprow, owner_r, il)
-            call g2l(k, nb, my_npcol, owner_c, jl)
-            if (owner_r == my_row .and. owner_c == my_col) then
-                A_loc(il, jl) = A_loc(il, jl) + real(n, ep)
-            end if
+            call set_local_from_global(k, k, A_glob(k, k), mb, nb, A_loc)
         end do
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow); lld_a = max(1, locm_a)

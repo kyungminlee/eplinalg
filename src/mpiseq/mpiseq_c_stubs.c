@@ -34,6 +34,7 @@
 
 #include "mpi.h"      /* configured MPI's mpi.h (Intel MPI) */
 #include "elapse.h"   /* mumps_elapse() — libseq-supplied wallclock */
+#include "mpiseq_dtype_tag.h"  /* derived-datatype sentinel encoding */
 
 /* Intel's mpi.h defines MPI_Comm_f2c as a function-like macro. We need
  * to redefine it as a callable function so Fortran-side mpi.f's
@@ -224,30 +225,26 @@ static int mpiseq_base_type_bytes(MPI_Datatype t)
     if (t == MPI_COMPLEX32)        return 32;
     if (t == MPI_C_LONG_DOUBLE_COMPLEX) return 32;
     /* Already-derived multifloats sentinels: pass byte-size through. */
-    if (((uintptr_t) t & 0xFF000000U) == 0x10000000U)
+    if (((uintptr_t) t & 0xFF000000U) == MPISEQ_DTYPE_TAG)
         return (int)((uintptr_t) t & 0x00FFFFFFU);
     return 0;
 }
 
-/* libmpiseq derived-datatype sentinels: 0x10000000 | total_size_in_bytes.
- * MUMPS_COPY in libseq's mpi.f recognises this tag and dispatches on
- * the encoded size, so multifloats' MPI_FLOAT64X2 / MPI_COMPLEX64X2
- * survive a single-rank MPI_ALLREDUCE without the C-side user-op
- * callbacks ever firing. The 0x10000000 tag is below MPI_OP_NULL
- * (0x18000000) and well clear of Intel's 0x4c00**** datatype range. */
-#define MPISEQ_DTYPE_TAG  0x10000000U
+/* Derived-datatype sentinels: MPISEQ_DTYPE_SENTINEL(total_bytes) --
+ * encoding and rationale in mpiseq_dtype_tag.h (shared with the
+ * multifloats bridge's seq-default Fortran handles). */
 
 int MPI_Type_contiguous(int count, MPI_Datatype old, MPI_Datatype *new_)
 {
     int b = mpiseq_base_type_bytes(old);
-    *new_ = (MPI_Datatype)(uintptr_t)(MPISEQ_DTYPE_TAG | (unsigned)(count * b));
+    *new_ = (MPI_Datatype)(uintptr_t)MPISEQ_DTYPE_SENTINEL(count * b);
     return MPI_SUCCESS;
 }
 int MPI_Type_vector(int c, int bl, int st, MPI_Datatype old, MPI_Datatype *new_)
 {
     (void) st;
     int b = mpiseq_base_type_bytes(old);
-    *new_ = (MPI_Datatype)(uintptr_t)(MPISEQ_DTYPE_TAG | (unsigned)(c * bl * b));
+    *new_ = (MPI_Datatype)(uintptr_t)MPISEQ_DTYPE_SENTINEL(c * bl * b);
     return MPI_SUCCESS;
 }
 int MPI_Type_indexed(int c, const int bls[], const int disps[],
@@ -257,7 +254,7 @@ int MPI_Type_indexed(int c, const int bls[], const int disps[],
     int b = mpiseq_base_type_bytes(old);
     int total = 0;
     for (int i = 0; i < c; ++i) total += bls[i];
-    *new_ = (MPI_Datatype)(uintptr_t)(MPISEQ_DTYPE_TAG | (unsigned)(total * b));
+    *new_ = (MPI_Datatype)(uintptr_t)MPISEQ_DTYPE_SENTINEL(total * b);
     return MPI_SUCCESS;
 }
 int MPI_Type_create_struct(int c, const int bls[], const MPI_Aint disps[],
@@ -266,7 +263,7 @@ int MPI_Type_create_struct(int c, const int bls[], const MPI_Aint disps[],
     (void) disps;
     int total = 0;
     for (int i = 0; i < c; ++i) total += bls[i] * mpiseq_base_type_bytes(types[i]);
-    *new_ = (MPI_Datatype)(uintptr_t)(MPISEQ_DTYPE_TAG | (unsigned)total);
+    *new_ = (MPI_Datatype)(uintptr_t)MPISEQ_DTYPE_SENTINEL(total);
     return MPI_SUCCESS;
 }
 int MPI_Type_commit(MPI_Datatype *t)                       { (void) t; return MPI_SUCCESS; }

@@ -76,15 +76,20 @@ any of these is missing:
 ```
 tests/scalapack/
 ├── CMakeLists.txt                    # guards, shim, wrapper, LINK_GROUP cycle
-├── common/                           # copied verbatim from tests/pblas/common
+├── ../common/                        # shared harness modules (compiled per
+│   │                                 # suite into scalapack's own moddir)
 │   ├── prec_kinds.f90
 │   ├── compare.f90
-│   ├── prec_report.f90               # module pblas_prec_report (rank-0 JSON)
+│   ├── prec_report.F90               # rank-0 JSON (PREC_REPORT_MPI here;
+│   │                                 # pblas_prec_report is a re-export shim)
 │   ├── test_data.f90
 │   ├── ref_quad_blas.f90
+│   ├── pblas_grid.F90                # BLACS init + numroc + descinit
+│   └── pblas_distrib.fypp            # block-cyclic scatter/gather
+│                                     # (fypp: real + complex from one body)
+├── common/
 │   ├── ref_quad_lapack.f90           # copied from tests/lapack/common
-│   ├── pblas_grid.f90                # BLACS init + numroc + descinit
-│   └── pblas_distrib.f90             # block-cyclic scatter/gather
+│   └── cond_helpers.f90
 ├── target_kind10/
 │   └── target_scalapack.f90          # passthrough to pe*/py* routines
 ├── target_kind16/
@@ -101,9 +106,9 @@ tests/scalapack/
 
 A dedicated `Fortran_MODULE_DIRECTORY`
 (`${PROJECT_BINARY_DIR}/fmod/${FORTRAN_MOD_COMPAT_TAG}/scalapack_tests`)
-prevents `.mod` collisions with `tests/pblas/` — the helper modules
-reuse the same names (`pblas_grid`, `pblas_distrib`, `compare`, …)
-because renaming them would defeat the point of reusing the sources.
+prevents `.mod` collisions with `tests/pblas/` — both suites compile
+the same shared helper sources (`pblas_grid`, `pblas_distrib`,
+`compare`, …) into modules with the same names.
 
 
 ## Caveats and bring-up notes

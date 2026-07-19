@@ -24,6 +24,13 @@
 #   fortran_install_library(<target> [NAMESPACE <ns>] [EXPORT <export-name>])
 #     Installs the library with a compiler-tagged filename and generates a
 #     Config.cmake for find_package() support.
+#
+#   _fc_detect_mpi_tag(<outvar>)
+#     Probes mpi.h's vendor macros and returns the MPI implementation
+#     flavor tag (e.g. intelmpi-2021.18), or "" when no MPI was found.
+#     Called by the top-level CMakeLists to compute MPI_TAG; uses the
+#     same canonical probe program the generated Configs re-run on the
+#     consumer side, so the two tags cannot drift.
 
 if(_FORTRAN_COMPILER_INCLUDED)
   return()
@@ -49,37 +56,76 @@ include(CMakePackageConfigHelpers)
 #   GNU       - gfortran
 #   Intel     - ifort (classic)
 #   IntelLLVM - ifx
-#   LLVMFlang - LLVM Flang (flang-new, the official LLVM Fortran compiler)
+#   LLVMFlang - LLVM Flang (flang-new, the official LLVM Fortran compiler);
+#               .mod files are valid Fortran source with !mod$ v1 header
 #   Flang     - Classic Flang (PGI-derived, incompatible with LLVM Flang)
 #   NVHPC     - NVIDIA nvfortran (PGI lineage, shares classic Flang .mod format)
 #   NAG       - NAG Fortran
 #   Cray      - Cray Fortran (CCE)
+#
+# The ID → family map and the per-family ABI version truncation are
+# needed twice: once here at configure time (producer side, baked into
+# the installed archive filenames) and once inside every generated
+# <pkg>Config.cmake, where the consumer re-derives the same tag to pick
+# the matching targets file. Both sides must stay in lockstep or
+# find_package() stops matching the installed filenames — so the
+# detection code exists exactly once, as text emitted by the two
+# generators below, parameterized by output variable names. The
+# producer evaluates it via cmake_language(EVAL CODE);
+# fortran_install_library splices the identical text (with
+# consumer-side names) into the generated Config.
 # ---------------------------------------------------------------------------
+function(_fc_family_detection_code outvar family_var)
+  set(${outvar} "\
+if(CMAKE_Fortran_COMPILER_ID STREQUAL \"GNU\")
+  set(${family_var} \"gfortran\")
+elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"Intel\")
+  set(${family_var} \"intel\")
+elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"IntelLLVM\")
+  set(${family_var} \"intel\")
+elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"LLVMFlang\")
+  set(${family_var} \"flang\")
+elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"Flang\")
+  set(${family_var} \"flang-classic\")
+elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"NVHPC\")
+  set(${family_var} \"nvhpc\")
+elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"NAG\")
+  set(${family_var} \"nag\")
+elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"Cray\")
+  set(${family_var} \"cray\")
+else()
+  set(${family_var} \"\${CMAKE_Fortran_COMPILER_ID}\")
+  string(TOLOWER \"\${${family_var}}\" ${family_var})
+endif()
+" PARENT_SCOPE)
+endfunction()
+
+# ABI-relevant version truncation per family, composing
+# ``<family>-<abi-version>`` into ${tag_var} (and unsetting the scratch
+# ${abiver_var}):
+#   gfortran -> major only (ABI stable within a release series)
+#   flang    -> major only (follows LLVM major versioning)
+#   intel    -> major.minor (ABI can change at minor releases, e.g. 2021.10)
+#   others   -> full version (conservative)
+function(_fc_abi_tag_code outvar family_var version_var abiver_var tag_var)
+  set(${outvar} "\
+if(${family_var} STREQUAL \"gfortran\" OR ${family_var} STREQUAL \"flang\")
+  string(REGEX MATCH \"^([0-9]+)\" ${abiver_var} \"\${${version_var}}\")
+elseif(${family_var} STREQUAL \"intel\")
+  string(REGEX MATCH \"^([0-9]+\\\\.[0-9]+)\" ${abiver_var} \"\${${version_var}}\")
+else()
+  set(${abiver_var} \"\${${version_var}}\")
+endif()
+set(${tag_var} \"\${${family_var}}-\${${abiver_var}}\")
+unset(${abiver_var})
+" PARENT_SCOPE)
+endfunction()
+
 set(FORTRAN_COMPILER_VERSION "${CMAKE_Fortran_COMPILER_VERSION}")
 
-if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-  set(FORTRAN_COMPILER_FAMILY "gfortran")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "Intel")
-  set(FORTRAN_COMPILER_FAMILY "intel")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "IntelLLVM")
-  set(FORTRAN_COMPILER_FAMILY "intel")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "LLVMFlang")
-  # LLVM Flang (flang-new): .mod files are valid Fortran source with !mod$ v1 header
-  set(FORTRAN_COMPILER_FAMILY "flang")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "Flang")
-  # Classic Flang (PGI-derived): completely different .mod format from LLVM Flang
-  set(FORTRAN_COMPILER_FAMILY "flang-classic")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-  # NVIDIA nvfortran: shares PGI-lineage .mod format with classic Flang
-  set(FORTRAN_COMPILER_FAMILY "nvhpc")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "NAG")
-  set(FORTRAN_COMPILER_FAMILY "nag")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL "Cray")
-  set(FORTRAN_COMPILER_FAMILY "cray")
-else()
-  set(FORTRAN_COMPILER_FAMILY "${CMAKE_Fortran_COMPILER_ID}")
-  string(TOLOWER "${FORTRAN_COMPILER_FAMILY}" FORTRAN_COMPILER_FAMILY)
-endif()
+_fc_family_detection_code(_fc_detect_code FORTRAN_COMPILER_FAMILY)
+cmake_language(EVAL CODE "${_fc_detect_code}")
+unset(_fc_detect_code)
 
 # ---------------------------------------------------------------------------
 # Determine .mod format version from compiler family + version
@@ -154,21 +200,11 @@ endif()
 #   FORTRAN_MOD_COMPAT_TAG  - for .mod directories (by format compatibility)
 #   FORTRAN_COMPILER_TAG    - for library files (by ABI-relevant version)
 #
-# Version truncation per family:
-#   gfortran -> major only (ABI stable within a release series)
-#   flang    -> major only (follows LLVM major versioning)
-#   intel    -> major.minor (ABI can change at minor releases, e.g. 2021.10)
-#   others   -> full version (conservative)
+# Version truncation rules are documented on _fc_abi_tag_code above.
 # ---------------------------------------------------------------------------
-if(FORTRAN_COMPILER_FAMILY STREQUAL "gfortran" OR FORTRAN_COMPILER_FAMILY STREQUAL "flang")
-  string(REGEX MATCH "^([0-9]+)" _fc_abi_version "${FORTRAN_COMPILER_VERSION}")
-elseif(FORTRAN_COMPILER_FAMILY STREQUAL "intel")
-  string(REGEX MATCH "^([0-9]+\\.[0-9]+)" _fc_abi_version "${FORTRAN_COMPILER_VERSION}")
-else()
-  set(_fc_abi_version "${FORTRAN_COMPILER_VERSION}")
-endif()
-set(FORTRAN_COMPILER_TAG "${FORTRAN_COMPILER_FAMILY}-${_fc_abi_version}")
-unset(_fc_abi_version)
+_fc_abi_tag_code(_fc_detect_code FORTRAN_COMPILER_FAMILY FORTRAN_COMPILER_VERSION _fc_abi_version FORTRAN_COMPILER_TAG)
+cmake_language(EVAL CODE "${_fc_detect_code}")
+unset(_fc_detect_code)
 
 if(FORTRAN_MOD_VERSION STREQUAL "unknown")
   set(FORTRAN_MOD_COMPAT_TAG "${FORTRAN_COMPILER_TAG}")
@@ -179,6 +215,76 @@ endif()
 message(STATUS "FortranCompiler: compiler=${CMAKE_Fortran_COMPILER_ID} ${FORTRAN_COMPILER_VERSION}")
 message(STATUS "FortranCompiler: family=${FORTRAN_COMPILER_FAMILY}, mod_version=${FORTRAN_MOD_VERSION}")
 message(STATUS "FortranCompiler: mod_tag=${FORTRAN_MOD_COMPAT_TAG}, lib_tag=${FORTRAN_COMPILER_TAG}")
+
+# ---------------------------------------------------------------------------
+# MPI vendor probe (single source).
+#
+# One canonical C program identifies the MPI implementation flavor and
+# version from mpi.h's vendor-specific macros:
+#   Intel MPI : I_MPI_VERSION (string, e.g. "2021.18.0")
+#   OpenMPI   : OMPI_MAJOR_VERSION / OMPI_MINOR_VERSION (ints)
+#   MPICH     : MPICH_VERSION (string, e.g. "4.2.0")
+# Its ``<flavor> <version>`` output parses via _FC_MPI_TAG_REGEX into a
+# ``<flavor>-<major>.<minor>`` tag (``intelmpi-2021.18`` /
+# ``openmpi-5.0`` / ``mpich-4.2``). The same program and regex serve
+# the producer-side probe (_fc_detect_mpi_tag, called by the top-level
+# CMakeLists to compute MPI_TAG) and the consumer-side probe re-escaped
+# into every generated Config (_fc_consumer_mpi_detect_block below) —
+# the two must derive identical tags or the installed filenames and the
+# consumer's lookup diverge.
+# ---------------------------------------------------------------------------
+set(_FC_MPI_PROBE_SOURCE "\
+#include <mpi.h>
+#include <stdio.h>
+int main(void){
+#if defined(I_MPI_VERSION)
+  printf(\"intelmpi %s\\n\", I_MPI_VERSION);
+#elif defined(OMPI_MAJOR_VERSION) && defined(OMPI_MINOR_VERSION)
+  printf(\"openmpi %d.%d\\n\", OMPI_MAJOR_VERSION, OMPI_MINOR_VERSION);
+#elif defined(MPICH_VERSION)
+  printf(\"mpich %s\\n\", MPICH_VERSION);
+#else
+  printf(\"unknown ?\\n\");
+#endif
+  return 0;
+}
+")
+
+# ``flavor major.minor[.patch]`` → capture flavor, major, minor.
+set(_FC_MPI_TAG_REGEX "^([a-z]+) ([0-9]+)\\.([0-9]+)")
+
+# _fc_detect_mpi_tag(<outvar>)
+#
+# Compile and run the canonical probe against the found MPI's headers
+# and return ``<flavor>-<major>.<minor>``. Empty when no MPI was found,
+# the probe fails, or the flavor is unidentified.
+function(_fc_detect_mpi_tag outvar)
+  set(_mpi_tag "")
+  if(MPI_C_FOUND)
+    set(_mpi_inc ${MPI_C_HEADER_DIR})
+    if(TARGET MPI::MPI_C)
+      get_target_property(_iface MPI::MPI_C INTERFACE_INCLUDE_DIRECTORIES)
+      if(_iface)
+        list(APPEND _mpi_inc ${_iface})
+      endif()
+    endif()
+    list(REMOVE_DUPLICATES _mpi_inc)
+    set(_mpi_probe_c "${CMAKE_BINARY_DIR}/CMakeFiles/mpi_probe.c")
+    file(WRITE "${_mpi_probe_c}" "${_FC_MPI_PROBE_SOURCE}")
+    try_run(_mpi_run_rc _mpi_compile_rc
+        "${CMAKE_BINARY_DIR}/CMakeFiles/mpi_probe.dir"
+        "${_mpi_probe_c}"
+        CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${_mpi_inc}"
+        RUN_OUTPUT_VARIABLE _mpi_id)
+    if(_mpi_compile_rc AND "${_mpi_run_rc}" STREQUAL "0")
+      string(STRIP "${_mpi_id}" _mpi_id)
+      if(_mpi_id MATCHES "${_FC_MPI_TAG_REGEX}")
+        set(_mpi_tag "${CMAKE_MATCH_1}-${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+      endif()
+    endif()
+  endif()
+  set(${outvar} "${_mpi_tag}" PARENT_SCOPE)
+endfunction()
 
 # ---------------------------------------------------------------------------
 # Helper: ensure INSTALL_INTERFACE paths are relative (required for
@@ -276,6 +382,265 @@ function(fortran_install_modules target)
 endfunction()
 
 # ---------------------------------------------------------------------------
+# Internal helpers for fortran_install_library
+# ---------------------------------------------------------------------------
+
+# TRUE iff <target> compiles Fortran sources (detected from the SOURCES
+# property): only such archives depend on the Fortran compiler's name
+# mangling, module format and runtime library. Pure-C archives have a
+# stable platform ABI and carry no compiler tag.
+function(_fc_target_has_fortran outvar target)
+  get_target_property(_fc_sources ${target} SOURCES)
+  set(_has_fortran FALSE)
+  foreach(_fc_src IN LISTS _fc_sources)
+    string(TOLOWER "${_fc_src}" _fc_src_lower)
+    if(_fc_src_lower MATCHES "\\.(f|for|ftn|f77|f90|f95|f03|f08)$")
+      set(_has_fortran TRUE)
+      break()
+    endif()
+  endforeach()
+  set(${outvar} "${_has_fortran}" PARENT_SCOPE)
+endfunction()
+
+# Assemble the install tag from the components the archive's ABI
+# actually depends on — each appears only when genuinely needed.
+# Compiler tag: only when <has_fortran> (name mangling, module format
+# and runtime library differ per compiler). MPI flavor tag: only when
+# <want_mpi> (objects are MPI-ABI-bound); prefer ``MPI_LIB_TAG`` (which
+# a caller may override, e.g. to ``seq`` for the libmpiseq release) and
+# fall back to the raw ``MPI_TAG``. When neither MPI variable is set,
+# <want_mpi> is a no-op. Archives needing neither tag install untagged.
+function(_fc_derive_install_tag out_tag out_is_mpi has_fortran want_mpi)
+  set(_flavor_tag "${MPI_TAG}")
+  if(DEFINED MPI_LIB_TAG)
+    set(_flavor_tag "${MPI_LIB_TAG}")
+  endif()
+
+  set(_tag_parts "")
+  if(has_fortran)
+    list(APPEND _tag_parts "${FORTRAN_COMPILER_TAG}")
+  endif()
+  set(_is_mpi FALSE)
+  if(want_mpi AND _flavor_tag)
+    list(APPEND _tag_parts "${_flavor_tag}")
+    set(_is_mpi TRUE)
+  endif()
+  list(JOIN _tag_parts "-" _full_tag)
+
+  set(${out_tag} "${_full_tag}" PARENT_SCOPE)
+  set(${out_is_mpi} "${_is_mpi}" PARENT_SCOPE)
+endfunction()
+
+# MPI language components (C;Fortran;CXX subset) whose MPI::MPI_*
+# imported targets the exported Targets file will reference. Even a
+# flavor-untagged package may reference them — static archives export
+# their PRIVATE deps as $<LINK_ONLY:…>, and pblas/scalapack/xblas
+# compile against mpi.h without their objects binding to the MPI ABI.
+# Such a Config must find_dependency(MPI) or the imported-target
+# references dangle at consumer time. Derive the needed components from
+# the link interface rather than from the MPI flag. (MPI_C needs the
+# delimiter guard so it doesn't match the MPI_CXX substring.)
+function(_fc_mpi_dep_components outvar target)
+  get_target_property(_fc_iface_links ${target} INTERFACE_LINK_LIBRARIES)
+  set(_components "")
+  if(_fc_iface_links MATCHES "MPI::MPI_C(>|;|$)")
+    list(APPEND _components C)
+  endif()
+  if(_fc_iface_links MATCHES "MPI::MPI_Fortran")
+    list(APPEND _components Fortran)
+  endif()
+  if(_fc_iface_links MATCHES "MPI::MPI_CXX")
+    list(APPEND _components CXX)
+  endif()
+  set(${outvar} "${_components}" PARENT_SCOPE)
+endfunction()
+
+# Consumer-side compiler detection block spliced into the Config of
+# every archive with Fortran objects. Pure-C packages skip it entirely,
+# so a consumer project with no Fortran language enabled can still
+# find_package() them. The detection code itself comes from the same
+# generators the producer-side detection evaluated above — only the
+# variable names differ.
+function(_fc_consumer_fc_detect_block outvar)
+  _fc_family_detection_code(_family_code _FC_consumer_family)
+  _fc_abi_tag_code(_abi_code _FC_consumer_family CMAKE_Fortran_COMPILER_VERSION _FC_abi_version _FC_consumer_tag)
+  set(${outvar} "\
+# --- Derive consumer's compiler family and ABI version tag ---
+set(_FC_consumer_family \"\")
+
+${_family_code}
+${_abi_code}" PARENT_SCOPE)
+endfunction()
+
+# Consumer-side MPI flavor detection block spliced into the Config of
+# MPI-ABI-bound (flavor-tagged) archives. Re-runs the canonical
+# _FC_MPI_PROBE_SOURCE program against the consumer's mpi.h.
+function(_fc_consumer_mpi_detect_block outvar config_name)
+  # Escape the canonical probe program and tag regex to survive one
+  # level of CMake string parsing inside the emitted Config.
+  string(REPLACE "\\" "\\\\" _probe "${_FC_MPI_PROBE_SOURCE}")
+  string(REPLACE "\"" "\\\"" _probe "${_probe}")
+  string(REPLACE "#" "\\#" _probe "${_probe}")
+  string(REPLACE "\n" "\\n" _probe "${_probe}")
+  string(REPLACE "\\" "\\\\" _regex "${_FC_MPI_TAG_REGEX}")
+  set(${outvar} "\
+# --- Derive consumer's MPI flavor + major.minor tag ---
+find_package(MPI QUIET COMPONENTS C)
+set(_FC_consumer_mpi_tag \"\")
+# A consumer may FORCE the MPI flavor tag via -DEPLINALG_MPI_TAG=<tag>,
+# bypassing the mpi.h vendor probe below. This is required for a
+# libmpiseq/seq release: such a consumer still finds a real MPI for the
+# mpi.h *headers* (mmsolve.c #includes mpi.h), so the probe would detect
+# that vendor (e.g. intelmpi-2021.18) — but the installed archives are
+# tagged `seq`. Setting EPLINALG_MPI_TAG=seq resolves the seq targets file.
+if(DEFINED EPLINALG_MPI_TAG)
+  set(_FC_consumer_mpi_tag \"\${EPLINALG_MPI_TAG}\")
+elseif(MPI_C_FOUND)
+  set(_FC_mpi_inc \"\${MPI_C_HEADER_DIR}\")
+  if(TARGET MPI::MPI_C)
+    get_target_property(_FC_mpi_iface MPI::MPI_C INTERFACE_INCLUDE_DIRECTORIES)
+    if(_FC_mpi_iface)
+      list(APPEND _FC_mpi_inc \${_FC_mpi_iface})
+    endif()
+  endif()
+  list(REMOVE_DUPLICATES _FC_mpi_inc)
+  set(_FC_mpi_probe \"\${CMAKE_CURRENT_BINARY_DIR}/_FC_mpi_probe.c\")
+  file(WRITE \"\${_FC_mpi_probe}\" \"${_probe}\")
+  try_run(_FC_run_rc _FC_compile_rc
+    \"\${CMAKE_CURRENT_BINARY_DIR}/_FC_mpi_probe.dir\"
+    \"\${_FC_mpi_probe}\"
+    CMAKE_FLAGS \"-DINCLUDE_DIRECTORIES=\${_FC_mpi_inc}\"
+    RUN_OUTPUT_VARIABLE _FC_mpi_id)
+  if(_FC_compile_rc AND \"\${_FC_run_rc}\" STREQUAL \"0\")
+    string(STRIP \"\${_FC_mpi_id}\" _FC_mpi_id)
+    if(_FC_mpi_id MATCHES \"${_regex}\")
+      set(_FC_consumer_mpi_tag \"\${CMAKE_MATCH_1}-\${CMAKE_MATCH_2}.\${CMAKE_MATCH_3}\")
+    endif()
+  endif()
+  unset(_FC_mpi_inc)
+  unset(_FC_mpi_iface)
+  unset(_FC_mpi_probe)
+  unset(_FC_mpi_id)
+  unset(_FC_run_rc)
+  unset(_FC_compile_rc)
+endif()
+if(NOT _FC_consumer_mpi_tag)
+  set(\${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+  set(\${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+    \"${config_name}: MPI-dependent library but no MPI flavor detected on the consumer side. find_package(MPI) must succeed and mpi.h must be locatable.\")
+  return()
+endif()
+" PARENT_SCOPE)
+endfunction()
+
+# Content of the per-tag transparent-deps file installed next to the
+# per-tag targets file (see the flavor comment at the call site).
+function(_fc_tag_deps_content outvar deps_file config_name full_tag mpi_dep_block deps_block)
+  set(${outvar} "\
+# ${deps_file}
+# Auto-generated by FortranCompiler.cmake
+#
+# Transparent dependencies of the '${full_tag}' flavor of package
+# ${config_name}. Kept per-tag (not in the shared Config) because one
+# prefix can hold several flavors of this package with different
+# dependency sets. Included by ${config_name}Config.cmake after it
+# resolves the consumer's tag; CMakeFindDependencyMacro is already in
+# scope there.
+${mpi_dep_block}${deps_block}" PARENT_SCOPE)
+endfunction()
+
+# Content of the Config for a tagged package: re-derives the tag on the
+# consumer side (via the detection blocks passed in) and includes the
+# matching per-tag deps + targets files.
+function(_fc_tagged_config_content outvar config_name export_name consumer_tag_expr fc_detect_block mpi_detect_block cleanup_mpi)
+  set(${outvar} "\
+# ${config_name}Config.cmake
+# Auto-generated by FortranCompiler.cmake
+#
+# Re-derives, on the consumer side, the ABI tag components baked into
+# this package's archive filename (compiler tag → Fortran ABI, MPI
+# flavor tag → MPI ABI) and includes the matching targets file.
+# Module directories are tagged by .mod format version separately.
+#
+# This file is identical across all flavors of the package and may be
+# overwritten by any of them; everything flavor-specific (the archive
+# targets AND their transparent find_dependency() calls) lives in the
+# per-tag targets/deps files included below.
+
+cmake_minimum_required(VERSION 3.12)
+
+# find_dependency() is used by the per-tag deps file included below (the
+# MPI dependency line when the Targets file references MPI targets, and
+# the transparent DEPENDS block for libraries that link a factored-out
+# shared package). No precision-sibling find_dependency() calls are
+# emitted — consumers list every per-precision package they need on
+# their own.
+include(CMakeFindDependencyMacro)
+${fc_detect_block}
+${mpi_detect_block}
+# Look for exact tag match
+set(_FC_targets_file \"\${CMAKE_CURRENT_LIST_DIR}/${export_name}-${consumer_tag_expr}.cmake\")
+
+if(NOT EXISTS \"\${_FC_targets_file}\")
+  # No exact match — list available builds and fail
+  file(GLOB _FC_available \"\${CMAKE_CURRENT_LIST_DIR}/${export_name}-*.cmake\")
+  set(_FC_available_names \"\")
+  foreach(_FC_f IN LISTS _FC_available)
+    get_filename_component(_FC_fname \"\${_FC_f}\" NAME)
+    list(APPEND _FC_available_names \"\${_FC_fname}\")
+  endforeach()
+  list(JOIN _FC_available_names \", \" _FC_available_list)
+  set(\${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+  set(\${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+    \"${config_name}: no pre-built library found for tag '${consumer_tag_expr}'. Available: [\${_FC_available_list}]\")
+  unset(_FC_consumer_family)
+  unset(_FC_consumer_tag)
+  unset(_FC_targets_file)
+  unset(_FC_available)
+  unset(_FC_available_names)
+  unset(_FC_available_list)
+  ${cleanup_mpi}
+  return()
+endif()
+
+# Transparent deps of THIS flavor (other flavors in the same prefix may
+# have different ones), then the flavor's targets. The deps file runs
+# nested find_dependency() calls whose Configs come from this same
+# template and (re)use the same _FC_* variables in this scope — stash
+# the targets path in a package-unique variable across that include.
+set(_FC_targets_file_${export_name} \"\${_FC_targets_file}\")
+include(\"\${CMAKE_CURRENT_LIST_DIR}/${export_name}-deps-${consumer_tag_expr}.cmake\")
+include(\"\${_FC_targets_file_${export_name}}\")
+unset(_FC_targets_file_${export_name})
+
+unset(_FC_consumer_family)
+unset(_FC_consumer_tag)
+unset(_FC_targets_file)
+${cleanup_mpi}
+" PARENT_SCOPE)
+endfunction()
+
+# Content of the Config for an untagged package: a single fixed targets
+# file, no consumer-side detection at all.
+function(_fc_untagged_config_content outvar config_name export_name mpi_dep_block deps_block)
+  set(${outvar} "\
+# ${config_name}Config.cmake
+# Auto-generated by FortranCompiler.cmake
+#
+# This package's archive contains no Fortran objects and is not bound
+# to an MPI ABI, so it is compatible across Fortran compilers and MPI
+# flavors — a single untagged targets file suffices and no
+# consumer-side tag detection is performed.
+
+cmake_minimum_required(VERSION 3.12)
+
+include(CMakeFindDependencyMacro)
+${mpi_dep_block}${deps_block}
+include(\"\${CMAKE_CURRENT_LIST_DIR}/${export_name}.cmake\")
+" PARENT_SCOPE)
+endfunction()
+
+# ---------------------------------------------------------------------------
 # fortran_install_library(<target>
 #     [MPI]
 #     [NAMESPACE <ns>]
@@ -324,60 +689,9 @@ function(fortran_install_library target)
     set(ARG_DESTINATION "${CMAKE_INSTALL_LIBDIR}")
   endif()
 
-  # Assemble the install tag from the components the archive's ABI
-  # actually depends on — each appears only when genuinely needed.
-  # Compiler tag: only for targets that compile Fortran (name mangling,
-  # module format and runtime library differ per compiler); detected
-  # from the SOURCES property. MPI flavor tag: only when the caller
-  # passes ``MPI`` (objects are MPI-ABI-bound); prefer ``MPI_LIB_TAG``
-  # (which a caller may override, e.g. to ``seq`` for the libmpiseq
-  # release) and fall back to the raw ``MPI_TAG``. Archives needing
-  # neither install untagged.
-  get_target_property(_fc_sources ${target} SOURCES)
-  set(_has_fortran FALSE)
-  foreach(_fc_src IN LISTS _fc_sources)
-    string(TOLOWER "${_fc_src}" _fc_src_lower)
-    if(_fc_src_lower MATCHES "\\.(f|for|ftn|f77|f90|f95|f03|f08)$")
-      set(_has_fortran TRUE)
-      break()
-    endif()
-  endforeach()
-
-  set(_flavor_tag "${MPI_TAG}")
-  if(DEFINED MPI_LIB_TAG)
-    set(_flavor_tag "${MPI_LIB_TAG}")
-  endif()
-
-  set(_tag_parts "")
-  if(_has_fortran)
-    list(APPEND _tag_parts "${FORTRAN_COMPILER_TAG}")
-  endif()
-  set(_is_mpi_lib FALSE)
-  if(ARG_MPI AND _flavor_tag)
-    list(APPEND _tag_parts "${_flavor_tag}")
-    set(_is_mpi_lib TRUE)
-  endif()
-  list(JOIN _tag_parts "-" _full_tag)
-
-  # Even a flavor-untagged package may reference MPI::MPI_* imported
-  # targets in its exported Targets file — static archives export their
-  # PRIVATE deps as $<LINK_ONLY:…>, and pblas/scalapack/xblas compile
-  # against mpi.h without their objects binding to the MPI ABI. Such a
-  # Config must find_dependency(MPI) or the imported-target references
-  # dangle at consumer time. Derive the needed components from the link
-  # interface rather than from the MPI flag. (MPI_C needs the delimiter
-  # guard so it doesn't match the MPI_CXX substring.)
-  get_target_property(_fc_iface_links ${target} INTERFACE_LINK_LIBRARIES)
-  set(_mpi_dep_components "")
-  if(_fc_iface_links MATCHES "MPI::MPI_C(>|;|$)")
-    list(APPEND _mpi_dep_components C)
-  endif()
-  if(_fc_iface_links MATCHES "MPI::MPI_Fortran")
-    list(APPEND _mpi_dep_components Fortran)
-  endif()
-  if(_fc_iface_links MATCHES "MPI::MPI_CXX")
-    list(APPEND _mpi_dep_components CXX)
-  endif()
+  _fc_target_has_fortran(_has_fortran ${target})
+  _fc_derive_install_tag(_full_tag _is_mpi_lib "${_has_fortran}" "${ARG_MPI}")
+  _fc_mpi_dep_components(_mpi_dep_components ${target})
 
   # Derive config name from the export set name (strip trailing "Targets").
   # This allows each library to get its own Config.cmake when given a
@@ -458,8 +772,8 @@ function(fortran_install_library target)
   # fixed targets file with no detection at all.
 
   # find_dependency(MPI) whenever the Targets file references
-  # MPI::MPI_* — independent of the flavor tag (see the derivation of
-  # _mpi_dep_components above).
+  # MPI::MPI_* — independent of the flavor tag (see
+  # _fc_mpi_dep_components above).
   if(_mpi_dep_components)
     list(JOIN _mpi_dep_components " " _mpi_dep_components_str)
     set(_mpi_dep_block "\
@@ -473,54 +787,7 @@ find_dependency(MPI COMPONENTS ${_mpi_dep_components_str})
   endif()
 
   if(_is_mpi_lib)
-    set(_mpi_detect_block "\
-# --- Derive consumer's MPI flavor + major.minor tag ---
-find_package(MPI QUIET COMPONENTS C)
-set(_FC_consumer_mpi_tag \"\")
-# A consumer may FORCE the MPI flavor tag via -DEPLINALG_MPI_TAG=<tag>,
-# bypassing the mpi.h vendor probe below. This is required for a
-# libmpiseq/seq release: such a consumer still finds a real MPI for the
-# mpi.h *headers* (mmsolve.c #includes mpi.h), so the probe would detect
-# that vendor (e.g. intelmpi-2021.18) — but the installed archives are
-# tagged `seq`. Setting EPLINALG_MPI_TAG=seq resolves the seq targets file.
-if(DEFINED EPLINALG_MPI_TAG)
-  set(_FC_consumer_mpi_tag \"\${EPLINALG_MPI_TAG}\")
-elseif(MPI_C_FOUND)
-  set(_FC_mpi_inc \"\${MPI_C_HEADER_DIR}\")
-  if(TARGET MPI::MPI_C)
-    get_target_property(_FC_mpi_iface MPI::MPI_C INTERFACE_INCLUDE_DIRECTORIES)
-    if(_FC_mpi_iface)
-      list(APPEND _FC_mpi_inc \${_FC_mpi_iface})
-    endif()
-  endif()
-  list(REMOVE_DUPLICATES _FC_mpi_inc)
-  set(_FC_mpi_probe \"\${CMAKE_CURRENT_BINARY_DIR}/_FC_mpi_probe.c\")
-  file(WRITE \"\${_FC_mpi_probe}\" \"\\#include <mpi.h>\\n\\#include <stdio.h>\\nint main(void){\\n\\#if defined(I_MPI_VERSION)\\n  printf(\\\"intelmpi %s\\\\n\\\", I_MPI_VERSION);\\n\\#elif defined(OMPI_MAJOR_VERSION) && defined(OMPI_MINOR_VERSION)\\n  printf(\\\"openmpi %d.%d\\\\n\\\", OMPI_MAJOR_VERSION, OMPI_MINOR_VERSION);\\n\\#elif defined(MPICH_VERSION)\\n  printf(\\\"mpich %s\\\\n\\\", MPICH_VERSION);\\n\\#else\\n  printf(\\\"unknown ?\\\\n\\\");\\n\\#endif\\n  return 0;\\n}\\n\")
-  try_run(_FC_run_rc _FC_compile_rc
-    \"\${CMAKE_CURRENT_BINARY_DIR}/_FC_mpi_probe.dir\"
-    \"\${_FC_mpi_probe}\"
-    CMAKE_FLAGS \"-DINCLUDE_DIRECTORIES=\${_FC_mpi_inc}\"
-    RUN_OUTPUT_VARIABLE _FC_mpi_id)
-  if(_FC_compile_rc AND \"\${_FC_run_rc}\" STREQUAL \"0\")
-    string(STRIP \"\${_FC_mpi_id}\" _FC_mpi_id)
-    if(_FC_mpi_id MATCHES \"^([a-z]+) ([0-9]+)\\\\.([0-9]+)\")
-      set(_FC_consumer_mpi_tag \"\${CMAKE_MATCH_1}-\${CMAKE_MATCH_2}.\${CMAKE_MATCH_3}\")
-    endif()
-  endif()
-  unset(_FC_mpi_inc)
-  unset(_FC_mpi_iface)
-  unset(_FC_mpi_probe)
-  unset(_FC_mpi_id)
-  unset(_FC_run_rc)
-  unset(_FC_compile_rc)
-endif()
-if(NOT _FC_consumer_mpi_tag)
-  set(\${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
-  set(\${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
-    \"${_config_name}: MPI-dependent library but no MPI flavor detected on the consumer side. find_package(MPI) must succeed and mpi.h must be locatable.\")
-  return()
-endif()
-")
+    _fc_consumer_mpi_detect_block(_mpi_detect_block "${_config_name}")
     set(_cleanup_mpi "unset(_FC_consumer_mpi_tag)")
   else()
     set(_mpi_detect_block "")
@@ -552,45 +819,8 @@ endif()
     string(APPEND _deps_block "find_dependency(${_dep})\n")
   endforeach()
 
-  # Compiler-detection block: emitted only for archives with Fortran
-  # objects. Pure-C packages skip it entirely, so a consumer project
-  # with no Fortran language enabled can still find_package() them.
   if(_has_fortran)
-    set(_fc_detect_block "\
-# --- Derive consumer's compiler family and ABI version tag ---
-set(_FC_consumer_family \"\")
-
-if(CMAKE_Fortran_COMPILER_ID STREQUAL \"GNU\")
-  set(_FC_consumer_family \"gfortran\")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"Intel\")
-  set(_FC_consumer_family \"intel\")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"IntelLLVM\")
-  set(_FC_consumer_family \"intel\")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"LLVMFlang\")
-  set(_FC_consumer_family \"flang\")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"Flang\")
-  set(_FC_consumer_family \"flang-classic\")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"NVHPC\")
-  set(_FC_consumer_family \"nvhpc\")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"NAG\")
-  set(_FC_consumer_family \"nag\")
-elseif(CMAKE_Fortran_COMPILER_ID STREQUAL \"Cray\")
-  set(_FC_consumer_family \"cray\")
-else()
-  set(_FC_consumer_family \"\${CMAKE_Fortran_COMPILER_ID}\")
-  string(TOLOWER \"\${_FC_consumer_family}\" _FC_consumer_family)
-endif()
-
-if(_FC_consumer_family STREQUAL \"gfortran\" OR _FC_consumer_family STREQUAL \"flang\")
-  string(REGEX MATCH \"^([0-9]+)\" _FC_abi_version \"\${CMAKE_Fortran_COMPILER_VERSION}\")
-elseif(_FC_consumer_family STREQUAL \"intel\")
-  string(REGEX MATCH \"^([0-9]+\\\\.[0-9]+)\" _FC_abi_version \"\${CMAKE_Fortran_COMPILER_VERSION}\")
-else()
-  set(_FC_abi_version \"\${CMAKE_Fortran_COMPILER_VERSION}\")
-endif()
-set(_FC_consumer_tag \"\${_FC_consumer_family}-\${_FC_abi_version}\")
-unset(_FC_abi_version)
-")
+    _fc_consumer_fc_detect_block(_fc_detect_block)
   else()
     set(_fc_detect_block "")
   endif()
@@ -605,106 +835,25 @@ unset(_FC_abi_version)
     # it. Split them into a per-tag deps file installed next to the per-tag
     # targets file; the Config includes the one matching the consumer's tag.
     set(_deps_file "${ARG_EXPORT}-deps-${_full_tag}.cmake")
+    _fc_tag_deps_content(_deps_content
+      "${_deps_file}" "${_config_name}" "${_full_tag}"
+      "${_mpi_dep_block}" "${_deps_block}")
     file(GENERATE
       OUTPUT "${PROJECT_BINARY_DIR}/cmake/${_deps_file}"
-      CONTENT "\
-# ${_deps_file}
-# Auto-generated by FortranCompiler.cmake
-#
-# Transparent dependencies of the '${_full_tag}' flavor of package
-# ${_config_name}. Kept per-tag (not in the shared Config) because one
-# prefix can hold several flavors of this package with different
-# dependency sets. Included by ${_config_name}Config.cmake after it
-# resolves the consumer's tag; CMakeFindDependencyMacro is already in
-# scope there.
-${_mpi_dep_block}${_deps_block}"
+      CONTENT "${_deps_content}"
     )
     install(
       FILES "${PROJECT_BINARY_DIR}/cmake/${_deps_file}"
       DESTINATION "${_cmake_install_dir}"
     )
 
-    set(_config_content "\
-# ${_config_name}Config.cmake
-# Auto-generated by FortranCompiler.cmake
-#
-# Re-derives, on the consumer side, the ABI tag components baked into
-# this package's archive filename (compiler tag → Fortran ABI, MPI
-# flavor tag → MPI ABI) and includes the matching targets file.
-# Module directories are tagged by .mod format version separately.
-#
-# This file is identical across all flavors of the package and may be
-# overwritten by any of them; everything flavor-specific (the archive
-# targets AND their transparent find_dependency() calls) lives in the
-# per-tag targets/deps files included below.
-
-cmake_minimum_required(VERSION 3.12)
-
-# find_dependency() is used by the per-tag deps file included below (the
-# MPI dependency line when the Targets file references MPI targets, and
-# the transparent DEPENDS block for libraries that link a factored-out
-# shared package). No precision-sibling find_dependency() calls are
-# emitted — consumers list every per-precision package they need on
-# their own.
-include(CMakeFindDependencyMacro)
-${_fc_detect_block}
-${_mpi_detect_block}
-# Look for exact tag match
-set(_FC_targets_file \"\${CMAKE_CURRENT_LIST_DIR}/${ARG_EXPORT}-${_consumer_tag_expr}.cmake\")
-
-if(NOT EXISTS \"\${_FC_targets_file}\")
-  # No exact match — list available builds and fail
-  file(GLOB _FC_available \"\${CMAKE_CURRENT_LIST_DIR}/${ARG_EXPORT}-*.cmake\")
-  set(_FC_available_names \"\")
-  foreach(_FC_f IN LISTS _FC_available)
-    get_filename_component(_FC_fname \"\${_FC_f}\" NAME)
-    list(APPEND _FC_available_names \"\${_FC_fname}\")
-  endforeach()
-  list(JOIN _FC_available_names \", \" _FC_available_list)
-  set(\${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
-  set(\${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
-    \"${_config_name}: no pre-built library found for tag '${_consumer_tag_expr}'. Available: [\${_FC_available_list}]\")
-  unset(_FC_consumer_family)
-  unset(_FC_consumer_tag)
-  unset(_FC_targets_file)
-  unset(_FC_available)
-  unset(_FC_available_names)
-  unset(_FC_available_list)
-  ${_cleanup_mpi}
-  return()
-endif()
-
-# Transparent deps of THIS flavor (other flavors in the same prefix may
-# have different ones), then the flavor's targets. The deps file runs
-# nested find_dependency() calls whose Configs come from this same
-# template and (re)use the same _FC_* variables in this scope — stash
-# the targets path in a package-unique variable across that include.
-set(_FC_targets_file_${ARG_EXPORT} \"\${_FC_targets_file}\")
-include(\"\${CMAKE_CURRENT_LIST_DIR}/${ARG_EXPORT}-deps-${_consumer_tag_expr}.cmake\")
-include(\"\${_FC_targets_file_${ARG_EXPORT}}\")
-unset(_FC_targets_file_${ARG_EXPORT})
-
-unset(_FC_consumer_family)
-unset(_FC_consumer_tag)
-unset(_FC_targets_file)
-${_cleanup_mpi}
-")
+    _fc_tagged_config_content(_config_content
+      "${_config_name}" "${ARG_EXPORT}" "${_consumer_tag_expr}"
+      "${_fc_detect_block}" "${_mpi_detect_block}" "${_cleanup_mpi}")
   else()
-    set(_config_content "\
-# ${_config_name}Config.cmake
-# Auto-generated by FortranCompiler.cmake
-#
-# This package's archive contains no Fortran objects and is not bound
-# to an MPI ABI, so it is compatible across Fortran compilers and MPI
-# flavors — a single untagged targets file suffices and no
-# consumer-side tag detection is performed.
-
-cmake_minimum_required(VERSION 3.12)
-
-include(CMakeFindDependencyMacro)
-${_mpi_dep_block}${_deps_block}
-include(\"\${CMAKE_CURRENT_LIST_DIR}/${ARG_EXPORT}.cmake\")
-")
+    _fc_untagged_config_content(_config_content
+      "${_config_name}" "${ARG_EXPORT}"
+      "${_mpi_dep_block}" "${_deps_block}")
   endif()
 
   file(GENERATE

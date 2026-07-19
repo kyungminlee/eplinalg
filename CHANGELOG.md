@@ -4,6 +4,16 @@ Release notes live on the [GitHub releases page](https://github.com/kyungminlee/
 this file summarizes each tagged version. The current version is in
 [VERSION](VERSION).
 
+## v0.17.0
+
+- Behavior-preserving cleanup across the codebase from a 79-finding
+  code-smell audit (migrator internals, recipe YAML, runtime bridges,
+  test harness, CMake infrastructure, scripts, examples). Staged
+  migrator output is byte-identical to v0.16.0 for all targets;
+  no library ABI or build-interface changes.
+- New push/PR CI workflow: migrator unit tests plus a stage +
+  library-only build of the kind10 / gfortran-15 / Intel MPI slot.
+
 ## v0.16.0
 
 - Removed the deprecated `MPI_DD_*` / `MPI_ZZ_*` multifloats MPI op

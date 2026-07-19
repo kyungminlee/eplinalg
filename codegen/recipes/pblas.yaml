@@ -63,17 +63,20 @@ header_patches:
   # body in extern "C" via the at_bof / at_eof patches; c_migrator
   # adds the matching wrap to each ``<name>_.c`` definition body
   # (after the last include, so the bridge templates stay C++).
+  # The opener/closer payloads are anchored (&extern_c_open /
+  # &extern_c_close) on this first pair and aliased by the other
+  # wrapped headers below — one payload spelling per recipe.
   - file: PBpblas.h
     when: multifloats
     at_bof: true
-    insert: |
+    insert: &extern_c_open |
       #ifdef __cplusplus
       extern "C" {
       #endif
   - file: PBpblas.h
     when: multifloats
     at_eof: true
-    insert: |
+    insert: &extern_c_close |
       #ifdef __cplusplus
       } /* extern "C" */
       #endif
@@ -86,45 +89,27 @@ header_patches:
   - file: PBblacs.h
     when: multifloats
     at_bof: true
-    insert: |
-      #ifdef __cplusplus
-      extern "C" {
-      #endif
+    insert: *extern_c_open
   - file: PBblacs.h
     when: multifloats
     at_eof: true
-    insert: |
-      #ifdef __cplusplus
-      } /* extern "C" */
-      #endif
+    insert: *extern_c_close
   - file: PBtools.h
     when: multifloats
     at_bof: true
-    insert: |
-      #ifdef __cplusplus
-      extern "C" {
-      #endif
+    insert: *extern_c_open
   - file: PBtools.h
     when: multifloats
     at_eof: true
-    insert: |
-      #ifdef __cplusplus
-      } /* extern "C" */
-      #endif
+    insert: *extern_c_close
   - file: PBblas.h
     when: multifloats
     at_bof: true
-    insert: |
-      #ifdef __cplusplus
-      extern "C" {
-      #endif
+    insert: *extern_c_open
   - file: PBblas.h
     when: multifloats
     at_eof: true
-    insert: |
-      #ifdef __cplusplus
-      } /* extern "C" */
-      #endif
+    insert: *extern_c_close
   # KIND targets: introduce primitive QREAL/EREAL typedef plus the
   # cmplxQ/cmplxE array form.
   - file: pblas.h
@@ -243,10 +228,6 @@ header_patches:
       #define TOP_TREE9    ((char *)"9")
       #endif
 
-# PBLAS/SRC contains 123 precision-specific C entry points (pdgemm_.c,
-# pzhemm_.c, pcsscal_.c, pdznrm2_.c, ...) plus one precision-independent
-# Fortran file (pilaenv.f). All originals are retained so the resulting
-# library still exposes the standard S/D/C/Z names.
 # copy_all_originals removed: PBLAS/SRC's 123 precision-specific C
 # entry points (pdgemm_, pzhemm_, pcsscal_, ...) plus the precision-
 # independent PTOOLS helpers (PB_C*) live in the standard-precision
@@ -321,13 +302,8 @@ overrides:
 asymmetric_patches:
   - S04__atrmv-alpha-hardcoded-one.patch
 
-# Task 44: privatize the MKL-colliding, family-independent support
-# symbols (blacs_*/Cblacs_*/BI_*, PB_C*, TOOLS/REDIST helpers, sltimer,
-# pxerbla, ...) by renaming them name -> ep_name in the migrated output.
-# eplinalg's Netlib-derived engine and MKL export identical names with
-# incompatible internal ABIs (BLACBUFF 48 vs 56 bytes); one process-wide
-# definition per name collapses the two engines and SIGSEGVs at np>=2 in
-# either link order. The manifest is shared across the whole extended
-# stack (uniform prefix keeps the commons byte-identical across
-# mw/qx/ey) and the nm audit gate reads the same file.
+# Task 44: rename the MKL-colliding, family-independent support symbols
+# name -> ep_name in the migrated output (shared manifest; the nm audit
+# gate reads the same file). Full rationale and mechanics:
+# codegen/migrator/privatize.py module docstring.
 privatize_symbols: privatize_ep_symbols.txt

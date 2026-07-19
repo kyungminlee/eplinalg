@@ -22,66 +22,57 @@ Transformations:
   5. INTRINSIC declaration statements
   6. Routine name prefixes (using rename map)
   7. XERBLA string arguments
+
+The per-concern rewrite passes live in the ``fortran/`` subpackage; this
+module hosts only the top-level drivers that sequence them and imports
+just the names those drivers use.
 """
 
+import dataclasses
 import re
 from pathlib import Path
 
 from .target_mode import TargetMode
 
-# Lexical + scanning primitives now live in ``fortran/lex.py`` (bottom layer
-# of the split). Re-imported here so this module's namespace — and every
-# caller that reaches these names through it — is unchanged.
-from .fortran.lex import (  # noqa: F401  (re-export)
-    is_comment_line, _iter_outside_strings, is_continuation_line,
-    _find_inline_bang, _count_open_parens, _build_split_mask,
-    _strip_strings_and_comments, _looks_like_statement_function,
-    _join_continued_lines, _is_fp_value, _scope_indices,
-    _scan_local_declared_names, _scan_referenced_identifiers,
-    _STRING_RE, _IDENT_RE, _DECL_LINE_RE, _STMT_FN_RE, _FP_VALUE_RE,
-    _FORTRAN_OP_RE, _INT_CALL_RE, _NINT_CALL_RE,
-    _PROC_HEADER_RE, _END_PROC_RE, _PROC_HEADER_RE_SCOPE,
-    _INTERFACE_BEGIN_RE, _INTERFACE_END_RE,
+from .fortran.use_inject import insert_use_multifloats, specialize_use_module
+from .fortran.la_constants import (
+    _KIND_PARAM_NAMES, _replace_kind_parameter, _strip_iso_fortran_env_realN,
+    rewrite_la_constants_use,
 )
-# --- re-exported rewriter submodules (facade); see fortran/ subpackage ---
-# REEXPORT-ANCHOR
-from .fortran.use_inject import (  # noqa: F401  (re-export)
-    _wrap_use_clause, insert_use_multifloats, _build_use_only_clause, specialize_use_module,
+from .fortran.params import (
+    convert_data_stmts, convert_parameter_stmts, nuke_multifloats_params,
 )
-from .fortran.la_constants import (  # noqa: F401  (re-export)
-    _KIND_PARAM_NAMES, _KIND_PARAM_RE, _replace_kind_parameter, _ISO_USE_ONLY_RE, _strip_iso_fortran_env_realN, _LA_CONSTANTS_REAL_NAMES, _LA_CONSTANTS_COMPLEX_NAMES, _la_constants_rename_map, rewrite_la_constants_use,
-)
-from .fortran.params import (  # noqa: F401  (re-export)
-    convert_data_stmts, convert_parameter_stmts,
-)
-from .fortran.literals import (  # noqa: F401  (re-export)
+from .fortran.literals import (
     replace_literals, _rewrite_int_kind_on_real64x2, _rewrite_int_of_complex,
 )
-from .fortran.decls import (  # noqa: F401  (re-export)
-    _TD_DECL_TAIL, _TD_DBL_PREC, _TD_DBL_CMPLX, _TD_CMPLX_STAR16, _TD_REAL_STAR8, _TD_CMPLX_STAR8, _TD_REAL_STAR4, _TD_REAL_KIND_E0, _TD_CMPLX_KIND_E0, _TD_REAL_KIND_D0, _TD_CMPLX_KIND_D0, _TD_REAL_KIND_WP, _TD_CMPLX_KIND_WP, _TD_GATE_RE, _TD_REAL_KIND_4, _TD_CMPLX_KIND_4, _TD_REAL_KIND_8, _TD_CMPLX_KIND_8, replace_type_decls, _filter_known_decl_re, _filter_known_constants_from_decl, replace_standalone_real_complex, _DECL_START_RE, _scan_typed_var_names, _COMPLEX_DECL_RE, _REAL_DECL_RE, _scan_complex_var_names, _scan_real_var_names, strip_known_constants_from_decls, fix_misdeclared_statement_functions,
+from .fortran.decls import (
+    replace_type_decls, replace_standalone_real_complex,
+    _scan_complex_var_names, _scan_real_var_names,
+    strip_known_constants_from_decls, fix_misdeclared_statement_functions,
 )
-from .fortran.fixedform import (  # noqa: F401  (re-export)
-    reformat_fixed_line, _strip_inline_comment, _segment_fixed_form_statements,
+from .fortran.fixedform import reformat_fixed_line, _segment_fixed_form_statements
+from .fortran.logical_lines import segment_free_form, reformat_free_line
+from .fortran.renames import (
+    replace_routine_names, replace_include_filenames, replace_xerbla_strings,
+    replace_known_constants,
 )
-from .fortran.logical_lines import (  # noqa: F401  (re-export)
-    segment_free_form, reformat_free_line,
+from .fortran.intrinsics_rw import (
+    replace_intrinsic_calls, replace_generic_conversions,
+    replace_intrinsic_decls, _dedup_intrinsic_stmts,
+    strip_overloaded_intrinsics,
 )
-from .fortran.renames import (  # noqa: F401  (re-export)
-    _ROUTINE_NAME_TOK_RE, _get_rename_pattern, replace_routine_names, _INCLUDE_RE, _RENAME_PATTERN_CACHE, replace_include_filenames, _XERBLA_STR_RE, replace_xerbla_strings, _known_constants_pattern, _all_known_constant_renames, _DECL_KEYWORD_RE, replace_known_constants,
+from .fortran.complex_rw import (
+    _wrap_bare_complex_literals, _unwrap_redundant_constructors,
 )
-from .fortran.intrinsics_rw import (  # noqa: F401  (re-export)
-    _INTRINSIC_CALL_GATE_RE, replace_intrinsic_calls, replace_generic_conversions, _wrap_complex_args, replace_intrinsic_decls, _dedup_intrinsic_stmts, _GENERIC_CONV_RE, _INTRINSIC_CALL_RE, _INTRINSIC_CALL_RE_REPL,
+from .fortran.mpi import (
+    _rewrite_prefixed_includes, _rewrite_mpi_datatypes, _rewrite_mpi_sum,
+    insert_use_multifloats_mpi_f,
 )
-from .fortran.complex_rw import (  # noqa: F401  (re-export)
-    _wrap_bare_complex_literals, _unwrap_redundant_constructors, _unwrap_ctor_re,
+from .fortran.keepkind import (
+    _apply_keep_kind_sentinel, _restore_keep_kind_sentinel,
+    _strip_roundup_lwork,
 )
-from .fortran.mpi import (  # noqa: F401  (re-export)
-    _MPI_DOUBLE_COMPLEX_RE, _MPI_DOUBLE_PRECISION_RE, _MPI_COMPLEX_RE, _MPI_REAL_RE, _INCLUDE_PREFIXED_H_RE, _MPI_REDUCE_HEAD_RE, _sub_mpi_reduce_calls, _MPI_OP_RE, _STANDARD_MPI_HANDLES, _rewrite_prefixed_includes, _rewrite_mpi_datatypes, _rewrite_mpi_sum, _custom_mpi_tokens, insert_use_multifloats_mpi_f,
-)
-from .fortran.keepkind import (  # noqa: F401  (re-export)
-    _KK_SENTINEL, _KK_DBLE_SENTINEL, _KK_DCMPLX_SENTINEL, _apply_keep_kind_sentinel, _restore_keep_kind_sentinel, _strip_roundup_lwork,
-)
-from .fortran.io_narrow import (  # noqa: F401  (re-export)
+from .fortran.io_narrow import (
     narrow_multifloats_io,
     narrow_multifloats_io_open,
     narrow_io_continuation,
@@ -92,9 +83,7 @@ from .fortran.io_narrow import (  # noqa: F401  (re-export)
 # ---------------------------------------------------------------------------
 # Orchestrators
 #
-# The per-concern rewrite passes now live in the ``fortran/`` subpackage and
-# are re-exported above; what remains here are the top-level drivers that
-# sequence them. Two design notes that outlived their original call sites:
+# Two design notes that outlived their original call sites:
 #
 # * An experimental ``_force_int_assignment`` pass (wrap the RHS of
 #   ``INT_VAR = ...`` with ``INT(...)`` when the RHS mentions a known
@@ -110,19 +99,13 @@ from .fortran.io_narrow import (  # noqa: F401  (re-export)
 # ---------------------------------------------------------------------------
 
 
-def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: TargetMode,
-                        source_kind: int | None = None,
-                        has_float_types: bool = True,
-                        has_real_literals: bool = True,
-                        comp_real: frozenset[str] = frozenset(),
-                        comp_complex: frozenset[str] = frozenset()) -> str:
-    """Migrate one fixed-form source string.
+@dataclasses.dataclass(frozen=True)
+class MigrationContext:
+    """Per-file-invariant inputs shared by the migration drivers.
 
-    ``has_float_types`` / ``has_real_literals`` let the parser-guided
-    caller (:func:`_migrate_with_flang`) skip the type-declaration /
-    literal-promotion passes when the parse facts show the file contains
-    no floating-point declarations / real literals. The parser-less path
-    has no such evidence and runs every pass (the defaults).
+    ``rename_map`` maps upper-cased source routine/module names to their
+    migrated names; ``source_kind`` is the source half's native kind (4
+    or 8, see :func:`_source_kind_from_filename`) or None.
 
     ``comp_real`` / ``comp_complex`` are the global derived-type component
     oracle (real64x2 / cmplx64x2 struct fields harvested across the whole
@@ -130,6 +113,58 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
     ``%``-qualified references (e.g. ``id%DKEEP(160)``) whose type is
     declared in a struct module this file only ``USE``s.
     """
+    rename_map: dict[str, str]
+    target_mode: TargetMode
+    source_kind: int | None = None
+    comp_real: frozenset[str] = frozenset()
+    comp_complex: frozenset[str] = frozenset()
+
+
+def _apply_intrinsic_passes(s: str, target_mode: TargetMode,
+                            real_names: set[str],
+                            complex_names: set[str]) -> str:
+    """Intrinsic-rewrite chain shared by the fixed- and free-form drivers."""
+    s = replace_intrinsic_calls(
+        s, target_mode, real_names=real_names, complex_names=complex_names,
+    )
+    s = replace_intrinsic_decls(s, target_mode)
+    s = replace_generic_conversions(s, target_mode, complex_names=complex_names)
+    return s
+
+
+def _apply_value_passes(s: str, target_mode: TargetMode,
+                        removed_known: dict[str, str],
+                        real_names: set[str],
+                        complex_names: set[str]) -> str:
+    """Constant/value-rewrite chain shared by the fixed- and free-form
+    drivers (known-constant renames, INT-of-complex, complex literal
+    wrapping/unwrapping)."""
+    s = replace_known_constants(s, target_mode, renames=removed_known)
+    s = _rewrite_int_of_complex(s, complex_names)
+    s = _rewrite_int_kind_on_real64x2(s, target_mode, real_names=real_names)
+    s = _wrap_bare_complex_literals(s, target_mode)
+    s = _unwrap_redundant_constructors(s, target_mode, real_names=real_names)
+    return s
+
+
+def migrate_fixed_form(source: str, ctx: MigrationContext, *,
+                        has_float_types: bool = True,
+                        has_real_literals: bool = True) -> str:
+    """Migrate one fixed-form source string.
+
+    ``has_float_types`` / ``has_real_literals`` let the parser-guided
+    caller (:func:`_migrate_with_facts`) skip the type-declaration /
+    literal-promotion passes when the parse facts show the file contains
+    no floating-point declarations / real literals. The parser-less path
+    has no such evidence and runs every pass (the defaults).
+
+    Note the fixed-form-only passes with no free-form counterpart:
+    :func:`replace_standalone_real_complex` and
+    :func:`replace_xerbla_strings` — a known, intentional divergence
+    from :func:`migrate_free_form`.
+    """
+    rename_map, target_mode = ctx.rename_map, ctx.target_mode
+    source_kind = ctx.source_kind
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
     source = fix_misdeclared_statement_functions(source, source_kind=source_kind)
@@ -178,32 +213,25 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
             s = replace_standalone_real_complex(s, target_mode, source_kind=source_kind)
         if has_real_literals:
             s = replace_literals(s, target_mode, source_kind=source_kind)
-        s = replace_intrinsic_calls(
-            s, target_mode, real_names=real_names, complex_names=complex_names,
-        )
-        s = replace_intrinsic_decls(s, target_mode)
-        s = replace_generic_conversions(s, target_mode, complex_names=complex_names)
+        s = _apply_intrinsic_passes(s, target_mode, real_names, complex_names)
         s = replace_routine_names(s, rename_map)
         s = replace_include_filenames(s, rename_map)
         s = replace_xerbla_strings(s, rename_map)
-        s = replace_known_constants(s, target_mode, renames=removed_known)
-        s = _rewrite_int_of_complex(s, complex_names)
-        s = _rewrite_int_kind_on_real64x2(s, target_mode, real_names=real_names)
-        s = _wrap_bare_complex_literals(s, target_mode)
-        s = _unwrap_redundant_constructors(s, target_mode, real_names=real_names)
+        s = _apply_value_passes(s, target_mode, removed_known,
+                                real_names, complex_names)
         if is_fixed_io_continuation(lines[0]):
             # Headless continuation fragment of a cpp-broken statement.
             # Narrow it only while a formatted output list is still open;
             # leave its open/closed state to the statement that owns it.
             if io_list_open:
                 s = narrow_io_continuation(s, real_names, complex_names,
-                                           comp_real, comp_complex)
+                                           ctx.comp_real, ctx.comp_complex)
         else:
             # A new logical statement begins: close any open output list,
             # then re-open if this statement is itself a formatted WRITE.
             io_list_open = False
             s, io_list_open = narrow_multifloats_io_open(
-                s, real_names, complex_names, comp_real, comp_complex)
+                s, real_names, complex_names, ctx.comp_real, ctx.comp_complex)
         if len(lines) > 1 and s == joined:
             # Multi-line statement, no transforms applied — emit the
             # original physical lines verbatim to avoid reformat churn.
@@ -226,73 +254,25 @@ def migrate_fixed_form(source: str, rename_map: dict[str, str], target_mode: Tar
     return source
 
 
-def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: TargetMode,
-                       source_kind: int | None = None,
-                       nuke_mf_params: bool = True,
-                       comp_real: frozenset[str] = frozenset(),
-                       comp_complex: frozenset[str] = frozenset()) -> str:
+def migrate_free_form(source: str, ctx: MigrationContext, *,
+                       nuke_mf_params: bool = True) -> str:
     """Migrate one free-form source string.
 
     ``nuke_mf_params`` controls the heuristic pass that comments out
     file-scope PARAMETER declarations whose names the multifloats module
     supplies as ``DD_*`` constants. The parser-guided caller
-    (:func:`_migrate_with_flang`) has never applied that pass and
+    (:func:`_migrate_with_facts`) has never applied that pass and
     disables it; the parser-less path keeps it (the default).
-
-    ``comp_real`` / ``comp_complex``: see :func:`migrate_fixed_form`.
     """
+    rename_map, target_mode = ctx.rename_map, ctx.target_mode
+    source_kind = ctx.source_kind
     complex_names = _scan_complex_var_names(source) if not target_mode.is_kind_based else set()
     real_names = _scan_real_var_names(source) if not target_mode.is_kind_based else set()
     source = rewrite_la_constants_use(source, target_mode)
     source = fix_misdeclared_statement_functions(source, source_kind=source_kind)
     source, removed_known = strip_known_constants_from_decls(source, target_mode)
     if nuke_mf_params and not target_mode.is_kind_based:
-        lines_tmp = source.splitlines()
-        res_tmp = []
-        in_comment_block = False
-        # Names of free-form file-scope PARAMETER declarations that are
-        # supplied as MF_* constants by the multifloats module. RTMIN and
-        # RTMAX are intentionally excluded: in several LAPACK routines
-        # they are local variables computed at runtime, not PARAMETERs.
-        # The mapping mirrors la_constants_map but with explicit
-        # multifloats target names for free-form Pattern A files (those
-        # use ``USE multifloats`` directly, not ``USE LA_CONSTANTS_MW``).
-        nuke_renames = {
-            'zero': 'DD_ZERO', 'one': 'DD_ONE', 'czero': 'DD_ZERO',
-            'safmin': 'DD_SAFMIN', 'safmax': 'DD_SAFMAX',
-            'tsml': 'DD_TSML', 'tbig': 'DD_TBIG',
-            'ssml': 'DD_SSML', 'sbig': 'DD_SBIG',
-            # dnrm2.f90's local ``maxN = huge(0.0_wp)`` is equivalent to
-            # DD_SAFMAX (which is itself defined as huge(0.0_dp) packed
-            # into float64x2's high limb).
-            'maxn': 'DD_SAFMAX',
-        }
-        nuke_names = set(nuke_renames.keys())
-
-        for line in lines_tmp:
-            stripped = line.strip().lower()
-            is_decl_start = re.match(r'^\s*(?:real|complex|integer|type|parameter).*?::', line, re.IGNORECASE) or \
-                            re.match(r'^\s*parameter\s*\(', line, re.IGNORECASE)
-
-            contains_nuke = False
-            matched_names: list[str] = []
-            for n in nuke_names:
-                if re.search(rf'\b{n}\b', stripped):
-                    contains_nuke = True
-                    matched_names.append(n)
-
-            if not in_comment_block and is_decl_start and contains_nuke:
-                res_tmp.append('! ' + line)
-                if line.rstrip().endswith('&'): in_comment_block = True
-                for n in matched_names:
-                    removed_known[n.upper()] = nuke_renames[n]
-            elif in_comment_block:
-                res_tmp.append('! ' + line)
-                if not line.rstrip().endswith('&'): in_comment_block = False
-                for n in matched_names:
-                    removed_known[n.upper()] = nuke_renames[n]
-            else: res_tmp.append(line)
-        source = '\n'.join(res_tmp)
+        source = nuke_multifloats_params(source, removed_known)
 
     source, param_assignments, dropped_p = convert_parameter_stmts(source, target_mode)
     source, data_assignments, dropped_d = convert_data_stmts(source, target_mode)
@@ -310,14 +290,8 @@ def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: Targ
         if not stripped.lstrip().startswith('!'):
             stripped = _strip_iso_fortran_env_realN(stripped)
             if not stripped: continue
-            stripped = replace_intrinsic_calls(
-                stripped, target_mode, real_names=real_names,
-                complex_names=complex_names,
-            )
-            stripped = replace_intrinsic_decls(stripped, target_mode)
-            stripped = replace_generic_conversions(
-                stripped, target_mode, complex_names=complex_names,
-            )
+            stripped = _apply_intrinsic_passes(stripped, target_mode,
+                                               real_names, complex_names)
         stripped = replace_routine_names(stripped, rename_map)
         stripped = replace_include_filenames(stripped, rename_map)
         if stripped.lstrip().startswith('!'):
@@ -334,13 +308,10 @@ def migrate_free_form(source: str, rename_map: dict[str, str], target_mode: Targ
             # KIND parameter once ``wp`` itself has been stripped.
             if not target_mode.is_kind_based:
                 stripped = replace_literals(stripped, target_mode, source_kind=source_kind)
-            stripped = replace_known_constants(stripped, target_mode, renames=removed_known)
-            stripped = _rewrite_int_of_complex(stripped, complex_names)
-            stripped = _rewrite_int_kind_on_real64x2(stripped, target_mode, real_names=real_names)
-            stripped = _wrap_bare_complex_literals(stripped, target_mode)
-            stripped = _unwrap_redundant_constructors(stripped, target_mode, real_names=real_names)
+            stripped = _apply_value_passes(stripped, target_mode, removed_known,
+                                           real_names, complex_names)
             stripped = narrow_multifloats_io(stripped, real_names, complex_names,
-                                             comp_real, comp_complex)
+                                             ctx.comp_real, ctx.comp_complex)
         result.append(stripped + nl)
 
     source = ''.join(result)
@@ -433,7 +404,14 @@ def _apply_local_passes(source: str, passes, *, fixed_form: bool) -> str:
     return ''.join(out)
 
 
-def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mode: TargetMode, parser: str | None = None, parser_cmd: str | None = None, keep_kind_lines: frozenset[int] | None = None, comp_real: frozenset[str] = frozenset(), comp_complex: frozenset[str] = frozenset()) -> tuple[str, str] | None:
+def migrate_file_to_string(src_path: Path, rename_map: dict[str, str],
+                           target_mode: TargetMode,
+                           parser: str | None = None,
+                           parser_cmd: str | None = None,
+                           keep_kind_lines: frozenset[int] | None = None,
+                           comp_real: frozenset[str] = frozenset(),
+                           comp_complex: frozenset[str] = frozenset(),
+                           ) -> tuple[str, str] | None:
     ext, source = src_path.suffix.lower(), src_path.read_text(errors='replace')
     facts = None
     if parser == 'flang':
@@ -448,12 +426,22 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
     if keep_kind_lines:
         source = _apply_keep_kind_sentinel(source, keep_kind_lines)
 
-    source_kind = _source_kind_from_filename(src_path.name)
+    ctx = MigrationContext(
+        rename_map=rename_map,
+        target_mode=target_mode,
+        source_kind=_source_kind_from_filename(src_path.name),
+        comp_real=comp_real,
+        comp_complex=comp_complex,
+    )
 
-    if facts is not None: migrated = _migrate_with_flang(source, ext, rename_map, target_mode, facts, source_kind=source_kind, comp_real=comp_real, comp_complex=comp_complex)
-    elif ext in ('.f', '.for', '.h'): migrated = migrate_fixed_form(source, rename_map, target_mode, source_kind=source_kind, comp_real=comp_real, comp_complex=comp_complex)
-    elif ext in ('.f90', '.f95', '.F90'): migrated = migrate_free_form(source, rename_map, target_mode, source_kind=source_kind, comp_real=comp_real, comp_complex=comp_complex)
-    else: return None
+    if facts is not None:
+        migrated = _migrate_with_facts(source, ext, ctx, facts)
+    elif ext in ('.f', '.for', '.h'):
+        migrated = migrate_fixed_form(source, ctx)
+    elif ext in ('.f90', '.f95', '.F90'):
+        migrated = migrate_free_form(source, ctx)
+    else:
+        return None
 
     if keep_kind_lines:
         migrated = _restore_keep_kind_sentinel(migrated)
@@ -482,69 +470,22 @@ def migrate_file_to_string(src_path: Path, rename_map: dict[str, str], target_mo
 
     out_name = target_filename(src_path.name, rename_map, target_mode)
 
-    # Type-conversion intrinsics frequently drift asymmetrically between
-    # co-family halves: D/Z-half upstream tends to declare ``REAL`` /
-    # ``CMPLX`` / ``DBLE`` / ``DIMAG`` / ``DCMPLX`` / ``DCONJG`` in its
-    # INTRINSIC list (used to convert ``DOUBLE COMPLEX`` ↔ ``DOUBLE
-    # PRECISION``), while S/C-half doesn't need them (kind4 default
-    # handles the same conversions implicitly). After kind16 migration
-    # both halves use the kind-promoted versions; the asymmetric
-    # INTRINSIC declarations remain as cosmetic text drift. Strip the
-    # type-conversion subset on every target to converge.
-    type_conv_intrinsics = {
-        'REAL', 'CMPLX', 'DCMPLX', 'DBLE',
-        'AIMAG', 'CONJG', 'DCONJG', 'DIMAG',
-    }
-    if not target_mode.is_kind_based:
-        # Multifloats also strips the full generic-overload set so
-        # INTRINSIC declarations of names that ``USE multifloats``
-        # provides as generic interfaces don't clash (gfortran: "Cannot
-        # change attributes of USE-associated symbol").
-        strip_set = type_conv_intrinsics | {
-            # Unary real -> real
-            'ABS', 'SQRT', 'SIN', 'COS', 'TAN', 'EXP', 'LOG', 'LOG10',
-            'ATAN', 'ASIN', 'ACOS', 'AINT', 'ANINT', 'SINH', 'COSH',
-            'TANH', 'ASINH', 'ACOSH', 'ATANH', 'ERF', 'ERFC',
-            'ERFC_SCALED', 'GAMMA', 'LOG_GAMMA', 'BESSEL_J0',
-            'BESSEL_J1', 'BESSEL_Y0', 'BESSEL_Y1', 'FRACTION',
-            'RRSPACING', 'SPACING', 'EPSILON', 'HUGE', 'TINY',
-            # Binary real
-            'SIGN', 'MOD', 'ATAN2', 'DIM', 'MODULO', 'HYPOT', 'NEAREST',
-            # Variadic
-            'MAX', 'MIN',
-            # Extra type-conversion
-            'INT', 'NINT', 'CEILING', 'FLOOR',
-        }
-    else:
-        strip_set = type_conv_intrinsics
-
-    def clean_intrinsic(m):
-        indent, sep, funcs_str, newline = m.group(1), m.group(2), m.group(3), m.group(4)
-        kept = [f.strip() for f in funcs_str.split(',')
-                if f.strip() and f.strip().upper() not in strip_set]
-        return f"{indent}INTRINSIC{sep}{', '.join(kept)}{newline}" if kept else ""
-
-    def clean_intrinsic_line(s: str) -> str:
-        # Runs on a single joined logical line, so a multi-line INTRINSIC list
-        # (previously punted on to avoid fusing ``MAXEXPONENT,\n$MINEXPONENT``
-        # into one token) is now cleaned as a whole. Returns ``''`` when the
-        # kept list is empty so the statement is dropped.
-        return re.sub(
-            r'(?im)^([ \t]*)INTRINSIC(\s*::\s*|\s+)([A-Za-z0-9_,\s]+?)(\r?\n|$)',
-            clean_intrinsic, s,
-        )
-
-    # Runs in the verbatim-preserving joined regime: multi-line INTRINSIC
-    # lists are collapsed before the strip, statements it doesn't alter keep
-    # their original physical formatting, and re-wrapping happens once here.
-    migrated = _apply_local_passes(migrated, [clean_intrinsic_line], fixed_form=fixed_form)
+    # Strip target-supplied names from INTRINSIC declarations (see
+    # strip_overloaded_intrinsics for the co-family-drift / generic-
+    # interface-clash rationale). Runs in the verbatim-preserving joined
+    # regime: multi-line INTRINSIC lists are collapsed before the strip,
+    # statements it doesn't alter keep their original physical
+    # formatting, and re-wrapping happens once here.
+    migrated = _apply_local_passes(
+        migrated,
+        [lambda s: strip_overloaded_intrinsics(s, target_mode)],
+        fixed_form=fixed_form,
+    )
     return out_name, migrated
 
 
-def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], target_mode: TargetMode, facts,
-                         source_kind: int | None = None,
-                         comp_real: frozenset[str] = frozenset(),
-                         comp_complex: frozenset[str] = frozenset()) -> str:
+def _migrate_with_facts(source: str, ext: str, ctx: MigrationContext,
+                        facts) -> str:
     # Also include USE-statement module names + every variable's type
     # spec (where the type is precision-prefixed, e.g.
     # ``TYPE(DMUMPS_INTR_STRUC)``). The gfortran parser doesn't surface
@@ -552,7 +493,7 @@ def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], targe
     # source the rename_map gets filtered down to nothing for files
     # whose only precision-prefixed reference is via ``USE`` or
     # ``TYPE(...)``.
-    use_names = {u.module_name for u in (facts.use_stmt_ranges or [])}
+    use_names = set(facts.use_modules or ())
     type_refs: set[str] = set()
     if facts.variable_types:
         # variable_types maps name -> ts; the ts may itself be a
@@ -564,12 +505,15 @@ def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], targe
             type_refs.add(token)
     file_names = (
         {rd.name for rd in facts.routine_defs}
-        | {cs.name for cs in facts.call_sites}
+        | set(facts.call_sites)
         | set(facts.external_names)
         | use_names
         | type_refs
     )
-    file_rename_map = {k: v for k, v in rename_map.items() if k in file_names}
+    file_ctx = dataclasses.replace(
+        ctx,
+        rename_map={k: v for k, v in ctx.rename_map.items() if k in file_names},
+    )
     has_float_types = any(td.type_spec in ('DoublePrecision', 'Real', 'Complex') for td in facts.type_decls)
     if not has_float_types:
         # gfortran's dump puts DOUBLE PRECISION components inside a
@@ -610,12 +554,7 @@ def _migrate_with_flang(source: str, ext: str, rename_map: dict[str, str], targe
         if re.search(r'(?<![\[\d])\d+\.\d*[DdEe][+-]?\d+', source):
             has_real_literals = True
     if ext in ('.f90', '.f95', '.F90'):
-        return migrate_free_form(source, file_rename_map, target_mode,
-                                 source_kind=source_kind,
-                                 nuke_mf_params=False,
-                                 comp_real=comp_real, comp_complex=comp_complex)
-    return migrate_fixed_form(source, file_rename_map, target_mode,
-                              source_kind=source_kind,
+        return migrate_free_form(source, file_ctx, nuke_mf_params=False)
+    return migrate_fixed_form(source, file_ctx,
                               has_float_types=has_float_types,
-                              has_real_literals=has_real_literals,
-                              comp_real=comp_real, comp_complex=comp_complex)
+                              has_real_literals=has_real_literals)

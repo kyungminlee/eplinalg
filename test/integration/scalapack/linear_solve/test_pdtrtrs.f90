@@ -5,9 +5,10 @@ program test_pdtrtrs
     use pblas_prec_report, only: report_init, report_case, report_finalize
     use ref_quad_lapack,  only: dtrtrs
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
-                                my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix
+                                my_nprow, my_row, numroc_local, &
+                                descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix, &
+                                set_local_from_global
     use target_scalapack, only: target_name, target_eps, target_pdtrtrs
     implicit none
 
@@ -21,7 +22,7 @@ program test_pdtrtrs
     real(ep), allocatable :: A_glob(:,:), B_glob(:,:), B_got(:,:), B_ref(:,:)
     real(ep) :: err, tol
     character(len=48) :: label
-    integer :: k, owner_r, owner_c, il, jl, ig, jg
+    integer :: k, ig, jg
 
     call grid_init()
     call report_init('pdtrtrs', target_name, my_rank)
@@ -35,18 +36,12 @@ program test_pdtrtrs
         do jg = 1, n
             do ig = jg + 1, n
                 A_glob(ig, jg) = 0.0_ep
-                call g2l(ig, mb, my_nprow, owner_r, il)
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_r == my_row .and. owner_c == my_col) A_loc(il, jl) = 0.0_ep
+                call set_local_from_global(ig, jg, A_glob(ig, jg), mb, nb, A_loc)
             end do
         end do
         do k = 1, n
             A_glob(k, k) = A_glob(k, k) + real(n, ep)
-            call g2l(k, mb, my_nprow, owner_r, il)
-            call g2l(k, nb, my_npcol, owner_c, jl)
-            if (owner_r == my_row .and. owner_c == my_col) then
-                A_loc(il, jl) = A_loc(il, jl) + real(n, ep)
-            end if
+            call set_local_from_global(k, k, A_glob(k, k), mb, nb, A_loc)
         end do
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow); lld_a = max(1, locm_a)

@@ -76,18 +76,21 @@ header_patches:
   # C++ linkage; the function definitions in *.c then re-open
   # extern "C" inside the translation unit, producing
   # "conflicting declaration … with C linkage" errors. Wrap each
-  # proto.h body in an extern "C" block under multifloats.
+  # proto.h body in an extern "C" block under multifloats. The
+  # opener/closer payloads are anchored (&extern_c_open /
+  # &extern_c_close) on this first pair and aliased by the other
+  # wrapped headers below — one payload spelling per recipe.
   - file: blas_extended_proto.h
     when: multifloats
     after: '#define BLAS_EXTENDED_PROTO_H'
-    insert: |
+    insert: &extern_c_open |
       #ifdef __cplusplus
       extern "C" {
       #endif
   - file: blas_extended_proto.h
     when: multifloats
     before: '#endif /* BLAS_EXTENDED_PROTO_H */'
-    insert: |
+    insert: &extern_c_close |
       #ifdef __cplusplus
       } /* extern "C" */
       #endif
@@ -99,17 +102,11 @@ header_patches:
   - file: blas_dense_proto.h
     when: multifloats
     before: '#endif'
-    insert: |
-      #ifdef __cplusplus
-      } /* extern "C" */
-      #endif
+    insert: *extern_c_close
   - file: blas_dense_proto.h
     when: multifloats
     after: '#define BLAS_DENSE_PROTO_H'
-    insert: |
-      #ifdef __cplusplus
-      extern "C" {
-      #endif
+    insert: *extern_c_open
   # blas_malloc.h declares blas_malloc/blas_realloc/blas_free in the
   # #else branch of an NO_BLASMALLOC switch. Same C-vs-C++ linkage
   # mismatch under multifloats. Apply the closing patch first so the
@@ -118,17 +115,11 @@ header_patches:
   - file: blas_malloc.h
     when: multifloats
     before: '#endif'
-    insert: |
-      #ifdef __cplusplus
-      } /* extern "C" */
-      #endif
+    insert: *extern_c_close
   - file: blas_malloc.h
     when: multifloats
     after: '#include <stddef.h>'
-    insert: |
-      #ifdef __cplusplus
-      extern "C" {
-      #endif
+    insert: *extern_c_open
 
 # Mixed-input-precision variants (BLAS_<P><routine>_<P1>_<P2>[_x].c)
 # have no S/C ↔ D/Z partner in the source tree — the prefix

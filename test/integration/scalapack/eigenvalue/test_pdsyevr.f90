@@ -7,8 +7,9 @@ program test_pdsyevr
     use ref_quad_lapack,  only: dsyev
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix, &
+                                scatter_matrix
     use target_scalapack, only: target_name, target_eps, target_pdsyevr
     implicit none
 
@@ -26,7 +27,7 @@ program test_pdsyevr
     real(ep) :: wopt(1)
     integer  :: iwopt(1)
     character(len=48) :: label
-    integer :: ig, jg, owner_r, owner_c, il, jl, j
+    integer :: j
 
     call grid_init()
     call report_init('pdsyevr', target_name, my_rank)
@@ -39,16 +40,7 @@ program test_pdsyevr
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)
         locn_a = numroc_local(n, nb, my_col, 0, my_npcol); lld_a = max(1, locm_a)
-        if (locm_a > 0 .and. locn_a > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) A_loc(il, jl) = A_sym(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix(n, n, mb, nb, A_sym, A_loc)
         call descinit_local(desca, n, n, mb, nb, 0, 0, my_context, lld_a, info)
         call descinit_local(descz, n, n, mb, nb, 0, 0, my_context, lld_a, info)
 

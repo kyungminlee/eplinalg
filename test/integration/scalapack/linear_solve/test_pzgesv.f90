@@ -5,8 +5,9 @@ program test_pzgesv
     use ref_quad_lapack,  only: zgesv
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z, &
+                                set_local_from_global_z
     use target_scalapack, only: target_name, target_eps, target_pzgesv
     implicit none
 
@@ -22,7 +23,7 @@ program test_pzgesv
     integer,  allocatable :: ipiv_got(:), ipiv_ref(:)
     real(ep) :: err, tol
     character(len=48) :: label
-    integer :: k, owner_r, owner_c, il, jl
+    integer :: k
     complex(ep) :: boost
 
     call grid_init()
@@ -37,11 +38,7 @@ program test_pzgesv
         boost = cmplx(real(n, ep), 0.0_ep, kind=ep)
         do k = 1, n
             A_glob(k, k) = A_glob(k, k) + boost
-            call g2l(k, mb, my_nprow, owner_r, il)
-            call g2l(k, nb, my_npcol, owner_c, jl)
-            if (owner_r == my_row .and. owner_c == my_col) then
-                A_loc(il, jl) = A_loc(il, jl) + boost
-            end if
+            call set_local_from_global_z(k, k, A_glob(k, k), mb, nb, A_loc)
         end do
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)

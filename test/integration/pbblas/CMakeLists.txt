@@ -40,27 +40,34 @@ if(NOT TARGET ${LIB_PAIR_PREFIX}blacs)
 endif()
 
 # ── Dedicated module directory ──────────────────────────────────────
-# tests/pbblas/common/pblas_grid diverged from tests/pblas/common's
-# copy (pbblas added `grid_init_shape` for the pb[dz]trnv non-square
-# grid coverage in commit 90f76d2). Keep our .mod files in a per-tree
-# subdir so neither version overwrites the other in the shared
-# fmod_tests/${FORTRAN_MOD_COMPAT_TAG} dir.
+# The shared tests/common helper modules are compiled once per suite
+# (with per-suite reporter macros), so a per-tree mod dir keeps each
+# tree's .mod files isolated in the shared fmod_tests/ tree.
 set(_pbb_moddir "${PROJECT_BINARY_DIR}/fmod_tests/${FORTRAN_MOD_COMPAT_TAG}/pbblas_tests")
 file(MAKE_DIRECTORY ${_pbb_moddir})
 
 # ── Common helper modules ───────────────────────────────────────────
+# pblas_distrib is a fypp template (one body instantiated for the real
+# and complex families) — expand it into this suite's binary dir.
+add_fypp_source(_pbb_distrib_src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common/pblas_distrib.fypp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 add_library(pbblas_test_common STATIC
     ../common/prec_kinds.f90
     ../common/compare.f90
-    common/prec_report.f90
+    ../common/prec_report.F90
+    ../common/pbblas_prec_report.f90
     ../common/test_data.f90
-    common/ref_quad_blas.f90
-    common/pblas_grid.F90
-    ../common/pblas_distrib.f90
+    ../common/ref_quad_blas.f90
+    ../common/pblas_grid.F90
+    ${_pbb_distrib_src}
 )
 set_target_properties(pbblas_test_common PROPERTIES
     Fortran_MODULE_DIRECTORY "${_pbb_moddir}"
 )
+# MPI reporter: rank 0 writes the JSON, report_finalize broadcasts the
+# pass/fail flag — see tests/common/prec_report.F90.
+target_compile_definitions(pbblas_test_common PRIVATE PREC_REPORT_MPI)
 target_include_directories(pbblas_test_common PUBLIC
     $<BUILD_INTERFACE:${_pbb_moddir}>
 )

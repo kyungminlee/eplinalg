@@ -9,9 +9,9 @@ import re
 from ..target_mode import TargetMode
 from .lex import (
     _END_PROC_RE, _INTERFACE_BEGIN_RE, _INTERFACE_END_RE, _PROC_HEADER_RE,
-    _count_open_parens, _looks_like_statement_function,
+    _looks_like_statement_function,
     _scan_local_declared_names, _scan_referenced_identifiers,
-    is_continuation_line,
+    is_continuation_line, split_top_level_commas, walk_procedure_header,
 )
 from .keepkind import _KK_DBLE_SENTINEL
 from .decls import _scan_complex_var_names
@@ -116,22 +116,7 @@ def _wrap_use_clause(indent: str, body: str, fixed_form: bool) -> str:
     if not sep:
         return full + '\n'
 
-    parts: list[str] = []
-    cur = ''
-    depth = 0
-    for ch in rest.strip():
-        if ch == ',' and depth == 0:
-            if cur.strip():
-                parts.append(cur.strip())
-            cur = ''
-            continue
-        if ch == '(':
-            depth += 1
-        elif ch == ')':
-            depth -= 1
-        cur += ch
-    if cur.strip():
-        parts.append(cur.strip())
+    parts = split_top_level_commas(rest.strip(), strip=True)
 
     out_lines: list[str] = []
     cur_line = indent + 'USE ' + head + ', only:'
@@ -250,6 +235,155 @@ def _build_use_only_clause(proc_lines: list[str],
     return ', only: ' + ', '.join(parts) if parts else ''
 
 
+# First tokens that keep the declaration-block walker walking. The
+# keep-kind sentinels appear at this stage in the pipeline — the
+# migrator masks ``DOUBLE PRECISION`` / ``dble`` / ``dcmplx`` with
+# sentinels around lines in codegen/recipes/*/keep-kind.manifest so they
+# survive the migration unchanged. The sentinels get restored after
+# migration but BEFORE this walker only when the migrator doesn't run a
+# USE pass (e.g. the source-emit path), and the walker runs on the
+# still-sentineled text in the multifloats path. Treat them as
+# declaration keywords so the walker doesn't stop at them and insert
+# PARAMETER-derived assignments in the middle of the declaration block.
+_DECL_KEYWORDS = (
+    'REAL', 'DOUBLE', 'COMPLEX', 'INTEGER', 'LOGICAL',
+    'CHARACTER', 'TYPE', 'USE', 'IMPLICIT', 'PARAMETER',
+    'DATA', 'INTRINSIC', 'EXTERNAL', 'DIMENSION', 'SAVE',
+    'EQUIVALENCE', 'COMMON', 'INCLUDE',
+    '__KEEPKIND_DP__',
+    '__KEEPKIND_DBLE__',
+    '__KEEPKIND_DCMPLX__',
+)
+
+
+def _has_use_nearby(lines: list[str], start: int, module_name: str) -> bool:
+    """True when a ``USE <module_name>`` already appears within the next
+    20 lines starting at ``start`` (case-insensitive)."""
+    needle = f"USE {module_name}".upper()
+    return any(needle in lines[kk].upper()
+               for kk in range(start, min(start + 20, len(lines))))
+
+
+def _walk_interface_block(lines: list[str], k: int,
+                          target_mode: TargetMode) -> int:
+    """Walk an INTERFACE ... END INTERFACE block whose opening line is
+    ``lines[k]``; return the index one past the block.
+
+    While walking, inject ``USE <module>`` after each inner SUBROUTINE/
+    FUNCTION prototype header — interface body scopes do not inherit
+    the enclosing procedure's USE clauses, so the migrated type
+    references inside the prototype need their own module visibility.
+    The USE line is spliced into ``lines`` IN PLACE so the caller's
+    outer walker copies it through to the output along with the rest of
+    the prototype. specialize_use_module's outer-procedure pass then
+    rewrites the bare form to a ``, only:`` clause.
+    """
+    k += 1
+    depth = 1
+    while k < len(lines) and depth > 0:
+        inner_ln = lines[k]
+        if _INTERFACE_BEGIN_RE.match(inner_ln):
+            depth += 1
+        elif _INTERFACE_END_RE.match(inner_ln):
+            depth -= 1
+        elif (target_mode.module_name
+                and _PROC_HEADER_RE.match(inner_ln)):
+            # Walk continuation lines of the inner header so the USE
+            # lands AFTER the full prototype header, not inside the
+            # formal-arg list.
+            k_after = walk_procedure_header(lines, k)
+            pm = _PROC_HEADER_RE.match(inner_ln)
+            hdr_indent = pm.group(1) if pm else '      '
+            use_line_inner = (
+                f"{hdr_indent if hdr_indent.strip() else '      '}"
+                f"USE {target_mode.module_name}\n"
+            )
+            if not _has_use_nearby(lines, k_after, target_mode.module_name):
+                lines.insert(k_after, use_line_inner)
+            k = k_after
+            continue
+        k += 1
+    return k
+
+
+def _walk_decl_block(lines: list[str], start: int,
+                     target_mode: TargetMode) -> int:
+    """Walk past the declaration block beginning at ``lines[start]``
+    (blank lines, comments, CPP directives, declaration statements and
+    their continuations, INTERFACE blocks, statement functions) and
+    return the index of the first executable statement.
+
+    May mutate ``lines`` in place: interface-inner prototype headers
+    get a ``USE <module>`` splice (see ``_walk_interface_block``).
+    """
+    k = start
+    prev_amp_decl = False
+    while k < len(lines):
+        raw = lines[k]
+        stripped = raw.lstrip()
+        if not stripped.strip():
+            k += 1; continue
+        if raw and raw[0] in ('C', 'c', '*', '!'):
+            k += 1; continue
+        # An all-comment line in fixed-form may also start
+        # with whitespace then ``!`` (the inline-comment
+        # marker is legal at any column).
+        if stripped.startswith('!'):
+            k += 1; continue
+        # Preprocessor directives (``#if defined(_OPENMP)`` /
+        # ``#endif`` / ``#include``) appear inside the decl
+        # block in capital-F sources (e.g. dsytrd_sb2st.F has
+        # ``#if defined(_OPENMP) / use omp_lib / #endif``
+        # between the USE clause and IMPLICIT NONE). Without
+        # this, the walker would stop at the ``#if`` line
+        # — treating it as an executable — and insert the
+        # PARAMETER assignments above IMPLICIT NONE, which
+        # gfortran rejects as ``Unexpected IMPLICIT NONE
+        # statement``. The body of ``#if/#endif`` blocks in
+        # this position is itself decl-only (``use omp_lib``)
+        # so skipping the directive markers is enough.
+        if stripped.startswith('#'):
+            k += 1; continue
+        # Free-form continuation: previous code line ended
+        # in ``&``. The current line is part of the same
+        # logical statement (typically the trailing names
+        # on a multi-line ``INTEGER, INTENT(IN) :: ...``
+        # argument declaration). Skip it so the walker
+        # doesn't treat the continuation prefix as the
+        # start of an executable statement.
+        if prev_amp_decl:
+            prev_amp_decl = raw.rstrip().rstrip('\n').endswith('&')
+            k += 1; continue
+        if is_continuation_line(raw):
+            k += 1; continue
+        # INTERFACE / END INTERFACE blocks live in the
+        # declaration section. Walk past the entire block
+        # so the runtime assignments don't get inserted
+        # into a prototype body or between IMPLICIT NONE
+        # and the rest of the declarations.
+        if _INTERFACE_BEGIN_RE.match(raw):
+            k = _walk_interface_block(lines, k, target_mode)
+            continue
+        l = stripped.upper()
+        if any(l.startswith(p) for p in _DECL_KEYWORDS):
+            prev_amp_decl = raw.rstrip().rstrip('\n').endswith('&')
+            k += 1; continue
+        # LAPACK statement-function definitions look like
+        # ``CABS1( ZDUM ) = ABS( ... )`` and live between the
+        # type-decl block and the executable statements. They
+        # are NOT executable, so the walker should also walk
+        # past them. We detect by looking back: if the
+        # previous non-blank line was a comment marked
+        # ``Statement Function`` (LAPACK convention) or this
+        # line is the only thing between two ``*     ..``
+        # separator comments, treat as still in decl section.
+        if _looks_like_statement_function(stripped, lines, k):
+            prev_amp_decl = raw.rstrip().rstrip('\n').endswith('&')
+            k += 1; continue
+        break
+    return k
+
+
 def insert_use_multifloats(source: str, target_mode: TargetMode,
                            extra_lines: list[tuple[int, str]] | list[str] | None = None) -> str:
     """Insert USE multifloats statement and extra assignments after procedure headers.
@@ -308,37 +442,12 @@ def insert_use_multifloats(source: str, target_mode: TargetMode,
             inside_interface = in_interface > 0
             if not inside_interface:
                 scope_counter += 1
-            j = i + 1
-            # Walk past continuation lines so the USE clause is
-            # inserted AFTER the entire procedure header, not in the
-            # middle of a continued SUBROUTINE/FUNCTION declaration.
-            # Both fixed-form (column-6 marker) and free-form
-            # (trailing ``&``) continuations are recognized.
-            #
-            # The SUBROUTINE header may also span CPP ``#if``/``#endif``
-            # blocks that conditionalize formal arguments (common in
-            # MUMPS — e.g. ``mana_aux.F`` toggles ``METIS_OPTIONS`` via
-            # ``#if defined(metis)``). Track parenthesis depth across
-            # the header lines: as long as the formal-arg-list paren is
-            # still open, we treat the next non-CPP line as part of the
-            # header even when neither the previous nor current line
-            # carries a continuation marker.
-            paren_depth = _count_open_parens(line)
-            prev_has_amp = result[-1].rstrip().rstrip('\n').endswith('&')
-            while j < len(lines):
-                next_line = lines[j]
-                if next_line.lstrip().startswith('#'):
-                    result.append(next_line)
-                    j += 1
-                    continue
-                if (is_continuation_line(next_line) or prev_has_amp
-                        or paren_depth > 0):
-                    result.append(next_line)
-                    prev_has_amp = next_line.rstrip().rstrip('\n').endswith('&')
-                    paren_depth += _count_open_parens(next_line)
-                    j += 1
-                else:
-                    break
+            # Walk past the whole procedure header (continuations, CPP
+            # ``#if/#endif`` blocks, open formal-arg paren lists) so the
+            # USE clause is inserted AFTER it, not in the middle of a
+            # continued SUBROUTINE/FUNCTION declaration.
+            j = walk_procedure_header(lines, i)
+            result.extend(lines[i + 1:j])
 
             if target_mode.module_name:
                 indent = m.group(1)
@@ -346,8 +455,8 @@ def insert_use_multifloats(source: str, target_mode: TargetMode,
                     f"{indent if indent.strip() else '      '}"
                     f"USE {target_mode.module_name}\n"
                 )
-                already_has = any(f"USE {target_mode.module_name}".upper() in lines[kk].upper() for kk in range(j, min(j+20, len(lines))))
-                if not already_has: result.append(use_line)
+                if not _has_use_nearby(lines, j, target_mode.module_name):
+                    result.append(use_line)
 
             # Filter extra_lines to those belonging to this scope
             # (scope_counter). Entries tagged with -1 are unscoped
@@ -361,159 +470,13 @@ def insert_use_multifloats(source: str, target_mode: TargetMode,
                                if sc == scope_counter or sc == -1]
 
             if scope_lines:
-                # Walk past the declaration block (blank lines, comments,
-                # and any line whose first token is a declaration keyword
-                # or a fixed-form continuation of one). Insert the
-                # extra assignments at the END of the declaration block,
-                # i.e. just before the first executable statement —
-                # otherwise the assignments would be parsed as
-                # implicit-typed executables before declarations.
-                k = j
-                prev_amp_decl = False
-                while k < len(lines):
-                    raw = lines[k]
-                    stripped = raw.lstrip()
-                    if not stripped.strip():
-                        k += 1; continue
-                    if raw and raw[0] in ('C', 'c', '*', '!'):
-                        k += 1; continue
-                    # An all-comment line in fixed-form may also start
-                    # with whitespace then ``!`` (the inline-comment
-                    # marker is legal at any column).
-                    if stripped.startswith('!'):
-                        k += 1; continue
-                    # Preprocessor directives (``#if defined(_OPENMP)`` /
-                    # ``#endif`` / ``#include``) appear inside the decl
-                    # block in capital-F sources (e.g. dsytrd_sb2st.F has
-                    # ``#if defined(_OPENMP) / use omp_lib / #endif``
-                    # between the USE clause and IMPLICIT NONE). Without
-                    # this, the walker would stop at the ``#if`` line
-                    # — treating it as an executable — and insert the
-                    # PARAMETER assignments above IMPLICIT NONE, which
-                    # gfortran rejects as ``Unexpected IMPLICIT NONE
-                    # statement``. The body of ``#if/#endif`` blocks in
-                    # this position is itself decl-only (``use omp_lib``)
-                    # so skipping the directive markers is enough.
-                    if stripped.startswith('#'):
-                        k += 1; continue
-                    # Free-form continuation: previous code line ended
-                    # in ``&``. The current line is part of the same
-                    # logical statement (typically the trailing names
-                    # on a multi-line ``INTEGER, INTENT(IN) :: ...``
-                    # argument declaration). Skip it so the walker
-                    # doesn't treat the continuation prefix as the
-                    # start of an executable statement.
-                    if prev_amp_decl:
-                        prev_amp_decl = raw.rstrip().rstrip('\n').endswith('&')
-                        k += 1; continue
-                    if is_continuation_line(raw):
-                        k += 1; continue
-                    # INTERFACE / END INTERFACE blocks live in the
-                    # declaration section. Walk past the entire block
-                    # so the runtime assignments don't get inserted
-                    # into a prototype body or between IMPLICIT NONE
-                    # and the rest of the declarations. While walking,
-                    # inject ``USE <module>`` after each inner
-                    # SUBROUTINE/FUNCTION prototype header — interface
-                    # body scopes do not inherit the enclosing
-                    # procedure's USE clauses, so the migrated type
-                    # references inside the prototype need their own
-                    # module visibility.
-                    if _INTERFACE_BEGIN_RE.match(raw):
-                        k += 1
-                        depth = 1
-                        while k < len(lines) and depth > 0:
-                            inner_ln = lines[k]
-                            if _INTERFACE_BEGIN_RE.match(inner_ln):
-                                depth += 1
-                            elif _INTERFACE_END_RE.match(inner_ln):
-                                depth -= 1
-                            elif (target_mode.module_name
-                                    and proc_header_re.match(inner_ln)):
-                                # Walk continuation lines of the inner
-                                # header so the USE lands AFTER the
-                                # full prototype header, not inside
-                                # the formal-arg list.
-                                k_after = k + 1
-                                paren_d = _count_open_parens(inner_ln)
-                                prev_amp = inner_ln.rstrip().rstrip('\n').endswith('&')
-                                while k_after < len(lines):
-                                    nxt = lines[k_after]
-                                    if nxt.lstrip().startswith('#'):
-                                        k_after += 1
-                                        continue
-                                    if (is_continuation_line(nxt)
-                                            or prev_amp or paren_d > 0):
-                                        prev_amp = nxt.rstrip().rstrip('\n').endswith('&')
-                                        paren_d += _count_open_parens(nxt)
-                                        k_after += 1
-                                    else:
-                                        break
-                                # Insert the bare ``USE`` line
-                                # immediately after the prototype
-                                # header. specialize_use_module's
-                                # outer-procedure pass then rewrites
-                                # the bare form to a ``, only:`` clause.
-                                pm = proc_header_re.match(inner_ln)
-                                hdr_indent = pm.group(1) if pm else '      '
-                                use_line_inner = (
-                                    f"{hdr_indent if hdr_indent.strip() else '      '}"
-                                    f"USE {target_mode.module_name}\n"
-                                )
-                                # Splice the USE line into ``lines`` so
-                                # the outer walker copies it through
-                                # to ``result`` along with the rest of
-                                # the prototype. Search 20 lines ahead
-                                # for an existing USE to skip duplicates.
-                                already_inner = any(
-                                    f"USE {target_mode.module_name}".upper()
-                                    in lines[kk].upper()
-                                    for kk in range(k_after, min(k_after + 20, len(lines)))
-                                )
-                                if not already_inner:
-                                    lines.insert(k_after, use_line_inner)
-                                k = k_after
-                                continue
-                            k += 1
-                        continue
-                    l = stripped.upper()
-                    if any(l.startswith(p) for p in (
-                        'REAL', 'DOUBLE', 'COMPLEX', 'INTEGER', 'LOGICAL',
-                        'CHARACTER', 'TYPE', 'USE', 'IMPLICIT', 'PARAMETER',
-                        'DATA', 'INTRINSIC', 'EXTERNAL', 'DIMENSION', 'SAVE',
-                        'EQUIVALENCE', 'COMMON', 'INCLUDE',
-                        # Keep-kind sentinels appear at this stage in the
-                        # pipeline — the migrator masks ``DOUBLE PRECISION`` /
-                        # ``dble`` / ``dcmplx`` with sentinels around lines
-                        # in codegen/recipes/*/keep-kind.manifest so they survive
-                        # the migration unchanged. The sentinels get
-                        # restored after migration but BEFORE this walker
-                        # only when the migrator doesn't run a USE pass
-                        # (e.g. the source-emit path), and the walker runs
-                        # on the still-sentineled text in the multifloats
-                        # path. Treat them as declaration keywords so the
-                        # walker doesn't stop at them and insert
-                        # PARAMETER-derived assignments in the middle of
-                        # the declaration block.
-                        '__KEEPKIND_DP__',
-                        '__KEEPKIND_DBLE__',
-                        '__KEEPKIND_DCMPLX__',
-                    )):
-                        prev_amp_decl = raw.rstrip().rstrip('\n').endswith('&')
-                        k += 1; continue
-                    # LAPACK statement-function definitions look like
-                    # ``CABS1( ZDUM ) = ABS( ... )`` and live between the
-                    # type-decl block and the executable statements. They
-                    # are NOT executable, so the walker should also walk
-                    # past them. We detect by looking back: if the
-                    # previous non-blank line was a comment marked
-                    # ``Statement Function`` (LAPACK convention) or this
-                    # line is the only thing between two ``*     ..``
-                    # separator comments, treat as still in decl section.
-                    if _looks_like_statement_function(stripped, lines, k):
-                        prev_amp_decl = raw.rstrip().rstrip('\n').endswith('&')
-                        k += 1; continue
-                    break
+                # Insert the extra assignments at the END of the
+                # declaration block, i.e. just before the first
+                # executable statement — otherwise the assignments
+                # would be parsed as implicit-typed executables before
+                # declarations. May splice interface-inner USE lines
+                # into ``lines``, which the copy below carries through.
+                k = _walk_decl_block(lines, j, target_mode)
                 # Copy declaration block as-is, then emit assignments.
                 for kk in range(j, k):
                     result.append(lines[kk])

@@ -10,7 +10,7 @@ continuation case through ``migrate_fixed_form``.
 """
 
 from migrator.target_mode import load_target
-from migrator.fortran_migrator import migrate_fixed_form
+from migrator.fortran_migrator import migrate_fixed_form, MigrationContext
 from migrator.fortran.io_narrow import (
     narrow_multifloats_io,
     narrow_multifloats_io_open,
@@ -199,7 +199,7 @@ _CPP_WRITE_SRC = """\
 
 def test_cpp_interrupted_write_continuation_narrowed():
     tm = load_target('multifloats')
-    out = migrate_fixed_form(_CPP_WRITE_SRC, {}, tm, source_kind=8)
+    out = migrate_fixed_form(_CPP_WRITE_SRC, MigrationContext({}, tm, source_kind=8))
     # The real64x2 item on the headless continuation fragment is narrowed,
     assert 'dble(RINFOG(1))' in out
     # the interleaved cpp directives survive intact,
@@ -219,7 +219,7 @@ def test_cpp_interrupted_write_does_not_leak_state():
         "99992 FORMAT('x =', I16, ' y =', 1PD10.3)",
     )
     tm = load_target('multifloats')
-    out = migrate_fixed_form(src, {}, tm, source_kind=8)
+    out = migrate_fixed_form(src, MigrationContext({}, tm, source_kind=8))
     # The assignment RHS/LHS must stay bare — only the WRITE item narrowed.
     assert 'dble(RINFOG(1))' in out
     assert out.count('dble(RINFOG') == 1

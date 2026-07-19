@@ -9,8 +9,8 @@ program test_pdgecon
     use cond_helpers,      only: true_kappa1_general
     use pblas_grid,        only: grid_init, grid_exit, my_rank, my_context, &
                                  my_nprow, my_npcol, my_row, my_col, &
-                                 numroc_local, descinit_local, g2l
-    use pblas_distrib,     only: gen_distrib_matrix
+                                 numroc_local, descinit_local
+    use pblas_distrib,     only: gen_distrib_matrix, set_local_from_global
     use target_scalapack,  only: target_name, target_pdgecon, target_pdgetrf, &
                                  target_pdlange
     implicit none
@@ -38,13 +38,9 @@ program test_pdgecon
         end do
         ! Mirror diagonal boost into A_loc owners.
         block
-            integer :: ig, owner_r, owner_c, il, jl
+            integer :: ig
             do ig = 1, n
-                call g2l(ig, mb, my_nprow, owner_r, il)
-                call g2l(ig, nb, my_npcol, owner_c, jl)
-                if (owner_r == my_row .and. owner_c == my_col) then
-                    A_loc(il, jl) = A_loc(il, jl) + real(2 * n, ep)
-                end if
+                call set_local_from_global(ig, ig, A_glob(ig, ig), mb, nb, A_loc)
             end do
         end block
 

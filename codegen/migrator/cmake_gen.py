@@ -2,18 +2,61 @@
 
 Extracted verbatim from ``__main__.py`` (Cluster 6) as part of the migrator
 file-restructuring refactor. Behaviour is unchanged; ``cmd_build`` imports
-``_generate_cmake`` from here. Pure string templating — the only inputs are the
+``generate_cmake`` from here. Pure string templating — the only inputs are the
 ``TargetMode`` and the source file lists.
 """
 import shutil
 from pathlib import Path
 
+# Shared multifloats-acquisition snippet, spliced into both the C and the
+# Fortran template below. Plain string (no f-string placeholders) so the
+# ``${...}`` CMake variables need no brace doubling. Deliberately simpler
+# than the top-level cmake/CMakeLists.txt acquisition (no binary-release
+# mode): single-library ``migrator build`` trees always build multifloats
+# from source via FetchContent or a local -DMULTIFLOATS_DIR checkout.
+_MULTIFLOATS_ACQUIRE = """\
+set(BUILD_TESTING OFF CACHE BOOL "Disable tests in fetched multifloats" FORCE)
+set(MULTIFLOATS_BUILD_BENCH OFF CACHE BOOL "Disable benches in fetched multifloats" FORCE)
+if(DEFINED MULTIFLOATS_DIR)
+    message(STATUS "Using local multifloats: ${MULTIFLOATS_DIR}")
+    add_subdirectory(${MULTIFLOATS_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
+else()
+    include(FetchContent)
+    set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
+        CACHE STRING "Git URL for the multifloats library")
+    # multifloats v0.6.0 fixed the ${CMAKE_SOURCE_DIR} include-path
+    # leak (upstream issue #23). Earlier tags fail at configure when
+    # add_subdirectory'd; don't drop below this floor.
+    set(MULTIFLOATS_GIT_TAG "v0.6.0"
+        CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
+    message(STATUS "Fetching multifloats from ${MULTIFLOATS_GIT_REPO} (${MULTIFLOATS_GIT_TAG})")
+    FetchContent_Declare(multifloats_fetch
+        GIT_REPOSITORY ${MULTIFLOATS_GIT_REPO}
+        GIT_TAG        ${MULTIFLOATS_GIT_TAG}
+    )
+    FetchContent_Populate(multifloats_fetch)
+    add_subdirectory(
+        ${multifloats_fetch_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
+endif()
+"""
 
-def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
-                    common_files: list[str], precision_files: list[str],
-                    language: str = 'fortran',
-                    project_root: Path | None = None,
-                    ref_sources: list[Path] | None = None):
+
+def _impi_headers_block(impi_default: str) -> str:
+    """The vendored-Intel-MPI-headers default, shared by both templates."""
+    return f"""if(NOT DEFINED IMPI_HEADERS)
+    set(IMPI_HEADERS "{impi_default}"
+        CACHE PATH "Path to vendored Intel MPI headers")
+endif()
+include_directories(${{IMPI_HEADERS}})"""
+
+
+def generate_cmake(output_dir: Path, lib_name: str, target_mode,
+                   common_files: list[str], precision_files: list[str],
+                   language: str = 'fortran',
+                   project_root: Path | None = None,
+                   ref_sources: list[Path] | None = None):
     """Generate a self-contained CMakeLists.txt in the output directory."""
     pmap = target_mode.prefix_map
     real_pfx = pmap['R'].lower()
@@ -53,33 +96,14 @@ def _generate_cmake(output_dir: Path, lib_name: str, target_mode,
                 # doesn't drag mpicxx.h templates into the migrator's
                 # ``extern "C" { … }`` wrap) is now baked into the header.
                 shutil.copy2(bridge_h_src, staged)
-            c_mf_link = """
-# multifloats: FetchContent (or local via -DMULTIFLOATS_DIR) so the
-# migrated sources can link against ``libmultifloats.a`` (C++) and
-# include ``multifloats_bridge.h`` (staged into ./_helpers/).
-set(BUILD_TESTING OFF CACHE BOOL "Disable tests in fetched multifloats" FORCE)
-set(MULTIFLOATS_BUILD_BENCH OFF CACHE BOOL "Disable benches in fetched multifloats" FORCE)
-if(DEFINED MULTIFLOATS_DIR)
-    message(STATUS "Using local multifloats: ${MULTIFLOATS_DIR}")
-    add_subdirectory(${MULTIFLOATS_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
-else()
-    include(FetchContent)
-    set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
-        CACHE STRING "Git URL for the multifloats library")
-    set(MULTIFLOATS_GIT_TAG "v0.6.0"
-        CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
-    FetchContent_Declare(multifloats_fetch
-        GIT_REPOSITORY ${MULTIFLOATS_GIT_REPO}
-        GIT_TAG        ${MULTIFLOATS_GIT_TAG}
-    )
-    FetchContent_Populate(multifloats_fetch)
-    add_subdirectory(
-        ${multifloats_fetch_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/_mf EXCLUDE_FROM_ALL)
-endif()
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/_helpers)
-"""
+            c_mf_link = (
+                '\n'
+                '# multifloats: FetchContent (or local via -DMULTIFLOATS_DIR) so the\n'
+                '# migrated sources can link against ``libmultifloats.a`` (C++) and\n'
+                '# include ``multifloats_bridge.h`` (staged into ./_helpers/).\n'
+                + _MULTIFLOATS_ACQUIRE
+                + 'include_directories(${CMAKE_CURRENT_SOURCE_DIR}/_helpers)\n'
+            )
             c_mf_deps = f"""
 if(TARGET multifloats)
     target_link_libraries({precision_lib} PUBLIC multifloats)
@@ -138,11 +162,7 @@ set(CMAKE_C_FLAGS "${{CMAKE_C_FLAGS}} -w")
 # libraries still come from whichever MPI runtime the user provides
 # (impi-rt / OpenMPI / MPICH — headers are ABI-compatible).
 # Users who want a different MPI's *headers* can override IMPI_HEADERS.
-if(NOT DEFINED IMPI_HEADERS)
-    set(IMPI_HEADERS "{_impi_default}"
-        CACHE PATH "Path to vendored Intel MPI headers")
-endif()
-include_directories(${{IMPI_HEADERS}})
+{_impi_headers_block(_impi_default)}
 find_package(MPI COMPONENTS C QUIET)
 {c_mf_link}
 # --- Common (type-independent) library ---
@@ -196,32 +216,7 @@ endif()
 # src/CMakeLists.txt references ``CMAKE_SOURCE_DIR/include`` which is
 # wrong outside a top-level build. Tests/benches are suppressed via
 # cache variables set before the subdirectory add.
-set(BUILD_TESTING OFF CACHE BOOL "Disable tests in fetched multifloats" FORCE)
-set(MULTIFLOATS_BUILD_BENCH OFF CACHE BOOL "Disable benches in fetched multifloats" FORCE)
-if(DEFINED MULTIFLOATS_DIR)
-    message(STATUS "Using local multifloats: ${{MULTIFLOATS_DIR}}")
-    add_subdirectory(${{MULTIFLOATS_DIR}}
-        ${{CMAKE_CURRENT_BINARY_DIR}}/_mf EXCLUDE_FROM_ALL)
-else()
-    include(FetchContent)
-    set(MULTIFLOATS_GIT_REPO "https://github.com/kyungminlee/multifloats.git"
-        CACHE STRING "Git URL for the multifloats library")
-    # multifloats v0.6.0 fixed the ${{CMAKE_SOURCE_DIR}} include-path
-    # leak (upstream issue #23). Earlier tags fail at configure when
-    # add_subdirectory'd; don't drop below this floor.
-    set(MULTIFLOATS_GIT_TAG "v0.6.0"
-        CACHE STRING "Git tag/branch/commit for multifloats (>= v0.6.0)")
-    message(STATUS "Fetching multifloats from ${{MULTIFLOATS_GIT_REPO}} (${{MULTIFLOATS_GIT_TAG}})")
-    FetchContent_Declare(multifloats_fetch
-        GIT_REPOSITORY ${{MULTIFLOATS_GIT_REPO}}
-        GIT_TAG        ${{MULTIFLOATS_GIT_TAG}}
-    )
-    FetchContent_Populate(multifloats_fetch)
-    add_subdirectory(
-        ${{multifloats_fetch_SOURCE_DIR}}
-        ${{CMAKE_CURRENT_BINARY_DIR}}/_mf EXCLUDE_FROM_ALL)
-endif()
-
+{_MULTIFLOATS_ACQUIRE}
 # multifloats_mpi_f.f90: Fortran module exposing the C-side MPI
 # datatype handles (MPI_FLOAT64X2 / MPI_MM_SUM / ...) via bind(c).
 # MUMPS's migrated source `USE multifloats_mpi_f` requires the .mod;
@@ -295,11 +290,7 @@ set(CMAKE_Fortran_PREPROCESS ON)
 # unconditionally; the runtime comes from whichever MPI the user links
 # against at final link time. MUMPS uses ``INCLUDE 'mpif.h'`` in 231
 # source files and never ``USE mpi``, so F77 headers are enough.
-if(NOT DEFINED IMPI_HEADERS)
-    set(IMPI_HEADERS "{_impi_default}"
-        CACHE PATH "Path to vendored Intel MPI headers")
-endif()
-include_directories(${{IMPI_HEADERS}})
+{_impi_headers_block(_impi_default)}
 find_package(MPI COMPONENTS Fortran QUIET)
 
 # Detect extended-precision (KIND=10 / KIND=16) support.

@@ -11,7 +11,7 @@ facts as :mod:`flang_parser`:
   - Literal constants (real, complex)
   - Character literal constants (for XERBLA strings)
 
-The output reuses :class:`flang_parser.ParseTreeFacts` and its component
+The output reuses :class:`parse_facts.ParseTreeFacts` and its component
 dataclasses so that the downstream migrator is parser-agnostic.
 """
 
@@ -21,9 +21,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .flang_parser import (
-    CallSite, ParseTreeFacts, RoutineDef, TypeDecl, UseStmtInfo
-)
+from .parse_facts import ParseTreeFacts, RoutineDef, TypeDecl
 
 
 # ---------------------------------------------------------------------------
@@ -150,161 +148,46 @@ _REAL_LIT_RE = re.compile(
     r'(?<!\w)(\d+\.\d+(?:e[+-]?\d+)?_\d+)(?!\w)', re.IGNORECASE)
 
 
-def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
-    """Extract transformation-relevant facts from gfortran dump text.
+def _harvest_use_assoc(line: str, use_modules: set[str]) -> None:
+    """Collect ``USE-ASSOC(modname)`` tags into *use_modules*.
 
-    The gfortran ``-fdump-fortran-original`` output has two sections per
-    program unit:
-
-    1. **Symbol table** – ``symtree`` entries with ``type spec`` and
-       ``attributes`` for every symbol (variables, procedures, intrinsics).
-    2. **Code section** – starting after the ``code:`` line, containing
-       a linearised representation of all executable statements.
-
-    We walk the symbol table to populate type declarations, routine
-    definitions, external names, and intrinsic names.  We scan the code
-    section for call sites, function references, character literals
-    (XERBLA strings), and real literal constants.
+    Symbols imported from another module appear with ``USE-ASSOC(modname)``
+    in their attribute lines. The explicit ``USE``-statement regex only
+    fires for ``USE`` lines, which gfortran's dump doesn't always emit;
+    harvesting USE-ASSOC tags from the symbol table ensures the
+    rename_map covers module names that the caller imports a TYPE or
+    symbol from.
     """
-    facts = ParseTreeFacts()
-    lines = tree_text.splitlines()
+    for am in _USE_ASSOC_RE.finditer(line):
+        use_modules.add(am.group(1).upper())
 
-    proc_name: str | None = None  # current procedure
-    in_code = False
 
-    # --- Collected symbols (before we turn them into facts) ---
-    # sym_name → {type_spec, kind_value, attrs_set, is_procedure_sym}
-    symbols: dict[str, dict] = {}
-    call_names: set[str] = set()
-    func_ref_names: set[str] = set()
-    # Module-name set mirroring facts.use_stmt_ranges for O(1) duplicate
-    # detection. The previous ``any(u.module_name == mod_name ...)``
-    # walk made USE-ASSOC harvesting O(M²) in #modules.
-    seen_use_modules: set[str] = set()
+def _read_symbol_entry(lines: list[str], i: int, use_modules: set[str],
+                       ) -> tuple[str | None, str | None, set[str], int]:
+    """Read the indented detail lines following a ``symtree:`` line.
 
-    i = 0
-    while i < len(lines):
-        line = lines[i]
+    Returns ``(type_spec, kind_value, attrs, next_i)``; USE-ASSOC tags
+    found on the detail lines are harvested into *use_modules* as a
+    side effect.
+    """
+    type_spec = None
+    kind_value = None
+    attrs_raw = ''
+    j = i + 1
+    while j < len(lines) and lines[j].startswith('    '):
+        sline = lines[j]
+        if 'type spec' in sline and type_spec is None:
+            type_spec, kind_value = _parse_type_spec(sline)
+        if 'attributes:' in sline:
+            attrs_raw = sline
+        _harvest_use_assoc(sline, use_modules)
+        j += 1
+    return type_spec, kind_value, _parse_attributes(attrs_raw), j
 
-        # --- Procedure header ---
-        pm = _PROC_NAME_RE.match(line)
-        if pm:
-            proc_name = pm.group(1).lower()
-            in_code = False
-            i += 1
-            continue
 
-        # --- Start of code section ---
-        if line.strip() == 'code:':
-            in_code = True
-            i += 1
-            continue
-
-        if not in_code:
-            # --- Use statement ---
-            um = _USE_STMT_RE.match(line)
-            if um:
-                mod_name = um.group(1).upper()
-                facts.use_stmt_ranges.append(
-                    UseStmtInfo(mod_name))
-                seen_use_modules.add(mod_name)
-
-            # --- USE-ASSOC tag ---
-            # Symbols imported from another module appear with
-            # ``USE-ASSOC(modname)`` in their attributes line. The
-            # `USE`-statement regex above only fires for explicit
-            # ``USE`` lines, which gfortran's dump doesn't always
-            # emit; harvesting USE-ASSOC tags from the symbol table
-            # ensures the rename_map covers module names that the
-            # caller imports a TYPE/symbol from.
-            for am in _USE_ASSOC_RE.finditer(line):
-                mod_name = am.group(1).upper()
-                if mod_name not in seen_use_modules:
-                    facts.use_stmt_ranges.append(
-                        UseStmtInfo(mod_name))
-                    seen_use_modules.add(mod_name)
-
-            # --- Symbol table entry ---
-            sm = _SYMTREE_RE.match(line)
-            if sm:
-                sym_name = sm.group(2).lower()
-                # Read subsequent indented lines for type spec & attributes
-                type_spec = None
-                kind_value = None
-                attrs_raw = ''
-                j = i + 1
-                while j < len(lines) and lines[j].startswith('    '):
-                    sline = lines[j]
-                    if 'type spec' in sline and type_spec is None:
-                        type_spec, kind_value = _parse_type_spec(sline)
-                    if 'attributes:' in sline:
-                        attrs_raw = sline
-                    # Harvest USE-ASSOC(modname) tags from any
-                    # attribute line — these mark symbols imported
-                    # from another module, which we need in
-                    # use_stmt_ranges so callers' rename_map keeps
-                    # the imported module name.
-                    for am in _USE_ASSOC_RE.finditer(sline):
-                        mod_name = am.group(1).upper()
-                        if mod_name not in seen_use_modules:
-                            facts.use_stmt_ranges.append(
-                                UseStmtInfo(mod_name))
-                            seen_use_modules.add(mod_name)
-                    j += 1
-
-                attrs = _parse_attributes(attrs_raw)
-                # User-defined derived types appear twice in gfortran's
-                # dump: once as ``symtree: 'Dmumps_intr_struc'`` (case-
-                # preserved, attributes (DERIVED ...)``) and once as
-                # ``symtree: 'dmumps_intr_struc'`` (autogenerated generic
-                # interface, attributes (PROCEDURE FUNCTION ...)).
-                # Both share the same lowercase ``symbol:`` key, so a
-                # plain dict overwrite drops the type definition. Emit
-                # the type entry immediately into routine_defs and skip
-                # the dict mutation for it.
-                if 'DERIVED' in attrs and not any(
-                        a.startswith('USE-ASSOC') for a in attrs):
-                    facts.routine_defs.append(
-                        RoutineDef('type', sym_name.upper()))
-                    i = j
-                    continue
-                symbols[sym_name] = {
-                    'type_spec': type_spec,
-                    'kind_value': kind_value,
-                    'attrs': attrs,
-                    # Record the procedure block this symbol was defined
-                    # in. Without this, is_proc_sym below compares each
-                    # symbol against the *last* proc_name seen in the
-                    # file (the innermost CONTAINS procedure), so a
-                    # top-level subroutine/function whose body has a
-                    # CONTAINS subprogram never matches its own
-                    # procedure block and gets dropped from routine_defs.
-                    'proc_name': proc_name,
-                }
-                i = j
-                continue
-        else:
-            # --- Code section: scan for calls, references, literals ---
-            for cm in _CALL_RE.finditer(line):
-                name = cm.group(1).lower()
-                # Skip scope-qualified prefix (e.g. ``dgemm:``)
-                if ':' in name:
-                    continue
-                call_names.add(name)
-
-            for fm in _FUNCREF_RE.finditer(line):
-                name = fm.group(1).lower()
-                if ':' in name:
-                    # e.g. ``dgemm:temp`` is a variable, not a function
-                    continue
-                func_ref_names.add(name)
-
-            for rm in _REAL_LIT_RE.finditer(line):
-                facts.real_literals.append(rm.group(1))
-
-        i += 1
-
-    # --- Convert symbol table into facts ---
+def _symbols_to_facts(symbols: dict[str, dict], facts: ParseTreeFacts) -> None:
+    """Convert the collected symbol table into routine defs, external
+    names, variable types, and type decls."""
     for sym_name, info in symbols.items():
         attrs = info['attrs']
         ts = info['type_spec']
@@ -336,7 +219,7 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                 RoutineDef('function', sym_name.upper()))
         elif is_module_name:
             # Treat the module name itself like a routine_def so the
-            # rename_map filter in _migrate_with_flang keeps the entry.
+            # rename_map filter in _migrate_with_facts keeps the entry.
             facts.routine_defs.append(
                 RoutineDef('module', sym_name.upper()))
 
@@ -353,18 +236,134 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
                     facts.type_decls.append(
                         TypeDecl(ts, kv, [sym_name.upper()]))
 
+
+def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
+    """Extract transformation-relevant facts from gfortran dump text.
+
+    The gfortran ``-fdump-fortran-original`` output has two sections per
+    program unit:
+
+    1. **Symbol table** – ``symtree`` entries with ``type spec`` and
+       ``attributes`` for every symbol (variables, procedures, intrinsics).
+    2. **Code section** – starting after the ``code:`` line, containing
+       a linearised representation of all executable statements.
+
+    We walk the symbol table to populate type declarations, routine
+    definitions, external names, and intrinsic names.  We scan the code
+    section for call sites, function references, character literals
+    (XERBLA strings), and real literal constants.
+    """
+    facts = ParseTreeFacts()
+    lines = tree_text.splitlines()
+
+    proc_name: str | None = None  # current procedure
+    in_code = False
+
+    # --- Collected symbols (before we turn them into facts) ---
+    # sym_name → {type_spec, kind_value, attrs, proc_name}
+    symbols: dict[str, dict] = {}
+    call_names: set[str] = set()
+    func_ref_names: set[str] = set()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # --- Procedure header ---
+        pm = _PROC_NAME_RE.match(line)
+        if pm:
+            proc_name = pm.group(1).lower()
+            in_code = False
+            i += 1
+            continue
+
+        # --- Start of code section ---
+        if line.strip() == 'code:':
+            in_code = True
+            i += 1
+            continue
+
+        if not in_code:
+            # --- Use statement ---
+            um = _USE_STMT_RE.match(line)
+            if um:
+                facts.use_modules.add(um.group(1).upper())
+
+            # --- USE-ASSOC tags on a top-level attribute line ---
+            _harvest_use_assoc(line, facts.use_modules)
+
+            # --- Symbol table entry ---
+            sm = _SYMTREE_RE.match(line)
+            if sm:
+                sym_name = sm.group(2).lower()
+                type_spec, kind_value, attrs, j = _read_symbol_entry(
+                    lines, i, facts.use_modules)
+                # User-defined derived types appear twice in gfortran's
+                # dump: once as ``symtree: 'Dmumps_intr_struc'`` (case-
+                # preserved, attributes (DERIVED ...)``) and once as
+                # ``symtree: 'dmumps_intr_struc'`` (autogenerated generic
+                # interface, attributes (PROCEDURE FUNCTION ...)).
+                # Both share the same lowercase ``symbol:`` key, so a
+                # plain dict overwrite drops the type definition. Emit
+                # the type entry immediately into routine_defs and skip
+                # the dict mutation for it.
+                if 'DERIVED' in attrs and not any(
+                        a.startswith('USE-ASSOC') for a in attrs):
+                    facts.routine_defs.append(
+                        RoutineDef('type', sym_name.upper()))
+                    i = j
+                    continue
+                symbols[sym_name] = {
+                    'type_spec': type_spec,
+                    'kind_value': kind_value,
+                    'attrs': attrs,
+                    # Record the procedure block this symbol was defined
+                    # in. Without this, is_proc_sym in _symbols_to_facts
+                    # compares each symbol against the *last* proc_name
+                    # seen in the file (the innermost CONTAINS
+                    # procedure), so a top-level subroutine/function
+                    # whose body has a CONTAINS subprogram never matches
+                    # its own procedure block and gets dropped from
+                    # routine_defs.
+                    'proc_name': proc_name,
+                }
+                i = j
+                continue
+        else:
+            # --- Code section: scan for calls, references, literals ---
+            for cm in _CALL_RE.finditer(line):
+                name = cm.group(1).lower()
+                # Skip scope-qualified prefix (e.g. ``dgemm:``)
+                if ':' in name:
+                    continue
+                call_names.add(name)
+
+            for fm in _FUNCREF_RE.finditer(line):
+                name = fm.group(1).lower()
+                if ':' in name:
+                    # e.g. ``dgemm:temp`` is a variable, not a function
+                    continue
+                func_ref_names.add(name)
+
+            for rm in _REAL_LIT_RE.finditer(line):
+                facts.real_literals.append(rm.group(1))
+
+        i += 1
+
+    _symbols_to_facts(symbols, facts)
+
     # --- Call sites from code section ---
     for name in sorted(call_names):
-        facts.call_sites.append(CallSite(name.upper()))
+        facts.call_sites.append(name.upper())
 
-    seen_call_names = {cs.name for cs in facts.call_sites}
+    seen_call_names = set(facts.call_sites)
     for name in sorted(func_ref_names):
         uname = name.upper()
         # Skip gfortran internal helper symbols (e.g. __max_i4, __convert_*)
         if uname.startswith('__'):
             continue
         if uname not in seen_call_names:
-            facts.call_sites.append(CallSite(uname))
+            facts.call_sites.append(uname)
             seen_call_names.add(uname)
 
     return facts

@@ -182,6 +182,13 @@ _IDENT_RE = re.compile(r"\b([A-Za-z_]\w*)\b")
 _STRING_RE = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"")
 
 
+# Capturing variant of ``_STRING_RE`` for ``re.split``: the string
+# literals land on the odd indices of the result so callers can rewrite
+# only the even (code) segments and re-join. Shared by every pass that
+# masks string interiors this way (renames, literals, prepare).
+_STRING_SPLIT_RE = re.compile(r"('(?:[^']|'')*'|\"(?:[^\"]|\"\")*\")")
+
+
 def _strip_strings_and_comments(line: str) -> str:
     """Drop string literals and trailing inline comments."""
     out = _STRING_RE.sub('', line)
@@ -396,16 +403,78 @@ def _count_open_parens(line: str) -> int:
     return depth
 
 
-def is_continuation_line(line: str) -> bool:
+def is_continuation_line(line: str, *, tab_marker: bool = True) -> bool:
     # Fixed-form continuation: cols 1-5 blank (spaces only — NOT tabs), col 6
     # holds a non-blank, non-zero marker. A tab in col 1 is the gfortran/intel
     # extension that means "rest of line is normal source from col 7"; such a
     # line is a fresh statement, not a continuation, even when col 6 (i.e. the
     # 6th character after the tab) happens to be alphabetic. See dlarre2.f in
     # ScaLAPACK 2.2.3 for the wild form: `\t    CALL DLARRC(...)`.
+    # ``tab_marker=False`` additionally refuses a tab in col 6 as a marker
+    # (the stricter reading some passes need, e.g. IO-list narrowing).
     if not line or line[0] == '\t':
         return False
-    return len(line) > 5 and line[0:5] == '     ' and line[5] not in (' ', '0', '')
+    if len(line) <= 5 or line[0:5] != '     ':
+        return False
+    if not tab_marker and line[5] == '\t':
+        return False
+    return line[5] not in (' ', '0', '')
+
+
+def split_top_level_commas(text: str, *, strip: bool = False) -> list[str]:
+    """Split ``text`` on commas at paren depth 0.
+
+    Deliberately quote-blind, matching every historical hand-rolled
+    copy of this scan (declaration entity lists and argument lists in
+    the corpus never carry commas/parens inside string literals at the
+    positions these passes care about).
+
+    ``strip=False`` returns the pieces verbatim: interior empty pieces
+    are kept ("a,,b" -> ["a", "", "b"]) but a trailing empty piece is
+    dropped ("a," -> ["a"]; "" -> []).
+    ``strip=True`` strips each piece and drops all empty ones.
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        elif ch == ',' and depth == 0:
+            parts.append(''.join(current))
+            current = []
+            continue
+        current.append(ch)
+    if current:
+        parts.append(''.join(current))
+    if strip:
+        return [p for p in (part.strip() for part in parts) if p]
+    return parts
+
+
+def walk_procedure_header(lines: list[str], start: int) -> int:
+    """Given ``lines[start]`` holding a SUBROUTINE/FUNCTION statement,
+    return the index one past its complete header: continuation lines,
+    interleaved CPP ``#`` directives, free-form ``&`` continuations,
+    and lines still inside an unbalanced formal-arg paren list (open
+    across CPP branches, e.g. MUMPS mana_aux.F) are all consumed."""
+    paren_depth = _count_open_parens(lines[start])
+    prev_has_amp = lines[start].rstrip('\n').rstrip().endswith('&')
+    j = start + 1
+    while j < len(lines):
+        nxt = lines[j]
+        if nxt.lstrip().startswith('#'):
+            j += 1
+            continue
+        if is_continuation_line(nxt) or prev_has_amp or paren_depth > 0:
+            paren_depth += _count_open_parens(nxt)
+            prev_has_amp = nxt.rstrip('\n').rstrip().endswith('&')
+            j += 1
+            continue
+        break
+    return j
 
 
 def _build_split_mask(body: str) -> list[bool]:

@@ -9,7 +9,7 @@ import functools
 from pathlib import Path
 
 from ..target_mode import TargetMode
-from .lex import is_comment_line
+from .lex import _STRING_SPLIT_RE, _find_inline_bang, is_comment_line
 
 
 @functools.cache
@@ -105,7 +105,7 @@ def _get_rename_pattern(rename_map: dict[str, str]) -> tuple[re.Pattern, dict[st
     # object, so a stale entry could be returned for an unrelated dict
     # that happens to land at the same address. This is not hypothetical
     # here — callers pass short-lived *per-file* ``file_rename_map``
-    # objects (built fresh in ``_migrate_with_flang`` for every source
+    # objects (built fresh in ``_migrate_with_facts`` for every source
     # file), not just the one stable run-wide map. When such a dict was
     # freed and its id reused for the next file's map (a same-length map
     # collided under the old ``(id, len)`` key), the cache silently
@@ -219,27 +219,11 @@ def replace_known_constants(
 
     # Split off any inline comment so we don't substitute inside it.
     # We must respect string literals when locating the '!'.
-    code_end = len(line)
-    in_str, qch = False, ''
-    i = 0
-    while i < len(line):
-        ch = line[i]
-        if in_str:
-            if ch == qch:
-                if i + 1 < len(line) and line[i + 1] == qch:
-                    i += 2  # doubled-quote escape stays inside the string
-                    continue
-                in_str = False
-        elif ch in ("'", '"'):
-            in_str, qch = True, ch
-        elif ch == '!':
-            code_end = i
-            break
-        i += 1
+    code_end = _find_inline_bang(line)
     code, tail = line[:code_end], line[code_end:]
 
     # Mask out string literal interiors in code segment.
-    parts = re.split(r"('(?:[^']|'')*'|\"(?:[^\"]|\"\")*\")", code)
+    parts = _STRING_SPLIT_RE.split(code)
     pattern = _known_constants_pattern(frozenset(renames.keys()))
 
     def _sub(m):

@@ -8,6 +8,7 @@ program test_zmumps_nrhs
     use target_mumps,          only: target_name, target_eps, &
                                      zmumps_struc, target_xmumps, &
                                      q2t_c, t2q_c
+    use mumps_lifecycle,       only: mumps_begin, mumps_end, mumps_default_tol
     use mpi
     implicit none
 
@@ -26,7 +27,7 @@ program test_zmumps_nrhs
 
     call gen_dense_problem_z(n, A, x_true, b, seed = 23001)
     call dense_to_triplet_z (A, irn, jcn, A_trip, nz)
-    tol = 16.0_ep * real(n, ep)**3 * target_eps
+    tol = mumps_default_tol(n)
 
     call mumps_solve(n=n, nz=nz, nrhs=1, irn=irn, jcn=jcn, &
                      A_trip=A_trip, B_in=reshape(b, [n, 1]), &
@@ -88,9 +89,7 @@ contains
         type(zmumps_struc) :: idl
         integer :: i
 
-        idl%COMM = MPI_COMM_WORLD;  idl%PAR = 1;  idl%SYM = 0;  idl%JOB = -1
-        call target_xmumps(idl)
-        idl%ICNTL(1) = -1; idl%ICNTL(2) = -1; idl%ICNTL(3) = -1; idl%ICNTL(4) = 0
+        call mumps_begin(idl, MPI_COMM_WORLD, 0)
 
         idl%N    = n
         idl%NNZ  = int(nz, kind=8)
@@ -117,10 +116,7 @@ contains
             X_out_buf(:, i) = t2q_c(idl%RHS((i - 1) * n + 1 : i * n))
         end do
 
-        deallocate(idl%IRN, idl%JCN, idl%A, idl%RHS)
-        nullify(idl%IRN, idl%JCN, idl%A, idl%RHS)
-        idl%JOB = -2
-        call target_xmumps(idl)
+        call mumps_end(idl)
     end subroutine mumps_solve
 
 end program test_zmumps_nrhs

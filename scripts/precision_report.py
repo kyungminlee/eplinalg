@@ -72,13 +72,22 @@ def fmt_err(e: float | None) -> str:
     return f'{e:.2e}'
 
 
-def render_summary(reports: list[dict]) -> str:
-    """Per-routine worst-case digits across targets."""
+def prepare(reports: list[dict]) -> tuple[dict[str, dict[str, dict]],
+                                          list[str], int]:
+    """Derive (by_routine, targets, n_failed) once for all renderers."""
     by_routine: dict[str, dict[str, dict]] = defaultdict(dict)
     for r in reports:
         by_routine[r['routine']][r['target']] = r
-
     targets = order_targets({r['target'] for r in reports})
+    n_failed = sum(
+        1 for r in reports for c in r['cases'] if not c['passed']
+    )
+    return by_routine, targets, n_failed
+
+
+def render_summary(by_routine: dict[str, dict[str, dict]],
+                   targets: list[str]) -> str:
+    """Per-routine worst-case digits across targets."""
     if not targets:
         return '_(no reports)_\n'
 
@@ -114,14 +123,9 @@ def render_summary(reports: list[dict]) -> str:
     return '\n'.join(lines)
 
 
-def render_detail(reports: list[dict]) -> str:
+def render_detail(by_routine: dict[str, dict[str, dict]],
+                  targets: list[str]) -> str:
     """Per-case detail tables, one section per (routine, target)."""
-    by_routine: dict[str, dict[str, dict]] = defaultdict(dict)
-    for r in reports:
-        by_routine[r['routine']][r['target']] = r
-
-    targets = order_targets({r['target'] for r in reports})
-
     lines = ['## Per-case detail', '']
     for routine in sorted(by_routine):
         lines.append(f'### {routine}')
@@ -143,13 +147,10 @@ def render_detail(reports: list[dict]) -> str:
     return '\n'.join(lines)
 
 
-def render_header(reports: list[dict]) -> str:
-    targets = order_targets({r['target'] for r in reports})
+def render_header(reports: list[dict], targets: list[str],
+                  n_failed: int) -> str:
     routines = sorted({r['routine'] for r in reports})
     n_cases = sum(len(r['cases']) for r in reports)
-    n_failed = sum(
-        1 for r in reports for c in r['cases'] if not c['passed']
-    )
     status = 'PASS' if n_failed == 0 else f'{n_failed} FAILED CASES'
 
     lines = ['# BLAS differential precision report', '']
@@ -188,10 +189,11 @@ def main() -> int:
     if not reports:
         ap.error(f'no JSON reports found in {args.reports_dir}')
 
+    by_routine, targets, n_failed = prepare(reports)
     md = '\n'.join([
-        render_header(reports),
-        render_summary(reports),
-        render_detail(reports),
+        render_header(reports, targets, n_failed),
+        render_summary(by_routine, targets),
+        render_detail(by_routine, targets),
     ])
 
     if args.out:
@@ -200,9 +202,6 @@ def main() -> int:
     else:
         print(md)
 
-    n_failed = sum(
-        1 for r in reports for c in r['cases'] if not c['passed']
-    )
     return 1 if n_failed else 0
 
 

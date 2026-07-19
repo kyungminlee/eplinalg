@@ -6,115 +6,38 @@ names and MPI datatype constants.
 
 Migration is done by cloning files with mechanical text substitution.
 No clang parser needed — C types are unambiguous single tokens.
+
+This module owns the generic rename-map-driven engine; the shared clone
+primitives and per-library passes (BLACS directory handling / Bdef.h
+patching, PBLAS header and idiom knowledge) live in the ``c``
+subpackage, mirroring the ``fortran/`` per-concern layout.
 """
 
 import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
-from .prefix_classifier import target_prefix, SymbolClassification
+from .prefix_classifier import SymbolClassification
 from .target_mode import TargetMode
+from .templates import build_sub_vars, expand_template
+from .c.clone import (
+    apply_clone_transform,
+    classify_blacs_stem,
+    derive_routine_renames,
+    rename_c_file,
+)
+from .c.blacs import migrate_blacs_c_directory
+from .c.pblas import (
+    PBLAS_COST_LOCAL,
+    apply_multifloats_pblas_subs,
+    patch_pblas_header,
+)
 from .pbcharshim import (
     is_typeset_stem,
     transform_typeset,
     pbcharshim_header_text,
 )
-
-
-# Default C type substitution rules.
-# Each rule is (pattern, replacement_template).
-# In replacement_template:
-#   {REAL_TYPE}    → the target real type name (e.g., "QREAL", "EREAL")
-#   {COMPLEX_TYPE} → the target complex type name (e.g., "QCOMPLEX")
-#   {MPI_REAL}     → the target MPI real type (e.g., "MPI_QREAL")
-#   {MPI_COMPLEX}  → the target MPI complex type (e.g., "MPI_QCOMPLEX")
-#   {RP}           → real prefix char lowercase (e.g., "q", "e")
-#   {CP}           → complex prefix char lowercase (e.g., "x", "y")
-#   {RPU}          → real prefix char uppercase
-#   {CPU}          → complex prefix char uppercase
-#   ...
-#   {C_REAL_TYPE}  → underlying C type (e.g., "__float128")
-
-# Clone-sub builders. Each table is a flat list of (pattern, replacement)
-# pairs applied in order to one C source line at a time. ``\b`` boundary
-# matches catch adjacent tokens in a single pass (so no "run twice" dup
-# is needed) and exclude underscore-adjacent identifiers like
-# ``float64x2_t``. Prefix rules (``Cd*``/``BI_d*``) use ``(?<![A-Za-z0-9_])``
-# lookbehind rather than ``\b`` because the leading prefix letter is
-# lowercase and may follow a word boundary that ``\b`` would mistake.
-#
-# {MPI_SUM_REAL}/{MPI_SUM_COMPLEX} are textual no-ops for KIND targets
-# (both expand to ``MPI_SUM``); multifloats expands them to its
-# user-defined ops (``MPI_MM_SUM`` / the zz variant) registered by libmfc.
-
-
-def _real_clone_subs(real_keyword: str, src_letter: str) -> list[tuple[str, str]]:
-    mpi_real_src = f'MPI_{real_keyword.upper()}'
-    return [
-        (rf'\b{real_keyword}\b', '{REAL_TYPE}'),
-        (rf'\b{mpi_real_src}\b', '{MPI_REAL}'),
-        (r'\bMPI_SUM\b', '{MPI_SUM_REAL}'),
-        # Function name prefixes (allow uppercase suffix for BI_dMPI_* etc.).
-        (rf'(?<![A-Za-z0-9_])C{src_letter}([a-z])', r'C{RP}\1'),
-        (rf'(?<![A-Za-z0-9_])BI_{src_letter}([a-zA-Z])', r'BI_{RP}\1'),
-    ]
-
-
-def _complex_clone_subs(real_keyword: str, own_struct: str, cross_struct: str,
-                        complex_letter: str, real_letter: str) -> list[tuple[str, str]]:
-    mpi_real_src = f'MPI_{real_keyword.upper()}'
-    mpi_complex_src = f'MPI_{real_keyword.upper()}_COMPLEX'
-    return [
-        (rf'\b{own_struct}\b', '{COMPLEX_TYPE}'),
-        (rf'\b{cross_struct}\b', '{COMPLEX_TYPE}'),
-        (rf'\b{real_keyword}\b', '{REAL_TYPE}'),
-        # MPI types — order matters: <PREC>_COMPLEX before <PREC>.
-        (rf'\b{mpi_complex_src}\b', '{MPI_COMPLEX}'),
-        (rf'\b{mpi_real_src}\b', '{MPI_REAL}'),
-        # Gated MPI_COMPLEX rule (preserved as-is: no leading boundary).
-        (r'MPI_COMPLEX([^a-zA-Z_0-9])', r'{MPI_COMPLEX}\1'),
-        (r'\bMPI_SUM\b', '{MPI_SUM_COMPLEX}'),
-        (rf'(?<![A-Za-z0-9_])C{complex_letter}([a-z])', r'C{CP}\1'),
-        (rf'(?<![A-Za-z0-9_])BI_{complex_letter}([a-zA-Z])', r'BI_{CP}\1'),
-        (rf'(?<![A-Za-z0-9_])BI_{real_letter}([a-zA-Z])', r'BI_{RP}\1'),
-    ]
-
-
-REAL_CLONE_SUBS = _real_clone_subs('double', 'd')
-COMPLEX_CLONE_SUBS = _complex_clone_subs('double', 'DCOMPLEX', 'SCOMPLEX', 'z', 'd')
-# S/C convergence-only mirror tables: re-derive the Q/X target from the
-# S/C half (sources use ``float``/``MPI_FLOAT``/``Cs*``/``Cc*``) so the
-# in-memory result can be compared against the canonical produced from
-# the D/Z half on disk.
-SINGLE_CLONE_SUBS = _real_clone_subs('float', 's')
-CSINGLE_CLONE_SUBS = _complex_clone_subs('float', 'SCOMPLEX', 'DCOMPLEX', 'c', 's')
-
-
-def _build_sub_vars(target_mode: TargetMode) -> dict[str, str]:
-    """Build template substitution variables for a given target mode.
-
-    All values are read from the target's c_interop YAML section
-    (populated in TargetMode by ``load_target()``).
-    """
-    assert target_mode.c_real_type is not None, (
-        "target_mode missing c_real_type; ensure the target YAML has a "
-        "c_interop section with real_type defined."
-    )
-    rp = target_prefix(target_mode, is_complex=False).lower()
-    cp = target_prefix(target_mode, is_complex=True).lower()
-    return {
-        'REAL_TYPE': target_mode.c_real_type,
-        'COMPLEX_TYPE': target_mode.c_complex_type,
-        'C_REAL_TYPE': target_mode.c_c_real_type,
-        'MPI_REAL': target_mode.c_mpi_real,
-        'MPI_COMPLEX': target_mode.c_mpi_complex,
-        'MPI_SUM_REAL': target_mode.c_mpi_sum_real,
-        'MPI_SUM_COMPLEX': target_mode.c_mpi_sum_complex,
-        'RP': rp,
-        'CP': cp,
-        'RPU': rp.upper(),
-        'CPU': cp.upper(),
-    }
 
 
 # ------------------------------------------------------------------ #
@@ -167,81 +90,22 @@ def _redist_clone_stem(routine: str,
     return 'p' + new_char.lower() + routine[2:].lower()
 
 
+@dataclass(frozen=True)
+class CMigrationOptions:
+    """Recipe-derived knobs for the generic C migration.
 
-
-def clone_c_file(src_path: Path, dst_path: Path,
-                 subs: list[tuple[str, str]],
-                 template_vars: dict[str, str],
-                 routine_renames: list[tuple[str, str]] | None = None,
-                 ) -> None:
-    """Clone a C file with mechanical text substitutions.
-
-    routine_renames is a list of (old_name, new_name) pairs for literal
-    routine name replacements (both lowercase and uppercase are applied).
+    Bundles the clump of RecipeConfig-sourced fields that travels from
+    the pipeline down to :func:`_migrate_generic_c_directory`, so adding
+    a recipe knob touches one place instead of every signature on the
+    way.  Deliberately NOT RecipeConfig itself — this module stays
+    recipe-agnostic.
     """
-    text = src_path.read_text(errors='replace')
-
-    for pattern, replacement in subs:
-        # Expand template variables in replacement
-        expanded = replacement
-        for key, val in template_vars.items():
-            expanded = expanded.replace(f'{{{key}}}', val)
-        text = re.sub(pattern, expanded, text, flags=re.MULTILINE)
-
-    # Apply routine name renames. Use a left-side word-boundary
-    # negative lookbehind so we don't double-rename inside identifiers
-    # already produced by the regex prefix substitutions above. For
-    # example with multifloats, the regex pass turns ``Cdgesd2d`` into
-    # ``Cddgesd2d``; a plain text.replace('dgesd2d', 'ddgesd2d') would
-    # then find the substring inside ``Cddgesd2d`` and produce
-    # ``Cdddgesd2d``. The lookbehind prevents that because the 'd' at
-    # offset 1 is preceded by another word character ('C' / 'd').
-    # Single-char-prefix KIND targets dodge this because their regex
-    # produces names like ``Cqgesd2d`` that no longer contain
-    # ``dgesd2d`` as a substring.
-    if routine_renames:
-        for old_name, new_name in routine_renames:
-            text = re.sub(
-                r'(?<![A-Za-z0-9_])' + re.escape(old_name),
-                new_name, text)
-            text = re.sub(
-                r'(?<![A-Za-z0-9_])' + re.escape(old_name.upper()),
-                new_name.upper(), text)
-
-    dst_path.write_text(text)
-
-
-def _routine_renames(old_stem: str, new_stem: str) -> list[tuple[str, str]]:
-    """Derive routine name renames from source/target file stems.
-
-    For user-facing files like 'dgesd2d_' → 'qgesd2d_', strips the
-    trailing underscore to get the routine base name and returns rename
-    pairs.  For BI_-prefixed files the function names are already handled
-    by the regex rules, so this returns an empty list.
-    """
-    if old_stem.startswith('BI_'):
-        return []
-    # Strip trailing underscore if present (Fortran naming convention)
-    old_routine = old_stem.rstrip('_')
-    new_routine = new_stem.rstrip('_')
-    if old_routine == new_routine:
-        return []
-    return [(old_routine, new_routine)]
-
-
-def rename_c_file(name: str, old_prefix: str, new_prefix: str) -> str:
-    """Rename a C file by replacing its prefix character."""
-    stem = Path(name).stem
-    ext = Path(name).suffix
-
-    if stem.startswith(f'BI_{old_prefix}'):
-        new_stem = f'BI_{new_prefix}' + stem[len(f'BI_{old_prefix}'):]
-    elif stem.startswith(old_prefix):
-        new_stem = new_prefix + stem[len(old_prefix):]
-    else:
-        return name
-
-    return new_stem + ext
+    c_type_aliases: list[dict] | None = None
+    c_pointer_cast_aliases: list[dict] | None = None
+    header_patches: list[dict] | None = None
+    extra_c_dirs: list[Path] | None = None
+    skip_files: set[str] | None = None
+    copy_files: set[str] | None = None
 
 
 def migrate_c_directory(src_dir: Path, output_dir: Path,
@@ -278,21 +142,25 @@ def migrate_c_directory(src_dir: Path, output_dir: Path,
     and after header patches have run. Used for hand-written
     replacement kernels that cannot be produced by regex substitution.
 
-    Returns a summary dict.
+    Returns a summary dict with keys ``cloned``, ``divergences``,
+    ``template_vars``, ``split_headers`` (plus ``overrides`` when
+    override files were applied).
     """
     if classification is not None and rename_map is not None:
         result = _migrate_generic_c_directory(
             src_dir, output_dir, target_mode,
             classification, rename_map,
-            c_type_aliases=c_type_aliases,
-            c_pointer_cast_aliases=c_pointer_cast_aliases,
-            header_patches=header_patches,
-            extra_c_dirs=extra_c_dirs,
-            skip_files=skip_files,
-            copy_files=copy_files,
+            CMigrationOptions(
+                c_type_aliases=c_type_aliases,
+                c_pointer_cast_aliases=c_pointer_cast_aliases,
+                header_patches=header_patches,
+                extra_c_dirs=extra_c_dirs,
+                skip_files=skip_files,
+                copy_files=copy_files,
+            ),
         )
     else:
-        result = _migrate_blacs_c_directory(
+        result = migrate_blacs_c_directory(
             src_dir, output_dir, target_mode,
             skip_files=skip_files,
         )
@@ -309,8 +177,7 @@ def migrate_c_directory(src_dir: Path, output_dir: Path,
     # forward declarations agree with the wrapped definitions. Run
     # this *after* ``_apply_overrides`` so hand-written replacements
     # are wrapped too.
-    split_headers = result.get('split_headers') if isinstance(result, dict) \
-        else None
+    split_headers = result['split_headers']
     if target_mode is not None and not target_mode.is_kind_based:
         _wrap_extern_c_after_last_include(output_dir, split_headers)
     # Point every migrated translation unit at the precision-prefixed
@@ -590,29 +457,6 @@ def _make_rename_substituter(combined: dict[str, str]):
     return _sub
 
 
-def _expand_template(s: str, template_vars: dict[str, str]) -> str:
-    """Expand ``{KEY}`` placeholders in ``s`` using template_vars."""
-    for key, val in template_vars.items():
-        s = s.replace('{' + key + '}', val)
-    return s
-
-
-# Cost-estimate local variable names used by PBLAS Level-3 entry points
-# (pdgemm/pdsymm/pdsyrk/...) for algorithm selection. These are pure
-# heuristic doubles that must NOT be promoted to the multifloats struct
-# type, otherwise (double) casts and `*=` arithmetic in the cost model
-# stop compiling. Survey of pblas/SRC/p[dz]*.c shows just two declaration
-# lines containing these names; recognising them by name is sufficient.
-#
-# Note: ``tmp\d+`` deliberately excluded — PBLAS pairs them with
-# ABest/ACest/BCest on the same line (so the line still matches via
-# those anchors), while XBLAS uses bare ``double tmp1;`` accumulators
-# that DO need to be promoted to float64x2 for working-precision math.
-_PBLAS_COST_LOCAL = (
-    r'ABest|ACest|BCest|ABestL|ABestR|Best'
-)
-
-
 def _apply_aliases_to_original(text: str, template_vars: dict[str, str],
                                 c_type_aliases: list[dict] | None,
                                 c_pointer_cast_aliases: list[dict] | None) -> str:
@@ -631,11 +475,11 @@ def _apply_aliases_to_original(text: str, template_vars: dict[str, str],
     receives a 16-byte stride per real component instead of 8.
     """
     for rule in c_type_aliases or []:
-        target = _expand_template(rule['to'], template_vars)
+        target = expand_template(rule['to'], template_vars)
         for src in rule['from']:
             text = re.sub(r'\b' + re.escape(src) + r'\b', target, text)
     for rule in c_pointer_cast_aliases or []:
-        target = _expand_template(rule['to'], template_vars)
+        target = expand_template(rule['to'], template_vars)
         for src in rule['from']:
             text = text.replace(src, target)
     return text
@@ -680,7 +524,7 @@ def _apply_c_type_subs(text: str, template_vars: dict[str, str],
         # known cost-estimate names somewhere on the same line.
         text = re.sub(
             r'(?m)^(\s*)double(\s+[^;\n]*\b(?:'
-            + _PBLAS_COST_LOCAL
+            + PBLAS_COST_LOCAL
             + r')\b[^;\n]*;)',
             lambda m: m.group(1) + decl_marker + m.group(2),
             text)
@@ -690,48 +534,14 @@ def _apply_c_type_subs(text: str, template_vars: dict[str, str],
     text = re.sub(r'\bDCOMPLEX\b', template_vars['COMPLEX_TYPE'], text)
     text = re.sub(r'\bSCOMPLEX\b', template_vars['COMPLEX_TYPE'], text)
     for rule in aliases or []:
-        target = _expand_template(rule['to'], template_vars)
+        target = expand_template(rule['to'], template_vars)
         for src in rule['from']:
             text = re.sub(r'\b' + re.escape(src) + r'\b', target, text)
 
     if is_multifloats:
         text = text.replace(cast_marker, '(double)')
         text = text.replace(decl_marker, 'double')
-        text = _apply_multifloats_pblas_subs(text)
-    return text
-
-
-_MF_PBLAS_PART = r'(\w+)\s*\[\s*(REAL_PART|IMAG_PART)\s*\]'
-
-
-def _apply_multifloats_pblas_subs(text: str) -> str:
-    """Rewrite PBLAS scalar quick-return checks for the float64x2_t
-    struct type. C operators ``==`` / ``!=`` are not defined on
-    structs, so we replace ``ALPHA[REAL_PART] == ZERO`` with the
-    inline macro ``MF_IS_ZERO(ALPHA[REAL_PART])`` (and likewise for
-    ``ONE`` / ``IMAG_PART`` / negation).
-    """
-    # ZERO comparisons
-    text = re.sub(
-        _MF_PBLAS_PART + r'\s*==\s*ZERO\b',
-        r'MF_IS_ZERO(\1[\2])', text)
-    text = re.sub(
-        _MF_PBLAS_PART + r'\s*!=\s*ZERO\b',
-        r'(!MF_IS_ZERO(\1[\2]))', text)
-    # ONE comparisons
-    text = re.sub(
-        _MF_PBLAS_PART + r'\s*==\s*ONE\b',
-        r'MF_IS_ONE(\1[\2])', text)
-    text = re.sub(
-        _MF_PBLAS_PART + r'\s*!=\s*ONE\b',
-        r'(!MF_IS_ONE(\1[\2]))', text)
-    # Integer truncation. PBLAS packs integer indices into work
-    # buffers: ``(Int)(work[1])`` or ``(Int)(work[1][REAL_PART])``
-    # becomes invalid on struct types. Rewrite to ``mf_to_int(...)``
-    # (defined in both multifloats_c.h and the C++ bridge header).
-    text = re.sub(
-        r'\(Int\)\(\s*(\w+(?:\[\s*\w+\s*\])+)\s*\)',
-        r'mf_to_int(\1)', text)
+        text = apply_multifloats_pblas_subs(text)
     return text
 
 
@@ -757,12 +567,14 @@ def migrate_c_file_to_string(
       in-text renames from ``rename_map`` plus C type upgrades applied.
     - **BLACS/direct** (both omitted): file's leading precision prefix
       (``d``/``z``/``s``/``c``, possibly preceded by ``BI_``) selects a
-      substitution rule set; routine name is rewritten in-place.
+      substitution rule set via :func:`classify_blacs_stem` — the same
+      classifier and clone transform the directory cloner uses, so the
+      harness cannot drift from the shipped path.
     """
     if src_path.suffix.lower() != '.c':
         return None
 
-    template_vars = _build_sub_vars(target_mode)
+    template_vars = build_sub_vars(target_mode)
 
     if rename_map is not None and classification is not None:
         # Scalapack mode (PBLAS).
@@ -793,48 +605,20 @@ def migrate_c_file_to_string(
     rp = template_vars['RP']
     cp = template_vars['CP']
 
-    # Identify precision variant from stem prefix. Order matters:
-    # check BI_-prefixed names before bare single-letter prefixes.
-    if stem.startswith('BI_d'):
-        src_prefix, new_prefix, subs = 'd', rp, REAL_CLONE_SUBS
-    elif stem.startswith('BI_z'):
-        src_prefix, new_prefix, subs = 'z', cp, COMPLEX_CLONE_SUBS
-    elif stem.startswith('BI_s'):
-        src_prefix, new_prefix, subs = 's', rp, SINGLE_CLONE_SUBS
-    elif stem.startswith('BI_c'):
-        src_prefix, new_prefix, subs = 'c', cp, CSINGLE_CLONE_SUBS
-    elif stem.startswith('BI_'):
-        return None  # precision-independent BI_* helper
-    elif stem.startswith('d'):
-        src_prefix, new_prefix, subs = 'd', rp, REAL_CLONE_SUBS
-    elif stem.startswith('z'):
-        src_prefix, new_prefix, subs = 'z', cp, COMPLEX_CLONE_SUBS
-    elif stem.startswith('s'):
-        src_prefix, new_prefix, subs = 's', rp, SINGLE_CLONE_SUBS
-    elif stem.startswith('c'):
-        src_prefix, new_prefix, subs = 'c', cp, CSINGLE_CLONE_SUBS
-    else:
+    plan = classify_blacs_stem(stem)
+    if plan is None:
         return None
+    src_prefix, is_complex, subs = plan
+    new_prefix = cp if is_complex else rp
 
     new_name = rename_c_file(src_path.name, src_prefix, new_prefix)
     if new_name == src_path.name:
         return None
 
-    renames = _routine_renames(stem, Path(new_name).stem)
+    renames = derive_routine_renames(stem, Path(new_name).stem)
     text = src_path.read_text(errors='replace')
-    for pat, repl in subs:
-        expanded = _expand_template(repl, template_vars)
-        text = re.sub(pat, expanded, text, flags=re.MULTILINE)
-    # See clone_c_file for the multi-char-prefix lookbehind rationale.
-    for old_name, new_routine in renames:
-        text = re.sub(
-            r'(?<![A-Za-z0-9_])' + re.escape(old_name),
-            new_routine, text)
-        text = re.sub(
-            r'(?<![A-Za-z0-9_])' + re.escape(old_name.upper()),
-            new_routine.upper(), text)
+    text = apply_clone_transform(text, subs, template_vars, renames)
     return new_name, text
-
 
 
 def _duplicate_header_lines(text: str,
@@ -915,7 +699,7 @@ def _apply_header_patches(output_dir: Path,
         target = output_dir / patch['file']
         if not target.exists():
             continue
-        insert = _expand_template(patch['insert'], template_vars).rstrip('\n')
+        insert = expand_template(patch['insert'], template_vars).rstrip('\n')
         text = target.read_text(errors='replace')
         if insert in text:
             continue  # already patched (idempotent)
@@ -941,58 +725,39 @@ def _apply_header_patches(output_dir: Path,
         target.write_text(text)
 
 
-def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
-                                 target_mode: TargetMode,
-                                 classification: SymbolClassification,
-                                 rename_map: dict[str, str],
-                                 c_type_aliases: list[dict] | None = None,
-                                 c_pointer_cast_aliases: list[dict] | None = None,
-                                 header_patches: list[dict] | None = None,
-                                 extra_c_dirs: list[Path] | None = None,
-                                 skip_files: set[str] | None = None,
-                                 copy_files: set[str] | None = None) -> dict:
-    """Rename-map-driven C migration for ScaLAPACK-style libraries.
+# ------------------------------------------------------------------ #
+# Generic (rename-map-driven) directory migration, phase by phase    #
+# ------------------------------------------------------------------ #
 
-    A file ``foo_.c`` is cloned iff its routine ``FOO`` is a D- or
-    Z-precision member of some family in ``classification``. The clone
-    is written to ``<target>.c`` where ``<target>`` is the lowercase of
-    ``rename_map[FOO]``, with all in-file routine names rewritten via
-    ``rename_map`` and C types upgraded to the target precision.
 
-    ``extra_c_dirs`` is a list of additional directories whose .c
-    sources are flat-copied (and cloned-as-applicable) into
-    ``output_dir`` alongside ``src_dir``. Used by PBLAS to migrate the
-    PTOOLS/ helpers.
+def _stage_passthrough_files(all_src_dirs: list[Path], src_dir: Path,
+                             output_dir: Path, target_mode: TargetMode,
+                             rename_map: dict[str, str],
+                             template_vars: dict[str, str],
+                             options: CMigrationOptions) -> None:
+    """Stage the pass-through files (headers, copy_files entries,
+    precision-independent dispatchers) into ``output_dir``.
+
+    When extra_c_dirs sources contain `#include "../foo.h"` paths
+    (PTOOLS uses ../pblas.h etc.), strip the `..` part since we're
+    flattening into a single output dir.
+
+    Only headers, copy_files entries, and precision-independent
+    dispatcher .c files are staged. The std archive (built directly
+    from upstream sources by the CMake side) carries the S/D/C/Z
+    entry points; the migrated archive carries the Q/X/E/Y/M/W
+    clones plus the dispatchers (PB_Cconjg, PB_CpswapNN, BI_BlacsErr,
+    ...) — files whose stems are NOT in rename_map. Dispatchers must
+    ride in the migrated archive because the migrator's
+    _apply_aliases_to_original pass widens their ``(double*)`` /
+    ``(float*)`` pointer-casts to ``(QREAL*)`` / ``(EREAL*)`` /
+    ``(float64x2_t*)`` for KIND targets, so the byte-stride
+    arithmetic matches the wider type carried by callers. The std
+    archive's untouched ``(double*)`` copies would corrupt strides
+    when the migrated entry points dispatch through them.
     """
-    template_vars = _build_sub_vars(target_mode)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    all_src_dirs: list[Path] = [src_dir]
-    if extra_c_dirs:
-        all_src_dirs.extend(extra_c_dirs)
-
-    # Stage the pass-through files first (headers, copy_files entries,
-    # precision-independent dispatchers).
-    # When extra_c_dirs sources contain `#include "../foo.h"` paths
-    # (PTOOLS uses ../pblas.h etc.), strip the `..` part since we're
-    # flattening into a single output dir.
-    # K&R-style function definitions are converted to ANSI so originals
-    # compile as C++ (mpicxx).
-    _skip = skip_files or set()
-    _copy = copy_files or set()
-    # Only headers, copy_files entries, and precision-independent
-    # dispatcher .c files are staged. The std archive (built directly
-    # from upstream sources by the CMake side) carries the S/D/C/Z
-    # entry points; the migrated archive carries the Q/X/E/Y/M/W
-    # clones plus the dispatchers (PB_Cconjg, PB_CpswapNN, BI_BlacsErr,
-    # ...) — files whose stems are NOT in rename_map. Dispatchers must
-    # ride in the migrated archive because the migrator's
-    # _apply_aliases_to_original pass widens their ``(double*)`` /
-    # ``(float*)`` pointer-casts to ``(QREAL*)`` / ``(EREAL*)`` /
-    # ``(float64x2_t*)`` for KIND targets, so the byte-stride
-    # arithmetic matches the wider type carried by callers. The std
-    # archive's untouched ``(double*)`` copies would corrupt strides
-    # when the migrated entry points dispatch through them.
+    _skip = options.skip_files or set()
+    _copy = options.copy_files or set()
     for d in all_src_dirs:
         for f in (p for p in sorted(d.iterdir())):
             stem_upper = (f.stem[:-1] if f.stem.endswith('_')
@@ -1071,46 +836,31 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
                 is_unprefixed = stem_upper not in rename_map
                 if is_unprefixed or target_mode.is_kind_based:
                     text = _apply_aliases_to_original(
-                        text, template_vars, c_type_aliases,
-                        c_pointer_cast_aliases)
+                        text, template_vars, options.c_type_aliases,
+                        options.c_pointer_cast_aliases)
             (output_dir / f.name).write_text(text)
 
-    # Snapshot the pristine (staged, pre-transform) bytes of every
-    # copied header. Any header the transforms below modify is emitted
-    # under a precision-prefixed sibling name (see the split step before
-    # the return) and the original is restored to these bytes, so every
-    # installed public Netlib-named header stays byte-identical to the
-    # upstream reference across all precisions.
-    _pristine_headers = {
-        h.name: h.read_bytes()
-        for h in output_dir.iterdir()
-        if h.suffix.lower() == '.h'
-    }
 
-    # Apply recipe-declared header patches to the copied originals so
-    # later clones can reference the newly introduced typedefs.
-    if header_patches:
-        _apply_header_patches(output_dir, header_patches, template_vars,
-                              target_mode=target_mode)
-
-    rename_pattern, combined_map = _build_rename_regex(rename_map)
-    _rename_sub = _make_rename_substituter(combined_map)
-
-    def _rename(text: str) -> str:
-        return rename_pattern.sub(_rename_sub, text)
-
-    # Header rename pass: each header in output_dir gets its precision-
-    # family declarations duplicated. Lines that mention an identifier
-    # in the rename map are kept verbatim AND a copy with the rename
-    # applied is appended right after. This propagates BLACS / PBLAS
-    # function prototypes to both the original (Cdgesd2d) and the
-    # cloned (Cddgesd2d) name so cloned source files compile.
-    # The duplicated lines also get type subs (double -> float64x2_t,
-    # etc.) so the cloned signature uses the right types.
-    # Only header declarations are duplicated, not the .c sources --
-    # those go through the per-file rename + clone path below.
+def _duplicate_header_prototypes(output_dir: Path,
+                                 rename_pattern: re.Pattern,
+                                 rename_sub,
+                                 template_vars: dict[str, str],
+                                 options: CMigrationOptions,
+                                 target_mode: TargetMode) -> None:
+    """Header rename pass: each header in output_dir gets its precision-
+    family declarations duplicated. Lines that mention an identifier
+    in the rename map are kept verbatim AND a copy with the rename
+    applied is appended right after. This propagates BLACS / PBLAS
+    function prototypes to both the original (Cdgesd2d) and the
+    cloned (Cddgesd2d) name so cloned source files compile.
+    The duplicated lines also get type subs (double -> float64x2_t,
+    etc.) so the cloned signature uses the right types.
+    Only header declarations are duplicated, not the .c sources --
+    those go through the per-file rename + clone path.
+    """
     def _hdr_type_transform(line: str) -> str:
-        return _apply_c_type_subs(line, template_vars, c_type_aliases,
+        return _apply_c_type_subs(line, template_vars,
+                                  options.c_type_aliases,
                                   target_mode=target_mode)
 
     for hdr in sorted(output_dir.iterdir()):
@@ -1118,19 +868,47 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
             continue
         text = hdr.read_text(errors='replace')
         new_text = _duplicate_header_lines(
-            text, rename_pattern, _rename_sub,
+            text, rename_pattern, rename_sub,
             type_transform=_hdr_type_transform)
         if new_text != text:
             hdr.write_text(new_text)
 
-    # Insert real-type typedef into pblas.h for KIND targets so that
-    # migrated declarations (QREAL, QCOMPLEX etc.) resolve.
-    pblas_path = output_dir / 'pblas.h'
-    if pblas_path.exists() and target_mode.c_header_mode == 'typedef':
-        _patch_pblas_header(pblas_path, template_vars)
 
-    # Process D/Z-sourced files first so they become the canonical
-    # output; S/C co-family members are verified against them.
+def _normalize_for_compare(s: str) -> str:
+    """Normalize C source for S/C-vs-D/Z convergence comparison."""
+    # Strip block + line comments
+    s = re.sub(r'/\*.*?\*/', '', s, flags=re.DOTALL)
+    s = re.sub(r'//[^\n]*', '', s)
+    # Canonicalize prefix-dependent identifiers: leading s/d/c/z
+    # becomes '@' so sibling C sources that differ only in the
+    # precision prefix of local names collapse together.
+    s = re.sub(r'\b[sdczSDCZ]+(?=[A-Za-z])', '@', s)
+    # Tokenize each line into words and single non-whitespace
+    # characters, then rejoin with a single space. This collapses
+    # not just column-aligned padding like ``float          *``
+    # vs ``double         *`` but also incidental single-space
+    # drift around punctuation: ``(QREAL )(`` vs ``(QREAL)(``,
+    # ``if (`` vs ``if(``, ``Mptr(...)))`` vs ``Mptr(... ))``.
+    lines = [' '.join(re.findall(r'\w+|\S', ln)) for ln in s.split('\n')]
+    return '\n'.join(ln for ln in lines if ln)
+
+
+def _clone_precision_files(all_src_dirs: list[Path], src_dir: Path,
+                           output_dir: Path, target_mode: TargetMode,
+                           classification: SymbolClassification,
+                           rename_map: dict[str, str],
+                           template_vars: dict[str, str],
+                           options: CMigrationOptions,
+                           rename) -> tuple[list[str], list[str]]:
+    """Clone every D/Z precision-family member to the target precision.
+
+    D/Z-sourced files are processed first so they become the canonical
+    output; S/C co-family members are verified against them (ignoring
+    comment/prefix differences via :func:`_normalize_for_compare`).
+    Returns ``(cloned, divergences)``.
+    """
+    _skip = options.skip_files or set()
+
     def _is_double_key(routine_upper: str) -> bool:
         fam = classification.get_family(routine_upper)
         if fam is None:
@@ -1154,23 +932,6 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
             f.name,
         ),
     )
-
-    def _normalize_for_compare(s: str) -> str:
-        # Strip block + line comments
-        s = re.sub(r'/\*.*?\*/', '', s, flags=re.DOTALL)
-        s = re.sub(r'//[^\n]*', '', s)
-        # Canonicalize prefix-dependent identifiers: leading s/d/c/z
-        # becomes '@' so sibling C sources that differ only in the
-        # precision prefix of local names collapse together.
-        s = re.sub(r'\b[sdczSDCZ]+(?=[A-Za-z])', '@', s)
-        # Tokenize each line into words and single non-whitespace
-        # characters, then rejoin with a single space. This collapses
-        # not just column-aligned padding like ``float          *``
-        # vs ``double         *`` but also incidental single-space
-        # drift around punctuation: ``(QREAL )(`` vs ``(QREAL)(``,
-        # ``if (`` vs ``if(``, ``Mptr(...)))`` vs ``Mptr(... ))``.
-        lines = [' '.join(re.findall(r'\w+|\S', ln)) for ln in s.split('\n')]
-        return '\n'.join(ln for ln in lines if ln)
 
     cloned: list[str] = []
     divergences: list[str] = []
@@ -1218,8 +979,9 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
         # Apply renames first, then type upgrades — the two domains
         # don't overlap but this order preserves identifier names that
         # happen to coincide with generic type keywords.
-        text = _rename(text)
-        text = _apply_c_type_subs(text, template_vars, c_type_aliases,
+        text = rename(text)
+        text = _apply_c_type_subs(text, template_vars,
+                                  options.c_type_aliases,
                                   target_mode=target_mode)
 
         # PBLAS typesets assign the type-generic drivers' BLAS callbacks
@@ -1251,36 +1013,43 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
                 f'{f.name} vs {canonical_source[new_name]} → {new_name}'
             )
 
-    # --- split transformed headers into precision-prefixed siblings ---
-    # Every header the migrator changed above (recipe patches, prototype
-    # duplication, precision typedefs) is written to a sibling named
-    # ``<pair>name.h`` (pair = real+complex prefix, e.g. ``qx``/``ey``/
-    # ``mw``); the original ``name.h`` is restored to its pristine
-    # upstream bytes. The include-rewrite (in ``migrate_c_directory``,
-    # after overrides + the C++ extern-wrap) points migrated sources at
-    # the sibling. Result: the installed public ``name.h`` is exactly the
-    # Netlib reference, while this precision's build sees the sibling.
-    #
-    # The split set is closed under the ``#include`` relation: a header
-    # that includes a split header must itself be split, otherwise a
-    # migrated TU that reaches it (e.g. ``blas_extended.h`` including
-    # ``blas_extended_proto.h``) would see the restored-pristine original,
-    # which has lost the transforms (missing ``extern "C"`` / typedefs) and
-    # fails to compile. Walk the relation to a fixed point.
-    pair = template_vars['RP'] + template_vars['CP']
+    return cloned, divergences
+
+
+def _split_transformed_headers(output_dir: Path,
+                               pristine_headers: dict[str, bytes],
+                               pair: str) -> dict[str, str]:
+    """Split transformed headers into precision-prefixed siblings.
+
+    Every header the migration changed (recipe patches, prototype
+    duplication, precision typedefs) is written to a sibling named
+    ``<pair>name.h`` (pair = real+complex prefix, e.g. ``qx``/``ey``/
+    ``mw``); the original ``name.h`` is restored to its pristine
+    upstream bytes. The include-rewrite (in ``migrate_c_directory``,
+    after overrides + the C++ extern-wrap) points migrated sources at
+    the sibling. Result: the installed public ``name.h`` is exactly the
+    Netlib reference, while this precision's build sees the sibling.
+
+    The split set is closed under the ``#include`` relation: a header
+    that includes a split header must itself be split, otherwise a
+    migrated TU that reaches it (e.g. ``blas_extended.h`` including
+    ``blas_extended_proto.h``) would see the restored-pristine original,
+    which has lost the transforms (missing ``extern "C"`` / typedefs) and
+    fails to compile. Walk the relation to a fixed point.
+    """
     # Guard idempotency: a prior stage into this tree may have left the
     # precision-prefixed siblings behind. Never treat an already-prefixed
     # sibling as a splittable original, else re-staging doubles the prefix
     # (mwblas_extended.h -> mwmwblas_extended.h).
     split_names = {
-        name for name, pristine in _pristine_headers.items()
+        name for name, pristine in pristine_headers.items()
         if not name.startswith(pair)
         and (output_dir / name).read_bytes() != pristine
     }
     grew = True
     while grew:
         grew = False
-        for name in _pristine_headers:
+        for name in pristine_headers:
             if name in split_names or name.startswith(pair):
                 continue
             text = (output_dir / name).read_text(errors='replace')
@@ -1297,8 +1066,85 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
         # Read the current (transformed for changed headers, pristine for
         # pulled-in intermediates) content before restoring the original.
         (output_dir / sibling).write_bytes((output_dir / name).read_bytes())
-        (output_dir / name).write_bytes(_pristine_headers[name])
+        (output_dir / name).write_bytes(pristine_headers[name])
         split_headers[name] = sibling
+    return split_headers
+
+
+def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
+                                 target_mode: TargetMode,
+                                 classification: SymbolClassification,
+                                 rename_map: dict[str, str],
+                                 options: CMigrationOptions) -> dict:
+    """Rename-map-driven C migration for ScaLAPACK-style libraries.
+
+    A file ``foo_.c`` is cloned iff its routine ``FOO`` is a D- or
+    Z-precision member of some family in ``classification``. The clone
+    is written to ``<target>.c`` where ``<target>`` is the lowercase of
+    ``rename_map[FOO]``, with all in-file routine names rewritten via
+    ``rename_map`` and C types upgraded to the target precision.
+
+    ``options.extra_c_dirs`` is a list of additional directories whose
+    .c sources are flat-copied (and cloned-as-applicable) into
+    ``output_dir`` alongside ``src_dir``. Used by PBLAS to migrate the
+    PTOOLS/ helpers.
+
+    Runs the phases strictly in sequence: pass-through staging, pristine
+    header snapshot, recipe header patches, header prototype
+    duplication, pblas.h typedef patching, D/Z-canonical cloning, and
+    the fixed-point header split.
+    """
+    template_vars = build_sub_vars(target_mode)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    all_src_dirs: list[Path] = [src_dir]
+    if options.extra_c_dirs:
+        all_src_dirs.extend(options.extra_c_dirs)
+
+    _stage_passthrough_files(all_src_dirs, src_dir, output_dir,
+                             target_mode, rename_map, template_vars,
+                             options)
+
+    # Snapshot the pristine (staged, pre-transform) bytes of every
+    # copied header. Any header the transforms below modify is emitted
+    # under a precision-prefixed sibling name (see the split step before
+    # the return) and the original is restored to these bytes, so every
+    # installed public Netlib-named header stays byte-identical to the
+    # upstream reference across all precisions.
+    _pristine_headers = {
+        h.name: h.read_bytes()
+        for h in output_dir.iterdir()
+        if h.suffix.lower() == '.h'
+    }
+
+    # Apply recipe-declared header patches to the copied originals so
+    # later clones can reference the newly introduced typedefs.
+    if options.header_patches:
+        _apply_header_patches(output_dir, options.header_patches,
+                              template_vars, target_mode=target_mode)
+
+    rename_pattern, combined_map = _build_rename_regex(rename_map)
+    _rename_sub = _make_rename_substituter(combined_map)
+
+    def _rename(text: str) -> str:
+        return rename_pattern.sub(_rename_sub, text)
+
+    _duplicate_header_prototypes(output_dir, rename_pattern, _rename_sub,
+                                 template_vars, options, target_mode)
+
+    # Insert real-type typedef into pblas.h for KIND targets so that
+    # migrated declarations (QREAL, QCOMPLEX etc.) resolve.
+    pblas_path = output_dir / 'pblas.h'
+    if pblas_path.exists() and target_mode.c_header_mode == 'typedef':
+        patch_pblas_header(pblas_path, template_vars)
+
+    cloned, divergences = _clone_precision_files(
+        all_src_dirs, src_dir, output_dir, target_mode,
+        classification, rename_map, template_vars, options, _rename)
+
+    split_headers = _split_transformed_headers(
+        output_dir, _pristine_headers,
+        template_vars['RP'] + template_vars['CP'])
 
     return {
         'cloned': cloned,
@@ -1306,276 +1152,3 @@ def _migrate_generic_c_directory(src_dir: Path, output_dir: Path,
         'template_vars': template_vars,
         'split_headers': split_headers,
     }
-
-
-def _migrate_blacs_c_directory(src_dir: Path, output_dir: Path,
-                                 target_mode: TargetMode,
-                                 skip_files: set[str] | None = None) -> dict:
-    """BLACS-specific C migration (original behavior).
-
-    Reads from ``src_dir`` (the staged source tree, already patched).
-
-    ``skip_files`` (uppercased logical stems, no trailing Fortran
-    underscore) are dropped from the migrated output — used to remove the
-    genuine S/C entry points (``sgesd2d_``, ``BI_cvvsum``, …) that the
-    plain ``blacs`` standard archive and MKL already provide, so the
-    migrated archive stays strictly extended-precision. Skipped stems
-    are also never used as clone sources (they are S/C, not the D/Z the
-    clone loops read), so dropping them cannot disturb the e/y clones.
-    """
-    _skip = skip_files or set()
-    template_vars = _build_sub_vars(target_mode)
-    rp = template_vars['RP']
-    cp = template_vars['CP']
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    sources = sorted(src_dir.iterdir())
-
-    # Copy headers always; drop precision-prefixed .c originals (the
-    # std archive owns the S/D/C/Z entry points); copy precision-
-    # independent dispatcher .c files (BI_BlacsErr, BI_GetBuff,
-    # blacs_setup_, ...). The
-    # dispatchers ride in the migrated archive because callers reach
-    # them through the BLACS-style symbol map; the std archive picks
-    # them up too via the upstream source dir, but the linker only
-    # ever pulls one definition (whichever resolves an undefined
-    # symbol first), so duplication is benign and the migrated copies
-    # match the precision the migrated bodies expect.
-    def _is_blacs_precision_prefix(stem: str) -> bool:
-        # Mirrors the d/z clone discovery in the loops below.
-        if stem.startswith(('d', 'z')) and not stem.startswith(('BI_',)):
-            return True
-        if stem.startswith(('BI_d', 'BI_z')):
-            return True
-        return False
-
-    for f in sources:
-        ext = f.suffix.lower()
-        # ``skip_files`` drops genuine S/C sources from the migrated
-        # output entirely (headers are never precision-specific, so they
-        # are exempt). Match on the underscore-stripped, uppercased stem
-        # to align with the recipe's logical-name convention.
-        stem_upper = (f.stem[:-1] if f.stem.endswith('_') else f.stem).upper()
-        if ext == '.c' and stem_upper in _skip:
-            continue
-        if ext == '.h':
-            shutil.copy2(f, output_dir / f.name)
-        elif ext == '.c':
-            if not _is_blacs_precision_prefix(f.stem):
-                shutil.copy2(f, output_dir / f.name)
-
-    cloned = []
-
-    # Clone d-variant → real-extended
-    for f in sources:
-        if f.suffix.lower() != '.c':
-            continue
-        stem = f.stem
-        if stem.startswith('d') or stem.startswith('BI_d'):
-            # Skip if it's not a type-specific file (check for 'd' prefix)
-            if stem.startswith('BI_d') and stem[3] == 'd':
-                pass  # BI_d* files
-            elif stem.startswith('d') and not stem.startswith('BI_'):
-                pass  # d* files
-            else:
-                continue
-
-            new_name = rename_c_file(f.name, 'd', rp)
-            if new_name == f.name:
-                continue
-            renames = _routine_renames(stem, Path(new_name).stem)
-            clone_c_file(f, output_dir / new_name,
-                         REAL_CLONE_SUBS, template_vars, renames)
-            cloned.append(f'{f.name} → {new_name}')
-
-    # Clone z-variant → complex-extended
-    for f in sources:
-        if f.suffix.lower() != '.c':
-            continue
-        stem = f.stem
-        if stem.startswith('z') or stem.startswith('BI_z'):
-            new_name = rename_c_file(f.name, 'z', cp)
-            if new_name == f.name:
-                continue
-            renames = _routine_renames(stem, Path(new_name).stem)
-            clone_c_file(f, output_dir / new_name,
-                         COMPLEX_CLONE_SUBS, template_vars, renames)
-            cloned.append(f'{f.name} → {new_name}')
-
-    # Patch Bdef.h with extended-precision type definitions and macros
-    bdef_path = output_dir / 'Bdef.h'
-    if bdef_path.exists():
-        _patch_bdef_header(bdef_path, target_mode, template_vars)
-
-
-    # Generate MPI datatype availability check when the target requires
-    # stock MPI datatypes that may not be universally available (e.g.
-    # MPI_REAL16 / MPI_COMPLEX32 for KIND=16).
-    if target_mode.c_needs_mpi_check:
-        _generate_mpi_real16_check(output_dir)
-
-    return {
-        'cloned': cloned,
-        'template_vars': template_vars,
-    }
-
-
-def _patch_pblas_header(pblas_path: Path,
-                        template_vars: dict[str, str]) -> None:
-    """Insert extended-precision typedefs into pblas.h for KIND targets.
-
-    The migrator replaces ``double``/``complex16`` with the target type
-    names (e.g. QREAL, QCOMPLEX) in .c files, but pblas.h keeps the
-    original types.  We add typedefs so both old and new names compile.
-    """
-    real_type = template_vars['REAL_TYPE']
-    complex_type = template_vars['COMPLEX_TYPE']
-    c_type = template_vars['C_REAL_TYPE']
-
-    block = (f'typedef {c_type} {real_type};\n'
-             f'typedef struct {{ {real_type} re, im; }} {complex_type};\n')
-
-    text = pblas_path.read_text(errors='replace')
-    if real_type in text and 'typedef' in text.split(real_type)[0]:
-        return  # already patched
-    # Insert just before the first "typedef struct" line
-    marker = 'typedef struct'
-    idx = text.find(marker)
-    if idx >= 0:
-        text = text[:idx] + block + '\n' + text[idx:]
-        pblas_path.write_text(text)
-
-
-# The 11 BLACS user-facing routine suffixes (same for each type prefix).
-_BLACS_ROUTINE_SUFFIXES = [
-    'gesd2d', 'gerv2d', 'gebs2d', 'gebr2d',
-    'trsd2d', 'trrv2d', 'trbs2d', 'trbr2d',
-    'gsum2d', 'gamx2d', 'gamn2d',
-]
-
-
-def _patch_bdef_header(bdef_path: Path, target_mode: TargetMode,
-                       template_vars: dict[str, str]) -> None:
-    """Add extended-precision type definitions and macros to Bdef.h."""
-    rp = template_vars['RP']
-    cp = template_vars['CP']
-    real_type = template_vars['REAL_TYPE']      # e.g. QREAL / float64x2_t
-    complex_type = template_vars['COMPLEX_TYPE']  # e.g. XCOMPLEX / complex128x2_t
-
-    c_type = template_vars['C_REAL_TYPE']
-
-    if target_mode.c_header_mode == 'include':
-        # Module-based target: types come from an external header
-        # (e.g. multifloats_bridge.h) which provides full operator
-        # overloading via C++ templates.
-        type_block = f"""
-/*
- *  Companion types for migrated {rp}/{cp} routines.
- *  Provided by {target_mode.c_header}.
- */
-#include "{target_mode.c_header}"
-
-void BI_{rp}mvcopy(Int m, Int n, {real_type} *A, Int lda, {real_type} *buff);
-void BI_{rp}vmcopy(Int m, Int n, {real_type} *A, Int lda, {real_type} *buff);
-"""
-    else:
-        # typedef mode (KIND targets): emit primitive typedefs.
-        type_block = f"""
-/*
- *  Extended-precision types for migrated {{prefix}} routines.
- */
-typedef {c_type} {real_type};
-typedef struct {{{real_type} r, i;}} {complex_type};
-
-void BI_{rp}mvcopy(Int m, Int n, {real_type} *A, Int lda, {real_type} *buff);
-void BI_{rp}vmcopy(Int m, Int n, {real_type} *A, Int lda, {real_type} *buff);
-""".replace('{prefix}', f'{rp}/{cp}')
-
-    # --- Complex copy macros ---
-    macro_block = f"""#define BI_{cp}mvcopy(m, n, A, lda, buff) \\
-        BI_{rp}mvcopy(2*(m), (n), ({real_type} *) (A), 2*(lda), ({real_type} *) (buff))
-#define BI_{cp}vmcopy(m, n, A, lda, buff) \\
-        BI_{rp}vmcopy(2*(m), (n), ({real_type} *) (A), 2*(lda), ({real_type} *) (buff))
-"""
-
-    # --- Fortran name mangling defines ---
-    def _mangling_block(prefix: str, transform) -> str:
-        lines = []
-        for suf in _BLACS_ROUTINE_SUFFIXES:
-            src = f'{prefix}{suf}_'
-            dst = transform(f'{prefix}{suf}')
-            lines.append(f'#define {src:19s}{dst}')
-        return '\n'.join(lines) + '\n'
-
-    nochange_block = (_mangling_block(rp, lambda s: s) +
-                      _mangling_block(cp, lambda s: s))
-    upcase_block = (_mangling_block(rp, str.upper) +
-                    _mangling_block(cp, str.upper))
-
-    text = bdef_path.read_text(errors='replace')
-
-    # Insert type definitions after the DCOMPLEX/SCOMPLEX typedefs
-    text = text.replace(
-        'typedef struct {float r, i;} SCOMPLEX;\n',
-        'typedef struct {float r, i;} SCOMPLEX;\n' + type_block
-    )
-
-    # Insert copy macros after the existing BI_zvmcopy macro
-    zvmcopy_line = '#define BI_zvmcopy(m, n, A, lda, buff) \\\n        BI_dvmcopy(2*(m), (n), (double *) (A), 2*(lda), (double *) (buff))'
-    text = text.replace(zvmcopy_line, zvmcopy_line + '\n' + macro_block)
-
-    # Insert name mangling defines in NOCHANGE section (after zgamn2d)
-    nochange_marker = '#define zgamn2d_   zgamn2d\n'
-    text = text.replace(nochange_marker, nochange_marker + nochange_block)
-
-    # Insert name mangling defines in UPCASE section (after ZGAMN2D)
-    upcase_marker = '#define zgamn2d_   ZGAMN2D\n'
-    text = text.replace(upcase_marker, upcase_marker + upcase_block)
-
-    bdef_path.write_text(text)
-
-
-def _generate_mpi_real16_check(output_dir: Path) -> None:
-    """Generate a CMake module that verifies MPI_REAL16 support."""
-    cmake = """\
-# CheckMpiReal16.cmake — Verify that the MPI implementation provides
-# MPI_REAL16 and MPI_COMPLEX32, which are required by the migrated
-# quad-precision BLACS routines.
-#
-# Usage:
-#   include(CheckMpiReal16)
-#   check_mpi_real16()          # FATAL_ERROR if unsupported
-#
-# After a successful check the cache variable HAVE_MPI_REAL16 is set.
-
-include(CheckCSourceCompiles)
-
-function(check_mpi_real16)
-    find_package(MPI REQUIRED COMPONENTS C)
-
-    set(CMAKE_REQUIRED_INCLUDES  ${MPI_C_INCLUDE_DIRS})
-    set(CMAKE_REQUIRED_LIBRARIES ${MPI_C_LIBRARIES})
-    set(CMAKE_REQUIRED_FLAGS     ${MPI_C_COMPILE_FLAGS})
-
-    check_c_source_compiles("
-        #include <mpi.h>
-        int main(void) {
-            MPI_Datatype dt_real = MPI_REAL16;
-            MPI_Datatype dt_cplx = MPI_COMPLEX32;
-            (void)dt_real; (void)dt_cplx;
-            return 0;
-        }
-    " HAVE_MPI_REAL16)
-
-    if(NOT HAVE_MPI_REAL16)
-        message(FATAL_ERROR
-            "The MPI implementation does not provide MPI_REAL16 / MPI_COMPLEX32. "
-            "Quad-precision BLACS requires an MPI library built with 128-bit real "
-            "support (e.g. OpenMPI or MPICH compiled with __float128 enabled).")
-    endif()
-
-    set(HAVE_MPI_REAL16 ${HAVE_MPI_REAL16} PARENT_SCOPE)
-endfunction()
-"""
-    (output_dir / 'CheckMpiReal16.cmake').write_text(cmake)

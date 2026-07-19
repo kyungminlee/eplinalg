@@ -1,12 +1,14 @@
 # kind8 — un-migrated double-precision baseline.
 #
 # Not a real migration target: the migrator never produces D/Z output
-# (those ARE the upstream prefix). This file exists so `migrator stage
-# --target kind8` resolves a TargetMode; the staging command short-
-# circuits to the baseline path (no per-library migration; staging
-# only copies upstream sources, tests/, and writes target_config.cmake
+# (those ARE the upstream prefix). `migrator stage --target kind8`
+# never loads this file — staging short-circuits on the raw target
+# name to the baseline path (no per-library migration; staging only
+# copies upstream sources, tests/, and writes target_config.cmake
 # with LIB_PREFIX="" so tests/<lib>/CMakeLists.txt links the standard
-# archive directly).
+# archive directly). The file carries only the loader-required
+# minimum so subcommands that do resolve targets by name
+# (migrate / diverge / ...) accept `--target kind8`.
 
 name: kind8
 
@@ -31,14 +33,3 @@ module: null
 known_constants: {}
 la_constants_map: {}
 la_constants_suffix: ""
-
-c_interop:
-  real_type: double
-  complex_type: doublecomplex
-  c_real_type: double
-  mpi_real: MPI_DOUBLE_PRECISION
-  mpi_complex: MPI_DOUBLE_COMPLEX
-  mpi_sum_real: MPI_SUM
-  mpi_sum_complex: MPI_SUM
-  needs_mpi_check: false
-  header_mode: typedef

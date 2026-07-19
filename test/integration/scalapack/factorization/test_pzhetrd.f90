@@ -7,8 +7,9 @@ program test_pzhetrd
     use ref_quad_lapack,  only: zhetrd
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z, &
+                                scatter_matrix_z
     use target_scalapack, only: target_name, target_eps, target_pzhetrd
     implicit none
 
@@ -18,7 +19,6 @@ program test_pzhetrd
     integer :: i, n, info, info_ref, lwork
     integer :: locm_a, locn_a, lld_a
     integer :: desca(9)
-    integer :: ig, jg, owner_r, owner_c, il, jl
     complex(ep), allocatable :: A_loc(:,:), A_glob(:,:), A_got(:,:)
     complex(ep), allocatable :: A_herm(:,:), A_ref(:,:)
     real(ep), allocatable :: d(:), e(:)
@@ -40,16 +40,7 @@ program test_pzhetrd
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)
         locn_a = numroc_local(n, nb, my_col, 0, my_npcol); lld_a = max(1, locm_a)
-        if (locm_a > 0 .and. locn_a > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) A_loc(il, jl) = A_herm(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix_z(n, n, mb, nb, A_herm, A_loc)
         call descinit_local(desca, n, n, mb, nb, 0, 0, my_context, lld_a, info)
 
         allocate(d(max(1, locn_a)), e(max(1, locn_a)), tau(max(1, locn_a)), work(1))

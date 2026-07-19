@@ -23,12 +23,13 @@ from migrator.fortran_migrator import (
     insert_use_multifloats,
     specialize_use_module,
     rewrite_la_constants_use,
-    _la_constants_rename_map,
     _rewrite_mpi_datatypes,
     _rewrite_mpi_sum,
     migrate_fixed_form,
     migrate_free_form,
+    MigrationContext,
 )
+from migrator.fortran.la_constants import _la_constants_rename_map
 
 
 # Multifloats prefix letters, derived from the loaded target so tests
@@ -548,7 +549,7 @@ SYNTHETIC_BLAS = """\
 
 
 def test_end_to_end_fixed_form(mf):
-    out = migrate_fixed_form(SYNTHETIC_BLAS, {}, mf)
+    out = migrate_fixed_form(SYNTHETIC_BLAS, MigrationContext({}, mf))
 
     # Header is unchanged
     assert 'SUBROUTINE FOO' in out
@@ -620,7 +621,7 @@ def test_param_assignment_lands_below_implicit_none_with_openmp_directive(mf):
     between USE and IMPLICIT NONE, the converted PARAMETER assignments
     must be inserted AFTER IMPLICIT NONE and the type declarations,
     not above them."""
-    out = migrate_fixed_form(SYNTHETIC_LAPACK_F_OPENMP, {}, mf)
+    out = migrate_fixed_form(SYNTHETIC_LAPACK_F_OPENMP, MigrationContext({}, mf))
 
     lines = out.splitlines()
 
@@ -669,7 +670,7 @@ def test_equivalence_no_diagnostic_after_sequence(mf, capsys):
         "      EQUIVALENCE (CR(1,1), CRV(1))\n"
         "      END\n"
     )
-    migrate_fixed_form(src, {}, mf)
+    migrate_fixed_form(src, MigrationContext({}, mf))
     captured = capsys.readouterr()
     assert 'EQUIVALENCE' not in captured.err
     assert 'Manual rewrite required' not in captured.err
@@ -683,7 +684,7 @@ def test_equivalence_no_warning_for_integer_only(mf, capsys):
         "      EQUIVALENCE (A(1), B(1,1))\n"
         "      END\n"
     )
-    migrate_fixed_form(src, {}, mf)
+    migrate_fixed_form(src, MigrationContext({}, mf))
     captured = capsys.readouterr()
     assert 'EQUIVALENCE' not in captured.err
 
@@ -704,14 +705,14 @@ def test_canonicalize_for_compare_strips_multifloats(mf):
     """The convergence canonicalizer must strip real64x2(...) wrappers
     and TYPE(real64x2) so S/D pairs migrated to multifloats canonicalize
     to the same text as the kind-based canonicalization would."""
-    from migrator.pipeline import _canonicalize_for_compare
+    from migrator.divergence import _canonicalize_for_compare
     a = "      X = real64x2('1.0D+0') + real64x2('2.0D+0')"
     b = "      X = 1.0D+0 + 2.0D+0"
     assert _canonicalize_for_compare(a) == _canonicalize_for_compare(b)
 
 
 def test_canonicalize_for_compare_normalizes_type_decl():
-    from migrator.pipeline import _canonicalize_for_compare
+    from migrator.divergence import _canonicalize_for_compare
     a = "      TYPE(real64x2) X"
     ca = _canonicalize_for_compare(a)
     # The migrator only ever produces TYPE(real64x2) for multifloats,
@@ -722,7 +723,7 @@ def test_canonicalize_for_compare_normalizes_type_decl():
 
 
 def test_end_to_end_free_form_pattern_b(mf):
-    out = migrate_free_form(SYNTHETIC_LAPACK_FREE_FORM, {}, mf)
+    out = migrate_free_form(SYNTHETIC_LAPACK_FREE_FORM, MigrationContext({}, mf))
     assert 'LA_CONSTANTS_MW' in out
     assert 'wp=>dp' not in out
     # Local aliases preserved (lowercase) with DD-prefixed RHS
@@ -740,57 +741,60 @@ def test_end_to_end_free_form_pattern_b(mf):
 # ---------------------------------------------------------------------------
 
 
-def test_rewrite_mpi_sum_real_call_site():
+def _mpi_rewrite(src, target):
+    """Datatype pass then reduce-op pass — the order the migrator runs
+    them in (the op rewriter keys on the already-rewritten datatype
+    token in the call's argument list)."""
+    return _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, target), target)
+
+
+def test_rewrite_mpi_sum_real_call_site(mf):
     """A reduce call whose arglist contains the rewritten real datatype
     token gets MPI_SUM swapped for MPI_MM_SUM."""
-    mf = load_target('multifloats')
     src = (
         "      CALL MPI_ALLREDUCE(SBUF, RBUF, 1, MPI_DOUBLE_PRECISION,\n"
         "     &                   MPI_SUM, COMM, IERR)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
+    out = _mpi_rewrite(src, mf)
     assert 'MPI_FLOAT64X2' in out
     assert 'MPI_MM_SUM' in out
     assert 'MPI_SUM' not in out
 
 
-def test_rewrite_mpi_sum_complex_call_site():
+def test_rewrite_mpi_sum_complex_call_site(mf):
     """Same but for a complex-typed reduce: MPI_SUM → MPI_WW_SUM."""
-    mf = load_target('multifloats')
     src = (
         "      CALL MPI_REDUCE(ZB, ZA, N, MPI_DOUBLE_COMPLEX, MPI_SUM,\n"
         "     &                ROOT, COMM, IERR)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
+    out = _mpi_rewrite(src, mf)
     assert 'MPI_COMPLEX64X2' in out
     assert 'MPI_WW_SUM' in out
     assert 'MPI_SUM' not in out
 
 
-def test_rewrite_mpi_sum_integer_call_site_untouched():
+def test_rewrite_mpi_sum_integer_call_site_untouched(mf):
     """Integer reductions stay MPI_SUM — MPI_MM_SUM is undefined for
     MPI_INTEGER. This is the whole reason for token-context dispatch."""
-    mf = load_target('multifloats')
     src = (
         "      CALL MPI_ALLREDUCE(N, NSUM, 1, MPI_INTEGER, MPI_SUM,\n"
         "     &                   COMM, IERR)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
+    out = _mpi_rewrite(src, mf)
     assert 'MPI_SUM' in out
     assert 'MPI_MM_SUM' not in out
     assert 'MPI_WW_SUM' not in out
 
 
-def test_rewrite_mpi_sum_mixed_arith_in_one_file():
+def test_rewrite_mpi_sum_mixed_arith_in_one_file(mf):
     """A single source with all three call sites — each judged
     independently. Real → MM_SUM, complex → WW_SUM, integer untouched."""
-    mf = load_target('multifloats')
     src = (
         "      CALL MPI_ALLREDUCE(R, S, 1, MPI_DOUBLE_PRECISION, MPI_SUM, C, I)\n"
         "      CALL MPI_ALLREDUCE(Z, W, 1, MPI_DOUBLE_COMPLEX, MPI_SUM, C, I)\n"
         "      CALL MPI_ALLREDUCE(N, M, 1, MPI_INTEGER, MPI_SUM, C, I)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
+    out = _mpi_rewrite(src, mf)
     lines = out.splitlines()
     assert 'MPI_MM_SUM' in lines[0] and 'MPI_FLOAT64X2' in lines[0]
     assert 'MPI_WW_SUM' in lines[1] and 'MPI_COMPLEX64X2' in lines[1]
@@ -813,7 +817,7 @@ def test_rewrite_mpi_sum_kind16_uses_custom_quad_ops():
         "      CALL MPI_REDUCE(R, S, 1, MPI_DOUBLE_PRECISION, MPI_MAX, 0, C, I)\n"
         "      CALL MPI_ALLREDUCE(N, M, 1, MPI_INTEGER, MPI_SUM, C, I)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, k16), k16)
+    out = _mpi_rewrite(src, k16)
     lines = out.splitlines()
     assert 'MPI_REAL16' in lines[0] and 'MPI_QQ_SUM' in lines[0]
     assert 'MPI_COMPLEX32' in lines[1] and 'MPI_XX_SUM' in lines[1]
@@ -828,17 +832,16 @@ def test_rewrite_mpi_sum_kind10_is_noop():
     src = (
         "      CALL MPI_ALLREDUCE(R, S, 1, MPI_DOUBLE_PRECISION, MPI_SUM, C, I)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, k10), k10)
+    out = _mpi_rewrite(src, k10)
     assert 'MPI_LONG_DOUBLE' in out
     assert 'MPI_SUM' in out
     assert 'MPI_MM_SUM' not in out
 
 
-def test_rewrite_mpi_sum_does_not_touch_non_reduce_calls():
+def test_rewrite_mpi_sum_does_not_touch_non_reduce_calls(mf):
     """MPI_SUM appearing outside a reduction call (e.g. as a literal in
     a SAVE / DATA / parameter list) is NOT rewritten by this pass —
     the regex anchors on MPI_(I?All)Reduce[_scatter]."""
-    mf = load_target('multifloats')
     src = (
         "      INTEGER, PARAMETER :: MY_OP = MPI_SUM\n"
         "      CALL MPI_OP_FREE(MPI_SUM, IERR)\n"
@@ -847,15 +850,14 @@ def test_rewrite_mpi_sum_does_not_touch_non_reduce_calls():
     assert out == src
 
 
-def test_rewrite_mpi_max_real_call_site():
+def test_rewrite_mpi_max_real_call_site(mf):
     """MPI_MAX on a float-typed reduce becomes MPI_MM_AMX (multifloats
     bridge ships AMX, not a stock-MPI-compatible MAX)."""
-    mf = load_target('multifloats')
     src = (
         "      CALL MPI_REDUCE(SBUF, RBUF, 1, MPI_DOUBLE_PRECISION,\n"
         "     &                MPI_MAX, MASTER, COMM, IERR)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
+    out = _mpi_rewrite(src, mf)
     assert 'MPI_MM_AMX' in out
     assert 'MPI_MAX' not in out
 
@@ -876,41 +878,38 @@ def test_rewrite_mpi_reduce_nested_paren_argument():
         "     &     MPI_MAX, 0,\n"
         "     &     COMM, IERROR)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, k16), k16)
+    out = _mpi_rewrite(src, k16)
     assert 'MPI_REAL16' in out
     assert 'MPI_QQ_AMX' in out
     assert 'MPI_MAX' not in out
 
 
-def test_rewrite_mpi_min_complex_call_site():
-    mf = load_target('multifloats')
+def test_rewrite_mpi_min_complex_call_site(mf):
     src = (
         "      CALL MPI_ALLREDUCE(Z, W, 1, MPI_DOUBLE_COMPLEX, MPI_MIN, C, I)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
+    out = _mpi_rewrite(src, mf)
     assert 'MPI_WW_AMN' in out
     assert 'MPI_MIN' not in out
 
 
-def test_rewrite_mpi_max_integer_call_site_untouched():
+def test_rewrite_mpi_max_integer_call_site_untouched(mf):
     """MPI_INTEGER + MPI_MAX must stay MPI_MAX — integer reductions
     don't go through the user-defined op."""
-    mf = load_target('multifloats')
     src = (
         "      CALL MPI_ALLREDUCE(N, M, 1, MPI_INTEGER, MPI_MAX, C, I)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
+    out = _mpi_rewrite(src, mf)
     assert 'MPI_MAX' in out
     assert 'MPI_MM_AMX' not in out
 
 
-def test_rewrite_mpi_sum_handles_mpi_reduce_scatter():
+def test_rewrite_mpi_sum_handles_mpi_reduce_scatter(mf):
     """MPI_REDUCE_SCATTER also takes (op, datatype) — must be covered."""
-    mf = load_target('multifloats')
     src = (
         "      CALL MPI_REDUCE_SCATTER(SB, RB, CNTS, MPI_DOUBLE_PRECISION,\n"
         "     &                        MPI_SUM, COMM, IERR)\n"
     )
-    out = _rewrite_mpi_sum(_rewrite_mpi_datatypes(src, mf), mf)
+    out = _mpi_rewrite(src, mf)
     assert 'MPI_MM_SUM' in out
     assert 'MPI_SUM' not in out

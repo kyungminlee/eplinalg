@@ -61,7 +61,7 @@ target_compile_options(refblas_quad PRIVATE
 # refblas_quad doesn't collide with the standard ``blas`` archive's
 # native-precision symbols when the kind4 / kind8 baseline tests link
 # both. The matching update on the consumer side lives in
-# tests/blas/common/ref_quad_blas.f90: every routine declared in the
+# tests/common/ref_quad_blas.f90: every routine declared in the
 # interface block is suffixed ``_quad``, with a thin module procedure
 # under the original name forwarding to the renamed external. Test
 # files keep ``use ref_quad_blas, only: dasum`` unchanged.

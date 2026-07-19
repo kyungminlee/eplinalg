@@ -83,31 +83,35 @@ if [ -f "$stamp" ] && [ "$stamp" -nt "$ar" ]; then
     exit 0
 fi
 
+# nm_pairs_of <archive> — emit `<orig> <new>` rename pairs for the
+# archive's defined Fortran symbols (T = text, W = weak). The single
+# owner of the rename policy: Fortran-mangled symbols (<name>_ ->
+# append _quad_) and gfortran module-procedure symbols
+# (__<mod>_MOD_<proc> -> append _quad). Module procs do not carry the
+# trailing-underscore convention, but still need renaming so quad-
+# promoted module bodies (la_xisnan, la_constants) do not collide with
+# the std archive native versions of the same modules at link time.
+nm_pairs_of() {
+    nm --defined-only "$1" 2>/dev/null \
+        | awk 'NF >= 3 {
+                sec = $2; name = $3;
+                if (sec != "T" && sec != "W") next;
+                if (name ~ /^[a-z_][a-z0-9_]*_$/) {
+                    bare = name; sub(/_$/, "", bare);
+                    if (bare ~ /_quad$/) next;
+                    print name " " bare "_quad_";
+                } else if (name ~ /^__[a-z_][a-z0-9_]*_MOD_[a-z_][a-z0-9_]*$/) {
+                    if (name ~ /_quad$/) next;
+                    print name " " name "_quad";
+                }
+            }'
+}
+
 # Step 1 — scan: snapshot this archive's defined Fortran symbols
-# (T = text, W = weak) BEFORE renaming. A sibling rename invoked
-# later (when this archive has already been renamed to *_quad_) reads
-# the pre-rename snapshot instead of nm-ing the archive directly.
-nm --defined-only "$ar" 2>/dev/null \
-    | awk 'NF >= 3 {
-            sec = $2; name = $3;
-            if (sec != "T" && sec != "W") next;
-            # Match Fortran-mangled symbols (<name>_ -> append _quad_)
-            # and gfortran module-procedure symbols (__<mod>_MOD_<proc>
-            # -> append _quad). Module procs do not carry the trailing-
-            # underscore convention, but still need renaming so quad-
-            # promoted module bodies (la_xisnan, la_constants) do not
-            # collide with the std archive native versions of the same
-            # modules at link time.
-            if (name ~ /^[a-z_][a-z0-9_]*_$/) {
-                bare = name; sub(/_$/, "", bare);
-                if (bare ~ /_quad$/) next;
-                print name " " bare "_quad_";
-            } else if (name ~ /^__[a-z_][a-z0-9_]*_MOD_[a-z_][a-z0-9_]*$/) {
-                if (name ~ /_quad$/) next;
-                print name " " name "_quad";
-            }
-        }' \
-    | sort -u > "$snapshot"
+# BEFORE renaming. A sibling rename invoked later (when this archive
+# has already been renamed to *_quad_) reads the pre-rename snapshot
+# instead of nm-ing the archive directly.
+nm_pairs_of "$ar" | sort -u > "$snapshot"
 
 # Step 2 — build the rename set: this archive's defs + every sibling's
 # defs (read from sibling snapshot if present, otherwise nm). objcopy
@@ -128,37 +132,10 @@ trap 'rm -f "$syms" "$exclset" "$siblings_file" "$excludes_file"' EXIT
 {
     while IFS= read -r ex; do
         if [ -f "$ex" ]; then
-            nm --defined-only "$ex" 2>/dev/null \
-                | awk 'NF >= 3 {
-                        sec = $2; name = $3;
-                        if (sec != "T" && sec != "W") next;
-                        if (name ~ /^[a-z_][a-z0-9_]*_$/) {
-                            print name;
-                        } else if (name ~ /^__[a-z_][a-z0-9_]*_MOD_[a-z_][a-z0-9_]*$/) {
-                            print name;
-                        }
-                    }'
+            nm_pairs_of "$ex" | awk '{print $1}'
         fi
     done < "$excludes_file"
 } | sort -u > "$exclset"
-
-# Helper: read a sibling archive's symbols on the fly and emit the
-# same `<orig> <new>` pair lines as $snapshot did for this archive.
-nm_pairs_of() {
-    nm --defined-only "$1" 2>/dev/null \
-        | awk 'NF >= 3 {
-                sec = $2; name = $3;
-                if (sec != "T" && sec != "W") next;
-                if (name ~ /^[a-z_][a-z0-9_]*_$/) {
-                    bare = name; sub(/_$/, "", bare);
-                    if (bare ~ /_quad$/) next;
-                    print name " " bare "_quad_";
-                } else if (name ~ /^__[a-z_][a-z0-9_]*_MOD_[a-z_][a-z0-9_]*$/) {
-                    if (name ~ /_quad$/) next;
-                    print name " " name "_quad";
-                }
-            }'
-}
 
 # Build the rename set: this archive's snapshot + sibling snapshots
 # (read from sibling .quad-symbols if present, else nm-extracted),

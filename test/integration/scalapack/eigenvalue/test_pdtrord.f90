@@ -8,8 +8,9 @@ program test_pdtrord
     use ref_quad_lapack,   only: dtrsen
     use pblas_grid,        only: grid_init, grid_exit, my_rank, my_context, &
                                  my_nprow, my_npcol, my_row, my_col, &
-                                 numroc_local, descinit_local, g2l
-    use pblas_distrib,     only: gen_distrib_matrix, gather_matrix
+                                 numroc_local, descinit_local
+    use pblas_distrib,     only: gen_distrib_matrix, gather_matrix, &
+                                 scatter_matrix
     use target_scalapack,  only: target_name, target_eps, target_pdtrord
     implicit none
 
@@ -18,7 +19,7 @@ program test_pdtrord
     integer :: i, n, info, info_ref, lwork, liwork, m_got, m_ref
     integer :: locm, locn, lld
     integer :: descT(9), descQ(9)
-    integer :: ig, jg, owner_r, owner_c, il, jl
+    integer :: ig, jg
     integer :: para(6)
     integer,  allocatable :: select_v(:)
     logical,  allocatable :: select_log(:)
@@ -44,16 +45,7 @@ program test_pdtrord
             end do
             T_glob(jg, jg) = T_glob(jg, jg) + real(2 * jg, ep)
         end do
-        if (size(T_loc, 1) > 0 .and. size(T_loc, 2) > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) T_loc(il, jl) = T_glob(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix(n, n, mb, nb, T_glob, T_loc)
 
         locm = numroc_local(n, mb, my_row, 0, my_nprow)
         locn = numroc_local(n, nb, my_col, 0, my_npcol); lld = max(1, locm)

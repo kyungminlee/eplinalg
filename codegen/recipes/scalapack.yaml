@@ -23,12 +23,30 @@ extra_symbol_dirs:
 # {s,c,d,z}{matadd,latcpy} families, and the integer-family piXXX
 # helpers. The precision-independent integer helpers numroc_ / iceil_
 # / ilcm_ are migrated here too (folded into scalapack_common via
-# force_common — see the extra_migrate_files note below). Every
-# other symbol a ScaLAPACK routine calls into from TOOLS is sourced
-# from here. The zzdotc.f/zzdotu.f pair is owned by PTZBLAS (migrated
-# via ptzblas.yaml) and is deliberately excluded so the final link
-# isn't ambushed by duplicate xxdotc_/xxdotu_ symbols across two
-# archives.
+# force_common — see the note below). Every other symbol a ScaLAPACK
+# routine calls into from TOOLS is sourced from here. The
+# zzdotc.f/zzdotu.f pair is owned by PTZBLAS (migrated via
+# ptzblas.yaml) and is deliberately excluded so the final link isn't
+# ambushed by duplicate xxdotc_/xxdotu_ symbols across two archives.
+# (The genuine-double mixed-precision helpers dddot.f etc. stay in
+# this listing — skip_files below keeps them out of the migrated
+# archive while the standard-precision sibling archive retains them.)
+extra_migrate_dirs:
+  - dir: extern/scalapack-2.2.3/TOOLS
+    exclude: [zzdotc, zzdotu]
+
+# NUMROC / ICEIL / ILCM — precision-independent integer helpers.
+# Migrated with the rest of TOOLS (into scalapack_common via
+# force_common below) rather than in a standalone
+# ${LIB_PREFIX}scalapack_tools archive: that per-family archive
+# duplicated these three MKL-provided symbols and made them a
+# mandatory dep of ${LIB_PREFIX}pbblas, so under extended-MKL they
+# collided with MKL's numroc_/iceil_/ilcm_. Folding them into the
+# drop-when-MKL scalapack_common removes that overlap (same profile
+# as blacs_common). scalapack_tools.yaml is retained only as a leaf
+# symbol-provider so pbblas.yaml keeps its cycle-free numroc symbol
+# context; its migrated output is no longer built.
+
 extra_migrate_files:
   # PJLAENV_EP — extended-precision-aware variant of PJLAENV. Lives
   # under recipes/scalapack/extras/ rather than extern/ because it
@@ -43,106 +61,6 @@ extra_migrate_files:
   # uninitialises the result for migrated names like 'PELAQR0' /
   # 'PELAQR5' / 'PESYTRD' that the QR eigensolver path passes in.
   - codegen/recipes/scalapack/extras/pilaenvx_ep.f
-  - extern/scalapack-2.2.3/TOOLS/ccdotc.f
-  - extern/scalapack-2.2.3/TOOLS/ccdotu.f
-  - extern/scalapack-2.2.3/TOOLS/chk1mat.f
-  - extern/scalapack-2.2.3/TOOLS/clatcpy.f
-  - extern/scalapack-2.2.3/TOOLS/cmatadd.f
-  - extern/scalapack-2.2.3/TOOLS/dddot.f
-  - extern/scalapack-2.2.3/TOOLS/desc_convert.f
-  - extern/scalapack-2.2.3/TOOLS/descinit.f
-  - extern/scalapack-2.2.3/TOOLS/descset.f
-  - extern/scalapack-2.2.3/TOOLS/dlatcpy.f
-  - extern/scalapack-2.2.3/TOOLS/dmatadd.f
-  - extern/scalapack-2.2.3/TOOLS/dsasum.f
-  - extern/scalapack-2.2.3/TOOLS/dscasum.f
-  - extern/scalapack-2.2.3/TOOLS/dscnrm2.f
-  - extern/scalapack-2.2.3/TOOLS/dsnrm2.f
-  # NUMROC / ICEIL / ILCM — precision-independent integer helpers.
-  # Migrated here (into scalapack_common via force_common below) rather
-  # than in a standalone ${LIB_PREFIX}scalapack_tools archive: that
-  # per-family archive duplicated these three MKL-provided symbols and
-  # made them a mandatory dep of ${LIB_PREFIX}pbblas, so under
-  # extended-MKL they collided with MKL's numroc_/iceil_/ilcm_. Folding
-  # them into the drop-when-MKL scalapack_common removes that overlap
-  # (same profile as blacs_common). scalapack_tools.yaml is retained
-  # only as a leaf symbol-provider so pbblas.yaml keeps its cycle-free
-  # numroc symbol context; its migrated output is no longer built.
-  - extern/scalapack-2.2.3/TOOLS/iceil.f
-  - extern/scalapack-2.2.3/TOOLS/ilcm.f
-  - extern/scalapack-2.2.3/TOOLS/numroc.f
-  - extern/scalapack-2.2.3/TOOLS/ilacpy.f
-  - extern/scalapack-2.2.3/TOOLS/indxg2l.f
-  - extern/scalapack-2.2.3/TOOLS/indxg2p.f
-  - extern/scalapack-2.2.3/TOOLS/indxl2g.f
-  - extern/scalapack-2.2.3/TOOLS/infog1l.f
-  - extern/scalapack-2.2.3/TOOLS/infog2l.f
-  - extern/scalapack-2.2.3/TOOLS/npreroc.f
-  - extern/scalapack-2.2.3/TOOLS/pcchekpad.f
-  - extern/scalapack-2.2.3/TOOLS/pccol2row.f
-  - extern/scalapack-2.2.3/TOOLS/pcelget.f
-  - extern/scalapack-2.2.3/TOOLS/pcelset2.f
-  - extern/scalapack-2.2.3/TOOLS/pcelset.f
-  - extern/scalapack-2.2.3/TOOLS/pcfillpad.f
-  - extern/scalapack-2.2.3/TOOLS/pchkxmat.f
-  - extern/scalapack-2.2.3/TOOLS/pclaprnt.f
-  - extern/scalapack-2.2.3/TOOLS/pclaread.f
-  - extern/scalapack-2.2.3/TOOLS/pclawrite.f
-  - extern/scalapack-2.2.3/TOOLS/pcmatadd.f
-  - extern/scalapack-2.2.3/TOOLS/pcrow2col.f
-  - extern/scalapack-2.2.3/TOOLS/pctreecomb.f
-  - extern/scalapack-2.2.3/TOOLS/pdchekpad.f
-  - extern/scalapack-2.2.3/TOOLS/pdcol2row.f
-  - extern/scalapack-2.2.3/TOOLS/pdelget.f
-  - extern/scalapack-2.2.3/TOOLS/pdelset2.f
-  - extern/scalapack-2.2.3/TOOLS/pdelset.f
-  - extern/scalapack-2.2.3/TOOLS/pdfillpad.f
-  - extern/scalapack-2.2.3/TOOLS/pdlaprnt.f
-  - extern/scalapack-2.2.3/TOOLS/pdlaread.f
-  - extern/scalapack-2.2.3/TOOLS/pdlawrite.f
-  - extern/scalapack-2.2.3/TOOLS/pdmatadd.f
-  - extern/scalapack-2.2.3/TOOLS/pdrow2col.f
-  - extern/scalapack-2.2.3/TOOLS/pdtreecomb.f
-  - extern/scalapack-2.2.3/TOOLS/pichekpad.f
-  - extern/scalapack-2.2.3/TOOLS/picol2row.f
-  - extern/scalapack-2.2.3/TOOLS/pielget.f
-  - extern/scalapack-2.2.3/TOOLS/pielset2.f
-  - extern/scalapack-2.2.3/TOOLS/pielset.f
-  - extern/scalapack-2.2.3/TOOLS/pifillpad.f
-  - extern/scalapack-2.2.3/TOOLS/pilaprnt.f
-  - extern/scalapack-2.2.3/TOOLS/pirow2col.f
-  - extern/scalapack-2.2.3/TOOLS/pitreecomb.f
-  - extern/scalapack-2.2.3/TOOLS/pschekpad.f
-  - extern/scalapack-2.2.3/TOOLS/pscol2row.f
-  - extern/scalapack-2.2.3/TOOLS/pselget.f
-  - extern/scalapack-2.2.3/TOOLS/pselset2.f
-  - extern/scalapack-2.2.3/TOOLS/pselset.f
-  - extern/scalapack-2.2.3/TOOLS/psfillpad.f
-  - extern/scalapack-2.2.3/TOOLS/pslaprnt.f
-  - extern/scalapack-2.2.3/TOOLS/pslaread.f
-  - extern/scalapack-2.2.3/TOOLS/pslawrite.f
-  - extern/scalapack-2.2.3/TOOLS/psmatadd.f
-  - extern/scalapack-2.2.3/TOOLS/psrow2col.f
-  - extern/scalapack-2.2.3/TOOLS/pstreecomb.f
-  - extern/scalapack-2.2.3/TOOLS/pzchekpad.f
-  - extern/scalapack-2.2.3/TOOLS/pzcol2row.f
-  - extern/scalapack-2.2.3/TOOLS/pzelget.f
-  - extern/scalapack-2.2.3/TOOLS/pzelset2.f
-  - extern/scalapack-2.2.3/TOOLS/pzelset.f
-  - extern/scalapack-2.2.3/TOOLS/pzfillpad.f
-  - extern/scalapack-2.2.3/TOOLS/pzlaprnt.f
-  - extern/scalapack-2.2.3/TOOLS/pzlaread.f
-  - extern/scalapack-2.2.3/TOOLS/pzlawrite.f
-  - extern/scalapack-2.2.3/TOOLS/pzmatadd.f
-  - extern/scalapack-2.2.3/TOOLS/pzrow2col.f
-  - extern/scalapack-2.2.3/TOOLS/pztreecomb.f
-  - extern/scalapack-2.2.3/TOOLS/SL_init.f
-  - extern/scalapack-2.2.3/TOOLS/slatcpy.f
-  - extern/scalapack-2.2.3/TOOLS/sltimer.f
-  - extern/scalapack-2.2.3/TOOLS/smatadd.f
-  - extern/scalapack-2.2.3/TOOLS/ssdot.f
-  - extern/scalapack-2.2.3/TOOLS/zlatcpy.f
-  - extern/scalapack-2.2.3/TOOLS/zmatadd.f
 
 skip_files:
   # PJLAENV / PILAENVX are replaced in the migrated archive by their
@@ -424,13 +342,8 @@ asymmetric_patches:
   - pdsyevd.f.patch    # pssyevd already has LIWORK.EQ.-1 branch
   - pslaed3.f.patch    # pdlaed3 already has INFO init + guard
 
-# Task 44: privatize the MKL-colliding, family-independent support
-# symbols (blacs_*/Cblacs_*/BI_*, PB_C*, TOOLS/REDIST helpers, sltimer,
-# pxerbla, ...) by renaming them name -> ep_name in the migrated output.
-# eplinalg's Netlib-derived engine and MKL export identical names with
-# incompatible internal ABIs (BLACBUFF 48 vs 56 bytes); one process-wide
-# definition per name collapses the two engines and SIGSEGVs at np>=2 in
-# either link order. The manifest is shared across the whole extended
-# stack (uniform prefix keeps the commons byte-identical across
-# mw/qx/ey) and the nm audit gate reads the same file.
+# Task 44: rename the MKL-colliding, family-independent support symbols
+# name -> ep_name in the migrated output (shared manifest; the nm audit
+# gate reads the same file). Full rationale and mechanics:
+# codegen/migrator/privatize.py module docstring.
 privatize_symbols: privatize_ep_symbols.txt

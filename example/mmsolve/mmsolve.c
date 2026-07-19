@@ -115,27 +115,33 @@ static int ordering_from_name(const char *s) {
     return -1;
 }
 
-/* ── real solve (s, d) ────────────────────────────────────────────────
+/* ── shared MUMPS lifecycle skeleton ──────────────────────────────────
  * On the host, assemble typed COO arrays from the double-valued MM, run the
  * MUMPS init→solve→finalize cycle, and copy the centralized solution (which
  * MUMPS returns in id.rhs) back into xr. `sym` (0 or 2) is passed uniformly
- * to every rank, since it must agree across the communicator at analysis. */
-#define GEN_REAL(NAME, STRUC, CFUN, REAL)                                        \
+ * to every rank, since it must agree across the communicator at analysis.
+ *
+ * All ten solvers share this one skeleton; only the value conversions
+ * differ. VALT is the MUMPS value type, PRE is a prologue statement
+ * ((void)xi; for the real solvers), and FILL_A / FILL_RHS / EXTRACT_X are
+ * the per-element conversion statements run inside the host-side loops
+ * (index k over a[], index i over rhs[]/xr[]/xi[]). */
+#define GEN_SOLVE(NAME, STRUC, CFUN, VALT, PRE, FILL_A, FILL_RHS, EXTRACT_X)     \
 static int NAME(const MM *A, const MM *b, int is_host, int sym, int verbose,     \
                 double *xr, double *xi) {                                        \
-    (void)xi;                                                                    \
+    PRE                                                                          \
     STRUC id; memset(&id, 0, sizeof id);                                         \
-    MUMPS_INT *irn = NULL, *jcn = NULL; REAL *a = NULL, *rhs = NULL;             \
+    MUMPS_INT *irn = NULL, *jcn = NULL; VALT *a = NULL, *rhs = NULL;             \
     int n = 0; long nz = 0; int infog1 = 0;                                      \
     if (is_host) {                                                               \
         n = A->n; nz = A->nnz;                                                   \
         irn = malloc(sizeof(MUMPS_INT) * (size_t)nz);                            \
         jcn = malloc(sizeof(MUMPS_INT) * (size_t)nz);                            \
-        a   = malloc(sizeof(REAL) * (size_t)nz);                                 \
-        rhs = malloc(sizeof(REAL) * (size_t)n);                                  \
+        a   = malloc(sizeof(VALT) * (size_t)nz);                                 \
+        rhs = malloc(sizeof(VALT) * (size_t)n);                                  \
         for (long k = 0; k < nz; k++) { irn[k] = A->irn[k]; jcn[k] = A->jcn[k];  \
-                                        a[k] = (REAL)A->val[k]; }                \
-        for (int i = 0; i < n; i++) rhs[i] = (REAL)b->val[i];                    \
+                                        FILL_A }                                 \
+        for (int i = 0; i < n; i++) { FILL_RHS }                                 \
     }                                                                            \
     id.par = 1; id.sym = sym;                                                    \
     id.comm_fortran = (MUMPS_INT)MPI_Comm_c2f(MPI_COMM_WORLD);                   \
@@ -149,130 +155,47 @@ static int NAME(const MM *A, const MM *b, int is_host, int sym, int verbose,    
     if (id.infog[0] < 0) { infog1 = id.infog[0]; id.job = JOB_END; CFUN(&id); goto cleanup; } \
     g_infog7 = id.infog[6];  /* INFOG(7): ordering actually used */               \
     g_infog32 = id.infog[31];  /* INFOG(32): analysis type (1=seq, 2=parallel) */ \
-    if (is_host) for (int i = 0; i < n; i++) xr[i] = (double)rhs[i];             \
+    if (is_host) for (int i = 0; i < n; i++) { EXTRACT_X }                       \
     id.job = JOB_END; CFUN(&id);                                                 \
 cleanup:                                                                         \
     free(irn); free(jcn); free(a); free(rhs);                                    \
     return infog1;                                                               \
 }
 
-/* ── complex solve (c, z) ─────────────────────────────────────────────
+/* ── real solve (s, d, e, q): plain scalar cast in and out ───────────*/
+#define GEN_REAL(NAME, STRUC, CFUN, REAL)                                        \
+    GEN_SOLVE(NAME, STRUC, CFUN, REAL, (void)xi;,                                \
+        a[k] = (REAL)A->val[k];,                                                 \
+        rhs[i] = (REAL)b->val[i];,                                               \
+        xr[i] = (double)rhs[i];)
+
+/* ── complex solve (c, z, y, x) ───────────────────────────────────────
  * CPLX is the interleaved {r,i} struct MUMPS uses (mumps_complex for c,
  * mumps_double_complex for z). A real MM matrix is promoted with zero
  * imaginary part. */
 #define GEN_CPLX(NAME, STRUC, CFUN, CPLX, REAL)                                  \
-static int NAME(const MM *A, const MM *b, int is_host, int sym, int verbose,     \
-                double *xr, double *xi) {                                        \
-    STRUC id; memset(&id, 0, sizeof id);                                         \
-    MUMPS_INT *irn = NULL, *jcn = NULL; CPLX *a = NULL, *rhs = NULL;             \
-    int n = 0; long nz = 0; int infog1 = 0;                                      \
-    if (is_host) {                                                               \
-        n = A->n; nz = A->nnz;                                                   \
-        irn = malloc(sizeof(MUMPS_INT) * (size_t)nz);                            \
-        jcn = malloc(sizeof(MUMPS_INT) * (size_t)nz);                            \
-        a   = malloc(sizeof(CPLX) * (size_t)nz);                                 \
-        rhs = malloc(sizeof(CPLX) * (size_t)n);                                  \
-        for (long k = 0; k < nz; k++) { irn[k] = A->irn[k]; jcn[k] = A->jcn[k];  \
-            a[k].r = (REAL)A->val[k]; a[k].i = (REAL)(A->ival ? A->ival[k] : 0.0); } \
-        for (int i = 0; i < n; i++) {                                            \
-            rhs[i].r = (REAL)b->val[i]; rhs[i].i = (REAL)(b->ival ? b->ival[i] : 0.0); } \
-    }                                                                            \
-    id.par = 1; id.sym = sym;                                                    \
-    id.comm_fortran = (MUMPS_INT)MPI_Comm_c2f(MPI_COMM_WORLD);                   \
-    id.job = JOB_INIT; CFUN(&id);                                                \
-    if (id.infog[0] < 0) { infog1 = id.infog[0]; goto cleanup; }                 \
-    if (!verbose) quiet_icntl(id.icntl);                                         \
-    set_ordering(id.icntl);                                                      \
-    if (is_host) { id.n = n; id.nnz = (MUMPS_INT8)nz;                            \
-                   id.irn = irn; id.jcn = jcn; id.a = a; id.rhs = rhs; }         \
-    id.job = JOB_ANALYZE_FACTOR_SOLVE; CFUN(&id);                                \
-    if (id.infog[0] < 0) { infog1 = id.infog[0]; id.job = JOB_END; CFUN(&id); goto cleanup; } \
-    g_infog7 = id.infog[6];  /* INFOG(7): ordering actually used */               \
-    g_infog32 = id.infog[31];  /* INFOG(32): analysis type (1=seq, 2=parallel) */ \
-    if (is_host) for (int i = 0; i < n; i++) { xr[i] = (double)rhs[i].r; xi[i] = (double)rhs[i].i; } \
-    id.job = JOB_END; CFUN(&id);                                                 \
-cleanup:                                                                         \
-    free(irn); free(jcn); free(a); free(rhs);                                    \
-    return infog1;                                                               \
-}
+    GEN_SOLVE(NAME, STRUC, CFUN, CPLX, ,                                         \
+        a[k].r = (REAL)A->val[k]; a[k].i = (REAL)(A->ival ? A->ival[k] : 0.0);,  \
+        rhs[i].r = (REAL)b->val[i]; rhs[i].i = (REAL)(b->ival ? b->ival[i] : 0.0);, \
+        xr[i] = (double)rhs[i].r; xi[i] = (double)rhs[i].i;)
 
 /* ── multifloats double-double solves (m, w) ──────────────────────────
  * real64x2 is a two-limb {hi,lo} struct, so the scalar cast in GEN_REAL/
  * GEN_CPLX can't build it. Promote each double d to the exact double-double
  * {d, 0} (hi=d, lo=0) on the way in, and read the high limb back out. */
 #define GEN_REAL_DD(NAME, STRUC, CFUN, REAL)                                     \
-static int NAME(const MM *A, const MM *b, int is_host, int sym, int verbose,     \
-                double *xr, double *xi) {                                        \
-    (void)xi;                                                                    \
-    STRUC id; memset(&id, 0, sizeof id);                                         \
-    MUMPS_INT *irn = NULL, *jcn = NULL; REAL *a = NULL, *rhs = NULL;             \
-    int n = 0; long nz = 0; int infog1 = 0;                                      \
-    if (is_host) {                                                               \
-        n = A->n; nz = A->nnz;                                                   \
-        irn = malloc(sizeof(MUMPS_INT) * (size_t)nz);                            \
-        jcn = malloc(sizeof(MUMPS_INT) * (size_t)nz);                            \
-        a   = malloc(sizeof(REAL) * (size_t)nz);                                 \
-        rhs = malloc(sizeof(REAL) * (size_t)n);                                  \
-        for (long k = 0; k < nz; k++) { irn[k] = A->irn[k]; jcn[k] = A->jcn[k];  \
-            a[k].limbs[0] = A->val[k]; a[k].limbs[1] = 0.0; }                    \
-        for (int i = 0; i < n; i++) { rhs[i].limbs[0] = b->val[i]; rhs[i].limbs[1] = 0.0; } \
-    }                                                                            \
-    id.par = 1; id.sym = sym;                                                    \
-    id.comm_fortran = (MUMPS_INT)MPI_Comm_c2f(MPI_COMM_WORLD);                   \
-    id.job = JOB_INIT; CFUN(&id);                                                \
-    if (id.infog[0] < 0) { infog1 = id.infog[0]; goto cleanup; }                 \
-    if (!verbose) quiet_icntl(id.icntl);                                         \
-    set_ordering(id.icntl);                                                      \
-    if (is_host) { id.n = n; id.nnz = (MUMPS_INT8)nz;                            \
-                   id.irn = irn; id.jcn = jcn; id.a = a; id.rhs = rhs; }         \
-    id.job = JOB_ANALYZE_FACTOR_SOLVE; CFUN(&id);                                \
-    if (id.infog[0] < 0) { infog1 = id.infog[0]; id.job = JOB_END; CFUN(&id); goto cleanup; } \
-    g_infog7 = id.infog[6];  /* INFOG(7): ordering actually used */               \
-    g_infog32 = id.infog[31];  /* INFOG(32): analysis type (1=seq, 2=parallel) */ \
-    if (is_host) for (int i = 0; i < n; i++) xr[i] = rhs[i].limbs[0];            \
-    id.job = JOB_END; CFUN(&id);                                                 \
-cleanup:                                                                         \
-    free(irn); free(jcn); free(a); free(rhs);                                    \
-    return infog1;                                                               \
-}
+    GEN_SOLVE(NAME, STRUC, CFUN, REAL, (void)xi;,                                \
+        a[k].limbs[0] = A->val[k]; a[k].limbs[1] = 0.0;,                         \
+        rhs[i].limbs[0] = b->val[i]; rhs[i].limbs[1] = 0.0;,                     \
+        xr[i] = rhs[i].limbs[0];)
 
-#define GEN_CPLX_DD(NAME, STRUC, CFUN, CPLX)                                      \
-static int NAME(const MM *A, const MM *b, int is_host, int sym, int verbose,     \
-                double *xr, double *xi) {                                        \
-    STRUC id; memset(&id, 0, sizeof id);                                         \
-    MUMPS_INT *irn = NULL, *jcn = NULL; CPLX *a = NULL, *rhs = NULL;             \
-    int n = 0; long nz = 0; int infog1 = 0;                                      \
-    if (is_host) {                                                               \
-        n = A->n; nz = A->nnz;                                                   \
-        irn = malloc(sizeof(MUMPS_INT) * (size_t)nz);                            \
-        jcn = malloc(sizeof(MUMPS_INT) * (size_t)nz);                            \
-        a   = malloc(sizeof(CPLX) * (size_t)nz);                                 \
-        rhs = malloc(sizeof(CPLX) * (size_t)n);                                  \
-        for (long k = 0; k < nz; k++) { irn[k] = A->irn[k]; jcn[k] = A->jcn[k];  \
-            a[k].r.limbs[0] = A->val[k];                     a[k].r.limbs[1] = 0.0;  \
-            a[k].i.limbs[0] = (A->ival ? A->ival[k] : 0.0);  a[k].i.limbs[1] = 0.0; } \
-        for (int i = 0; i < n; i++) {                                            \
-            rhs[i].r.limbs[0] = b->val[i];                    rhs[i].r.limbs[1] = 0.0;  \
-            rhs[i].i.limbs[0] = (b->ival ? b->ival[i] : 0.0); rhs[i].i.limbs[1] = 0.0; } \
-    }                                                                            \
-    id.par = 1; id.sym = sym;                                                    \
-    id.comm_fortran = (MUMPS_INT)MPI_Comm_c2f(MPI_COMM_WORLD);                   \
-    id.job = JOB_INIT; CFUN(&id);                                                \
-    if (id.infog[0] < 0) { infog1 = id.infog[0]; goto cleanup; }                 \
-    if (!verbose) quiet_icntl(id.icntl);                                         \
-    set_ordering(id.icntl);                                                      \
-    if (is_host) { id.n = n; id.nnz = (MUMPS_INT8)nz;                            \
-                   id.irn = irn; id.jcn = jcn; id.a = a; id.rhs = rhs; }         \
-    id.job = JOB_ANALYZE_FACTOR_SOLVE; CFUN(&id);                                \
-    if (id.infog[0] < 0) { infog1 = id.infog[0]; id.job = JOB_END; CFUN(&id); goto cleanup; } \
-    g_infog7 = id.infog[6];  /* INFOG(7): ordering actually used */               \
-    g_infog32 = id.infog[31];  /* INFOG(32): analysis type (1=seq, 2=parallel) */ \
-    if (is_host) for (int i = 0; i < n; i++) { xr[i] = rhs[i].r.limbs[0]; xi[i] = rhs[i].i.limbs[0]; } \
-    id.job = JOB_END; CFUN(&id);                                                 \
-cleanup:                                                                         \
-    free(irn); free(jcn); free(a); free(rhs);                                    \
-    return infog1;                                                               \
-}
+#define GEN_CPLX_DD(NAME, STRUC, CFUN, CPLX)                                     \
+    GEN_SOLVE(NAME, STRUC, CFUN, CPLX, ,                                         \
+        a[k].r.limbs[0] = A->val[k];                     a[k].r.limbs[1] = 0.0;  \
+        a[k].i.limbs[0] = (A->ival ? A->ival[k] : 0.0);  a[k].i.limbs[1] = 0.0;, \
+        rhs[i].r.limbs[0] = b->val[i];                    rhs[i].r.limbs[1] = 0.0; \
+        rhs[i].i.limbs[0] = (b->ival ? b->ival[i] : 0.0); rhs[i].i.limbs[1] = 0.0;, \
+        xr[i] = rhs[i].r.limbs[0]; xi[i] = rhs[i].i.limbs[0];)
 
 GEN_REAL(solve_s, SMUMPS_STRUC_C, smumps_c, float)
 GEN_REAL(solve_d, DMUMPS_STRUC_C, dmumps_c, double)
@@ -290,6 +213,20 @@ GEN_CPLX(solve_x, XMUMPS_STRUC_C, xmumps_c, mumps_float128_complex, mumps_float1
 /* Extended multifloats (double-double) — struct value type, dedicated macros. */
 GEN_REAL_DD(solve_m, MMUMPS_STRUC_C, mmumps_c, mumps_float64x2)
 GEN_CPLX_DD(solve_w, WMUMPS_STRUC_C, wmumps_c, mumps_complex64x2)
+
+/* One row per arithmetic: the single source of truth for the valid `-t`
+ * letters, the real/complex family split, and solver dispatch. */
+static const struct solver {
+    char letter;
+    int (*solve)(const MM *, const MM *, int, int, int, double *, double *);
+    int is_complex;
+} solvers[] = {
+    {'s', solve_s, 0}, {'c', solve_c, 1},
+    {'d', solve_d, 0}, {'z', solve_z, 1},
+    {'e', solve_e, 0}, {'y', solve_y, 1},
+    {'q', solve_q, 0}, {'x', solve_x, 1},
+    {'m', solve_m, 0}, {'w', solve_w, 1},
+};
 
 static void usage(const char *prog) {
     fprintf(stderr,
@@ -333,12 +270,15 @@ int main(int argc, char **argv)
             MPI_Finalize(); return 2;
         }
     }
-    if (np != 3 || !strchr("scdzeyqxmw", type) || type == 0) {
+    const struct solver *sv = NULL;
+    for (size_t k = 0; k < sizeof solvers / sizeof solvers[0]; k++)
+        if (solvers[k].letter == type) { sv = &solvers[k]; break; }
+    if (np != 3 || !sv) {
         if (is_host) usage(argv[0]);
         MPI_Finalize(); return 2;
     }
     const char *mpath = paths[0], *bpath = paths[1], *xpath = paths[2];
-    int is_cplx = (strchr("czyxw", type) != NULL);
+    int is_cplx = sv->is_complex;
 
     /* ── host reads + validates; broadcast an error flag + sym ────────*/
     MM A, b; memset(&A, 0, sizeof A); memset(&b, 0, sizeof b);
@@ -368,19 +308,7 @@ int main(int argc, char **argv)
     if (is_host) { xr = calloc((size_t)n, sizeof(double));
                    if (is_cplx) xi = calloc((size_t)n, sizeof(double)); }
 
-    int infog = 0;
-    switch (type) {
-        case 's': infog = solve_s(&A, &b, is_host, sym, verbose, xr, xi); break;
-        case 'd': infog = solve_d(&A, &b, is_host, sym, verbose, xr, xi); break;
-        case 'c': infog = solve_c(&A, &b, is_host, sym, verbose, xr, xi); break;
-        case 'z': infog = solve_z(&A, &b, is_host, sym, verbose, xr, xi); break;
-        case 'e': infog = solve_e(&A, &b, is_host, sym, verbose, xr, xi); break;
-        case 'y': infog = solve_y(&A, &b, is_host, sym, verbose, xr, xi); break;
-        case 'q': infog = solve_q(&A, &b, is_host, sym, verbose, xr, xi); break;
-        case 'x': infog = solve_x(&A, &b, is_host, sym, verbose, xr, xi); break;
-        case 'm': infog = solve_m(&A, &b, is_host, sym, verbose, xr, xi); break;
-        case 'w': infog = solve_w(&A, &b, is_host, sym, verbose, xr, xi); break;
-    }
+    int infog = sv->solve(&A, &b, is_host, sym, verbose, xr, xi);
 
     int rc = 0;
     if (infog < 0) {

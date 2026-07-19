@@ -61,7 +61,7 @@ def collect_mixed_stems(src_root: Path) -> list[str]:
 
 
 def main() -> None:
-    src_root = Path(__file__).resolve().parents[2] / 'external' / 'xblas-1.0.248' / 'src'
+    src_root = Path(__file__).resolve().parents[3] / 'extern' / 'xblas-1.0.248' / 'src'
     if not src_root.is_dir():
         raise SystemExit(f'XBLAS source not found at {src_root}')
 

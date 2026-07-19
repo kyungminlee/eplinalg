@@ -8,6 +8,7 @@ import re
 
 from ..intrinsics import INTRINSIC_MAP, INTRINSIC_DECL_MAP
 from ..target_mode import TargetMode
+from .lex import is_continuation_line, split_top_level_commas
 
 
 # ``REAL(`` / ``CMPLX(`` paren-call detector for ``replace_generic_conversions``.
@@ -135,15 +136,8 @@ def replace_intrinsic_calls(
                             # 1-component derived type ("Too many components
                             # in structure constructor"). Split at the
                             # top-level comma respecting nested parens.
-                            depth_k = 0
-                            split_at = -1
-                            for ii, ch in enumerate(inner):
-                                if ch == '(': depth_k += 1
-                                elif ch == ')': depth_k -= 1
-                                elif ch == ',' and depth_k == 0:
-                                    split_at = ii
-                                    break
-                            inner_first = inner[:split_at] if split_at >= 0 else inner
+                            args = split_top_level_commas(inner)
+                            inner_first = args[0] if args else inner
                             replacement = f'{target_mode.real_constructor}({inner_first})'
                         elif old_name.upper() in ('CMPLX', 'DCMPLX'):
                             wrapped = _wrap_complex_args(
@@ -181,6 +175,9 @@ def replace_generic_conversions(
     complex_names: set[str] | None = None,
 ) -> str:
     """Add KIND (or wrap in constructor) to generic REAL() and CMPLX() calls in expression context."""
+    # Deliberately stricter than lex.is_continuation_line: comment
+    # markers ('!', 'C', 'c', '*') and tab in col 6 must NOT be masked
+    # with '\0' below, or the marker restore would corrupt them.
     is_fixed_cont = (len(line) >= 6 and line[:5] == '     ' and line[5] not in (' ', '0', '!', 'C', 'c', '*', '\t'))
     cont_marker = line[5] if is_fixed_cont else ''
     if is_fixed_cont:
@@ -233,15 +230,8 @@ def replace_generic_conversions(
                     # (`REAL(x, wp)` / `REAL(x, KIND=wp)`) — see the
                     # parallel comment in the wrap_constructor branch
                     # of `replace_intrinsic_calls` for the rationale.
-                    depth_k = 0
-                    split_at = -1
-                    for ii, ch in enumerate(inner):
-                        if ch == '(': depth_k += 1
-                        elif ch == ')': depth_k -= 1
-                        elif ch == ',' and depth_k == 0:
-                            split_at = ii
-                            break
-                    inner_first = inner[:split_at] if split_at >= 0 else inner
+                    args = split_top_level_commas(inner)
+                    inner_first = args[0] if args else inner
                     replacement = f'{target_mode.real_constructor}({inner_first})'
                 else:
                     wrapped = _wrap_complex_args(
@@ -255,6 +245,38 @@ def replace_generic_conversions(
     if is_fixed_cont:
         line = line[:5] + cont_marker + line[6:]
     return line
+
+
+def _split_dcolon_sep(text: str) -> tuple[str, str]:
+    """Split an optional leading ``::`` separator (with surrounding
+    whitespace) off ``text``. Returns ``(sep, rest)`` where ``sep`` is
+    the verbatim separator text ('' when absent)."""
+    sep_m = re.match(r'\s*::\s*', text)
+    if sep_m:
+        return text[:sep_m.end()], text[sep_m.end():]
+    return '', text
+
+
+def _normalize_intrinsic_names(names_text: str,
+                               target_mode: TargetMode | None) -> list[str]:
+    """Comma-split an INTRINSIC name list, dedupe case-insensitively
+    (order-preserving, first spelling wins) and, in wrap_constructor
+    mode, drop names the target module overloads — gfortran refuses a
+    USE-associated generic name when an INTRINSIC declaration in the
+    same scope binds it to the standard intrinsic of incompatible
+    signature."""
+    names = [n.strip() for n in names_text.split(',') if n.strip()]
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for n in names:
+        key = n.upper()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(n)
+    if target_mode is not None and target_mode.intrinsic_mode == 'wrap_constructor':
+        overloaded = frozenset(n.upper() for n in target_mode.module_generic_names)
+        deduped = [n for n in deduped if n.upper() not in overloaded]
+    return deduped
 
 
 def replace_intrinsic_decls(line: str, target_mode: TargetMode | None = None) -> str:
@@ -283,22 +305,8 @@ def replace_intrinsic_decls(line: str, target_mode: TargetMode | None = None) ->
             trail = ','
             stripped = stripped[:-1]
         # Strip an optional ``::`` separator after the keyword.
-        sep_m = re.match(r'\s*::\s*', stripped)
-        sep = ''
-        if sep_m:
-            sep = stripped[:sep_m.end()]
-            stripped = stripped[sep_m.end():]
-        names = [n.strip() for n in stripped.split(',') if n.strip()]
-        seen: set[str] = set()
-        deduped: list[str] = []
-        for n in names:
-            key = n.upper()
-            if key not in seen:
-                seen.add(key)
-                deduped.append(n)
-        if target_mode is not None and target_mode.intrinsic_mode == 'wrap_constructor':
-            overloaded = frozenset(n.upper() for n in target_mode.module_generic_names)
-            deduped = [n for n in deduped if n.upper() not in overloaded]
+        sep, stripped = _split_dcolon_sep(stripped)
+        deduped = _normalize_intrinsic_names(stripped, target_mode)
         if not deduped:
             # Whole declaration empty — drop the line so we don't emit a
             # bare ``INTRINSIC`` keyword. The trailing comment, if any,
@@ -328,8 +336,7 @@ def _dedup_intrinsic_stmts(text: str, target_mode: TargetMode | None = None) -> 
         j = i + 1
         while j < len(lines):
             next_line = lines[j]
-            is_fixed_cont = (len(next_line) > 6 and next_line[:5] == '     ' and next_line[5] not in (' ', '0') and next_line[0] not in ('C', 'c', '*', '!'))
-            if is_fixed_cont:
+            if is_continuation_line(next_line):
                 stmt_lines.append(next_line)
                 j += 1
             elif stmt_lines[-1].rstrip().endswith('&'):
@@ -347,7 +354,7 @@ def _dedup_intrinsic_stmts(text: str, target_mode: TargetMode | None = None) -> 
         prefix = m.group(1)
         name_part = stmt_lines[0][len(prefix):]
         for sl in stmt_lines[1:]:
-            if len(sl) > 5 and sl[0] == ' ' and sl[5] not in (' ', '0', ''):
+            if is_continuation_line(sl):
                 name_part += ' ' + sl[6:]
             else:
                 stripped = sl.lstrip()
@@ -356,20 +363,8 @@ def _dedup_intrinsic_stmts(text: str, target_mode: TargetMode | None = None) -> 
 
         name_part = name_part.replace('&', ' ')
         # Drop an optional ``::`` separator following the keyword.
-        sep_m = re.match(r'\s*::\s*', name_part)
-        if sep_m:
-            name_part = name_part[sep_m.end():]
-        names = [n.strip() for n in name_part.split(',') if n.strip()]
-        seen: set[str] = set()
-        deduped: list[str] = []
-        for n in names:
-            key = n.upper()
-            if key not in seen:
-                seen.add(key)
-                deduped.append(n)
-        if target_mode is not None and target_mode.intrinsic_mode == 'wrap_constructor':
-            overloaded = frozenset(n.upper() for n in target_mode.module_generic_names)
-            deduped = [n for n in deduped if n.upper() not in overloaded]
+        _, name_part = _split_dcolon_sep(name_part)
+        deduped = _normalize_intrinsic_names(name_part, target_mode)
 
         if not deduped:
             # Whole INTRINSIC statement empty: drop the entire (possibly
@@ -428,19 +423,7 @@ def _wrap_complex_args(
     ``dd_from_cdd`` which discards the imaginary part — silently
     corrupting the result.
     """
-    parts: list[str] = []
-    cur, depth = '', 0
-    for ch in inner:
-        if ch == '(':
-            depth += 1; cur += ch
-        elif ch == ')':
-            depth -= 1; cur += ch
-        elif ch == ',' and depth == 0:
-            parts.append(cur); cur = ''
-        else:
-            cur += ch
-    if cur:
-        parts.append(cur)
+    parts = split_top_level_commas(inner)
 
     # Drop a trailing ``KIND=...`` argument. The kind selector is only
     # meaningful in the original CMPLX call signature; the multifloats
@@ -488,3 +471,63 @@ def _wrap_complex_args(
         return f'{target_mode.real_constructor}({s})'
 
     return ','.join(_wrap_one(p) for p in parts)
+
+
+# Type-conversion intrinsics frequently drift asymmetrically between
+# co-family halves: D/Z-half upstream tends to declare ``REAL`` /
+# ``CMPLX`` / ``DBLE`` / ``DIMAG`` / ``DCMPLX`` / ``DCONJG`` in its
+# INTRINSIC list (used to convert ``DOUBLE COMPLEX`` <-> ``DOUBLE
+# PRECISION``), while S/C-half doesn't need them (kind4 default
+# handles the same conversions implicitly). After kind16 migration
+# both halves use the kind-promoted versions; the asymmetric
+# INTRINSIC declarations remain as cosmetic text drift.
+# :func:`strip_overloaded_intrinsics` strips this subset on every
+# target to converge.
+_TYPE_CONV_INTRINSICS = frozenset({
+    'REAL', 'CMPLX', 'DCMPLX', 'DBLE',
+    'AIMAG', 'CONJG', 'DCONJG', 'DIMAG',
+})
+
+# Multifloats also strips the full generic-overload set so INTRINSIC
+# declarations of names that ``USE multifloats`` provides as generic
+# interfaces don't clash (gfortran: "Cannot change attributes of
+# USE-associated symbol").
+_MF_OVERLOADED_INTRINSICS = _TYPE_CONV_INTRINSICS | {
+    # Unary real -> real
+    'ABS', 'SQRT', 'SIN', 'COS', 'TAN', 'EXP', 'LOG', 'LOG10',
+    'ATAN', 'ASIN', 'ACOS', 'AINT', 'ANINT', 'SINH', 'COSH',
+    'TANH', 'ASINH', 'ACOSH', 'ATANH', 'ERF', 'ERFC',
+    'ERFC_SCALED', 'GAMMA', 'LOG_GAMMA', 'BESSEL_J0',
+    'BESSEL_J1', 'BESSEL_Y0', 'BESSEL_Y1', 'FRACTION',
+    'RRSPACING', 'SPACING', 'EPSILON', 'HUGE', 'TINY',
+    # Binary real
+    'SIGN', 'MOD', 'ATAN2', 'DIM', 'MODULO', 'HYPOT', 'NEAREST',
+    # Variadic
+    'MAX', 'MIN',
+    # Extra type-conversion
+    'INT', 'NINT', 'CEILING', 'FLOOR',
+}
+
+
+def strip_overloaded_intrinsics(line: str, target_mode: TargetMode) -> str:
+    """Strip target-supplied names from an INTRINSIC declaration statement.
+
+    Runs on a single joined logical line (via ``_apply_local_passes``),
+    so a multi-line INTRINSIC list is cleaned as a whole. Kind-based
+    targets strip only the type-conversion subset; multifloats strips
+    the full generic-overload set. Returns ``''`` when the kept list is
+    empty so the statement is dropped.
+    """
+    strip_set = (_TYPE_CONV_INTRINSICS if target_mode.is_kind_based
+                 else _MF_OVERLOADED_INTRINSICS)
+
+    def clean_intrinsic(m):
+        indent, sep, funcs_str, newline = m.group(1), m.group(2), m.group(3), m.group(4)
+        kept = [f.strip() for f in funcs_str.split(',')
+                if f.strip() and f.strip().upper() not in strip_set]
+        return f"{indent}INTRINSIC{sep}{', '.join(kept)}{newline}" if kept else ""
+
+    return re.sub(
+        r'(?im)^([ \t]*)INTRINSIC(\s*::\s*|\s+)([A-Za-z0-9_,\s]+?)(\r?\n|$)',
+        clean_intrinsic, line,
+    )

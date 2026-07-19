@@ -7,9 +7,7 @@ migrated archives need (MPI_QQ_* / MPI_MM_* / ...) and injects the matching
 import re
 
 from ..target_mode import TargetMode
-from .lex import (
-    _END_PROC_RE, _PROC_HEADER_RE, _count_open_parens, is_continuation_line,
-)
+from .lex import _END_PROC_RE, _PROC_HEADER_RE, walk_procedure_header
 
 
 # Fortran-side MPI datatype name rewriter. In an `s*`/`c*` source MUMPS
@@ -257,23 +255,8 @@ def insert_use_multifloats_mpi_f(source: str, target_mode: TargetMode) -> str:
         # Walk past the procedure header (continuations + CPP blocks),
         # mirroring insert_use_multifloats so paren-balanced argument
         # lists that span ``#if defined(metis)`` blocks are handled.
-        j = i + 1
-        paren_depth = _count_open_parens(line)
-        prev_has_amp = line.rstrip().rstrip('\n').endswith('&')
-        while j < len(lines):
-            next_line = lines[j]
-            if next_line.lstrip().startswith('#'):
-                result.append(next_line)
-                j += 1
-                continue
-            if (is_continuation_line(next_line) or prev_has_amp
-                    or paren_depth > 0):
-                result.append(next_line)
-                prev_has_amp = next_line.rstrip().rstrip('\n').endswith('&')
-                paren_depth += _count_open_parens(next_line)
-                j += 1
-            else:
-                break
+        j = walk_procedure_header(lines, i)
+        result.extend(lines[i + 1:j])
         # Find this procedure's matching END via depth tracking. Many
         # MUMPS files put an INTERFACE block inside the outer SUBROUTINE
         # whose internal SUBROUTINE signatures look syntactically like

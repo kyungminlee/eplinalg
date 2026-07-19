@@ -15,14 +15,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .cmake_gen import _generate_cmake
-from .pipeline import (
-    run_divergence_report, run_migration,
-)
+from .cmake_gen import generate_cmake
+from .divergence import run_divergence_report
+from .pipeline import classify_recipe_symbols, run_migration
 from .prepare import prepare_recipe, run_prepare, verify_patches
-from .prefix_classifier import classify_symbols
-from .symbol_scanner import scan_symbols
-from .cli_common import _get_target_mode, _parser_args
+from .cli_common import (
+    LA_SUFFIXES, get_target_mode, la_helper_pairs, parser_args,
+    recipe_project_root,
+)
 from .fortran.lex import is_comment_line
 from .staging import cmd_stage
 
@@ -63,8 +63,8 @@ def cmd_prepare(args):
 
 def cmd_migrate(args):
     """Run the migration step."""
-    parser, parser_cmd = _parser_args(args)
-    target = _get_target_mode(args)
+    parser, parser_cmd = parser_args(args)
+    target = get_target_mode(args)
     run_migration(
         recipe_path=args.recipe,
         output_dir=args.output_dir,
@@ -76,26 +76,34 @@ def cmd_migrate(args):
     )
 
 
-def cmd_diverge(args):
-    """Report every co-family pair whose migrated text differs."""
-    parser, parser_cmd = _parser_args(args)
-    target = _get_target_mode(args)
+def _run_diverge(recipe: Path, target_mode, project_root: Path | None,
+                 parser: str | None, parser_cmd: str | None,
+                 no_whitelist: bool = False,
+                 grep: str | None = None, exclude: str | None = None,
+                 context: int = 8, full: bool = False,
+                 max_width: int = 200) -> int:
+    """Report every co-family pair whose migrated text differs.
+
+    Keyword defaults mirror the ``diverge`` subparser so callers that
+    bypass argparse (``cmd_run``) get the same behavior as a bare
+    ``migrator diverge`` invocation.
+    """
     report = run_divergence_report(
-        recipe_path=args.recipe,
-        target_mode=target,
-        project_root=args.project_root,
+        recipe_path=recipe,
+        target_mode=target_mode,
+        project_root=project_root,
         parser=parser,
         parser_cmd=parser_cmd,
-        apply_whitelist=not getattr(args, 'no_whitelist', False),
+        apply_whitelist=not no_whitelist,
     )
     total = len(report)
     # Optional filtering on diff content.
     try:
-        if args.grep:
-            pat = re.compile(args.grep, re.IGNORECASE)
+        if grep:
+            pat = re.compile(grep, re.IGNORECASE)
             report = [r for r in report if any(pat.search(l) for l in r['diff'])]
-        if args.exclude:
-            pat = re.compile(args.exclude, re.IGNORECASE)
+        if exclude:
+            pat = re.compile(exclude, re.IGNORECASE)
             report = [r for r in report if not any(pat.search(l) for l in r['diff'])]
     except re.error as exc:
         print(f'error: invalid regex: {exc}', file=sys.stderr)
@@ -105,19 +113,37 @@ def cmd_diverge(args):
         header = (f'### {entry["other"]} vs {entry["canonical"]}'
                   f' → {entry["target"]} (+{len(entry["diff"])})')
         print(header)
-        diff = entry['diff'] if args.full else entry['diff'][:args.context]
+        diff = entry['diff'] if full else entry['diff'][:context]
         for line in diff:
-            print(line[:args.max_width])
-        if not args.full and len(entry['diff']) > args.context:
-            print(f'  ...{len(entry["diff"]) - args.context} more')
+            print(line[:max_width])
+        if not full and len(entry['diff']) > context:
+            print(f'  ...{len(entry["diff"]) - context} more')
         print()
 
     shown = len(report)
-    if args.grep or args.exclude:
+    if grep or exclude:
         print(f'{shown} shown / {total} divergent pairs')
     else:
         print(f'{total} divergent pairs')
     return 1 if total else 0
+
+
+def cmd_diverge(args):
+    """Report every co-family pair whose migrated text differs."""
+    parser, parser_cmd = parser_args(args)
+    return _run_diverge(
+        recipe=args.recipe,
+        target_mode=get_target_mode(args),
+        project_root=args.project_root,
+        parser=parser,
+        parser_cmd=parser_cmd,
+        no_whitelist=getattr(args, 'no_whitelist', False),
+        grep=args.grep,
+        exclude=args.exclude,
+        context=args.context,
+        full=args.full,
+        max_width=args.max_width,
+    )
 
 
 def _is_fixed_form_comment(line: str) -> bool:
@@ -159,8 +185,8 @@ _REF_EXCLUDE_STEMS: dict[str, set[str]] = {
     'lapack': {
         'dsgesv', 'zcgesv', 'dsposv', 'zcposv', 'dsgels', 'zcgels',
         'dlag2s', 'slag2d', 'zlag2c', 'clag2z', 'dlat2s', 'zlat2c',
-        'la_constants_ey', 'la_constants_qx', 'la_constants_mw',
-        'la_xisnan_ey', 'la_xisnan_qx', 'la_xisnan_mw',
+        *(f'la_{base}{sfx}'
+          for base in ('constants', 'xisnan') for sfx in LA_SUFFIXES),
     },
 }
 
@@ -227,16 +253,19 @@ def _collect_ref_sources(config) -> list[Path]:
 
 
 
-def cmd_verify(args):
-    """Verify migrated output: residual types, literals, column width."""
-    out_dir = args.output_dir
+def _run_verify(output_dir: Path, target_mode) -> int:
+    """Verify migrated output: residual types, literals, column width.
+
+    Returns the number of issues found (0 = pass); the printed
+    FAILED/PASSED summary happens here so ``cmd_run`` can continue
+    past a failure while the ``verify`` subcommand exits non-zero.
+    """
+    out_dir = output_dir
     src_dir = out_dir / 'src'
     if not src_dir.is_dir():
         # Fall back to flat layout
         src_dir = out_dir
     errors = 0
-
-    target_mode = _get_target_mode(args)
 
     f_files = sorted(list(src_dir.glob('*.f')) + list(src_dir.glob('*.F')))
     f90_files = sorted(list(src_dir.glob('*.f90')) + list(src_dir.glob('*.F90')))
@@ -366,27 +395,29 @@ def cmd_verify(args):
 
     if errors:
         print(f'FAILED: {errors} issue(s)')
-        sys.exit(1)
     else:
         print('PASSED')
+    return errors
 
 
-def cmd_build(args):
+def cmd_verify(args):
+    """Verify migrated output: residual types, literals, column width."""
+    if _run_verify(args.output_dir, get_target_mode(args)):
+        sys.exit(1)
+
+
+def _run_build(recipe: Path, output_dir: Path, target_mode,
+               project_root: Path | None, fc: str | None) -> None:
     """Generate CMake project and build static libraries."""
-    output_dir = args.output_dir
-    target_mode = _get_target_mode(args)
     src_dir = output_dir / 'src'
     if not src_dir.is_dir():
         src_dir = output_dir
 
-    config = prepare_recipe(args.recipe, args.project_root)
+    config = prepare_recipe(recipe, project_root)
     lib_name = config.library
 
     # Classify source files into common vs precision-specific
-    symbols = scan_symbols(config.source_dir, config.language,
-                           config.extensions,
-                           extra_c_return_types=tuple(config.c_return_types))
-    classification = classify_symbols(symbols)
+    classification = classify_recipe_symbols(config)
     independent = classification.independent
 
     if config.language == 'c':
@@ -414,18 +445,12 @@ def cmd_build(args):
     # shared common archive.
     #
     # The LA_CONSTANTS/LA_XISNAN pair filter below IS shared with
-    # staging.py: only the target's own suffix pair (_ey/_qx/_mw) may
-    # be compiled. Foreign pairs are not just dead weight — the *_mw
-    # pair does ``use multifloats``, which doesn't exist in a
-    # kind10/kind16 build, so compiling it would break the build.
-    _la_suffixes = ('_ey', '_qx', '_mw')
-    _own_suffix = target_mode.la_constants_suffix.lower()
-    _la_foreign = {
-        f'la_{base}{s}'
-        for base in ('constants', 'xisnan')
-        for s in _la_suffixes
-        if s != _own_suffix
-    }
+    # staging.py (cli_common.la_helper_pairs): only the target's own
+    # suffix pair (_ey/_qx/_mw) may be compiled. Foreign pairs are not
+    # just dead weight — the *_mw pair does ``use multifloats``, which
+    # doesn't exist in a kind10/kind16 build, so compiling it would
+    # break the build.
+    _, _la_foreign = la_helper_pairs(target_mode)
     common_files, precision_files = [], []
     for f in files:
         if f.stem in _la_foreign:
@@ -452,10 +477,10 @@ def cmd_build(args):
     if ref_sources:
         print(f'  Reference: {len(ref_sources)} files (standard-precision sibling)')
 
-    proj_root = (args.project_root or args.recipe.resolve().parent.parent.parent)
-    _generate_cmake(output_dir, lib_name, target_mode, common_files, precision_files,
-                    language=config.language, project_root=proj_root,
-                    ref_sources=ref_sources)
+    proj_root = (project_root or recipe_project_root(recipe.resolve()))
+    generate_cmake(output_dir, lib_name, target_mode, common_files, precision_files,
+                   language=config.language, project_root=proj_root,
+                   ref_sources=ref_sources)
 
     # Configure and build
     build_dir = output_dir / '_build'
@@ -466,8 +491,8 @@ def cmd_build(args):
         cmake_cmd, '-S', str(output_dir), '-B', str(build_dir),
         '-DCMAKE_BUILD_TYPE=Release',
     ]
-    if config.language != 'c' and args.fc:
-        configure_args.append(f'-DCMAKE_Fortran_COMPILER={args.fc}')
+    if config.language != 'c' and fc:
+        configure_args.append(f'-DCMAKE_Fortran_COMPILER={fc}')
 
     build_dir.mkdir(parents=True, exist_ok=True)
     configure_log = build_dir / 'configure.log'
@@ -525,6 +550,17 @@ def cmd_build(args):
     print(f'\nLibraries in {build_dir}/')
 
 
+def cmd_build(args):
+    """Generate CMake project and build static libraries."""
+    return _run_build(
+        recipe=args.recipe,
+        output_dir=args.output_dir,
+        target_mode=get_target_mode(args),
+        project_root=args.project_root,
+        fc=args.fc,
+    )
+
+
 def cmd_run(args):
     """Run the full pipeline: migrate → diverge → verify → build."""
     work_dir = args.work_dir
@@ -532,49 +568,53 @@ def cmd_run(args):
     src_dir = output_dir / 'src'
     src_dir.mkdir(parents=True, exist_ok=True)
 
+    parser, parser_cmd = parser_args(args)
+    target_mode = get_target_mode(args)
+
     print('=' * 60)
     print('  Step 1: Migrate')
     print('=' * 60)
-    args.output_dir = src_dir
-    args.dry_run = False
-    cmd_migrate(args)
+    run_migration(
+        recipe_path=args.recipe,
+        output_dir=src_dir,
+        target_mode=target_mode,
+        dry_run=False,
+        project_root=args.project_root,
+        parser=parser,
+        parser_cmd=parser_cmd,
+    )
 
     print()
     print('=' * 60)
     print('  Step 2: Divergence')
     print('=' * 60)
-    args.output_dir = src_dir
-    if not hasattr(args, 'grep'):
-        args.grep = None
-    if not hasattr(args, 'exclude'):
-        args.exclude = None
-    if not hasattr(args, 'context'):
-        args.context = 8
-    if not hasattr(args, 'full'):
-        args.full = False
-    if not hasattr(args, 'max_width'):
-        args.max_width = 200
-    rc_diverge = cmd_diverge(args) or 0
+    rc_diverge = _run_diverge(
+        recipe=args.recipe,
+        target_mode=target_mode,
+        project_root=args.project_root,
+        parser=parser,
+        parser_cmd=parser_cmd,
+    ) or 0
 
     print()
     print('=' * 60)
     print('  Step 3: Verify')
     print('=' * 60)
-    args.output_dir = output_dir
-    rc_verify = 0
-    try:
-        cmd_verify(args)
-    except SystemExit as e:
-        if e.code:
-            rc_verify = int(e.code) if isinstance(e.code, int) else 1
-            print('Verify failed, continuing...')
+    rc_verify = 1 if _run_verify(output_dir, target_mode) else 0
+    if rc_verify:
+        print('Verify failed, continuing...')
 
     print()
     print('=' * 60)
     print('  Step 4: Build (CMake)')
     print('=' * 60)
-    args.output_dir = output_dir
-    rc_build = cmd_build(args) or 0
+    rc_build = _run_build(
+        recipe=args.recipe,
+        output_dir=output_dir,
+        target_mode=target_mode,
+        project_root=args.project_root,
+        fc=args.fc,
+    ) or 0
 
     return rc_build or rc_verify or rc_diverge
 

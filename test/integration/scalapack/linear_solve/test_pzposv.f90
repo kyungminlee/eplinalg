@@ -5,8 +5,9 @@ program test_pzposv
     use ref_quad_lapack,  only: zposv
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z, &
+                                scatter_matrix_z
     use target_scalapack, only: target_name, target_eps, target_pzposv
     implicit none
 
@@ -17,7 +18,6 @@ program test_pzposv
     integer :: i, n, info, info_ref, k
     integer :: locm_a, locn_a, lld_a, locm_b, lld_b
     integer :: desca(9), descb(9)
-    integer :: owner_r, owner_c, il, jl, ig, jg
     complex(ep), allocatable :: A_loc(:,:), B_loc(:,:)
     complex(ep), allocatable :: A_glob(:,:), B_glob(:,:), B_got(:,:)
     complex(ep), allocatable :: A_herm(:,:), A_ref(:,:), B_ref(:,:)
@@ -41,16 +41,7 @@ program test_pzposv
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)
         locn_a = numroc_local(n, nb, my_col, 0, my_npcol); lld_a = max(1, locm_a)
         locm_b = numroc_local(n, mb, my_row, 0, my_nprow); lld_b = max(1, locm_b)
-        if (locm_a > 0 .and. locn_a > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) A_loc(il, jl) = A_herm(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix_z(n, n, mb, nb, A_herm, A_loc)
         call descinit_local(desca, n, n,    mb, nb, 0, 0, my_context, lld_a, info)
         call descinit_local(descb, n, nrhs, mb, nb, 0, 0, my_context, lld_b, info)
 

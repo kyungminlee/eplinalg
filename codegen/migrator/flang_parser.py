@@ -18,53 +18,15 @@ import functools
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass, field
 from pathlib import Path
 
-
-@dataclass
-class TypeDecl:
-    """A type declaration found by Flang."""
-    type_spec: str          # e.g., 'DoublePrecision', 'Real', 'Complex'
-    kind_value: str | None  # e.g., '16' for COMPLEX*16, None for plain REAL
-    names: list[str]        # declared entity names
-
-
-@dataclass
-class RoutineDef:
-    """A subroutine or function definition."""
-    kind: str               # 'subroutine' or 'function'
-    name: str
-
-
-@dataclass
-class CallSite:
-    """A CALL statement or function reference."""
-    name: str               # called routine name
-
-
-@dataclass
-class UseStmtInfo:
-    """Information about a USE statement."""
-    module_name: str
+from .parse_facts import ParseTreeFacts, RoutineDef, TypeDecl
 
 
 # The Flang parse-tree dump emits ``Name = 'IDENT'`` markers on
 # almost every interesting line; the same regex is searched at nine
 # call sites in this module. Hoist once.
 _NAME_RE = re.compile(r"Name\s*=\s*'(\w+)'")
-
-
-@dataclass
-class ParseTreeFacts:
-    """All facts extracted from a Flang parse tree."""
-    type_decls: list[TypeDecl] = field(default_factory=list)
-    routine_defs: list[RoutineDef] = field(default_factory=list)
-    call_sites: list[CallSite] = field(default_factory=list)
-    external_names: list[str] = field(default_factory=list)
-    real_literals: list[str] = field(default_factory=list)
-    variable_types: dict[str, str] = field(default_factory=dict)
-    use_stmt_ranges: list[UseStmtInfo] = field(default_factory=list)
 
 
 @functools.cache
@@ -145,20 +107,19 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
             if not m and i + 1 < len(lines):
                 m = _NAME_RE.search(lines[i + 1])
             if m:
-                mod_name = m.group(1).upper()
-                facts.use_stmt_ranges.append(UseStmtInfo(mod_name))
+                facts.use_modules.add(m.group(1).upper())
 
         # --- Call statement ---
         elif 'CallStmt' in line:
             name = _extract_procedure_name(lines, i)
             if name:
-                facts.call_sites.append(CallSite(name))
+                facts.call_sites.append(name)
 
         # --- Function reference (not inside CallStmt) ---
         elif 'FunctionReference -> Call' in line and 'CallStmt' not in line:
             name = _extract_procedure_name(lines, i)
             if name:
-                facts.call_sites.append(CallSite(name))
+                facts.call_sites.append(name)
 
         # --- External declaration ---
         elif 'ExternalStmt' in line:
@@ -181,16 +142,16 @@ def parse_tree_facts(tree_text: str) -> ParseTreeFacts:
     # Also scan for all ProcedureDesignator names (function references
     # that appear as sub-expressions, like DCONJG, LSAME, etc.).
     # Use a set for O(1) duplicate detection — the previous
-    # ``any(cs.name == name ...)`` scan was O(N) per ProcedureDesignator,
+    # ``any(...)`` scan over the list was O(N) per ProcedureDesignator,
     # quadratic in total over the parse tree.
-    seen_call_names = {cs.name for cs in facts.call_sites}
+    seen_call_names = set(facts.call_sites)
     for line in lines:
         if 'ProcedureDesignator -> Name' in line:
             m = _NAME_RE.search(line)
             if m:
                 name = m.group(1).upper()
                 if name not in seen_call_names:
-                    facts.call_sites.append(CallSite(name))
+                    facts.call_sites.append(name)
                     seen_call_names.add(name)
 
     return facts

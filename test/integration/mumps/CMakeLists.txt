@@ -274,7 +274,7 @@ endif()
 add_library(mumps_test_common STATIC
     ../common/prec_kinds.f90
     ../common/compare.f90
-    common/prec_report.f90
+    ../common/prec_report.F90
     common/test_data_mumps.f90
     common/ref_quad_lapack_solve.f90
 )
@@ -284,7 +284,14 @@ set_target_properties(mumps_test_common PROPERTIES
 target_include_directories(mumps_test_common PUBLIC
     $<BUILD_INTERFACE:${_mp_moddir}>
 )
-# prec_report.f90 does ``use mpi`` (to confine reporting to the host rank
+# MPI reporter with deferred exit status: report_finalize only closes
+# the JSON; drivers run MPI_FINALIZE and then report_check_status().
+# The deferred configuration references no MPI collective, so the _seq
+# variant stays linkable against libmpiseq's stubs — see
+# tests/common/prec_report.F90 for the variant matrix.
+target_compile_definitions(mumps_test_common PRIVATE
+    PREC_REPORT_MPI PREC_REPORT_DEFERRED_STATUS)
+# prec_report.F90 does ``use mpi`` (to confine reporting to the host rank
 # under mpiexec -n N). It needs only mpi.mod at COMPILE time — the actual
 # MPI_COMM_RANK symbol is resolved when the test executable links, against
 # MPI::MPI_Fortran (plain variant) or libmpiseq (_seq variant). So pull the
@@ -299,7 +306,12 @@ add_fypp_source(_mumps_wrapper_src
     ${_wrapper_dir}/target_mumps.fypp
     ${CMAKE_CURRENT_SOURCE_DIR}/common
 )
-add_library(mumps_test_target STATIC ${_mumps_wrapper_src})
+# mumps_lifecycle rides in the same library: it USEs target_mumps, and
+# cmake's Fortran scanner orders the module compilation within the target.
+add_library(mumps_test_target STATIC
+    ${_mumps_wrapper_src}
+    common/mumps_lifecycle.f90
+)
 set_target_properties(mumps_test_target PROPERTIES
     Fortran_MODULE_DIRECTORY "${_mp_moddir}"
 )
@@ -678,14 +690,20 @@ function(_mumps_attach_link_group tgt variant want_c)
     endif()
 endfunction()
 
+# Maps a _mumps_test_variants key to its target-name suffix: the
+# ``plain`` key contributes no suffix, every other key is its own.
+function(_mumps_variant_suffix out_var vkey)
+    if(vkey STREQUAL "plain")
+        set(${out_var} "" PARENT_SCOPE)
+    else()
+        set(${out_var} "${vkey}" PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(add_mumps_fortran_test test_src)
     get_filename_component(name ${test_src} NAME_WE)
     foreach(_vkey IN LISTS _mumps_test_variants)
-        if(_vkey STREQUAL "plain")
-            set(variant "")
-        else()
-            set(variant "${_vkey}")
-        endif()
+        _mumps_variant_suffix(variant "${_vkey}")
         # PT-Scotch (ICNTL(28)=2/ICNTL(29)=1) is distributed, real-MPI-only
         # analysis: the libptscotch increment is absent from the libseq
         # column, so the *_ptscotch_analysis drivers cannot link (let alone
@@ -722,11 +740,7 @@ function(add_mumps_c_test test_src)
     get_filename_component(name ${test_src} NAME_WE)
     string(TOUPPER "${TARGET_NAME}" _ttn_upper)
     foreach(_vkey IN LISTS _mumps_test_variants)
-        if(_vkey STREQUAL "plain")
-            set(variant "")
-        else()
-            set(variant "${_vkey}")
-        endif()
+        _mumps_variant_suffix(variant "${_vkey}")
         # Seq-only: the *_noinit drivers prove a plain libmpiseq consumer
         # solves without MPI_Init or the per-target MPI-handle registration —
         # a contract that only holds under the ``_seq`` variant. Mirrors the
@@ -761,6 +775,50 @@ function(add_mumps_c_test test_src)
             "TEST_TARGET_NAME=\"${TARGET_NAME}\""
             "TEST_TARGET_${_ttn_upper}"
         )
+        _mumps_register_test_variant(${tgt} "${variant}")
+    endforeach()
+endfunction()
+
+# Registers one genuine (unmigrated d/z/s/c) solve test per link variant.
+# The genuine executables link the disjoint genuine archive groups rather
+# than the migrated _mumps_link_group_archives, so they bypass
+# _mumps_attach_link_group: the plain variant resolves the circular
+# static refs with LINK_GROUP RESCAN, while _seq swaps the parallel
+# stack for libmpiseq via an explicit --start/--end-group of raw
+# $<TARGET_FILE:> archives. group_var / group_seq_var name (not
+# dereference) the list variables so both stay readable at the call site.
+function(_mumps_add_genuine_test name src group_var group_seq_var
+         want_c use_fortran_linker)
+    foreach(_vkey IN LISTS _mumps_test_variants)
+        _mumps_variant_suffix(variant "${_vkey}")
+        set(tgt ${name}${variant})
+        add_executable(${tgt} ${src})
+        if(use_fortran_linker)
+            # Fortran linker: the genuine bridges pull gfortran-LTO
+            # bitcode from libdmumps/libzmumps, exactly like the
+            # migrated C tests (see add_mumps_c_test).
+            set_target_properties(${tgt} PROPERTIES LINKER_LANGUAGE Fortran)
+        endif()
+        target_link_options(${tgt} PRIVATE -fno-lto)
+        # Upstream dmumps_c.h / zmumps_c.h / dmumps_struc.h / mumps_c_types.h.
+        target_include_directories(${tgt} PRIVATE ${_MUMPS_C_INC})
+        if(variant STREQUAL "_seq")
+            add_dependencies(${tgt} ${${group_seq_var}} mpiseq)
+            target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
+            foreach(_arc IN LISTS ${group_seq_var})
+                target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
+            endforeach()
+            target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:mpiseq>)
+            target_link_libraries(${tgt} PRIVATE "-Wl,--end-group")
+            foreach(_arc IN LISTS ${group_seq_var})
+                target_include_directories(${tgt} PRIVATE
+                    $<TARGET_PROPERTY:${_arc},INTERFACE_INCLUDE_DIRECTORIES>)
+            endforeach()
+        else()
+            target_link_libraries(${tgt} PRIVATE
+                "$<LINK_GROUP:RESCAN,${${group_var}}>")
+        endif()
+        _mumps_apply_link_variant(${tgt} "${variant}" ${want_c})
         _mumps_register_test_variant(${tgt} "${variant}")
     endforeach()
 endfunction()
@@ -931,40 +989,8 @@ if(TARGET dzmumps
         endif()
     endforeach()
 
-    foreach(_vkey IN LISTS _mumps_test_variants)
-        if(_vkey STREQUAL "plain")
-            set(variant "")
-        else()
-            set(variant "${_vkey}")
-        endif()
-        set(tgt test_genuine_dz_solve${variant})
-        add_executable(${tgt} ${_genuine_solve_src})
-        # Fortran linker + no-LTO: the genuine bridges pull gfortran-LTO
-        # bitcode from libdmumps/libzmumps, exactly like the migrated
-        # C tests (see add_mumps_c_test).
-        set_target_properties(${tgt} PROPERTIES LINKER_LANGUAGE Fortran)
-        target_link_options(${tgt} PRIVATE -fno-lto)
-        # Upstream dmumps_c.h / zmumps_c.h / mumps_c_types.h.
-        target_include_directories(${tgt} PRIVATE ${_MUMPS_C_INC})
-        if(variant STREQUAL "_seq")
-            add_dependencies(${tgt} ${_genuine_group_seq} mpiseq)
-            target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
-            foreach(_arc IN LISTS _genuine_group_seq)
-                target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
-            endforeach()
-            target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:mpiseq>)
-            target_link_libraries(${tgt} PRIVATE "-Wl,--end-group")
-            foreach(_arc IN LISTS _genuine_group_seq mpiseq)
-                target_include_directories(${tgt} PRIVATE
-                    $<TARGET_PROPERTY:${_arc},INTERFACE_INCLUDE_DIRECTORIES>)
-            endforeach()
-        else()
-            target_link_libraries(${tgt} PRIVATE
-                "$<LINK_GROUP:RESCAN,${_genuine_group}>")
-        endif()
-        _mumps_apply_link_variant(${tgt} "${variant}" TRUE)
-        _mumps_register_test_variant(${tgt} "${variant}")
-    endforeach()
+    _mumps_add_genuine_test(test_genuine_dz_solve ${_genuine_solve_src}
+        _genuine_group _genuine_group_seq TRUE TRUE)
 
     # ── genuine Fortran-API solve test ───────────────────────────────
     # Companion to the C-bridge test above: calls the genuine DMUMPS /
@@ -978,36 +1004,8 @@ if(TARGET dzmumps
     set(_genuine_solve_f_src
         ${CMAKE_CURRENT_SOURCE_DIR}/fortran/genuine/test_genuine_dz_solve_f.F90)
     if(EXISTS ${_genuine_solve_f_src})
-        foreach(_vkey IN LISTS _mumps_test_variants)
-            if(_vkey STREQUAL "plain")
-                set(variant "")
-            else()
-                set(variant "${_vkey}")
-            endif()
-            set(tgt test_genuine_dz_solve_f${variant})
-            add_executable(${tgt} ${_genuine_solve_f_src})
-            target_link_options(${tgt} PRIVATE -fno-lto)
-            # dmumps_struc.h / zmumps_struc.h live in the upstream include.
-            target_include_directories(${tgt} PRIVATE ${_MUMPS_C_INC})
-            if(variant STREQUAL "_seq")
-                add_dependencies(${tgt} ${_genuine_group_seq} mpiseq)
-                target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
-                foreach(_arc IN LISTS _genuine_group_seq)
-                    target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
-                endforeach()
-                target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:mpiseq>)
-                target_link_libraries(${tgt} PRIVATE "-Wl,--end-group")
-                foreach(_arc IN LISTS _genuine_group_seq mpiseq)
-                    target_include_directories(${tgt} PRIVATE
-                        $<TARGET_PROPERTY:${_arc},INTERFACE_INCLUDE_DIRECTORIES>)
-                endforeach()
-            else()
-                target_link_libraries(${tgt} PRIVATE
-                    "$<LINK_GROUP:RESCAN,${_genuine_group}>")
-            endif()
-            _mumps_apply_link_variant(${tgt} "${variant}" FALSE)
-            _mumps_register_test_variant(${tgt} "${variant}")
-        endforeach()
+        _mumps_add_genuine_test(test_genuine_dz_solve_f ${_genuine_solve_f_src}
+            _genuine_group _genuine_group_seq FALSE FALSE)
     endif()
 
     # ── genuine ALL-precision C-bridge solve test (s + c + d + z) ─────
@@ -1028,35 +1026,7 @@ if(TARGET dzmumps
         # groups; the shared common + parallel stack are already listed there.
         set(_genuine_scdz_group     scmumps ${_genuine_group})
         set(_genuine_scdz_group_seq scmumps ${_genuine_group_seq})
-        foreach(_vkey IN LISTS _mumps_test_variants)
-            if(_vkey STREQUAL "plain")
-                set(variant "")
-            else()
-                set(variant "${_vkey}")
-            endif()
-            set(tgt test_genuine_scdz_solve${variant})
-            add_executable(${tgt} ${_genuine_scdz_src})
-            set_target_properties(${tgt} PROPERTIES LINKER_LANGUAGE Fortran)
-            target_link_options(${tgt} PRIVATE -fno-lto)
-            target_include_directories(${tgt} PRIVATE ${_MUMPS_C_INC})
-            if(variant STREQUAL "_seq")
-                add_dependencies(${tgt} ${_genuine_scdz_group_seq} mpiseq)
-                target_link_libraries(${tgt} PRIVATE "-Wl,--start-group")
-                foreach(_arc IN LISTS _genuine_scdz_group_seq)
-                    target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:${_arc}>)
-                endforeach()
-                target_link_libraries(${tgt} PRIVATE $<TARGET_FILE:mpiseq>)
-                target_link_libraries(${tgt} PRIVATE "-Wl,--end-group")
-                foreach(_arc IN LISTS _genuine_scdz_group_seq mpiseq)
-                    target_include_directories(${tgt} PRIVATE
-                        $<TARGET_PROPERTY:${_arc},INTERFACE_INCLUDE_DIRECTORIES>)
-                endforeach()
-            else()
-                target_link_libraries(${tgt} PRIVATE
-                    "$<LINK_GROUP:RESCAN,${_genuine_scdz_group}>")
-            endif()
-            _mumps_apply_link_variant(${tgt} "${variant}" TRUE)
-            _mumps_register_test_variant(${tgt} "${variant}")
-        endforeach()
+        _mumps_add_genuine_test(test_genuine_scdz_solve ${_genuine_scdz_src}
+            _genuine_scdz_group _genuine_scdz_group_seq TRUE TRUE)
     endif()
 endif()

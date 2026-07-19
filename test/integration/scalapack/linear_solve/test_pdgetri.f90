@@ -6,8 +6,9 @@ program test_pdgetri
     use ref_quad_lapack,  only: dgetrf, dgetri
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix, &
+                                set_local_from_global
     use target_scalapack, only: target_name, target_eps, &
                                 target_pdgetrf, target_pdgetri
     implicit none
@@ -17,7 +18,6 @@ program test_pdgetri
     integer :: i, n, info, info_ref, lwork, liwork, k
     integer :: locm_a, locn_a, lld_a
     integer :: desca(9)
-    integer :: owner_r, owner_c, il, jl
     real(ep), allocatable :: A_loc(:,:), A_glob(:,:), A_got(:,:), A_ref(:,:)
     real(ep), allocatable :: work(:), work_ref(:)
     integer,  allocatable :: ipiv_got(:), ipiv_ref(:), iwork(:)
@@ -33,11 +33,7 @@ program test_pdgetri
         ! Diagonal boost for conditioning.
         do k = 1, n
             A_glob(k, k) = A_glob(k, k) + real(n, ep)
-            call g2l(k, mb, my_nprow, owner_r, il)
-            call g2l(k, nb, my_npcol, owner_c, jl)
-            if (owner_r == my_row .and. owner_c == my_col) then
-                A_loc(il, jl) = A_loc(il, jl) + real(n, ep)
-            end if
+            call set_local_from_global(k, k, A_glob(k, k), mb, nb, A_loc)
         end do
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)

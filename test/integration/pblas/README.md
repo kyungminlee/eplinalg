@@ -68,17 +68,21 @@ gracefully otherwise.
 tests/pblas/
 ├── README.md                     ← you are here
 ├── CMakeLists.txt                ← gated build, registers ctest entries
-├── common/
+├── ../common/                    ← shared harness modules (compiled per
+│   │                               suite into pblas' own moddir)
 │   ├── prec_kinds.f90            ← ep=16, dp=8 (shared with tests/blas)
 │   ├── compare.f90               ← rel-error helpers (shared)
 │   ├── test_data.f90             ← seeded RNG (shared — same seed → same
 │   │                               data on every rank, no scatter needed)
-│   ├── prec_report.f90           ← rank-0-only JSON writer
-│   ├── ref_quad_blas.f90         ← subset of serial quad-BLAS interfaces
-│   ├── pblas_grid.f90            ← BLACS init/exit + grid shape picker
+│   ├── prec_report.F90           ← rank-0-only JSON writer (built with
+│   │                               PREC_REPORT_MPI here)
+│   ├── ref_quad_blas.f90         ← serial quad-BLAS interfaces
+│   ├── pblas_grid.F90            ← BLACS init/exit + grid shape picker
 │   │                               + inline numroc / descinit / g2l
-│   └── pblas_distrib.f90         ← block-cyclic scatter (mirror → local)
-│                                   + gather (local → rank-0 global)
+│   └── pblas_distrib.fypp        ← block-cyclic scatter (mirror → local)
+│                                   + gather (local → rank-0 global);
+│                                   fypp: real + complex from one body
+├── common/target_pblas_body.fypp ← shared wrapper template body
 ├── target_kind10/target_pblas.f90
 ├── target_kind16/target_pblas.f90
 ├── target_multifloats/target_pblas.f90
@@ -225,7 +229,7 @@ distributed algorithm differs from serial BLAS only in associativity.
 
 For a PBLAS routine `pxroutine` already wrapped in
 `common/target_pblas_body.fypp` and declared in
-`common/ref_quad_blas.f90`:
+`../common/ref_quad_blas.f90`:
 
 1. Drop a new program into the appropriate `level{1,2,3}/` directory
    (one of the existing `test_pd*.f90` files makes a suitable
@@ -235,7 +239,7 @@ For a PBLAS routine `pxroutine` already wrapped in
    needed.
 
 For a routine **not** yet declared:
-1. Add an explicit interface to `common/ref_quad_blas.f90` for the
+1. Add an explicit interface to `../common/ref_quad_blas.f90` for the
    corresponding serial reference routine.
 2. Add an abstract interface and a concrete `target_p<routine>`
    wrapper inside `common/target_pblas_body.fypp` (one fypp file

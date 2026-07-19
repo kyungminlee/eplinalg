@@ -6,8 +6,10 @@ appropriate migration.
 """
 
 import sys
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field
 from pathlib import Path
+
+from .cli_common import recipe_project_root
 
 try:
     import yaml
@@ -55,7 +57,11 @@ class RecipeConfig:
     # the engine's ``_strip_roundup_lwork`` post-pass elides every
     # call site — see ``codegen/recipes/lapack.yaml``); PTZBLAS pulls in
     # ``TOOLS/zzdotc.f`` and ``TOOLS/zzdotu.f`` without claiming
-    # the rest of ScaLAPACK's TOOLS/.
+    # the rest of ScaLAPACK's TOOLS/. The YAML-only key
+    # ``extra_migrate_dirs`` is the directory-level spelling — the
+    # loader expands each listed directory (minus its ``exclude``
+    # stems) into this field, so downstream consumers see exactly the
+    # per-file list a hand enumeration would produce.
     extra_migrate_files: list[Path] = field(default_factory=list)
     # Additional C source directories to *migrate* (not just scan) in
     # the same generic-rename-map pass as ``source_dir``. Used by PBLAS
@@ -223,7 +229,51 @@ _LOADER_ONLY_FIELDS: frozenset[str] = frozenset({
 })
 _KNOWN_RECIPE_KEYS: frozenset[str] = (
     frozenset(RecipeConfig.__dataclass_fields__) - _LOADER_ONLY_FIELDS
-) | frozenset({'keep_kind_manifest'})
+) | frozenset({'keep_kind_manifest', 'extra_migrate_dirs'})
+
+# Recipe keys load_recipe() normalizes explicitly (path resolution, case
+# folding, manifest reads, per-entry parsing). Every other key in
+# _KNOWN_RECIPE_KEYS is populated generically by _passthrough_fields(),
+# so a new no-normalization RecipeConfig field is picked up on load
+# automatically — previously each one needed a hand-written constructor
+# line, and a forgotten line silently dropped the key to its default.
+_NORMALIZED_KEYS: frozenset[str] = frozenset({
+    'library', 'language', 'source_dir', 'extensions', 'skip_files',
+    'copy_files', 'force_common', 'prefer_source', 'depends',
+    'extra_symbol_dirs', 'extra_migrate_files', 'extra_c_dirs',
+    'extra_fortran_dirs', 'module_renames', 'extra_renames',
+    'call_arg_casts', 'expected_divergences', 'privatize_symbols',
+    'keep_kind_manifest', 'extra_migrate_dirs',
+})
+
+
+def _passthrough_fields(data: dict) -> dict:
+    """Constructor kwargs for the no-normalization recipe keys.
+
+    Values are coerced through the field's declared container (list /
+    dict / bool) so downstream code owns an independent copy; a key
+    present with a null YAML value (``patches:``) keeps the field
+    default, matching the ``data.get(..., default)`` lines this
+    replaces.
+    """
+    kwargs: dict = {}
+    fields = RecipeConfig.__dataclass_fields__
+    for name in _KNOWN_RECIPE_KEYS - _NORMALIZED_KEYS:
+        value = data.get(name)
+        if value is None:
+            continue
+        fdef = fields[name]
+        default = (fdef.default_factory()
+                   if fdef.default_factory is not MISSING else fdef.default)
+        if isinstance(default, bool):
+            kwargs[name] = bool(value)
+        elif isinstance(default, list):
+            kwargs[name] = list(value)
+        elif isinstance(default, dict):
+            kwargs[name] = dict(value)
+        else:
+            kwargs[name] = value
+    return kwargs
 
 
 def _parse_call_arg_casts(
@@ -261,7 +311,7 @@ def load_recipe(recipe_path: Path,
 
     if project_root is None:
         # codegen/recipes/*.yaml → project root is three levels up
-        project_root = recipe_path.parent.parent.parent
+        project_root = recipe_project_root(recipe_path)
 
     with open(recipe_path) as f:
         data = yaml.safe_load(f)
@@ -287,6 +337,32 @@ def load_recipe(recipe_path: Path,
         )
 
     source_dir = project_root / data['source_dir']
+    extensions = [e.lower() for e in data.get('extensions', ['.f', '.f90'])]
+
+    # Expand ``extra_migrate_dirs`` (directory-level spelling of
+    # ``extra_migrate_files``) into a flat per-file list. Each entry is
+    # either a project-root-relative directory path or a mapping
+    # ``{dir: <path>, exclude: [<stem>, ...]}``; every file in the
+    # directory whose extension matches the recipe ``extensions`` is
+    # migrated except the excluded stems (matched case-insensitively,
+    # without extension). Non-recursive, mirroring the pipeline's own
+    # directory walk. Expansion happens at load time so every consumer
+    # (migration pipeline, standard-precision sibling collector, symbol
+    # classifier) sees the exact list a hand enumeration would produce.
+    extra_migrate = [project_root / p
+                     for p in (data.get('extra_migrate_files') or [])]
+    for entry in data.get('extra_migrate_dirs') or []:
+        if isinstance(entry, dict):
+            entry_dir = project_root / entry['dir']
+            excluded = {str(s).upper() for s in (entry.get('exclude') or [])}
+        else:
+            entry_dir = project_root / entry
+            excluded = set()
+        extra_migrate.extend(sorted(
+            p for p in entry_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in extensions
+            and p.stem.upper() not in excluded
+        ))
 
     skip = set(s.upper() for s in data.get('skip_files', []))
     copy = set(s.upper() for s in data.get('copy_files', []))
@@ -335,21 +411,14 @@ def load_recipe(recipe_path: Path,
         library=data['library'],
         language=data['language'],
         source_dir=source_dir,
-        extensions=[e.lower() for e in data.get('extensions', ['.f', '.f90'])],
+        extensions=extensions,
         skip_files=skip,
         copy_files=copy,
         force_common=force_common,
         prefer_source=prefer,
-        patches=data.get('patches', []),
         depends=depends,
         extra_symbol_dirs=extra_symbol_dirs,
-        extra_migrate_files=[project_root / p
-                             for p in (data.get('extra_migrate_files') or [])],
-        c_return_types=list(data.get('c_return_types', [])),
-        c_type_aliases=list(data.get('c_type_aliases', [])),
-        c_pointer_cast_aliases=list(data.get('c_pointer_cast_aliases', [])),
-        header_patches=list(data.get('header_patches', [])),
-        overrides=dict(data.get('overrides') or {}),
+        extra_migrate_files=extra_migrate,
         recipe_dir=recipe_path.parent,
         extra_c_dirs=[project_root / d
                       for d in (data.get('extra_c_dirs') or [])],
@@ -368,8 +437,6 @@ def load_recipe(recipe_path: Path,
         expected_divergences={
             str(s).upper() for s in (data.get('expected_divergences') or [])
         },
-        defer_all_divergences=bool(data.get('defer_all_divergences', False)),
-        asymmetric_patches=list(data.get('asymmetric_patches') or []),
-        one_sided_cleanup=list(data.get('one_sided_cleanup') or []),
         privatize_symbols=frozenset(privatize_names),
+        **_passthrough_fields(data),
     )

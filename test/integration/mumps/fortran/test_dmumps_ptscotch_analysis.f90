@@ -25,12 +25,11 @@
 
 program test_dmumps_ptscotch_analysis
     use prec_kinds,            only: ep
-    use prec_report,           only: report_init, report_case, report_finalize, report_check_status
-    use compare,               only: max_rel_err_vec
+    use prec_report,           only: report_init, report_finalize, report_check_status
     use test_data_mumps,       only: gen_sparse_spd_problem
-    use target_mumps,          only: target_name, target_eps, &
-                                     dmumps_struc, target_qmumps, &
-                                     q2t_r, t2q_r
+    use target_mumps,          only: target_name, dmumps_struc, q2t_r
+    use mumps_lifecycle,       only: mumps_begin, mumps_solve6, &
+                                     mumps_check_solution, mumps_end
     use mpi
     implicit none
 
@@ -41,7 +40,6 @@ program test_dmumps_ptscotch_analysis
     integer,  allocatable :: irn(:), jcn(:)
     real(ep), allocatable :: A_trip(:)
     type(dmumps_struc)    :: id
-    real(ep)              :: tol
 
     call MPI_INIT(ierr)
     call MPI_COMM_RANK(MPI_COMM_WORLD, myid, ierr)
@@ -54,7 +52,6 @@ program test_dmumps_ptscotch_analysis
     ! matrix with no duplicated entries.
     call gen_sparse_spd_problem(nx, ny, n, x_true, b, irn, jcn, A_trip, nz, &
                                 seed = 7101)
-    tol = 16.0_ep * real(n, ep)**3 * target_eps
 
     lo     = (myid * nz) / nprocs + 1
     hi     = ((myid + 1) * nz) / nprocs
@@ -78,17 +75,8 @@ contains
     subroutine run_case(label, parallel_ana)
         character(len=*), intent(in) :: label
         logical,          intent(in) :: parallel_ana
-        real(ep), allocatable :: x_solve(:)
-        real(ep)              :: err
 
-        id%COMM = MPI_COMM_WORLD;  id%PAR = 1;  id%SYM = 0;  id%JOB = -1
-        call target_qmumps(id)
-        if (id%INFOG(1) < 0) then
-            write(*, '(3a,i0)') 'JOB=-1 (', label, ') failed, INFOG(1)=', id%INFOG(1)
-            error stop 1
-        end if
-
-        id%ICNTL(1) = -1; id%ICNTL(2) = -1; id%ICNTL(3) = -1; id%ICNTL(4) = 0
+        call mumps_begin(id, MPI_COMM_WORLD, 0, ' ('//label//')')
         id%ICNTL(18) = 3                      ! distributed assembled entry
         if (parallel_ana) then
             id%ICNTL(28) = 2                  ! parallel analysis
@@ -108,25 +96,11 @@ contains
             allocate(id%RHS(n));   id%RHS = q2t_r(b)
         end if
 
-        id%JOB = 6
-        call target_qmumps(id)
-        if (id%INFOG(1) < 0) then
-            write(*, '(3a,i0,a,i0)') 'JOB=6 (', label, ') failed, INFOG(1)=', &
-                id%INFOG(1), ', INFOG(2)=', id%INFOG(2)
-            error stop 1
-        end if
+        call mumps_solve6(id, ' ('//label//')')
 
-        if (is_host) then
-            allocate(x_solve(n));  x_solve = t2q_r(id%RHS)
-            err = max_rel_err_vec(x_solve, x_true)
-            call report_case(label, err, tol)
-            deallocate(id%RHS, x_solve)
-            nullify(id%RHS)
-        end if
+        if (is_host) call mumps_check_solution(id, x_true, label)
 
-        deallocate(id%IRN_loc, id%JCN_loc, id%A_loc)
-        nullify(id%IRN_loc, id%JCN_loc, id%A_loc)
-        id%JOB = -2;  call target_qmumps(id)
+        call mumps_end(id)
     end subroutine run_case
 
 end program test_dmumps_ptscotch_analysis

@@ -5,9 +5,9 @@ program test_pdtrsv
     use pblas_ref_quad_blas, only: dtrsv
     use pblas_grid,    only: grid_init, grid_exit, my_rank, my_context, &
                              my_nprow, my_npcol, my_row, my_col, &
-                             numroc_local, descinit_local, g2l
+                             numroc_local, descinit_local
     use pblas_distrib, only: gen_distrib_matrix, gen_distrib_vector, &
-                             gather_vector
+                             gather_vector, set_local_from_global
     use target_pblas,  only: target_name, target_eps, target_pdtrsv
     implicit none
 
@@ -20,7 +20,6 @@ program test_pdtrsv
     integer :: combo
     integer :: locm_a, locn_a, locn_x, lld_a, lld_x
     integer :: desca(9), descx(9)
-    integer :: owner_r, owner_c, il, jl
     character(len=1) :: uplo, trans, diag
     real(ep) :: bump
     real(ep), allocatable :: A_loc(:,:), x_loc(:)
@@ -51,11 +50,7 @@ program test_pdtrsv
                     bump = real(n, ep)
                     do j = 1, n
                         A_glob(j, j) = A_glob(j, j) + bump
-                        call g2l(j, mb, my_nprow, owner_r, il)
-                        call g2l(j, mb, my_npcol, owner_c, jl)
-                        if (owner_r == my_row .and. owner_c == my_col) then
-                            A_loc(il, jl) = A_loc(il, jl) + bump
-                        end if
+                        call set_local_from_global(j, j, A_glob(j, j), mb, mb, A_loc)
                     end do
 
                     locm_a = numroc_local(n, mb, my_row, 0, my_nprow)
