@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Migrator unit tests (fast) ───────────────────────────────────
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Run unit tests
+        run: uv run pytest test/unit -q
+
+  # ── Stage + library build, one representative slot ───────────────
+  # kind10 + gfortran-15 + Intel MPI, libraries only (no test
+  # harness, no ctest): the per-push signal is "the migrator stages
+  # and the staged stack compiles". Intel MPI because it is the
+  # canonical MPI for the migrated stack (the libmpiseq path is
+  # written against Intel MPI's handle ABI). Correctness testing and
+  # the full target x compiler x MPI matrix stay in release.yml.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Extract vendored sources
+        run: |
+          cd extern
+          [ -d lapack-3.12.1 ] || tar xzf lapack-3.12.1.tar.gz
+          [ -d scalapack-2.2.3 ] || tar xzf scalapack-2.2.3.tar.gz
+
+      - name: Install GCC (gfortran)
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y gcc-15 g++-15 gfortran-15
+
+      - name: Install Intel MPI
+        run: |
+          wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+            | sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update
+          sudo apt-get install -y intel-oneapi-mpi-devel
+
+      - name: Setup Intel oneAPI environment
+        run: |
+          env | sort > /tmp/env.before
+          source /opt/intel/oneapi/setvars.sh > /dev/null
+          env | sort > /tmp/env.after
+          comm -13 /tmp/env.before /tmp/env.after >> "$GITHUB_ENV"
+
+      - name: Setup Intel MPI compiler shims
+        run: |
+          {
+            echo "I_MPI_F90=gfortran-15"
+            echo "I_MPI_CC=gcc-15"
+            echo "I_MPI_CXX=g++-15"
+          } >> "$GITHUB_ENV"
+
+      - name: Stage kind10
+        run: |
+          uv run python -m migrator stage \
+            ${{ github.workspace }}/staging \
+            --target kind10
+
+      - name: Configure
+        run: |
+          cmake -S staging -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_Fortran_COMPILER=gfortran-15 \
+            -DCMAKE_C_COMPILER=gcc-15 \
+            -DCMAKE_CXX_COMPILER=g++-15 \
+            -DMIGRATOR_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
