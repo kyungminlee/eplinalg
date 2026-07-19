@@ -7,9 +7,10 @@ program test_zmumps_jobs
     use prec_report,           only: report_init, report_case, report_finalize, report_check_status
     use compare,               only: max_rel_err_vec_z
     use test_data_mumps,       only: gen_dense_problem_z, dense_to_triplet_z
-    use target_mumps,          only: target_name, target_eps, &
-                                     zmumps_struc, target_xmumps, &
-                                     q2t_c, t2q_c
+    use target_mumps,          only: target_name, &
+                                     zmumps_struc, target_xmumps, t2q_c
+    use mumps_lifecycle,       only: mumps_begin, mumps_load_triplet, &
+                                     mumps_end, mumps_default_tol
     use mpi
     implicit none
 
@@ -26,7 +27,7 @@ program test_zmumps_jobs
 
     call gen_dense_problem_z(n, A, x_true, b, seed = 21001)
     call dense_to_triplet_z (A, irn, jcn, A_trip, nz)
-    tol = 16.0_ep * real(n, ep)**3 * target_eps
+    tol = mumps_default_tol(n)
 
     call mumps_solve_jobs(jobs = [6], n=n, nz=nz, irn=irn, jcn=jcn, &
                           A_trip=A_trip, b=b, x_solve=x_combined)
@@ -58,16 +59,8 @@ contains
         type(zmumps_struc) :: idl
         integer :: k
 
-        idl%COMM = MPI_COMM_WORLD;  idl%PAR = 1;  idl%SYM = 0;  idl%JOB = -1
-        call target_xmumps(idl)
-        idl%ICNTL(1) = -1; idl%ICNTL(2) = -1; idl%ICNTL(3) = -1; idl%ICNTL(4) = 0
-
-        idl%N   = n
-        idl%NNZ = int(nz, kind=8)
-        allocate(idl%IRN(nz));  idl%IRN = irn
-        allocate(idl%JCN(nz));  idl%JCN = jcn
-        allocate(idl%A(nz));    idl%A   = q2t_c(A_trip)
-        allocate(idl%RHS(n));   idl%RHS = q2t_c(b)
+        call mumps_begin(idl, MPI_COMM_WORLD, 0)
+        call mumps_load_triplet(idl, n, nz, irn, jcn, A_trip, b)
 
         do k = 1, size(jobs)
             idl%JOB = jobs(k)
@@ -82,10 +75,7 @@ contains
         allocate(x_solve(n))
         x_solve = t2q_c(idl%RHS)
 
-        deallocate(idl%IRN, idl%JCN, idl%A, idl%RHS)
-        nullify(idl%IRN, idl%JCN, idl%A, idl%RHS)
-        idl%JOB = -2
-        call target_xmumps(idl)
+        call mumps_end(idl)
     end subroutine mumps_solve_jobs
 
 end program test_zmumps_jobs

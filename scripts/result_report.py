@@ -18,7 +18,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from precision_report import fmt_digits, load_reports, order_targets
+from precision_report import (TARGET_ORDER, fmt_digits, load_reports,
+                              order_targets)
 
 
 LIBRARIES = ['BLAS', 'LAPACK', 'PBLAS', 'ScaLAPACK']
@@ -149,7 +150,7 @@ def main() -> int:
         by_routine[r['routine']][r['target']] = r
 
     targets = order_targets({r['target'] for r in reports}) \
-        if reports else ['kind4', 'kind8', 'kind10', 'kind16', 'multifloats']
+        if reports else list(TARGET_ORDER)
 
     out: list[str] = []
     out.append('# Per-routine precision results')

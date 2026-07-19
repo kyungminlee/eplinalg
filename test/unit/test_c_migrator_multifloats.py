@@ -16,13 +16,13 @@ import textwrap
 import pytest
 
 from migrator.target_mode import load_target
+from migrator.templates import build_sub_vars as _build_sub_vars
+from migrator.c.blacs import patch_bdef_header as _patch_bdef_header
 from migrator.c_migrator import (
-    _build_sub_vars,
     _apply_aliases_to_original,
     _apply_overrides,
     _build_rename_regex,
     _make_rename_substituter,
-    _patch_bdef_header,
     migrate_c_file_to_string,
 )
 

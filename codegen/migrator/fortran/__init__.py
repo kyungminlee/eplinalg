@@ -5,6 +5,7 @@ the migrator file-restructuring refactor. Layering is acyclic and bottom-up::
 
     lex  <-  per-line rewriter clusters  <-  form orchestrators
 
-``fortran_migrator.py`` remains the public facade and re-imports the moved
-names, so every existing caller keeps working unchanged.
+``fortran_migrator.py`` hosts only the top-level drivers that sequence
+these passes and imports just the names those drivers use; callers reach
+per-pass helpers through the owning submodule directly.
 """

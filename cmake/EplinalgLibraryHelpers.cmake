@@ -145,6 +145,29 @@ function(add_standard_c_library name src_dir)
 endfunction()
 
 
+# _eplinalg_manifest_sources(<lib> <dir> <out_common> <out_precision> [<out_dual>])
+#
+# Turn the relative source lists a staged manifest.cmake defines
+# (${lib}_COMMON_SOURCES, ${lib}_PRECISION_SOURCES and — when
+# <out_dual> is given — ${lib}_DUAL_INTERFACE_SOURCES) into
+# <dir>-prefixed paths. The caller include()s the manifest itself so
+# its other variables (e.g. ${lib}_LANGUAGE) stay in the caller's
+# scope; this helper only reads the source lists from that scope.
+function(_eplinalg_manifest_sources lib_name dir out_common out_precision)
+    set(_common "${${lib_name}_COMMON_SOURCES}")
+    list(TRANSFORM _common PREPEND "${dir}/")
+    set(${out_common} "${_common}" PARENT_SCOPE)
+    set(_precision "${${lib_name}_PRECISION_SOURCES}")
+    list(TRANSFORM _precision PREPEND "${dir}/")
+    set(${out_precision} "${_precision}" PARENT_SCOPE)
+    if(ARGC GREATER 4)
+        set(_dual "${${lib_name}_DUAL_INTERFACE_SOURCES}")
+        list(TRANSFORM _dual PREPEND "${dir}/")
+        set(${ARGV4} "${_dual}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+
 function(add_migrated_fortran_library lib_name)
     set(_dir ${CMAKE_CURRENT_SOURCE_DIR}/${lib_name})
     if(NOT EXISTS "${_dir}/manifest.cmake")
@@ -153,14 +176,7 @@ function(add_migrated_fortran_library lib_name)
     include(${_dir}/manifest.cmake)
 
     # Prefix source paths with library directory
-    set(_common "")
-    foreach(f ${${lib_name}_COMMON_SOURCES})
-        list(APPEND _common "${_dir}/${f}")
-    endforeach()
-    set(_precision "")
-    foreach(f ${${lib_name}_PRECISION_SOURCES})
-        list(APPEND _precision "${_dir}/${f}")
-    endforeach()
+    _eplinalg_manifest_sources(${lib_name} "${_dir}" _common _precision)
 
     # The precision target carries the full family-pair prefix (ey/qx/mw)
     # so the target name, the emitted archive filename and the installed
@@ -227,18 +243,7 @@ function(add_migrated_c_library lib_name)
     include(${_dir}/manifest.cmake)
 
     # Prefix source paths with library directory
-    set(_common "")
-    foreach(f ${${lib_name}_COMMON_SOURCES})
-        list(APPEND _common "${_dir}/${f}")
-    endforeach()
-    set(_precision "")
-    foreach(f ${${lib_name}_PRECISION_SOURCES})
-        list(APPEND _precision "${_dir}/${f}")
-    endforeach()
-    set(_dual "")
-    foreach(f ${${lib_name}_DUAL_INTERFACE_SOURCES})
-        list(APPEND _dual "${_dir}/${f}")
-    endforeach()
+    _eplinalg_manifest_sources(${lib_name} "${_dir}" _common _precision _dual)
 
     # Family-pair-prefixed target name, matching the archive filename and
     # package name (see add_migrated_fortran_library).

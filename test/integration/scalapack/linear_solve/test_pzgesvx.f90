@@ -6,8 +6,9 @@ program test_pzgesvx
     use ref_quad_lapack,   only: zgesv
     use pblas_grid,        only: grid_init, grid_exit, my_rank, my_context, &
                                  my_nprow, my_npcol, my_row, my_col, &
-                                 numroc_local, descinit_local, g2l
-    use pblas_distrib,     only: gen_distrib_matrix_z, gather_matrix_z
+                                 numroc_local, descinit_local
+    use pblas_distrib,     only: gen_distrib_matrix_z, gather_matrix_z, &
+                                 set_local_from_global_z
     use target_scalapack,  only: target_name, target_eps, target_pzgesvx
     implicit none
 
@@ -17,7 +18,6 @@ program test_pzgesvx
     integer :: i, n, info, info_ref, lwork, lrwork, k
     integer :: locm_a, locn_a, lld_a, locm_b, locn_b, lld_b
     integer :: desca(9), descaf(9), descb(9), descx(9)
-    integer :: owner_r, owner_c, il, jl
     complex(ep), allocatable :: A_loc(:,:), A_glob(:,:)
     complex(ep), allocatable :: B_loc(:,:), B_glob(:,:)
     complex(ep), allocatable :: AF_loc(:,:), X_loc(:,:), X_got(:,:)
@@ -40,11 +40,7 @@ program test_pzgesvx
 
         do k = 1, n
             A_glob(k, k) = A_glob(k, k) + cmplx(real(2 * n, ep), 0.0_ep, ep)
-            call g2l(k, mb, my_nprow, owner_r, il)
-            call g2l(k, nb, my_npcol, owner_c, jl)
-            if (owner_r == my_row .and. owner_c == my_col) then
-                A_loc(il, jl) = A_loc(il, jl) + cmplx(real(2 * n, ep), 0.0_ep, ep)
-            end if
+            call set_local_from_global_z(k, k, A_glob(k, k), mb, nb, A_loc)
         end do
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)

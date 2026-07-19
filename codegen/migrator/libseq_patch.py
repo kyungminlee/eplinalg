@@ -2,12 +2,12 @@
 
 Extracted verbatim from ``__main__.py`` (Cluster 3) as part of the migrator
 file-restructuring refactor. Behaviour is unchanged; ``cmd_stage`` imports
-``_patch_libseq_mpi_f`` from here.
+``patch_libseq_mpi_f`` from here.
 """
 from pathlib import Path
 
 
-def _patch_libseq_mpi_f(path: Path) -> None:
+def patch_libseq_mpi_f(path: Path) -> None:
     """Extend libseq's ``MUMPS_COPY`` with MPI_REAL16 / MPI_COMPLEX32
     cases so reductions on REAL(KIND=16) / COMPLEX(KIND=16) buffers
     dispatch correctly under our libmpiseq variant. Upstream's

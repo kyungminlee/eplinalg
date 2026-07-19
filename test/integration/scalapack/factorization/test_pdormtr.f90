@@ -6,8 +6,9 @@ program test_pdormtr
     use ref_quad_lapack,  only: dsytrd, dormtr
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix, &
+                                scatter_matrix
     use target_scalapack, only: target_name, target_eps, &
                                 target_pdsytrd, target_pdormtr
     implicit none
@@ -20,7 +21,6 @@ program test_pdormtr
     integer :: ic, n, mC, nC, info, info_ref, lwork
     integer :: locm_a, locn_a, lld_a, locm_c, locn_c, lld_c
     integer :: desca(9), descc(9)
-    integer :: ig, jg, owner_r, owner_c, il, jl
     real(ep), allocatable :: A_loc(:,:), A_glob(:,:), C_loc(:,:), C_glob(:,:)
     real(ep), allocatable :: A_sym(:,:), A_ref(:,:), C_ref(:,:), C_got(:,:)
     real(ep), allocatable :: d(:), e(:), tau(:), work(:)
@@ -47,16 +47,7 @@ program test_pdormtr
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)
         locn_a = numroc_local(n, nb, my_col, 0, my_npcol); lld_a = max(1, locm_a)
-        if (locm_a > 0 .and. locn_a > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) A_loc(il, jl) = A_sym(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix(n, n, mb, nb, A_sym, A_loc)
         locm_c = numroc_local(mC, mb, my_row, 0, my_nprow)
         locn_c = numroc_local(nC, nb, my_col, 0, my_npcol); lld_c = max(1, locm_c)
         call descinit_local(desca, n,  n,  mb, nb, 0, 0, my_context, lld_a, info)

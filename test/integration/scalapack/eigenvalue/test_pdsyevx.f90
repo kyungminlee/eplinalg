@@ -11,8 +11,8 @@ program test_pdsyevx
     use ref_quad_lapack,   only: dsyev
     use pblas_grid,        only: grid_init, grid_exit, my_rank, my_context, &
                                  my_nprow, my_npcol, my_row, my_col, &
-                                 numroc_local, descinit_local, g2l
-    use pblas_distrib,     only: gen_distrib_matrix
+                                 numroc_local, descinit_local
+    use pblas_distrib,     only: gen_distrib_matrix, scatter_matrix
     use target_scalapack,  only: target_name, target_eps, target_pdsyevx
     implicit none
 
@@ -21,7 +21,6 @@ program test_pdsyevx
     integer :: i, n, info, info_ref, lwork, liwork, m_got, nz_got
     integer :: locm, locn, lld
     integer :: desca(9), descZ(9)
-    integer :: ig, jg, owner_r, owner_c, il, jl
     real(ep), allocatable :: A_loc(:,:), A_glob(:,:), A_sym(:,:), A_ref(:,:)
     real(ep), allocatable :: Z_loc(:,:)
     real(ep), allocatable :: w(:), w_ref(:), gap(:), work(:), work_ref(:)
@@ -38,16 +37,7 @@ program test_pdsyevx
 
         allocate(A_sym(n, n))
         A_sym = 0.5_ep * (A_glob + transpose(A_glob))
-        if (size(A_loc, 1) > 0 .and. size(A_loc, 2) > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) A_loc(il, jl) = A_sym(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix(n, n, mb, nb, A_sym, A_loc)
 
         locm = numroc_local(n, mb, my_row, 0, my_nprow)
         locn = numroc_local(n, nb, my_col, 0, my_npcol); lld = max(1, locm)

@@ -15,6 +15,12 @@
 add_library(quad_mpi STATIC "${CMAKE_CURRENT_SOURCE_DIR}/quad_mpi.c")
 target_include_directories(quad_mpi PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
+# ep_mpi_op_commute.h lives in the sibling mpiseq dir — the one runtime
+# dir the migrator stages for every target (src/quad-mpi and src/mpiseq
+# land as runtime/ siblings in the staged tree, so the relative path
+# holds there too). PRIVATE: only quad_mpi.c reads it.
+target_include_directories(quad_mpi PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mpiseq)
 # MPI::MPI_C is PRIVATE so consumers linking libmpiseq instead of
 # the real MPI runtime (the _seq test variants) aren't forced to
 # pull in the real MPI .so — mirrors multifloats_mpi's handling.

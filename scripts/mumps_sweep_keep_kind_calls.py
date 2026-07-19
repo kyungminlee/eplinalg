@@ -32,9 +32,11 @@ import argparse
 import re
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
-SRC_DIR = REPO / 'extern' / 'MUMPS_5.9.0' / 'src'
-MANIFEST = REPO / 'codegen' / 'recipes' / 'mumps' / 'keep-kind.manifest'
+# MUMPS tree and manifest locations are owned by the base sweep script
+# so a MUMPS version bump only needs updating in one place.
+from mumps_sweep_keep_kind import DEFAULT_MANIFEST as MANIFEST
+from mumps_sweep_keep_kind import REPO
+from mumps_sweep_keep_kind import SRC as SRC_DIR
 
 # copy_files stems (must match codegen/recipes/mumps.yaml). Anything listed
 # here contributes its SUBROUTINE / FUNCTION names to the "DP-stable"
@@ -162,8 +164,9 @@ def main() -> int:
             print(f'#   {n}')
 
     sites = find_call_sites(shared)
+    src_rel = SRC_DIR.relative_to(REPO).as_posix()
     entries = sorted(
-        f'extern/MUMPS_5.9.0/src/{name}:{ln}'
+        f'{src_rel}/{name}:{ln}'
         for (name, ln) in sites
     )
 

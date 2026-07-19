@@ -31,11 +31,14 @@ endif()
 add_library(blas_test_common STATIC
     ../common/prec_kinds.f90
     ../common/compare.f90
-    common/prec_report.f90
+    ../common/prec_report.F90
     ../common/test_data.f90
-    common/ref_quad_blas.f90
+    ../common/ref_quad_blas.f90
 )
 fortran_test_module_layout(blas_test_common)
+# Serial reporter with the bit-exact kind16 gate — see
+# tests/common/prec_report.F90 for the variant matrix.
+target_compile_definitions(blas_test_common PRIVATE PREC_REPORT_STRICT_EXACT)
 target_link_libraries(blas_test_common PUBLIC refblas_quad)
 
 # ── Per-target wrapper module ───────────────────────────────────────

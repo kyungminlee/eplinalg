@@ -10,9 +10,10 @@ program test_dmumps_jobs
     use prec_report,           only: report_init, report_case, report_finalize, report_check_status
     use compare,               only: max_rel_err_vec
     use test_data_mumps,       only: gen_dense_problem, dense_to_triplet
-    use target_mumps,          only: target_name, target_eps, &
-                                     dmumps_struc, target_qmumps, &
-                                     q2t_r, t2q_r
+    use target_mumps,          only: target_name, &
+                                     dmumps_struc, target_qmumps, t2q_r
+    use mumps_lifecycle,       only: mumps_begin, mumps_load_triplet, &
+                                     mumps_end, mumps_default_tol
     use mpi
     implicit none
 
@@ -40,7 +41,7 @@ program test_dmumps_jobs
 
     ! Each path against the quad ground-truth.
     err = max_rel_err_vec(x_combined, x_true)
-    tol = 16.0_ep * real(n, ep)**3 * target_eps
+    tol = mumps_default_tol(n)
     call report_case('combined-vs-truth', err, tol)
 
     err = max_rel_err_vec(x_phased, x_true)
@@ -72,23 +73,8 @@ contains
         type(dmumps_struc) :: idl
         integer :: k
 
-        idl%COMM = MPI_COMM_WORLD
-        idl%PAR  = 1
-        idl%SYM  = 0
-        idl%JOB  = -1
-        call target_qmumps(idl)
-
-        idl%ICNTL(1) = -1
-        idl%ICNTL(2) = -1
-        idl%ICNTL(3) = -1
-        idl%ICNTL(4) = 0
-
-        idl%N   = n
-        idl%NNZ = int(nz, kind=8)
-        allocate(idl%IRN(nz));  idl%IRN = irn
-        allocate(idl%JCN(nz));  idl%JCN = jcn
-        allocate(idl%A(nz));    idl%A   = q2t_r(A_trip)
-        allocate(idl%RHS(n));   idl%RHS = q2t_r(b)
+        call mumps_begin(idl, MPI_COMM_WORLD, 0)
+        call mumps_load_triplet(idl, n, nz, irn, jcn, A_trip, b)
 
         do k = 1, size(jobs)
             idl%JOB = jobs(k)
@@ -103,10 +89,7 @@ contains
         allocate(x_solve(n))
         x_solve = t2q_r(idl%RHS)
 
-        deallocate(idl%IRN, idl%JCN, idl%A, idl%RHS)
-        nullify(idl%IRN, idl%JCN, idl%A, idl%RHS)
-        idl%JOB = -2
-        call target_qmumps(idl)
+        call mumps_end(idl)
     end subroutine mumps_solve_jobs
 
 end program test_dmumps_jobs

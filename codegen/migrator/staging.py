@@ -9,12 +9,12 @@ import shutil
 import sys
 from pathlib import Path
 
-from .cli_common import _get_target_mode, _parser_args
-from .libseq_patch import _patch_libseq_mpi_f
-from .pipeline import run_migration
-from .prefix_classifier import classify_symbols
+from .cli_common import (
+    get_target_mode, la_helper_pairs, migrator_project_root, parser_args,
+)
+from .libseq_patch import patch_libseq_mpi_f
+from .pipeline import classify_recipe_symbols, run_migration
 from .prepare import prepare_recipe, run_prepare
-from .symbol_scanner import scan_symbols
 
 
 # BLACS-style dual-entry-point detector used by ``cmd_stage`` to
@@ -206,6 +206,163 @@ LIBRARY_ORDER = [
 BASELINE_TARGETS = ('kind4', 'kind8')
 
 
+# Top-level CMakeLists + its include() modules, FortranCompiler module,
+# and the extended-precision detector. Copied verbatim into every staged
+# tree (migrated and baseline alike).
+_CMAKE_GLUE_FILES = (
+    'CMakeLists.txt',
+    'EplinalgLibraryHelpers.cmake',
+    'EplinalgMumps.cmake',
+    'EplinalgInstall.cmake',
+    'EplinalgPrivatizeGate.cmake',
+    'EplinalgPrivatizeGateCheck.cmake',
+    'FortranCompiler.cmake',
+    'DetectExtendedPrecision.cmake',
+)
+
+# Repo-root files that ride along: ``CMakePresets.json`` so users can
+# `cmake --preset=linux-impi` from the staged tree without having to
+# re-discover Intel MPI's wrapper paths, and ``VERSION`` so the staged
+# CMakeLists.txt's project() call carries the release version.
+_ROOT_FILES = ('CMakePresets.json', 'VERSION')
+
+
+# Standard-precision source directories staged for the std archives
+# built alongside each migrated extension. The CMakeLists.txt invokes
+# add_standard_fortran_library / add_standard_c_library against these
+# directories. Sibling to _refblas_src/_reflapack_src but used for
+# production link deps, not just tests.
+# Each entry is (dst_name, extern-relative source, recipe name or None).
+# The recipe column is consumed only by baseline staging: libraries with
+# a recipe stage from build/staged-sources/<lib>/ so the baseline column
+# links against the patched archives; libraries without one (TOOLS /
+# REDIST / libseq / MUMPS include/) come straight from extern/.
+# _pblas_src/ includes PTOOLS/ as a child subdirectory (matching
+# the upstream layout) so PTOOLS sources' ``#include "../pblas.h"``
+# resolves without an explicit include-path remap. Same shape for
+# _scalapack_src/ which contains REDIST/SRC and shares the
+# ``../some_header.h`` convention. PBLAS's internal subdirectories
+# (PBBLAS, PTZBLAS) are NOT included under _pblas_src — those are
+# owned by the separate ptzblas / pbblas std archives.
+# _scalapack_src/ is the upstream SRC/ tree; scalapack_c REDIST
+# routines live alongside SRC under REDIST/SRC, but we stage them
+# together inside _scalapack_src/REDIST/ so REDIST sources'
+# ``#include "../redist.h"`` (or the matching SRC headers)
+# resolve relative to _scalapack_src/.
+_STD_DIRS: list[tuple[str, str, str | None]] = [
+    ('_blacs_src',            'scalapack-2.2.3/BLACS/SRC',         'blacs'),
+    ('_pblas_src',            'scalapack-2.2.3/PBLAS/SRC',         'pblas'),
+    ('_ptzblas_src',          'scalapack-2.2.3/PBLAS/SRC/PTZBLAS', 'ptzblas'),
+    ('_pbblas_src',           'scalapack-2.2.3/PBLAS/SRC/PBBLAS',  'pbblas'),
+    ('_scalapack_src',        'scalapack-2.2.3/SRC',               'scalapack'),
+    ('_scalapack_tools_src',  'scalapack-2.2.3/TOOLS',             None),
+    ('_scalapack_redist_src', 'scalapack-2.2.3/REDIST/SRC',        None),
+    # MUMPS sequential MPI stub. Lets cmake build a single-process
+    # ``libmpiseq`` archive alongside the migrated qxmumps; tests can
+    # link it instead of MPI::MPI_Fortran for plain (no mpiexec)
+    # executables. Stubs print a "should not be called" error if a
+    # collective/comm primitive that requires multi-rank coordination
+    # is invoked, so libseq is NPROCS=1-only by construction.
+    ('_mpiseq_src',           'MUMPS_5.9.0/libseq',                None),
+    # MUMPS upstream src/ + include/. The recipe (which is fortran-
+    # only) skips every *MUMPS_C / MUMPS_C_TYPES header and every
+    # *.c file, so the migrated qxmumps archive ships without a C
+    # interface. tests/mumps's C-bridge build re-uses upstream
+    # mumps_c.c (compiled twice with quad-precision type overrides
+    # supplied from tests/mumps/c/include/, see B2 in
+    # tests/mumps/TODO.md), plus mumps_common.c, mumps_addr.c, and
+    # the IO/save/thread/metis/pord/scotch helpers, all of which are
+    # type-agnostic and compile verbatim. Staging the whole src/
+    # tree (including the .F siblings we don't need here) is
+    # cheaper than per-file plumbing and matches the convention.
+    ('_mumps_upstream_src',     'MUMPS_5.9.0/src',                 'mumps'),
+    ('_mumps_upstream_include', 'MUMPS_5.9.0/include',             None),
+    # PORD nested-dissection ordering — ships in-tree with MUMPS and
+    # is self-contained standard C (no MPI / external dep). Staging
+    # its algorithm sources (PORD/lib) + headers (PORD/include) lets
+    # cmake build ``libpord`` and define ``-Dpord`` so ICNTL(7)=4
+    # works; without it mumps_pord.c compiles as an inert stub.
+    # Precision-agnostic (permutes the integer adjacency graph), so a
+    # single build serves every migrated arithmetic.
+    ('_mumps_pord_src',         'MUMPS_5.9.0/PORD/lib',            None),
+    ('_mumps_pord_include',     'MUMPS_5.9.0/PORD/include',        None),
+    # METIS 5.1.0 nested-dissection / k-way ordering — vendored under
+    # extern/metis-5.1.0 with every public API symbol privately
+    # namespaced (METIS_<X> → METIS_MUMPS_<X>, internal libmetis__ →
+    # libmetis_MUMPS_) so this copy can never clash with a system
+    # METIS at link time; the MUMPS caller sites were renamed to
+    # match. Staging GKlib + libmetis sources and the public header
+    # lets cmake build ``libmetis`` and define ``-Dmetis`` so
+    # ICNTL(7)=5 works; without it the mumps_metis*.c compile as inert
+    # stubs. Integer-graph only, so a single 32-bit-idx build serves
+    # every migrated arithmetic.
+    ('_mumps_metis_gklib',      'metis-5.1.0/GKlib',               None),
+    ('_mumps_metis_lib',        'metis-5.1.0/libmetis',            None),
+    ('_mumps_metis_include',    'metis-5.1.0/include',             None),
+    # Scotch 7.0.4 sequential ordering (ICNTL(7)=3) — vendored under
+    # extern/scotch-7.0.4, built with -DSCOTCH_NAME_SUFFIX=_mumps so
+    # every public SCOTCH_* and internal _SCOTCH* symbol carries a
+    # _mumps suffix and this copy can never clash with a system Scotch
+    # at link time; the MUMPS caller sites resolve to the suffixed
+    # names through scotch_rename_mumps.h. The bison/flex parser and
+    # scotch.h/scotchf.h are pre-generated and vendored, so the build
+    # needs no bison/flex. Staging libscotch + esmumps sources and the
+    # generated headers lets cmake build ``scotch``/``esmumps``
+    # and define ``-Dscotch`` so ICNTL(7)=3 works; without
+    # it the mumps_scotch*.c compile as inert stubs. Integer-graph
+    # only, so a single build serves every migrated arithmetic.
+    ('_mumps_scotch_libsrc',    'scotch-7.0.4/libscotch',          None),
+    ('_mumps_scotch_esmumps',   'scotch-7.0.4/esmumps',            None),
+    ('_mumps_scotch_include',   'scotch-7.0.4/include',            None),
+]
+
+
+def _copy_cmake_glue(proj_root: Path, staging_dir: Path,
+                     warn: bool = False) -> None:
+    """Copy the CMake glue files into the staged tree."""
+    cmake_dir = proj_root / 'cmake'
+    for cmake_file in _CMAKE_GLUE_FILES:
+        src = cmake_dir / cmake_file
+        if src.exists():
+            shutil.copy2(src, staging_dir / cmake_file)
+        elif warn:
+            print(f'Warning: {src} not found')
+
+
+def _copy_root_files(proj_root: Path, staging_dir: Path,
+                     warn: bool = False) -> None:
+    """Copy the ride-along repo-root files into the staged tree."""
+    for root_file in _ROOT_FILES:
+        src = proj_root / root_file
+        if src.exists():
+            shutil.copy2(src, staging_dir / root_file)
+        elif warn:
+            print(f'Warning: {src} not found')
+
+
+def _copy_rename_script(proj_root: Path, staging_dir: Path) -> None:
+    """Plant the refblas_quad / reflapack_quad symbol-rename helper
+    alongside the other build-time scripts so tests/blas/refblas and
+    tests/lapack/reflapack can locate it via find_file in the staging
+    tree (see those CMakeLists for the search-path list)."""
+    scripts_src = proj_root / 'scripts' / 'refquad_rename_archive.sh'
+    if scripts_src.exists():
+        scripts_dst = staging_dir / 'scripts'
+        scripts_dst.mkdir(exist_ok=True)
+        shutil.copy2(scripts_src, scripts_dst / scripts_src.name)
+
+
+def _copy_tests(proj_root: Path, staging_dir: Path) -> None:
+    """Copy tests/ subtree so the unified CMakeLists.txt can pick it up
+    via add_subdirectory(tests) when BUILD_TESTING=ON."""
+    tests_src = proj_root / 'test' / 'integration'
+    if tests_src.is_dir():
+        tests_dst = staging_dir / 'tests'
+        if tests_dst.exists():
+            shutil.rmtree(tests_dst)
+        shutil.copytree(tests_src, tests_dst)
+
+
 def _copy_runtime_mpiseq(proj_root: Path, staging_dir: Path) -> None:
     """Plant runtime/mpiseq (libmpiseq CMakeLists + first-party stub
     sources) into the staged tree, so the parent build's
@@ -236,9 +393,9 @@ def cmd_stage(args):
         return _stage_baseline(args, target_str)
 
     staging_dir = args.staging_dir.resolve()
-    target_mode = _get_target_mode(args)
-    parser, parser_cmd = _parser_args(args)
-    proj_root = (args.project_root or Path(__file__).resolve().parent.parent.parent)
+    target_mode = get_target_mode(args)
+    parser, parser_cmd = parser_args(args)
+    proj_root = args.project_root or migrator_project_root()
     recipes_dir = proj_root / 'codegen' / 'recipes'
 
     # Determine which libraries to stage
@@ -292,10 +449,7 @@ def cmd_stage(args):
 
         # Classify files into common vs precision-specific
         config = prepare_recipe(recipe_path, proj_root)
-        symbols = scan_symbols(config.source_dir, config.language,
-                               config.extensions,
-                               extra_c_return_types=tuple(config.c_return_types))
-        classification = classify_symbols(symbols)
+        classification = classify_recipe_symbols(config)
         independent = classification.independent
 
         # Files that the precision-rename map RENAMES are precision-
@@ -334,15 +488,7 @@ def cmd_stage(args):
         # target's own pair belongs in this staging tree — the other
         # targets' pairs are excluded, so e.g. the *_ey/*_qx SRC files
         # stay out of a multifloats build.
-        _la_suffixes = ('_ey', '_qx', '_mw')
-        _own_suffix = target_mode.la_constants_suffix.lower()
-        _la_own = {f'la_constants{_own_suffix}', f'la_xisnan{_own_suffix}'}
-        _la_foreign = {
-            f'la_{base}{s}'
-            for base in ('constants', 'xisnan')
-            for s in _la_suffixes
-            if s != _own_suffix
-        }
+        _la_own, _la_foreign = la_helper_pairs(target_mode)
 
         common_files, precision_files = [], []
         for f in files:
@@ -543,31 +689,10 @@ set(PRIVATIZED_LIBRARIES {privatized_list})
     (staging_dir / 'target_config.cmake').write_text(target_config)
 
     # Copy CMake files to staging directory.
-    cmake_dir = proj_root / 'cmake'
-    for cmake_file in ['CMakeLists.txt',
-                       'EplinalgLibraryHelpers.cmake',
-                       'EplinalgMumps.cmake',
-                       'EplinalgInstall.cmake',
-                       'EplinalgPrivatizeGate.cmake',
-                       'EplinalgPrivatizeGateCheck.cmake',
-                       'FortranCompiler.cmake',
-                       'DetectExtendedPrecision.cmake']:
-        src = cmake_dir / cmake_file
-        if src.exists():
-            shutil.copy2(src, staging_dir / cmake_file)
-        else:
-            print(f'Warning: {src} not found')
+    _copy_cmake_glue(proj_root, staging_dir, warn=True)
 
-    # Repo-root files that ride along: ``CMakePresets.json`` so users can
-    # `cmake --preset=linux-impi` from the staged tree without having to
-    # re-discover Intel MPI's wrapper paths, and ``VERSION`` so the staged
-    # CMakeLists.txt's project() call carries the release version.
-    for root_file in ['CMakePresets.json', 'VERSION']:
-        src = proj_root / root_file
-        if src.exists():
-            shutil.copy2(src, staging_dir / root_file)
-        else:
-            print(f'Warning: {src} not found')
+    # Repo-root ride-along files (presets + VERSION, see _ROOT_FILES).
+    _copy_root_files(proj_root, staging_dir, warn=True)
 
     # The privatize gate audits each PRIVATIZED_LIBRARIES archive against
     # the same checked-in manifest the migrator's rename pass consumed;
@@ -582,24 +707,9 @@ set(PRIVATIZED_LIBRARIES {privatized_list})
             print(f'Warning: {manifest_src} not found — the privatize '
                   'gate will fail at configure time')
 
-    # Plant the refblas_quad / reflapack_quad symbol-rename helper
-    # alongside the other build-time scripts so tests/blas/refblas and
-    # tests/lapack/reflapack can locate it via find_file in the staging
-    # tree (see those CMakeLists for the search-path list).
-    scripts_src = proj_root / 'scripts' / 'refquad_rename_archive.sh'
-    if scripts_src.exists():
-        scripts_dst = staging_dir / 'scripts'
-        scripts_dst.mkdir(exist_ok=True)
-        shutil.copy2(scripts_src, scripts_dst / scripts_src.name)
+    _copy_rename_script(proj_root, staging_dir)
 
-    # Copy tests/ subtree so the unified CMakeLists.txt can pick it up
-    # via add_subdirectory(tests) when BUILD_TESTING=ON.
-    tests_src = proj_root / 'test' / 'integration'
-    if tests_src.is_dir():
-        tests_dst = staging_dir / 'tests'
-        if tests_dst.exists():
-            shutil.rmtree(tests_dst)
-        shutil.copytree(tests_src, tests_dst)
+    _copy_tests(proj_root, staging_dir)
 
     # Copy vendored Netlib BLAS source for the differential precision
     # tests' refblas_quad reference library (compiled with gfortran's
@@ -639,89 +749,11 @@ set(PRIVATIZED_LIBRARIES {privatized_list})
                 shutil.copy2(src, reflapack_dst / fname)
 
     # Stage standard-precision source directories for the std archives
-    # built alongside each migrated extension. The CMakeLists.txt
-    # invokes add_standard_fortran_library / add_standard_c_library
-    # against these directories. Sibling to _refblas_src/_reflapack_src
-    # but used for production link deps, not just tests.
-    # _pblas_src/ includes PTOOLS/ as a child subdirectory (matching
-    # the upstream layout) so PTOOLS sources' ``#include "../pblas.h"``
-    # resolves without an explicit include-path remap. Same shape for
-    # _scalapack_src/ which contains REDIST/SRC and shares the
-    # ``../some_header.h`` convention. PBLAS's internal subdirectories
-    # (PBBLAS, PTZBLAS) are NOT included under _pblas_src — those are
-    # owned by the separate ptzblas / pbblas std archives.
-    # _scalapack_src/ is the upstream SRC/ tree; scalapack_c REDIST
-    # routines live alongside SRC under REDIST/SRC, but we stage them
-    # together inside _scalapack_src/REDIST/ so REDIST sources'
-    # ``#include "../redist.h"`` (or the matching SRC headers)
-    # resolve relative to _scalapack_src/.
-    _std_dirs = [
-        ('_blacs_src',     'scalapack-2.2.3/BLACS/SRC'),
-        ('_pblas_src',     'scalapack-2.2.3/PBLAS/SRC'),
-        ('_ptzblas_src',   'scalapack-2.2.3/PBLAS/SRC/PTZBLAS'),
-        ('_pbblas_src',    'scalapack-2.2.3/PBLAS/SRC/PBBLAS'),
-        ('_scalapack_src', 'scalapack-2.2.3/SRC'),
-        ('_scalapack_tools_src', 'scalapack-2.2.3/TOOLS'),
-        ('_scalapack_redist_src', 'scalapack-2.2.3/REDIST/SRC'),
-        # MUMPS sequential MPI stub. Lets cmake build a single-process
-        # ``libmpiseq`` archive alongside the migrated qxmumps; tests can
-        # link it instead of MPI::MPI_Fortran for plain (no mpiexec)
-        # executables. Stubs print a "should not be called" error if a
-        # collective/comm primitive that requires multi-rank coordination
-        # is invoked, so libseq is NPROCS=1-only by construction.
-        ('_mpiseq_src',    'MUMPS_5.9.0/libseq'),
-        # MUMPS upstream src/ + include/. The recipe (which is fortran-
-        # only) skips every *MUMPS_C / MUMPS_C_TYPES header and every
-        # *.c file, so the migrated qxmumps archive ships without a C
-        # interface. tests/mumps's C-bridge build re-uses upstream
-        # mumps_c.c (compiled twice with quad-precision type overrides
-        # supplied from tests/mumps/c/include/, see B2 in
-        # tests/mumps/TODO.md), plus mumps_common.c, mumps_addr.c, and
-        # the IO/save/thread/metis/pord/scotch helpers, all of which are
-        # type-agnostic and compile verbatim. Staging the whole src/
-        # tree (including the .F siblings we don't need here) is
-        # cheaper than per-file plumbing and matches the convention.
-        ('_mumps_upstream_src',     'MUMPS_5.9.0/src'),
-        ('_mumps_upstream_include', 'MUMPS_5.9.0/include'),
-        # PORD nested-dissection ordering — ships in-tree with MUMPS and
-        # is self-contained standard C (no MPI / external dep). Staging
-        # its algorithm sources (PORD/lib) + headers (PORD/include) lets
-        # cmake build ``libpord`` and define ``-Dpord`` so ICNTL(7)=4
-        # works; without it mumps_pord.c compiles as an inert stub.
-        # Precision-agnostic (permutes the integer adjacency graph), so a
-        # single build serves every migrated arithmetic.
-        ('_mumps_pord_src',         'MUMPS_5.9.0/PORD/lib'),
-        ('_mumps_pord_include',     'MUMPS_5.9.0/PORD/include'),
-        # METIS 5.1.0 nested-dissection / k-way ordering — vendored under
-        # extern/metis-5.1.0 with every public API symbol privately
-        # namespaced (METIS_<X> → METIS_MUMPS_<X>, internal libmetis__ →
-        # libmetis_MUMPS_) so this copy can never clash with a system
-        # METIS at link time; the MUMPS caller sites were renamed to
-        # match. Staging GKlib + libmetis sources and the public header
-        # lets cmake build ``libmetis`` and define ``-Dmetis`` so
-        # ICNTL(7)=5 works; without it the mumps_metis*.c compile as inert
-        # stubs. Integer-graph only, so a single 32-bit-idx build serves
-        # every migrated arithmetic.
-        ('_mumps_metis_gklib',      'metis-5.1.0/GKlib'),
-        ('_mumps_metis_lib',        'metis-5.1.0/libmetis'),
-        ('_mumps_metis_include',    'metis-5.1.0/include'),
-        # Scotch 7.0.4 sequential ordering (ICNTL(7)=3) — vendored under
-        # extern/scotch-7.0.4, built with -DSCOTCH_NAME_SUFFIX=_mumps so
-        # every public SCOTCH_* and internal _SCOTCH* symbol carries a
-        # _mumps suffix and this copy can never clash with a system Scotch
-        # at link time; the MUMPS caller sites resolve to the suffixed
-        # names through scotch_rename_mumps.h. The bison/flex parser and
-        # scotch.h/scotchf.h are pre-generated and vendored, so the build
-        # needs no bison/flex. Staging libscotch + esmumps sources and the
-        # generated headers lets cmake build ``scotch``/``esmumps``
-        # and define ``-Dscotch`` so ICNTL(7)=3 works; without
-        # it the mumps_scotch*.c compile as inert stubs. Integer-graph
-        # only, so a single build serves every migrated arithmetic.
-        ('_mumps_scotch_libsrc',    'scotch-7.0.4/libscotch'),
-        ('_mumps_scotch_esmumps',   'scotch-7.0.4/esmumps'),
-        ('_mumps_scotch_include',   'scotch-7.0.4/include'),
-    ]
-    for dst_name, rel_src in _std_dirs:
+    # built alongside each migrated extension (see the _STD_DIRS table
+    # for the directory list and its layout rationale). Migrated targets
+    # always copy from extern/; the recipe column only matters for
+    # baseline staging.
+    for dst_name, rel_src, _recipe in _STD_DIRS:
         src = proj_root / 'extern' / rel_src
         if not src.is_dir():
             continue
@@ -737,7 +769,7 @@ set(PRIVATIZED_LIBRARIES {privatized_list})
     # extern/ stays read-only.
     mpiseq_dst = staging_dir / '_mpiseq_src' / 'mpi.f'
     if mpiseq_dst.is_file():
-        _patch_libseq_mpi_f(mpiseq_dst)
+        patch_libseq_mpi_f(mpiseq_dst)
 
     # Fail loudly if a case-insensitive rename corrupted any shared C struct
     # layout (raises SystemExit on violation; see the guard's docstring).
@@ -765,8 +797,7 @@ def _stage_baseline(args, target_name: str):
     directly.
     """
     staging_dir = args.staging_dir.resolve()
-    proj_root = (args.project_root or
-                 Path(__file__).resolve().parent.parent.parent)
+    proj_root = args.project_root or migrator_project_root()
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     print(f'\n{"=" * 60}')
@@ -795,42 +826,19 @@ def _stage_baseline(args, target_name: str):
     # CMake glue (top-level CMakeLists + its include() modules,
     # FortranCompiler module, presets). Same files cmd_stage copies;
     # baseline reuses them.
-    cmake_dir = proj_root / 'cmake'
-    for cmake_file in ['CMakeLists.txt',
-                       'EplinalgLibraryHelpers.cmake',
-                       'EplinalgMumps.cmake',
-                       'EplinalgInstall.cmake',
-                       'EplinalgPrivatizeGate.cmake',
-                       'EplinalgPrivatizeGateCheck.cmake',
-                       'FortranCompiler.cmake',
-                       'DetectExtendedPrecision.cmake']:
-        src = cmake_dir / cmake_file
-        if src.exists():
-            shutil.copy2(src, staging_dir / cmake_file)
+    _copy_cmake_glue(proj_root, staging_dir)
 
     # Repo-root presets + VERSION, same as cmd_stage.
-    for root_file in ['CMakePresets.json', 'VERSION']:
-        src = proj_root / root_file
-        if src.exists():
-            shutil.copy2(src, staging_dir / root_file)
+    _copy_root_files(proj_root, staging_dir)
 
     # libmpiseq assembly (CMakeLists + first-party stub sources), same
     # subtree cmd_stage copies.
     _copy_runtime_mpiseq(proj_root, staging_dir)
 
-    scripts_src = proj_root / 'scripts' / 'refquad_rename_archive.sh'
-    if scripts_src.exists():
-        scripts_dst = staging_dir / 'scripts'
-        scripts_dst.mkdir(exist_ok=True)
-        shutil.copy2(scripts_src, scripts_dst / scripts_src.name)
+    _copy_rename_script(proj_root, staging_dir)
 
     # tests/ subtree.
-    tests_src = proj_root / 'test' / 'integration'
-    if tests_src.is_dir():
-        tests_dst = staging_dir / 'tests'
-        if tests_dst.exists():
-            shutil.rmtree(tests_dst)
-        shutil.copytree(tests_src, tests_dst)
+    _copy_tests(proj_root, staging_dir)
 
     # Upstream BLAS / LAPACK / ScaLAPACK / PBLAS / BLACS / MUMPS sources.
     # For libraries with a recipe we stage from build/staged-sources/<lib>/
@@ -873,27 +881,7 @@ def _stage_baseline(args, target_name: str):
             if src.is_file():
                 shutil.copy2(src, reflapack_dst / fname)
 
-    _std_dirs: list[tuple[str, str, str | None]] = [
-        ('_blacs_src',            'scalapack-2.2.3/BLACS/SRC',         'blacs'),
-        ('_pblas_src',            'scalapack-2.2.3/PBLAS/SRC',         'pblas'),
-        ('_ptzblas_src',          'scalapack-2.2.3/PBLAS/SRC/PTZBLAS', 'ptzblas'),
-        ('_pbblas_src',           'scalapack-2.2.3/PBLAS/SRC/PBBLAS',  'pbblas'),
-        ('_scalapack_src',        'scalapack-2.2.3/SRC',               'scalapack'),
-        ('_scalapack_tools_src',  'scalapack-2.2.3/TOOLS',             None),
-        ('_scalapack_redist_src', 'scalapack-2.2.3/REDIST/SRC',        None),
-        ('_mpiseq_src',           'MUMPS_5.9.0/libseq',                None),
-        ('_mumps_upstream_src',   'MUMPS_5.9.0/src',                   'mumps'),
-        ('_mumps_upstream_include', 'MUMPS_5.9.0/include',             None),
-        ('_mumps_pord_src',       'MUMPS_5.9.0/PORD/lib',              None),
-        ('_mumps_pord_include',   'MUMPS_5.9.0/PORD/include',          None),
-        ('_mumps_metis_gklib',    'metis-5.1.0/GKlib',                 None),
-        ('_mumps_metis_lib',      'metis-5.1.0/libmetis',              None),
-        ('_mumps_metis_include',  'metis-5.1.0/include',               None),
-        ('_mumps_scotch_libsrc',  'scotch-7.0.4/libscotch',            None),
-        ('_mumps_scotch_esmumps', 'scotch-7.0.4/esmumps',              None),
-        ('_mumps_scotch_include', 'scotch-7.0.4/include',              None),
-    ]
-    for dst_name, rel_src, recipe_name in _std_dirs:
+    for dst_name, rel_src, recipe_name in _STD_DIRS:
         _stage_dst(dst_name, _staged_or_external(rel_src, recipe_name))
 
     print(f'  Output:  {staging_dir}')

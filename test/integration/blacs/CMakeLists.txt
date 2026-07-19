@@ -26,8 +26,8 @@ if(NOT TARGET ${LIB_PAIR_PREFIX}blacs)
 endif()
 
 # ── Dedicated module directory ──────────────────────────────────────
-# pblas_grid module name is shared with tests/{pbblas,pblas} (whose
-# bodies have since diverged), so use a per-tree subdir to keep our
+# The shared tests/common helper modules are compiled once per suite
+# (with per-suite reporter macros), so a per-tree subdir keeps our
 # .mod files from colliding in the shared fmod_tests/ tree.
 set(_bl_moddir "${PROJECT_BINARY_DIR}/fmod_tests/${FORTRAN_MOD_COMPAT_TAG}/blacs_tests")
 file(MAKE_DIRECTORY ${_bl_moddir})
@@ -36,13 +36,17 @@ file(MAKE_DIRECTORY ${_bl_moddir})
 add_library(blacs_test_common STATIC
     ../common/prec_kinds.f90
     ../common/compare.f90
-    common/blacs_prec_report.f90
+    ../common/prec_report.F90
+    ../common/blacs_prec_report.f90
     ../common/test_data.f90
-    common/pblas_grid.F90
+    ../common/pblas_grid.F90
 )
 set_target_properties(blacs_test_common PROPERTIES
     Fortran_MODULE_DIRECTORY "${_bl_moddir}"
 )
+# MPI reporter: rank 0 writes the JSON, report_finalize broadcasts the
+# pass/fail flag — see tests/common/prec_report.F90.
+target_compile_definitions(blacs_test_common PRIVATE PREC_REPORT_MPI)
 target_include_directories(blacs_test_common PUBLIC
     $<BUILD_INTERFACE:${_bl_moddir}>
 )

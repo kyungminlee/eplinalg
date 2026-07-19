@@ -5,8 +5,9 @@ program test_pdpotrs
     use ref_quad_lapack,  only: dpotrf, dpotrs
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix, gather_matrix, &
+                                scatter_matrix
     use target_scalapack, only: target_name, target_eps, &
                                 target_pdpotrf, target_pdpotrs
     implicit none
@@ -22,7 +23,7 @@ program test_pdpotrs
     real(ep), allocatable :: M_glob(:,:), dummy_loc(:,:)
     real(ep) :: err, tol
     character(len=48) :: label
-    integer :: ig, jg, owner_r, owner_c, il, jl, k
+    integer :: k
 
     call grid_init()
     call report_init('pdpotrs', target_name, my_rank)
@@ -44,16 +45,7 @@ program test_pdpotrs
         locm_b = numroc_local(n, mb, my_row, 0, my_nprow); lld_b = max(1, locm_b)
         allocate(A_loc(max(1, locm_a), max(1, locn_a)))
         A_loc = 0.0_ep
-        if (locm_a > 0 .and. locn_a > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) A_loc(il, jl) = A_glob(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix(n, n, mb, nb, A_glob, A_loc)
         call descinit_local(desca, n, n,    mb, nb, 0, 0, my_context, lld_a, info)
         call descinit_local(descb, n, nrhs, mb, nb, 0, 0, my_context, lld_b, info)
 

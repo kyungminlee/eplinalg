@@ -48,13 +48,16 @@ file(MAKE_DIRECTORY ${_xb_moddir})
 add_library(xblas_test_common STATIC
     ../common/prec_kinds.f90
     ../common/compare.f90
-    common/prec_report.f90
+    ../common/prec_report.F90
     ../common/test_data.f90
     common/ref_quad_xblas.f90
 )
 set_target_properties(xblas_test_common PROPERTIES
     Fortran_MODULE_DIRECTORY "${_xb_moddir}"
 )
+# Serial reporter with the bit-exact kind16 gate — see
+# tests/common/prec_report.F90 for the variant matrix.
+target_compile_definitions(xblas_test_common PRIVATE PREC_REPORT_STRICT_EXACT)
 target_include_directories(xblas_test_common PUBLIC
     $<BUILD_INTERFACE:${_xb_moddir}>
 )

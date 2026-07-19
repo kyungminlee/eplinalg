@@ -1,0 +1,794 @@
+"""Convergence comparison engine and divergence reporting.
+
+Extracted verbatim from ``pipeline.py`` as part of the migrator
+file-restructuring refactor. Behaviour is unchanged; ``pipeline.py``
+imports :func:`_canonicalize_for_compare` and
+:func:`_strip_fortran_comments` from here for its convergence-buffer
+equality check, and ``__main__`` imports :func:`run_divergence_report`.
+
+Everything in this module is pure text comparison — the actual
+migration machinery (parsing, renaming, parallel workers) stays in
+``pipeline.py`` and is imported lazily by :func:`run_divergence_report`.
+"""
+
+import re
+from pathlib import Path
+
+from .config import RecipeConfig
+from .prepare import prepare_recipe
+from .prefix_classifier import classify_symbols
+from .fortran.lex import (
+    _find_inline_bang, is_comment_line, is_continuation_line,
+)
+from .fortran_migrator import target_filename
+
+
+def _stem_upper(filename: str) -> str:
+    """Uppercase stem with extension stripped (handles .f, .f90, .c, etc.)."""
+    return Path(filename).stem.upper()
+
+
+def _filter_expected_divergences(report: list[dict],
+                                  config: RecipeConfig) -> list[dict]:
+    """Drop entries whose canonical stem is whitelisted as expected.
+
+    Two whitelist forms (Phase D, ``doc/archive/refactor-20260509.md``):
+    - ``defer_all_divergences: true`` — drop every entry.
+    - ``expected_divergences: [STEM, ...]`` — drop entries whose
+      canonical stem (case-insensitive, no extension) matches.
+    """
+    if config.defer_all_divergences:
+        return []
+    if not config.expected_divergences:
+        return report
+    return [
+        r for r in report
+        if _stem_upper(r['canonical']) not in config.expected_divergences
+    ]
+
+
+def _strip_fortran_comments(text: str, ext: str) -> str:
+    """Strip comments from Fortran source so convergence comparisons
+    ignore commentary that differs between S/D or C/Z source halves.
+
+    Fixed-form (.f/.for): a line is a full comment when column 1 is
+    C, c, *, or !. Inline ! comments are stripped unless inside a
+    string literal. (D/d-lines are conditionally-compiled debug code,
+    not comments — both halves contain or omit them symmetrically, so
+    leave them in place.)
+
+    Free-form (.f90/.F90/.f95): a line is a full comment when the
+    first non-blank char is !. Inline ! comments are stripped the
+    same way.
+
+    Trailing whitespace and blank lines that result from stripping are
+    removed so normalization is stable.
+    """
+    is_fixed = ext.lower() in ('.f', '.for')
+    out_lines: list[str] = []
+    for line in text.split('\n'):
+        if is_fixed and is_comment_line(line):
+            continue
+        if not is_fixed and line.lstrip().startswith('!'):
+            continue
+        # Strip inline ! comments (respect simple single/double quotes)
+        stripped = _strip_inline_bang(line)
+        if stripped.strip():
+            out_lines.append(stripped.rstrip())
+
+    # Join fixed-form continuation lines so sibling sources that wrap
+    # at different columns still normalize to the same text — merge
+    # each continuation into its parent after stripping the marker
+    # and surrounding whitespace.
+    if is_fixed:
+        joined: list[str] = []
+        for ln in out_lines:
+            if is_continuation_line(ln) and joined:
+                joined[-1] = joined[-1].rstrip() + ' ' + ln[6:].lstrip()
+            else:
+                joined.append(ln)
+        out_lines = joined
+    else:
+        # Free-form: '&' at end of line continues onto next line.
+        joined: list[str] = []
+        pending = ''
+        for ln in out_lines:
+            if pending:
+                ln = pending + ' ' + ln.lstrip()
+                pending = ''
+            stripped = ln.rstrip()
+            if stripped.endswith('&'):
+                pending = stripped[:-1].rstrip()
+            else:
+                joined.append(stripped)
+        if pending:
+            joined.append(pending)
+        out_lines = joined
+    return '\n'.join(out_lines)
+
+
+def _strip_inline_bang(line: str) -> str:
+    return line[:_find_inline_bang(line)]
+
+
+def _prec_neutral_key(name: str) -> str:
+    """Sort key that maps S↔D and C↔Z to the same character so
+    precision-equivalent locals (CI vs ZI) sort to the same position."""
+    return name.replace('S', 'D').replace('C', 'Z')
+
+
+def _sort_decl_match(match: re.Match, key=None, sep: str = ',') -> str:
+    """Sort the comma-separated identifier list in a regex match.
+
+    Group 1 is the leading keyword (e.g. ``INTRINSIC``, ``EXTERNAL``);
+    group 2 is the comma-separated body. Items are stripped before
+    sorting and rejoined with ``sep``. Pass ``key=_prec_neutral_key``
+    to sort with S↔D / C↔Z folded together.
+    """
+    kw = match.group(1)
+    items = [s.strip() for s in match.group(2).split(',')]
+    items = sorted(items, key=key) if key else sorted(items)
+    return f'{kw} ' + sep.join(items)
+
+
+def _strip_real_cmplx_casts(text: str) -> str:
+    """Strip ``REAL(expr, KIND=N)`` and ``CMPLX(expr, KIND=N)`` wrappers,
+    replacing them with just ``expr``. Single-argument ``REAL(expr)``
+    (integer/implicit-real promotion) is also stripped, but
+    ``CMPLX(expr)`` is NOT — it materially changes the result type
+    from real to complex and the two halves genuinely may differ in
+    how they construct complex literals."""
+    pattern = re.compile(r'\b(?:REAL|CMPLX)\s*\(', re.IGNORECASE)
+    out = []
+    i = 0
+    while i < len(text):
+        m = pattern.search(text, i)
+        if not m:
+            out.append(text[i:])
+            break
+        out.append(text[i:m.start()])
+        # Find matching ')'
+        depth = 1
+        j = m.end()
+        while j < len(text) and depth > 0:
+            c = text[j]
+            if c == '(':
+                depth += 1
+            elif c == ')':
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if depth != 0:
+            # Unmatched — give up on this match
+            out.append(text[m.start():m.end()])
+            i = m.end()
+            continue
+        inner = text[m.end():j]
+        # Recurse into the inner expression so nested casts are
+        # stripped even when the outer call doesn't match the KIND
+        # shape we rewrite.
+        inner = _strip_real_cmplx_casts(inner)
+        parts = _split_top_level_comma(inner)
+        is_real_call = text[m.start():m.end()].upper().lstrip().startswith('REAL')
+        # Skip declaration-form ``REAL(KIND=N)`` — that's a type
+        # specifier, not a cast.
+        is_kind_decl = (len(parts) == 1 and
+                        re.fullmatch(r'\s*KIND\s*=\s*\d+\s*', parts[0]))
+        # Strip trailing ``KIND=N`` from any multi-arg call. This
+        # covers ``CMPLX(re, im, KIND=16)`` as well as
+        # ``REAL(x, KIND=16)``.
+        is_kinded_multi = (len(parts) >= 2 and
+                           re.fullmatch(r'\s*KIND\s*=\s*\d+\s*', parts[-1]))
+        if is_kinded_multi:
+            # Drop the KIND= tail argument but keep the call.
+            call_head = text[m.start():m.end()]
+            new_inner = ','.join(p.strip() for p in parts[:-1])
+            if len(parts) == 2:
+                # 1-data-arg form: reduce to bare identifier/expr.
+                inner_expr = parts[0].strip()
+                if _has_top_level_operator(inner_expr):
+                    out.append('(' + inner_expr + ')')
+                else:
+                    out.append(inner_expr)
+            else:
+                # Multi-arg CMPLX(a, b, KIND=N) → CMPLX(a, b)
+                out.append(call_head + new_inner + ')')
+            i = j + 1
+            continue
+        if not is_kind_decl and (
+                (len(parts) == 1 and is_real_call)):
+            # Wrap the stripped expression in parens ONLY when the
+            # inner contains a top-level additive operator — the
+            # surrounding context's precedence then matches the
+            # unwrapped side (``REAL(N-1, KIND=16)*T`` → ``(N-1)*T``
+            # rather than ``N-1*T``). Single atoms keep their natural
+            # form so ``REAL(X, KIND=16)`` → ``X``.
+            #
+            # Single-arg REAL(X)/CMPLX(X) is also stripped: it is an
+            # integer→real promotion that the Fortran compiler would
+            # insert implicitly when X is used in a real context, so
+            # ``REAL(MAXITR)*UNFL`` is semantically identical to
+            # ``MAXITR*UNFL`` after migration.
+            inner_expr = parts[0].strip()
+            if _has_top_level_operator(inner_expr):
+                out.append('(' + inner_expr + ')')
+            else:
+                out.append(inner_expr)
+        else:
+            # Not the shape we want — keep original call, but with
+            # inner expression already stripped recursively.
+            out.append(text[m.start():m.end()] + inner + ')')
+        i = j + 1
+    return ''.join(out)
+
+
+def _has_top_level_operator(s: str) -> bool:
+    """True if ``s`` contains a top-level ``+`` or ``-`` outside nested
+    parens/brackets (ignoring unary signs and exponent markers).
+
+    We only consider additive operators here, not ``*`` / ``/``:
+    when the stripped expression is used as a factor in an outer
+    multiplication (the usual case for REAL(int_expr, KIND=16)*x),
+    a pure product like ``MAXITR*Q*Q`` is associative with the
+    outer ``*`` so parens are unnecessary. Only ``a-b`` or ``a+b``
+    would change precedence under multiplication.
+    """
+    depth = 0
+    for i, c in enumerate(s):
+        if c in '([':
+            depth += 1
+        elif c in ')]':
+            depth -= 1
+        elif depth == 0 and c in '+-' and i > 0:
+            # Skip if preceded by 'E' / 'D' (exponent sign) or an
+            # operator (meaning it's a unary sign).
+            prev = s[i - 1]
+            if prev in 'eEdD' and i >= 2 and s[i - 2].isdigit():
+                continue
+            if prev in '+-*/=(,':
+                continue
+            return True
+    return False
+
+
+def _split_top_level_comma(s: str) -> list[str]:
+    """Split on commas that are not inside nested parens or brackets."""
+    out: list[str] = []
+    depth = 0
+    start = 0
+    for i, c in enumerate(s):
+        if c in '([':
+            depth += 1
+        elif c in ')]':
+            depth -= 1
+        elif c == ',' and depth == 0:
+            out.append(s[start:i])
+            start = i + 1
+    out.append(s[start:])
+    return out
+
+
+_LABEL_PATTERN = re.compile(
+    # Statement-label definition at line start (followed by space + non-digit).
+    r'(?m)^[ \t]*(\d+)(?=[ \t]+\S)|'
+    # DO label reference.
+    r'\bDO[ \t]*(\d+)\b|'
+    # GO TO single-label reference.
+    r'\bGO[ \t]*TO[ \t]*(\d+)\b|'
+    # I/O specifier (END=, ERR=, EOR=).
+    r'\b(?:END|ERR|EOR)[ \t]*=[ \t]*(\d+)\b|'
+    # ASSIGN <label> TO <var> (legacy F77).
+    r'\bASSIGN[ \t]+(\d+)[ \t]+TO\b|'
+    # Computed GO TO list (a body of comma-separated label numbers).
+    r'\bGO[ \t]*TO[ \t]*\(([\d,\s]+)\)'
+)
+
+
+def _canonicalize_labels(text: str) -> str:
+    """Re-number all Fortran statement labels in canonical order.
+
+    Walks every label position (statement-label definitions and
+    references via ``DO``, ``GO TO``, computed ``GO TO``, I/O
+    ``END=``/``ERR=``/``EOR=``, and legacy ``ASSIGN``). Each distinct
+    label is mapped to ``1, 2, 3, ...`` in order of first appearance,
+    then all occurrences are rewritten.
+
+    Both halves of a co-family pair encounter labels in the same
+    source order if they share the same logical structure (the
+    typical case for upstream label-number drift between LAPACK S/D
+    or C/Z halves), so the renumbering produces identical canonical
+    text. A two-pass placeholder strategy avoids in-place rename
+    collisions: first map each label to ``\\x01L<canonical>\\x01``,
+    then replace placeholders with bare digits.
+    """
+    label_map: dict[str, str] = {}
+
+    def assign(n: str) -> str:
+        if n not in label_map:
+            label_map[n] = f'\x01L{len(label_map) + 1}\x01'
+        return label_map[n]
+
+    def replace(m: re.Match[str]) -> str:
+        for gi in (1, 2, 3, 4, 5):
+            if m.group(gi) is not None:
+                return m.group(0).replace(m.group(gi), assign(m.group(gi)), 1)
+        # Computed GO TO body — renumber each digit literal in the list.
+        body = m.group(6)
+        new = re.sub(r'\d+', lambda dm: assign(dm.group()), body)
+        return m.group(0).replace(body, new, 1)
+
+    text = _LABEL_PATTERN.sub(replace, text)
+    return re.sub(r'\x01L(\d+)\x01', r'\1', text)
+
+
+_PRECISION_PAIRS = frozenset({
+    frozenset(('S', 'D')),
+    frozenset(('C', 'Z')),
+})
+
+
+def _is_precision_equivalent_token(a: str, b: str) -> bool:
+    """True if *a* and *b* differ only at S↔D or C↔Z positions.
+
+    Both tokens must have the same length, and every position where
+    they disagree must be an (S,D) or (C,Z) pair (case-insensitive).
+    Returns False for identical tokens (no drift to fold).
+    """
+    if len(a) != len(b) or a == b:
+        return False
+    for ca, cb in zip(a, b):
+        if ca == cb:
+            continue
+        if frozenset((ca.upper(), cb.upper())) not in _PRECISION_PAIRS:
+            return False
+    return True
+
+
+def _is_precision_equivalent_line(line_a: str, line_b: str) -> bool:
+    """True if two normalized source lines differ only at precision-prefix
+    positions within identifier tokens.
+
+    Tokenizes both lines into words (``\\w+``) and punctuation (``\\S``),
+    then checks each token pair.  If any non-precision token differs, or
+    if the token counts don't match, returns False.
+    """
+    toks_a = re.findall(r'\w+|\S', line_a)
+    toks_b = re.findall(r'\w+|\S', line_b)
+    if len(toks_a) != len(toks_b):
+        return False
+    has_drift = False
+    for ta, tb in zip(toks_a, toks_b):
+        if ta == tb:
+            continue
+        if not _is_precision_equivalent_token(ta, tb):
+            return False
+        has_drift = True
+    return has_drift
+
+
+def _filter_precision_drift(lines_a: list[str],
+                            lines_b: list[str]) -> list[str]:
+    """Compute diff between *lines_a* and *lines_b*, suppressing hunks
+    that are purely precision-prefix local-variable drift (S↔D, C↔Z).
+
+    Uses :func:`difflib.SequenceMatcher` to align the two sides, then
+    for each ``'replace'`` block where every replaced line pair is
+    precision-equivalent (per :func:`_is_precision_equivalent_line`),
+    the block is silently dropped.  Insert, delete, and mixed blocks
+    are kept as real divergences.
+
+    Returns a list of diff lines (prefixed with ``-`` / ``+``) for
+    genuine divergences only.
+    """
+    import difflib
+    sm = difflib.SequenceMatcher(None, lines_a, lines_b)
+    diff_lines: list[str] = []
+    for op, i1, i2, j1, j2 in sm.get_opcodes():
+        if op == 'equal':
+            continue
+        if op == 'replace' and (i2 - i1) == (j2 - j1):
+            if all(
+                lines_a[i1 + k] == lines_b[j1 + k]  # identical
+                or _is_precision_equivalent_line(lines_a[i1 + k],
+                                                 lines_b[j1 + k])
+                for k in range(i2 - i1)
+            ):
+                continue  # pure precision drift — suppress
+        for line in lines_a[i1:i2]:
+            diff_lines.append(f'-{line}')
+        for line in lines_b[j1:j2]:
+            diff_lines.append(f'+{line}')
+    return diff_lines
+
+
+def _strip_type_constructors(text: str) -> str:
+    # 0. Strip module-based type constructors: e.g. real64x2('1.0D0') -> '1.0D0'
+    # Matches identifiers containing a digit (type names like real64x2,
+    # cmplx64x2, real256, etc.) followed by a single-argument call.
+    # This avoids matching Fortran keywords or subroutine calls.
+    text = re.sub(r"\b(\w*\d\w*)\s*\(\s*'([^']+)'\s*\)", r"\2", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\w*\d\w*)\s*\(([^)]+)\)", r"\2", text, flags=re.IGNORECASE)
+    return text
+
+
+def _normalize_numeric_literals(text: str) -> str:
+    # 1. d/D exponent → E in numeric literals. The leading character may
+    #    be a digit or a ``.`` (Fortran allows ``1.D0`` as a typed-real
+    #    literal) — needed to fold ``1.D0`` ↔ ``1`` cosmetic drift between
+    #    MUMPS S/D halves (sana_aux_par writes ``SYMMETRY = 1.D0`` while
+    #    dana_aux_par writes ``SYMMETRY = 1``).
+    text = re.sub(r'([\d.])[dD]([+-]?\d)', r'\1E\2', text)
+    # 2. Strip _N kind suffixes on literals (suffix after a digit)
+    text = re.sub(r'(\d)_\d+\b', r'\1', text)
+    # 3. Drop insignificant exponents (E0/E+0/e-0/E00 ...)
+    text = re.sub(r'([0-9.])[eE][+-]?0+\b', r'\1', text)
+    # 4. Canonicalize mantissa exponent marker to uppercase E
+    text = re.sub(r'(\d)e([+-]?\d)', r'\1E\2', text)
+    # 4b. Strip REAL(expr, KIND=N) / CMPLX(expr, KIND=N) wrappers.
+    text = _strip_real_cmplx_casts(text)
+    # 4c. Canonicalize numeric literal forms.
+    text = re.sub(r'(\d)\.0*(?![\deEdD_])', r'\1', text)
+    # 4c2. Collapse scientific-notation literals that name an integer
+    #     to that integer's decimal form. ScaLAPACK's ``bslaexc.f``
+    #     writes ``PARAMETER(TEN=1.0E1)`` while ``bdlaexc.f`` writes
+    #     ``PARAMETER(TEN=10)``; both name the same value but as
+    #     different literal forms. Match ``<int>.<zeros?>E<+?<int>``
+    #     and re-render as the expanded integer when the result fits
+    #     in a reasonable size (exp ≤ 18, the precision limit of
+    #     double-precision integer reproduction).
+    def _expand_int_exponent(m: re.Match) -> str:
+        mantissa = int(m.group(1))
+        exp = int(m.group(2))
+        if exp > 18:
+            return m.group(0)
+        return str(mantissa * (10 ** exp))
+    text = re.sub(
+        r'\b(\d+)\.0*[eE]\+?(\d+)\b',
+        _expand_int_exponent, text,
+    )
+    return text
+
+
+def _normalize_type_specs(text: str) -> str:
+    # 4d. Strip ``(KIND=N)`` suffix or TYPE(...) specifier.
+    text = re.sub(
+        r'\bREAL\s*\(\s*KIND\s*=\s*\d+\s*\)',
+        r'REAL', text, flags=re.IGNORECASE)
+    text = re.sub(
+        r'\bCOMPLEX\s*\(\s*KIND\s*=\s*\d+\s*\)',
+        r'COMPLEX', text, flags=re.IGNORECASE)
+    # Canonicalize TYPE(...) declarations to REAL/COMPLEX.
+    # Any TYPE(...) that remains after KIND canonicalization is a module-
+    # based type (e.g. TYPE(real64x2), TYPE(real256)) — normalize to
+    # base precision for comparison purposes.
+    text = re.sub(
+        r'\bTYPE\s*\(\s*\w+\s*\)',
+        r'REAL', text, flags=re.IGNORECASE)
+    return text
+
+
+def _renumber_labels(text: str) -> str:
+    # 4e. Canonicalize numeric labels. Must run before the
+    #     ``[sdczSDCZ]→@`` substitution at step 5, which would turn
+    #     ``DO 100`` into ``@O 100`` and defeat the ``\bDO\b`` part of
+    #     the label pattern. Uppercase first so the pattern (which
+    #     expects uppercase ``DO``/``GO TO``) matches mixed-case input.
+    return _canonicalize_labels(text.upper())
+
+
+def _fold_precision_prefixes(text: str) -> str:
+    # 5. Canonicalize prefix-dependent identifiers
+    text = re.sub(
+        r'(?<![A-Za-z0-9])[sdczSDCZ]+(?=[A-Za-z])', '@', text,
+    )
+    # 5_str. The previous rule requires a non-alphanumeric lookbehind so
+    #     it doesn't fold the ``D`` inside ``DBLE`` or the ``S`` inside
+    #     ``STOP``. But MUMPS error strings embed routine names directly
+    #     after a leading word with no separator (e.g.
+    #     ``"... message inSMUMPS_BUF_SEND_BLOCFACTO"`` vs
+    #     ``"... message inDMUMPS_BUF_..."``). Collapse the precision
+    #     letter immediately preceding the library-specific roots
+    #     ``MUMPS_``, ``LAPACK``, ``BLAS``, ``BLACS``, ``SCALAPACK`` so
+    #     these literal-embedded names converge regardless of context.
+    text = re.sub(
+        r'[sdczSDCZ](?=MUMPS_|LAPACK|BLAS|BLACS|SCALAPACK)',
+        '@', text,
+    )
+    # 5a. iso_fortran_env kind imports: ``only: real32`` vs
+    #     ``only: real64`` survive as an unused import (after the
+    #     migrator rewrites ``WP = real32`` → ``WP = 16``). Normalize
+    #     the kind-suffix digits so both halves compare equal.
+    text = re.sub(r'\breal(32|64|128)\b', 'realK', text, flags=re.IGNORECASE)
+    return text
+
+
+def _uppercase(text: str) -> str:
+    # 5b. Uppercase everything. Fortran is case-insensitive, and S vs
+    #     D sources are not consistent about casing keywords
+    #     (``then`` vs ``THEN``, ``IF`` vs ``if``). Uppercasing both
+    #     halves makes them compare equal.
+    return text.upper()
+
+
+def _merge_keyword_spellings(text: str) -> str:
+    # 5c. Merge ``END IF`` → ``ENDIF`` etc. LAPACK writes these block
+    #     terminators with or without a space arbitrarily between
+    #     precision halves.
+    text = re.sub(r'\bEND\s+(IF|DO|SELECT|WHERE|FORALL|SUBROUTINE|FUNCTION|MODULE|INTERFACE|PROGRAM|TYPE|BLOCK|ASSOCIATE)\b',
+                  r'END\1', text)
+    # 5c2. Merge ``ELSE IF`` → ``ELSEIF`` and ``GO TO`` → ``GOTO``.
+    #      Same upstream-style asymmetry as END+keyword.
+    text = re.sub(r'\bELSE\s+IF\b', 'ELSEIF', text)
+    text = re.sub(r'\bGO\s+TO\b', 'GOTO', text)
+    # 5c3. ``DOUBLE PRECISION`` keyword: equate to ``REAL``. After
+    #      migration both halves' real-typed locals get the same
+    #      kind, but the keyword may survive as-is on each side.
+    text = re.sub(r'\bDOUBLE\s+PRECISION\b', 'REAL', text)
+    # 5c4. ``COMPLEX*16`` → ``COMPLEX`` for the same reason.
+    text = re.sub(r'\bCOMPLEX\s*\*\s*16\b', 'COMPLEX', text)
+    return text
+
+
+def _collapse_string_literals(text: str) -> str:
+    # 5c5. Collapse empty / single-space string literals — LAPACK has
+    #      ``ILAENV(..., '', ...)`` vs ``ILAENV(..., ' ', ...)`` and
+    #      ``XERBLA('NAME', ...)`` vs ``XERBLA('NAME ', ...)``. The
+    #      trailing spaces inside ``'...'`` (a Fortran CHARACTER literal)
+    #      affect the callee's interpretation only via LEN_TRIM, which
+    #      for LAPACK's ROUTINE / OPTS string args is always done — so
+    #      ``''`` and ``' '`` and ``'  '`` all behave identically.
+    text = re.sub(r"'( *)'",
+                  lambda m: "''" if not m.group(1) else "' '", text)
+    # 5c6. Strip trailing spaces inside XERBLA first-arg literals so
+    #      ``XERBLA('NAME ', ...)`` matches ``XERBLA('NAME', ...)``.
+    text = re.sub(
+        r"(XERBLA\s*\(\s*'[A-Z0-9_]+) +(')",
+        r'\1\2', text)
+    return text
+
+
+def _strip_implicit_statements(text: str) -> str:
+    # 5d. Strip bare ``IMPLICIT NONE`` (or any other IMPLICIT spec).
+    #     Some S/D halves have it and others don't; it has no bearing
+    #     on the migrated numerics.
+    return re.sub(r'^\s*IMPLICIT\s+\S.*$', '', text, flags=re.MULTILINE)
+
+
+def _squeeze_whitespace(text: str) -> str:
+    # 6. Collapse runs of whitespace to a single space — BLAS sources
+    #    hand-align declaration lists with varying spacing between
+    #    type keyword and argument list, and indent DO loop bodies
+    #    differently across precision halves.
+    text = re.sub(r'[ \t]+', ' ', text)
+    # 6b. Strip whitespace adjacent to arithmetic / relational
+    #     operators. LAPACK's S and D sources format the same
+    #     expression with different spacing (``NZ*EPS`` vs
+    #     ``NZ* EPS``, ``I + 1`` vs ``I+1``). We squeeze both sides
+    #     so they compare equal.
+    text = re.sub(r'\s*([*+\-/=])\s*', r'\1', text)
+    # 6c. Strip whitespace adjacent to parens. LAPACK formats
+    #     argument lists with varying spacing (``F( X )`` vs
+    #     ``F(X)``, ``IF (X)`` vs ``IF(X)``).
+    text = re.sub(r'\s*\(\s*', '(', text)
+    text = re.sub(r'\s*\)', ')', text)
+    # 6c2. Strip whitespace around ``::`` (F90 attribute-list separator)
+    #      so ``REAL :: X`` and ``REAL::X`` compare equal.
+    text = re.sub(r'\s*::\s*', '::', text)
+    # 6c3. Strip whitespace before ``THEN``: ``IF(X)THEN`` and
+    #      ``IF(X) THEN`` are equivalent. ``\)THEN`` and ``)THEN``
+    #      should collapse, but the prior parens rule already strips
+    #      space inside the parens — what remains is a possibly-empty
+    #      gap between the closing ``)`` and ``THEN``.
+    text = re.sub(r'\)\s+THEN\b', ')THEN', text)
+    # 6d. Strip whitespace around commas. LAPACK formats complex
+    #     literals and argument lists as ``(1.0, 0.0)`` vs
+    #     ``(1.0,0.0)`` inconsistently between S/C and D/Z halves,
+    #     and occasionally leaves a stray space before the comma
+    #     (``1 ,WORK``).
+    text = re.sub(r'\s*,\s*', ',', text)
+    # 6d2. Strip whitespace around Fortran word operators
+    #      (``.AND.``, ``.OR.``, ``.NOT.``, ``.NE.``, etc.). LAPACK
+    #      halves format ``LWMIN .AND. X`` vs ``LWMIN.AND.X``
+    #      arbitrarily; the arithmetic-op rule at 6b does not cover
+    #      these because they are bracketed by ``.``.
+    text = re.sub(
+        r'\s*(\.(?:AND|OR|NOT|NE|EQ|LT|LE|GT|GE|EQV|NEQV)\.)\s*',
+        r'\1', text)
+    return text
+
+
+def _strip_rhs_parens(line: str) -> str:
+    # Helper for the 6e pass below: the outer ``(...)`` is stripped
+    # only if its matching ``)`` lands at end-of-line (or end-of-text)
+    # — i.e. the parens wrap the entire RHS. Nested parens inside
+    # ``EXPR`` are tolerated via depth-walk.
+    i = line.find('=(')
+    if i < 0:
+        return line
+    depth = 1
+    j = i + 2
+    while j < len(line) and depth > 0:
+        if line[j] == '(':
+            depth += 1
+        elif line[j] == ')':
+            depth -= 1
+        j += 1
+    if depth == 0 and j == len(line):
+        return line[:i + 1] + line[i + 2:j - 1]
+    return line
+
+
+def _strip_redundant_parens(text: str) -> str:
+    # 6e. Drop redundant parens around RHS of assignments:
+    #     ``WORK(1)=(EXPR)`` vs ``WORK(1)=EXPR``.
+    text = '\n'.join(_strip_rhs_parens(ln) for ln in text.split('\n'))
+    # 6f. Collapse doubled parens ``((X))`` → ``(X)``. LAPACK
+    #     occasionally wraps a boolean / logical expression in an
+    #     extra redundant paren on one half.
+    prev = None
+    while prev != text:
+        prev = text
+        text = re.sub(r'\(\(([^()]*)\)\)', r'(\1)', text)
+    return text
+
+
+def _sort_declaration_lists(text: str) -> str:
+    # 7. Sort items in declaration lists whose order isn't
+    #    semantically meaningful. BLAS/LAPACK sources list
+    #    intrinsics, externals, and type-declared variables in
+    #    arbitrary (often precision-specific) order — e.g., S source
+    #    writes "INTRINSIC REAL, CONJG, MAX" while Z source writes
+    #    "INTRINSIC CONJG, MAX, MIN, REAL".
+    # Sort declaration-list bodies with a precision-neutral key so
+    # co-family halves whose local-variable names differ only at an
+    # S↔D / C↔Z position (``WPSLANGE`` vs ``WPDLANGE``,
+    # ``SIZEPZHETRD`` vs ``SIZEPCHETRD``) land in the same order.
+    # Without the neutral key the post-sort positions diverge and
+    # ``_filter_precision_drift`` no longer recognizes the pair as
+    # token-aligned.
+    return re.sub(
+        r'\b(INTRINSIC|EXTERNAL|INTEGER|LOGICAL|COMPLEX|REAL)\s+'
+        r'([A-Za-z_@][A-Za-z0-9_@,\s]*?)(?=$)',
+        lambda m: _sort_decl_match(m, key=_prec_neutral_key, sep=', '),
+        text, flags=re.MULTILINE,
+    )
+
+
+# Ordered normalization passes for _canonicalize_for_compare. The order
+# is load-bearing (e.g. label renumbering at _renumber_labels must run
+# before _fold_precision_prefixes, and _uppercase before the
+# keyword-spelling merges); the numbered step comments inside each pass
+# preserve the original sequence.
+_CANONICALIZE_PASSES = (
+    _strip_type_constructors,
+    _normalize_numeric_literals,
+    _normalize_type_specs,
+    _renumber_labels,
+    _fold_precision_prefixes,
+    _uppercase,
+    _merge_keyword_spellings,
+    _collapse_string_literals,
+    _strip_implicit_statements,
+    _squeeze_whitespace,
+    _strip_redundant_parens,
+    _sort_declaration_lists,
+)
+
+
+def _canonicalize_for_compare(text: str) -> str:
+    """Normalize text to ignore cosmetic precision-specific differences
+    that remain after migration.
+    """
+    for step in _CANONICALIZE_PASSES:
+        text = step(text)
+    return text
+
+
+def run_divergence_report(recipe_path: Path, target_mode=None,
+                           project_root: Path | None = None,
+                           parser: str | None = None,
+                           parser_cmd: str | None = None,
+                           apply_whitelist: bool = True) -> list[dict]:
+    """Migrate every co-family source pair in-memory and return the
+    normalized diff for each pair whose members disagree.
+
+    Returns a list of ``{'target', 'canonical', 'other', 'diff'}``
+    dicts, sorted by target filename. ``diff`` is the list of +/-
+    lines (without context) from the unified diff of the two
+    canonicalized texts.
+    """
+    # Deferred import: pipeline.py imports this module at top level for
+    # the convergence comparison helpers, so pulling the migration
+    # machinery back in must wait until call time to avoid a cycle.
+    from .pipeline import (
+        _apply_extra_renames,
+        _build_module_rename_pairs,
+        _canonical_rank,
+        _collect_all_symbols,
+        _migrate_parallel,
+        _postprocess_migrated,
+    )
+
+    config = prepare_recipe(recipe_path, project_root)
+
+    symbols = _collect_all_symbols(config, project_root)
+    classification = classify_symbols(symbols)
+    rename_map = classification.build_rename_map(target_mode)
+    rename_map = _apply_extra_renames(rename_map, config, target_mode)
+
+    # Group eligible source files by their target output name.
+    src_files = sorted(
+        p for p in config.source_dir.iterdir()
+        if p.suffix.lower() in config.extensions
+    )
+    by_target: dict[str, list[Path]] = {}
+    for p in src_files:
+        stem_u = p.stem.upper()
+        if stem_u in config.skip_files or stem_u in config.copy_files:
+            continue
+        if stem_u in classification.independent:
+            continue
+        by_target.setdefault(target_filename(p.name, rename_map, target_mode), []).append(p)
+
+    # Migrate every member of every multi-member group in parallel.
+    pairs: list[tuple[Path, Path]] = []
+    for members in by_target.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda p: (
+            _canonical_rank(p.stem, config.prefer_source),
+            p.name,
+        ))
+        canonical = members[0]
+        for other in members[1:]:
+            pairs.append((canonical, other))
+
+    all_paths = {p for pair in pairs for p in pair}
+    module_rename_pairs = _build_module_rename_pairs(config)
+    results = _migrate_parallel(all_paths, rename_map, target_mode,
+                                parser, parser_cmd, config)
+    texts: dict[Path, str] = {}
+    for p, res in results.items():
+        if res is None:
+            continue
+        _, migrated = res
+        texts[p] = _postprocess_migrated(migrated, p, config,
+                                         module_rename_pairs)
+
+    # Memoize the normalized text per path. A 4-member precision
+    # family produces 3 pairs that all share the same canonical;
+    # without this cache the canonical's _canonicalize_for_compare +
+    # _strip_fortran_comments pipeline ran once per pair.
+    normalized: dict[Path, str] = {}
+
+    def _normalize(p: Path) -> str:
+        n = normalized.get(p)
+        if n is None:
+            n = _canonicalize_for_compare(
+                _strip_fortran_comments(texts[p], p.suffix))
+            normalized[p] = n
+        return n
+
+    report: list[dict] = []
+    for canonical, other in pairs:
+        if canonical not in texts or other not in texts:
+            continue
+        n_can = _normalize(canonical)
+        n_oth = _normalize(other)
+        if n_can == n_oth:
+            continue
+        diff = _filter_precision_drift(
+            n_oth.splitlines(), n_can.splitlines())
+        if not diff:
+            continue
+        report.append({
+            'target': target_filename(canonical.name, rename_map, target_mode),
+            'canonical': canonical.name,
+            'other': other.name,
+            'diff': diff,
+        })
+    report.sort(key=lambda r: (r['other'], r['canonical']))
+    if not apply_whitelist:
+        return report
+    return _filter_expected_divergences(report, config)

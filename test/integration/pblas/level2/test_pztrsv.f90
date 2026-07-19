@@ -5,9 +5,9 @@ program test_pztrsv
     use pblas_ref_quad_blas, only: ztrsv
     use pblas_grid,    only: grid_init, grid_exit, my_rank, my_context, &
                              my_nprow, my_npcol, my_row, my_col, &
-                             numroc_local, descinit_local, g2l
+                             numroc_local, descinit_local
     use pblas_distrib, only: gen_distrib_matrix_z, gen_distrib_vector_z, &
-                             gather_vector_z
+                             gather_vector_z, set_local_from_global_z
     use target_pblas,  only: target_name, target_eps, target_pztrsv
     implicit none
 
@@ -20,7 +20,6 @@ program test_pztrsv
     integer :: combo
     integer :: locm_a, locn_a, locn_x, lld_a, lld_x
     integer :: desca(9), descx(9)
-    integer :: owner_r, owner_c, il, jl
     character(len=1) :: uplo, trans, diag
     complex(ep) :: bump
     complex(ep), allocatable :: A_loc(:,:), x_loc(:)
@@ -46,11 +45,7 @@ program test_pztrsv
                     bump = cmplx(real(n, ep), 0.0_ep, ep)
                     do j = 1, n
                         A_glob(j, j) = A_glob(j, j) + bump
-                        call g2l(j, mb, my_nprow, owner_r, il)
-                        call g2l(j, mb, my_npcol, owner_c, jl)
-                        if (owner_r == my_row .and. owner_c == my_col) then
-                            A_loc(il, jl) = A_loc(il, jl) + bump
-                        end if
+                        call set_local_from_global_z(j, j, A_glob(j, j), mb, mb, A_loc)
                     end do
 
                     locm_a = numroc_local(n, mb, my_row, 0, my_nprow)

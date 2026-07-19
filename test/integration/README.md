@@ -101,12 +101,15 @@ test/integration/            (staged into the build tree as tests/)
     ├── CMakeLists.txt        ← BLAS test build (selects target wrapper, links libs)
     ├── refblas/
     │   └── CMakeLists.txt    ← builds refblas_quad from _refblas_src/
-    ├── common/               ← target-agnostic helpers (used by every test)
+    ├── ../common/            ← target-agnostic helpers (shared across suites,
+    │   │                       compiled per suite into its own moddir)
     │   ├── prec_kinds.f90    ← parameter ep = 16
     │   ├── compare.f90       ← rel_err helpers (scalar / vector / matrix, real / complex)
-    │   ├── prec_report.f90   ← report_init / report_case / report_finalize (JSON writer)
+    │   ├── prec_report.F90   ← report_init / report_case / report_finalize (JSON writer)
     │   ├── test_data.f90     ← seeded RNG, gen_{vector,matrix}_{quad,complex}
     │   └── ref_quad_blas.f90 ← explicit interfaces to refblas_quad (D/Z names @ KIND=16)
+    ├── common/
+    │   └── target_blas_body.fypp ← per-target wrapper module template body
     ├── target_kind10/
     │   └── target_blas.f90   ← wraps e/y-prefix routines, casts ep ↔ kind=10
     ├── target_kind16/

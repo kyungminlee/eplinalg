@@ -5,8 +5,9 @@ program test_pztrsm
     use pblas_ref_quad_blas, only: ztrsm
     use pblas_grid,    only: grid_init, grid_exit, my_rank, my_context, &
                              my_nprow, my_npcol, my_row, my_col, &
-                             numroc_local, descinit_local, g2l
-    use pblas_distrib, only: gen_distrib_matrix_z, gather_matrix_z
+                             numroc_local, descinit_local
+    use pblas_distrib, only: gen_distrib_matrix_z, gather_matrix_z, &
+                             set_local_from_global_z
     use target_pblas,  only: target_name, target_eps, target_pztrsm
     implicit none
 
@@ -25,7 +26,6 @@ program test_pztrsm
     integer :: ka
     integer :: locm_a, locn_a, locm_b, locn_b, lld_a, lld_b
     integer :: desca(9), descb(9)
-    integer :: owner_r, owner_c, il, jl
     character(len=1) :: side, uplo, transa, diag
     complex(ep) :: bump, alpha
     complex(ep), allocatable :: A_loc(:,:), B_loc(:,:)
@@ -56,11 +56,7 @@ program test_pztrsm
             bump = cmplx(real(ka, ep), 0.0_ep, ep)
             do j = 1, ka
                 A_glob(j, j) = A_glob(j, j) + bump
-                call g2l(j, mb, my_nprow, owner_r, il)
-                call g2l(j, mb, my_npcol, owner_c, jl)
-                if (owner_r == my_row .and. owner_c == my_col) then
-                    A_loc(il, jl) = A_loc(il, jl) + bump
-                end if
+                call set_local_from_global_z(j, j, A_glob(j, j), mb, mb, A_loc)
             end do
 
             locm_a = numroc_local(ka, mb, my_row, 0, my_nprow)

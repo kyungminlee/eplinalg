@@ -6,14 +6,14 @@ least two of them mishandled the doubled-quote escape (``''`` / ``""``).
 These tests pin the corrected behavior of the shared primitives.
 """
 
-from migrator.fortran_migrator import (
+from migrator.fortran.lex import (
     _build_split_mask,
     _count_open_parens,
     _find_inline_bang,
     _iter_outside_strings,
     _strip_strings_and_comments,
 )
-from migrator.pipeline import _strip_inline_bang
+from migrator.divergence import _strip_inline_bang
 
 
 def test_iter_outside_strings_skips_doubled_apostrophe():

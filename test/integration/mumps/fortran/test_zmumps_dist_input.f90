@@ -6,23 +6,22 @@
 
 program test_zmumps_dist_input
     use prec_kinds,            only: ep
-    use prec_report,           only: report_init, report_case, report_finalize, report_check_status
-    use compare,               only: max_rel_err_vec_z
+    use prec_report,           only: report_init, report_finalize, report_check_status
     use test_data_mumps,       only: gen_dense_problem_z, dense_to_triplet_z
-    use target_mumps,          only: target_name, target_eps, &
-                                     zmumps_struc, target_xmumps, &
-                                     q2t_c, t2q_c
+    use target_mumps,          only: target_name, &
+                                     zmumps_struc, target_xmumps, q2t_c
+    use mumps_lifecycle,       only: mumps_begin, mumps_check_solution, &
+                                     mumps_end
     use mpi
     implicit none
 
     integer, parameter :: n = 16
     integer            :: ierr, nz, myid, nprocs, lo, hi, nz_loc
     logical            :: is_host
-    complex(ep), allocatable :: A(:,:), x_true(:), b(:), x_solve(:)
+    complex(ep), allocatable :: A(:,:), x_true(:), b(:)
     integer,     allocatable :: irn(:), jcn(:)
     complex(ep), allocatable :: A_trip(:)
     type(zmumps_struc)       :: id
-    real(ep)                 :: err, tol
 
     call MPI_INIT(ierr)
     call MPI_COMM_RANK(MPI_COMM_WORLD, myid, ierr)
@@ -32,16 +31,13 @@ program test_zmumps_dist_input
 
     call gen_dense_problem_z(n, A, x_true, b, seed = 25001)
     call dense_to_triplet_z (A, irn, jcn, A_trip, nz)
-    tol = 16.0_ep * real(n, ep)**3 * target_eps
 
     lo     = (myid * nz) / nprocs + 1
     hi     = ((myid + 1) * nz) / nprocs
     nz_loc = hi - lo + 1
     if (nz_loc < 0) nz_loc = 0
 
-    id%COMM = MPI_COMM_WORLD;  id%PAR = 1;  id%SYM = 0;  id%JOB = -1
-    call target_xmumps(id)
-    id%ICNTL(1) = -1; id%ICNTL(2) = -1; id%ICNTL(3) = -1; id%ICNTL(4) = 0
+    call mumps_begin(id, MPI_COMM_WORLD, 0)
     id%ICNTL(18) = 3
 
     id%N        = n
@@ -62,17 +58,9 @@ program test_zmumps_dist_input
         error stop 1
     end if
 
-    if (is_host) then
-        allocate(x_solve(n));  x_solve = t2q_c(id%RHS)
-        err = max_rel_err_vec_z(x_solve, x_true)
-        call report_case('icntl18=3', err, tol)
-        deallocate(id%RHS, x_solve)
-        nullify(id%RHS)
-    end if
+    if (is_host) call mumps_check_solution(id, x_true, 'icntl18=3')
 
-    deallocate(id%IRN_loc, id%JCN_loc, id%A_loc)
-    nullify(id%IRN_loc, id%JCN_loc, id%A_loc)
-    id%JOB = -2;  call target_xmumps(id)
+    call mumps_end(id)
 
     deallocate(A, x_true, b, irn, jcn, A_trip)
     call report_finalize()

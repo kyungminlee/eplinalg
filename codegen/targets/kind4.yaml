@@ -2,12 +2,14 @@
 #
 # Not a real migration target: S/C are the standard single-precision
 # entry points already in the upstream BLAS/LAPACK source tree, not
-# something the migrator produces. This file exists so `migrator stage
-# --target kind4` resolves a TargetMode; the staging command short-
-# circuits to the baseline path (no per-library migration; staging
-# only copies upstream sources, tests/, and writes target_config.cmake
+# something the migrator produces. `migrator stage --target kind4`
+# never loads this file — staging short-circuits on the raw target
+# name to the baseline path (no per-library migration; staging only
+# copies upstream sources, tests/, and writes target_config.cmake
 # with LIB_PREFIX="" so tests/<lib>/CMakeLists.txt links the standard
-# archive directly).
+# archive directly). The file carries only the loader-required
+# minimum so subcommands that do resolve targets by name
+# (migrate / diverge / ...) accept `--target kind4`.
 
 name: kind4
 
@@ -32,14 +34,3 @@ module: null
 known_constants: {}
 la_constants_map: {}
 la_constants_suffix: ""
-
-c_interop:
-  real_type: float
-  complex_type: complex
-  c_real_type: float
-  mpi_real: MPI_REAL
-  mpi_complex: MPI_COMPLEX
-  mpi_sum_real: MPI_SUM
-  mpi_sum_complex: MPI_SUM
-  needs_mpi_check: false
-  header_mode: typedef

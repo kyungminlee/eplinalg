@@ -24,6 +24,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .cli_common import recipe_project_root
 from .config import RecipeConfig, load_recipe
 
 
@@ -257,7 +258,7 @@ def run_prepare(recipe_path: Path,
     Returns the staged root path.
     """
     if project_root is None:
-        project_root = recipe_path.parent.parent.parent
+        project_root = recipe_project_root(recipe_path)
 
     config = load_recipe(recipe_path, project_root)
     staged_root = staged_root_for(project_root, config.library)
@@ -393,7 +394,7 @@ def verify_patches(recipe_path: Path,
     Returns a list of error strings; empty list means clean.
     """
     if project_root is None:
-        project_root = recipe_path.parent.parent.parent
+        project_root = recipe_project_root(recipe_path)
     config = load_recipe(recipe_path, project_root)
     pdir = patch_dir_for(recipe_path, config.library)
     if not pdir.is_dir():
@@ -446,7 +447,7 @@ def prepare_recipe(recipe_path: Path,
     one swap routes the entire migration through the staged tree.
     """
     if project_root is None:
-        project_root = recipe_path.parent.parent.parent
+        project_root = recipe_project_root(recipe_path)
     staged_root = run_prepare(recipe_path, project_root, rebuild=rebuild)
     config = load_recipe(recipe_path, project_root)
     config.source_dir = staged_root

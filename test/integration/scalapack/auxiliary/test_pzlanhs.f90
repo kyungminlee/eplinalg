@@ -6,8 +6,9 @@ program test_pzlanhs
     use ref_quad_lapack,  only: zlanhs
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix_z
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix_z, &
+                                set_local_from_global_z
     use target_scalapack, only: target_name, target_eps, target_pzlanhs
     implicit none
 
@@ -21,7 +22,7 @@ program test_pzlanhs
     real(ep),    allocatable :: work(:), work_ref(:)
     real(ep) :: got, refv, err, tol
     character(len=48) :: label
-    integer :: ig, jg, owner_r, owner_c, il, jl
+    integer :: ig, jg
 
     call grid_init()
     call report_init('pzlanhs', target_name, my_rank)
@@ -33,10 +34,7 @@ program test_pzlanhs
         do jg = 1, n
             do ig = jg + 2, n
                 A_glob(ig, jg) = (0.0_ep, 0.0_ep)
-                call g2l(ig, mb, my_nprow, owner_r, il)
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_r == my_row .and. owner_c == my_col) &
-                    A_loc(il, jl) = (0.0_ep, 0.0_ep)
+                call set_local_from_global_z(ig, jg, A_glob(ig, jg), mb, nb, A_loc)
             end do
         end do
 

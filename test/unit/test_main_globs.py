@@ -7,6 +7,8 @@ LAPACK 2-stage routines (``iparam2stage.F``, ``dsytrd_sb2st.F``,
 Linux, so ``*.f`` does **not** match ``*.F``; the helper must glob both.
 """
 
+import pytest
+
 from migrator.staging import _collect_source_files
 
 
@@ -70,8 +72,8 @@ def test_collect_dedupes_by_inode(tmp_path):
         link.hardlink_to(real)
     except OSError:
         # Some filesystems (e.g. tmpfs without hardlink support) refuse;
-        # accept the test as a no-op rather than failing on env oddities.
-        return
+        # surface that as a skip rather than a vacuous pass.
+        pytest.skip('filesystem does not support hardlinks')
 
     files = _collect_source_files(tmp_path, 'fortran')
     assert len(files) == 1

@@ -6,8 +6,9 @@ program test_pzgerfs
     use ref_quad_lapack,  only: zgesv
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z, &
+                                set_local_from_global_z
     use target_scalapack, only: target_name, target_eps, &
                                 target_pzgetrf, target_pzgetrs, target_pzgerfs
     implicit none
@@ -27,7 +28,7 @@ program test_pzgerfs
     complex(ep) :: wopt(1)
     real(ep) :: rwopt(1)
     character(len=48) :: label
-    integer :: k, owner_r, owner_c, il, jl
+    integer :: k
 
     call grid_init()
     call report_init('pzgerfs', target_name, my_rank)
@@ -38,11 +39,7 @@ program test_pzgerfs
         call gen_distrib_matrix_z(n, nrhs, mb, nb, B_loc, B_glob, seed = 22411 + 31*i)
         do k = 1, n
             A_glob(k, k) = A_glob(k, k) + cmplx(real(n, ep), 0.0_ep, ep)
-            call g2l(k, mb, my_nprow, owner_r, il)
-            call g2l(k, nb, my_npcol, owner_c, jl)
-            if (owner_r == my_row .and. owner_c == my_col) then
-                A_loc(il, jl) = A_loc(il, jl) + cmplx(real(n, ep), 0.0_ep, ep)
-            end if
+            call set_local_from_global_z(k, k, A_glob(k, k), mb, nb, A_loc)
         end do
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)

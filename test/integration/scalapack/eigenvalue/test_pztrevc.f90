@@ -8,8 +8,9 @@ program test_pztrevc
     use pblas_prec_report, only: report_init, report_case, report_finalize
     use pblas_grid,        only: grid_init, grid_exit, my_rank, my_context, &
                                  my_nprow, my_npcol, my_row, my_col, &
-                                 numroc_local, descinit_local, g2l
-    use pblas_distrib,     only: gen_distrib_matrix_z, gather_matrix_z
+                                 numroc_local, descinit_local
+    use pblas_distrib,     only: gen_distrib_matrix_z, gather_matrix_z, &
+                                 scatter_matrix_z
     use target_scalapack,  only: target_name, target_eps, target_pztrevc
     implicit none
 
@@ -18,7 +19,7 @@ program test_pztrevc
     integer :: i, n, info, lwork, lrwork, m, k, j
     integer :: locm, locn, lld
     integer :: descT(9), descVL(9), descVR(9)
-    integer :: ig, jg, owner_r, owner_c, il, jl
+    integer :: ig, jg
     complex(ep), allocatable :: T_loc(:,:), T_glob(:,:)
     complex(ep), allocatable :: VL_loc(:,:), VR_loc(:,:), VR_got(:,:)
     complex(ep), allocatable :: work(:)
@@ -43,16 +44,7 @@ program test_pztrevc
             ! Bias diagonal to keep eigenvalues well-separated and large.
             T_glob(jg, jg) = T_glob(jg, jg) + cmplx(real(2 * jg, ep), 0.0_ep, ep)
         end do
-        if (size(T_loc, 1) > 0 .and. size(T_loc, 2) > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) T_loc(il, jl) = T_glob(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix_z(n, n, mb, nb, T_glob, T_loc)
 
         locm = numroc_local(n, mb, my_row, 0, my_nprow)
         locn = numroc_local(n, nb, my_col, 0, my_npcol); lld = max(1, locm)

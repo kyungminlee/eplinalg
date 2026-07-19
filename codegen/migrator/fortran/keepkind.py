@@ -4,6 +4,9 @@ Protects source spans whose KIND must survive migration by swapping them for
 private sentinels before the type rewrite and restoring them after. Self-
 contained; extracted verbatim from ``fortran_migrator.py``.
 """
+import re
+
+from .lex import is_continuation_line
 
 
 _KK_SENTINEL = '__KEEPKIND_DP__'
@@ -13,6 +16,20 @@ _KK_DBLE_SENTINEL = '__KEEPKIND_DBLE__'
 
 
 _KK_DCMPLX_SENTINEL = '__KEEPKIND_DCMPLX__'
+
+
+KEEPKIND_MARKERS = (_KK_SENTINEL, _KK_DBLE_SENTINEL, _KK_DCMPLX_SENTINEL)
+
+
+def has_keepkind_marker(text: str) -> bool:
+    """True when ``text`` carries any keep-kind sentinel (i.e. it is
+    mid-pipeline between apply and restore and must not be rewritten)."""
+    return any(marker in text for marker in KEEPKIND_MARKERS)
+
+
+_KK_DP_RE = re.compile(r'DOUBLE\s+PRECISION', re.IGNORECASE)
+_KK_DBLE_RE = re.compile(r'\bdble\s*\(', re.IGNORECASE)
+_KK_DCMPLX_RE = re.compile(r'\bdcmplx\s*\(', re.IGNORECASE)
 
 
 def _apply_keep_kind_sentinel(source: str, keep_kind_lines: frozenset[int]) -> str:
@@ -27,16 +44,12 @@ def _apply_keep_kind_sentinel(source: str, keep_kind_lines: frozenset[int]) -> s
     callers of verbatim (copy_files) DP-stable routines keep passing
     DP values instead of being rewritten to ``REAL(x, KIND=16)``.
     """
-    import re as _re
     lines = source.splitlines(keepends=True)
-    _dp = _re.compile(r'DOUBLE\s+PRECISION', _re.IGNORECASE)
-    _dble = _re.compile(r'\bdble\s*\(', _re.IGNORECASE)
-    _dcmplx = _re.compile(r'\bdcmplx\s*\(', _re.IGNORECASE)
     for ln in keep_kind_lines:
         if 1 <= ln <= len(lines):
-            t = _dp.sub(_KK_SENTINEL, lines[ln - 1])
-            t = _dble.sub(_KK_DBLE_SENTINEL + '(', t)
-            t = _dcmplx.sub(_KK_DCMPLX_SENTINEL + '(', t)
+            t = _KK_DP_RE.sub(_KK_SENTINEL, lines[ln - 1])
+            t = _KK_DBLE_RE.sub(_KK_DBLE_SENTINEL + '(', t)
+            t = _KK_DCMPLX_RE.sub(_KK_DCMPLX_SENTINEL + '(', t)
             lines[ln - 1] = t
     return ''.join(lines)
 
@@ -46,6 +59,33 @@ def _restore_keep_kind_sentinel(source: str) -> str:
     source = source.replace(_KK_DBLE_SENTINEL, 'dble')
     source = source.replace(_KK_DCMPLX_SENTINEL, 'dcmplx')
     return source
+
+
+_ROUNDUP_NAME_RE = re.compile(r'\b([A-Z])ROUNDUP_LWORK\b')
+
+# Orphan-declaration matchers for pass 2 of _strip_roundup_lwork.
+# REAL(KIND=N) <list> — strip ROUNDUP token from list.
+_ROUNDUP_REAL_DECL_RE = re.compile(
+    r'^(\s*REAL(?:\s*\(\s*KIND\s*=\s*\d+\s*\))?\s+)(.*)$', re.IGNORECASE)
+_ROUNDUP_EXTERNAL_DECL_RE = re.compile(r'^(\s*EXTERNAL\s+)(.*)$', re.IGNORECASE)
+# Modern F90 attribute-list form: ``REAL, EXTERNAL :: NAME``
+# and ``DOUBLE PRECISION, EXTERNAL :: NAME``. Migrator-level
+# strip needs to handle both to drop the orphan ROUNDUP_LWORK
+# declaration after the call sites are stripped.
+_ROUNDUP_ATTR_DECL_RE = re.compile(
+    r'^(\s*(?:REAL|DOUBLE\s+PRECISION)'
+    r'(?:\s*\(\s*KIND\s*=\s*\d+\s*\))?'
+    r'\s*,\s*EXTERNAL\s*::\s*)(.*)$',
+    re.IGNORECASE)
+
+
+def _is_cont_free(prev: str) -> bool:
+    # Free-form: previous line ended (before any trailing comment) in '&'.
+    s = prev.rstrip('\n').rstrip()
+    # strip a trailing '! ...' comment for the heuristic
+    if '!' in s:
+        s = s.split('!', 1)[0].rstrip()
+    return s.endswith('&')
 
 
 def _strip_roundup_lwork(source: str, target_mode) -> str:
@@ -68,24 +108,27 @@ def _strip_roundup_lwork(source: str, target_mode) -> str:
     """
     if target_mode.is_kind_based and (target_mode.kind_suffix or 0) < 8:
         return source
-    import re as _re
-    name_re = _re.compile(r'\b([A-Z])ROUNDUP_LWORK\b')
-    if not name_re.search(source):
+    if not _ROUNDUP_NAME_RE.search(source):
         return source
+    source = _strip_roundup_calls(source)
+    return _strip_roundup_decls(source)
 
-    # 1) Strip call wrappers: <PREFIX>ROUNDUP_LWORK( <expr> )  ->  <expr>
+
+def _strip_roundup_calls(source: str) -> str:
+    """Pass 1: strip call wrappers,
+    ``<PREFIX>ROUNDUP_LWORK( <expr> )`` -> ``<expr>``."""
     out = []
     i = 0
     n = len(source)
     while i < n:
-        m = name_re.search(source, i)
+        m = _ROUNDUP_NAME_RE.search(source, i)
         if not m:
             out.append(source[i:])
             break
         out.append(source[i:m.start()])
         # Skip the function definition itself (FUNCTION QROUNDUP_LWORK(...))
         prefix = source[max(0, m.start() - 16):m.start()].upper()
-        if _re.search(r'\bFUNCTION\s*$', prefix):
+        if re.search(r'\bFUNCTION\s*$', prefix):
             out.append(m.group(0))
             i = m.end()
             continue
@@ -116,25 +159,20 @@ def _strip_roundup_lwork(source: str, target_mode) -> str:
             break
         out.append(source[j + 1:k])  # the inner expression
         i = k + 1
-    source = ''.join(out)
+    return ''.join(out)
 
-    # 2) Drop the now-orphan declarations. Logical-line-aware: joins
-    # fixed-form ($/+/&) and free-form (& at EOL) continuations, strips
-    # the dead token from any REAL/EXTERNAL list, then re-emits — also
-    # dropping lines whose entire list became empty.
+
+def _strip_roundup_decls(source: str) -> str:
+    """Pass 2: drop the now-orphan declarations. Logical-line-aware:
+    joins fixed-form ($/+/&) and free-form (& at EOL) continuations,
+    strips the dead token from any REAL/EXTERNAL list, then re-emits —
+    also dropping lines whose entire list became empty."""
     physical = source.splitlines(keepends=True)
-    # Identify continuation runs.
+
     def is_cont_fixed(line: str) -> bool:
-        # Fixed-form: column 6 has a non-space, non-zero character.
-        # We accept whitespace-leading lines starting with $/+/& at col 6.
-        return len(line) > 5 and line[5] not in (' ', '0', '\t', '\n')
-    def is_cont_free(prev: str) -> bool:
-        # Free-form: previous line ended (before any trailing comment) in '&'.
-        s = prev.rstrip('\n').rstrip()
-        # strip a trailing '! ...' comment for the heuristic
-        if '!' in s:
-            s = s.split('!', 1)[0].rstrip()
-        return s.endswith('&')
+        # Fixed-form: cols 1-5 blank and column 6 has a non-space,
+        # non-zero, non-tab character ($/+/& conventionally).
+        return is_continuation_line(line, tab_marker=False)
 
     out_lines: list[str] = []
     i = 0
@@ -151,7 +189,7 @@ def _strip_roundup_lwork(source: str, target_mode) -> str:
                 # In fixed form, comment lines may interleave continuations;
                 # but if comment line, stop the group here.
                 break
-            if is_cont_fixed(nxt) or is_cont_free(physical[j - 1]):
+            if is_cont_fixed(nxt) or _is_cont_free(physical[j - 1]):
                 j += 1
             else:
                 break
@@ -176,21 +214,9 @@ def _strip_roundup_lwork(source: str, target_mode) -> str:
         # Match on the joined logical line.
         joined = logical.rstrip('\n').rstrip()
 
-        # REAL(KIND=N) <list>   — strip ROUNDUP token from list
-        m_real = _re.match(
-            r'^(\s*REAL(?:\s*\(\s*KIND\s*=\s*\d+\s*\))?\s+)(.*)$',
-            joined, _re.IGNORECASE)
-        m_ext = _re.match(r'^(\s*EXTERNAL\s+)(.*)$',
-                          joined, _re.IGNORECASE)
-        # Modern F90 attribute-list form: ``REAL, EXTERNAL :: NAME``
-        # and ``DOUBLE PRECISION, EXTERNAL :: NAME``. Migrator-level
-        # strip needs to handle both to drop the orphan ROUNDUP_LWORK
-        # declaration after the call sites are stripped.
-        m_attr = _re.match(
-            r'^(\s*(?:REAL|DOUBLE\s+PRECISION)'
-            r'(?:\s*\(\s*KIND\s*=\s*\d+\s*\))?'
-            r'\s*,\s*EXTERNAL\s*::\s*)(.*)$',
-            joined, _re.IGNORECASE)
+        m_real = _ROUNDUP_REAL_DECL_RE.match(joined)
+        m_ext = _ROUNDUP_EXTERNAL_DECL_RE.match(joined)
+        m_attr = _ROUNDUP_ATTR_DECL_RE.match(joined)
         is_attr = bool(m_attr)
         is_real = m_real and not m_ext and not is_attr
         is_ext  = bool(m_ext) and not is_attr
@@ -199,8 +225,8 @@ def _strip_roundup_lwork(source: str, target_mode) -> str:
             head, names = m.group(1), m.group(2)
             tokens = [t.strip() for t in names.split(',')]
             keep = [t for t in tokens
-                    if t and not _re.fullmatch(
-                        r'[A-Z]ROUNDUP_LWORK', t, _re.IGNORECASE)]
+                    if t and not re.fullmatch(
+                        r'[A-Z]ROUNDUP_LWORK', t, re.IGNORECASE)]
             if len(keep) == len(tokens):
                 # Token not present — emit group unchanged.
                 out_lines.extend(group)
@@ -214,7 +240,7 @@ def _strip_roundup_lwork(source: str, target_mode) -> str:
                 # EXTERNAL/REAL declaration lines are not column-7
                 # constrained).
                 # Keep leading whitespace from original line for cosmetics.
-                lead = _re.match(r'^(\s*)', group[0]).group(1)
+                lead = re.match(r'^(\s*)', group[0]).group(1)
                 new_logical = head + ', '.join(keep) + '\n'
                 # Preserve original leading indent from first phys line.
                 # head may not have leading whitespace; ensure it does:

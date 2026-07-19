@@ -9,13 +9,15 @@
 ! the explicit interface would default DDOT etc. to DOUBLE PRECISION
 ! (KIND=8), mismatching the promoted KIND=16 symbol. Always `use
 ! ref_quad_blas`.
+!
+! This is the shared superset copy for every suite that compares
+! against refblas_quad (blas, ptzblas, pblas, pbblas, scalapack).
+! Interfaces for routines a suite never calls are harmless — they
+! only declare. The historical per-suite module renames survive as
+! one-line re-export shims (pblas_ref_quad_blas.f90,
+! ptzblas_ref_quad_blas.f90) next to this file.
 
-! Module name is pblas_ref_quad_blas (not ref_quad_blas) to avoid
-! colliding with tests/blas/common/ref_quad_blas. Both targets write
-! their .mod files into the same ${PROJECT_BINARY_DIR}/fmod directory,
-! so the module names must differ — same convention as
-! pblas_prec_report vs prec_report.
-module pblas_ref_quad_blas
+module ref_quad_blas
     use prec_kinds, only: ep
     implicit none
 
@@ -48,6 +50,13 @@ module pblas_ref_quad_blas
             real(ep), intent(in) :: x(*)
             integer :: r
         end function idamax_quad
+
+        function izamax_quad(n, x, incx) result(r)
+            import :: ep
+            integer,     intent(in) :: n, incx
+            complex(ep), intent(in) :: x(*)
+            integer :: r
+        end function izamax_quad
 
         subroutine daxpy_quad(n, alpha, x, incx, y, incy)
             import :: ep
@@ -139,12 +148,18 @@ module pblas_ref_quad_blas
             complex(ep), intent(inout) :: x(*)
         end subroutine zscal_quad
 
-        subroutine zdscal_quad(n, alpha, x, incx)
+        function dcabs1_quad(z) result(r)
             import :: ep
-            integer,     intent(in)    :: n, incx
-            real(ep),    intent(in)    :: alpha
-            complex(ep), intent(inout) :: x(*)
-        end subroutine zdscal_quad
+            complex(ep), intent(in) :: z
+            real(ep) :: r
+        end function dcabs1_quad
+
+        function dznrm2_quad(n, x, incx) result(r)
+            import :: ep
+            integer,     intent(in) :: n, incx
+            complex(ep), intent(in) :: x(*)
+            real(ep) :: r
+        end function dznrm2_quad
 
         subroutine zcopy_quad(n, x, incx, y, incy)
             import :: ep
@@ -159,19 +174,27 @@ module pblas_ref_quad_blas
             complex(ep), intent(inout) :: x(*), y(*)
         end subroutine zswap_quad
 
-        function izamax_quad(n, x, incx) result(r)
+        subroutine zdscal_quad(n, alpha, x, incx)
             import :: ep
-            integer,     intent(in) :: n, incx
-            complex(ep), intent(in) :: x(*)
-            integer :: r
-        end function izamax_quad
+            integer,     intent(in)    :: n, incx
+            real(ep),    intent(in)    :: alpha
+            complex(ep), intent(inout) :: x(*)
+        end subroutine zdscal_quad
 
-        function dznrm2_quad(n, x, incx) result(r)
+        subroutine zdrot_quad(n, x, incx, y, incy, c, s)
             import :: ep
-            integer,     intent(in) :: n, incx
-            complex(ep), intent(in) :: x(*)
-            real(ep) :: r
-        end function dznrm2_quad
+            integer,     intent(in)    :: n, incx, incy
+            complex(ep), intent(inout) :: x(*), y(*)
+            real(ep),    intent(in)    :: c, s
+        end subroutine zdrot_quad
+
+        subroutine zrotg_quad(a, b, c, s)
+            import :: ep
+            complex(ep), intent(inout) :: a
+            complex(ep), intent(in)    :: b
+            real(ep),    intent(out)   :: c
+            complex(ep), intent(out)   :: s
+        end subroutine zrotg_quad
 
         ! ── Level 2 — real ───────────────────────────────────────────
         subroutine dgemv_quad(trans, m, n, alpha, A, lda, x, incx, beta, y, incy)
@@ -257,6 +280,38 @@ module pblas_ref_quad_blas
             real(ep),  intent(inout) :: x(*)
         end subroutine dtrsv_quad
 
+        subroutine dtbsv_quad(uplo, trans, diag, n, k, A, lda, x, incx)
+            import :: ep
+            character, intent(in)    :: uplo, trans, diag
+            integer,   intent(in)    :: n, k, lda, incx
+            real(ep),  intent(in)    :: A(lda,*)
+            real(ep),  intent(inout) :: x(*)
+        end subroutine dtbsv_quad
+
+        subroutine dtpsv_quad(uplo, trans, diag, n, ap, x, incx)
+            import :: ep
+            character, intent(in)    :: uplo, trans, diag
+            integer,   intent(in)    :: n, incx
+            real(ep),  intent(in)    :: ap(*)
+            real(ep),  intent(inout) :: x(*)
+        end subroutine dtpsv_quad
+
+        subroutine dspr_quad(uplo, n, alpha, x, incx, ap)
+            import :: ep
+            character, intent(in)    :: uplo
+            integer,   intent(in)    :: n, incx
+            real(ep),  intent(in)    :: alpha, x(*)
+            real(ep),  intent(inout) :: ap(*)
+        end subroutine dspr_quad
+
+        subroutine dspr2_quad(uplo, n, alpha, x, incx, y, incy, ap)
+            import :: ep
+            character, intent(in)    :: uplo
+            integer,   intent(in)    :: n, incx, incy
+            real(ep),  intent(in)    :: alpha, x(*), y(*)
+            real(ep),  intent(inout) :: ap(*)
+        end subroutine dspr2_quad
+
         subroutine dsyr_quad(uplo, n, alpha, x, incx, A, lda)
             import :: ep
             character, intent(in)    :: uplo
@@ -306,6 +361,32 @@ module pblas_ref_quad_blas
             complex(ep), intent(inout) :: A(lda,*)
         end subroutine zgeru_quad
 
+        subroutine zgbmv_quad(trans, m, n, kl, ku, alpha, A, lda, x, incx, beta, y, incy)
+            import :: ep
+            character,   intent(in)    :: trans
+            integer,     intent(in)    :: m, n, kl, ku, lda, incx, incy
+            complex(ep), intent(in)    :: alpha, beta
+            complex(ep), intent(in)    :: A(lda,*), x(*)
+            complex(ep), intent(inout) :: y(*)
+        end subroutine zgbmv_quad
+
+        subroutine zhbmv_quad(uplo, n, k, alpha, A, lda, x, incx, beta, y, incy)
+            import :: ep
+            character,   intent(in)    :: uplo
+            integer,     intent(in)    :: n, k, lda, incx, incy
+            complex(ep), intent(in)    :: alpha, beta
+            complex(ep), intent(in)    :: A(lda,*), x(*)
+            complex(ep), intent(inout) :: y(*)
+        end subroutine zhbmv_quad
+
+        subroutine zhpmv_quad(uplo, n, alpha, ap, x, incx, beta, y, incy)
+            import :: ep
+            character,   intent(in)    :: uplo
+            integer,     intent(in)    :: n, incx, incy
+            complex(ep), intent(in)    :: alpha, beta, ap(*), x(*)
+            complex(ep), intent(inout) :: y(*)
+        end subroutine zhpmv_quad
+
         subroutine zher_quad(uplo, n, alpha, x, incx, A, lda)
             import :: ep
             character,   intent(in)    :: uplo
@@ -322,6 +403,55 @@ module pblas_ref_quad_blas
             complex(ep), intent(in)    :: alpha, x(*), y(*)
             complex(ep), intent(inout) :: A(lda,*)
         end subroutine zher2_quad
+
+        subroutine zhpr_quad(uplo, n, alpha, x, incx, ap)
+            import :: ep
+            character,   intent(in)    :: uplo
+            integer,     intent(in)    :: n, incx
+            real(ep),    intent(in)    :: alpha
+            complex(ep), intent(in)    :: x(*)
+            complex(ep), intent(inout) :: ap(*)
+        end subroutine zhpr_quad
+
+        subroutine zhpr2_quad(uplo, n, alpha, x, incx, y, incy, ap)
+            import :: ep
+            character,   intent(in)    :: uplo
+            integer,     intent(in)    :: n, incx, incy
+            complex(ep), intent(in)    :: alpha, x(*), y(*)
+            complex(ep), intent(inout) :: ap(*)
+        end subroutine zhpr2_quad
+
+        subroutine ztbmv_quad(uplo, trans, diag, n, k, A, lda, x, incx)
+            import :: ep
+            character,   intent(in)    :: uplo, trans, diag
+            integer,     intent(in)    :: n, k, lda, incx
+            complex(ep), intent(in)    :: A(lda,*)
+            complex(ep), intent(inout) :: x(*)
+        end subroutine ztbmv_quad
+
+        subroutine ztbsv_quad(uplo, trans, diag, n, k, A, lda, x, incx)
+            import :: ep
+            character,   intent(in)    :: uplo, trans, diag
+            integer,     intent(in)    :: n, k, lda, incx
+            complex(ep), intent(in)    :: A(lda,*)
+            complex(ep), intent(inout) :: x(*)
+        end subroutine ztbsv_quad
+
+        subroutine ztpmv_quad(uplo, trans, diag, n, ap, x, incx)
+            import :: ep
+            character,   intent(in)    :: uplo, trans, diag
+            integer,     intent(in)    :: n, incx
+            complex(ep), intent(in)    :: ap(*)
+            complex(ep), intent(inout) :: x(*)
+        end subroutine ztpmv_quad
+
+        subroutine ztpsv_quad(uplo, trans, diag, n, ap, x, incx)
+            import :: ep
+            character,   intent(in)    :: uplo, trans, diag
+            integer,     intent(in)    :: n, incx
+            complex(ep), intent(in)    :: ap(*)
+            complex(ep), intent(inout) :: x(*)
+        end subroutine ztpsv_quad
 
         subroutine ztrmv_quad(uplo, trans, diag, n, A, lda, x, incx)
             import :: ep
@@ -394,6 +524,15 @@ module pblas_ref_quad_blas
             real(ep),  intent(inout) :: B(ldb,*)
         end subroutine dtrsm_quad
 
+        subroutine dgemmtr_quad(uplo, transa, transb, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
+            import :: ep
+            character, intent(in)    :: uplo, transa, transb
+            integer,   intent(in)    :: n, k, lda, ldb, ldc
+            real(ep),  intent(in)    :: alpha, beta
+            real(ep),  intent(in)    :: A(lda,*), B(ldb,*)
+            real(ep),  intent(inout) :: C(ldc,*)
+        end subroutine dgemmtr_quad
+
         ! ── Level 3 — complex ────────────────────────────────────────
         subroutine zgemm_quad(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
             import :: ep
@@ -431,15 +570,6 @@ module pblas_ref_quad_blas
             complex(ep), intent(inout) :: B(ldb,*)
         end subroutine ztrsm_quad
 
-        subroutine ztrmm_quad(side, uplo, transa, diag, m, n, alpha, A, lda, B, ldb)
-            import :: ep
-            character,   intent(in)    :: side, uplo, transa, diag
-            integer,     intent(in)    :: m, n, lda, ldb
-            complex(ep), intent(in)    :: alpha
-            complex(ep), intent(in)    :: A(lda,*)
-            complex(ep), intent(inout) :: B(ldb,*)
-        end subroutine ztrmm_quad
-
         subroutine zsymm_quad(side, uplo, m, n, alpha, A, lda, B, ldb, beta, C, ldc)
             import :: ep
             character,   intent(in)    :: side, uplo
@@ -476,6 +606,24 @@ module pblas_ref_quad_blas
             complex(ep), intent(in)    :: A(lda,*), B(ldb,*)
             complex(ep), intent(inout) :: C(ldc,*)
         end subroutine zher2k_quad
+
+        subroutine ztrmm_quad(side, uplo, transa, diag, m, n, alpha, A, lda, B, ldb)
+            import :: ep
+            character,   intent(in)    :: side, uplo, transa, diag
+            integer,     intent(in)    :: m, n, lda, ldb
+            complex(ep), intent(in)    :: alpha
+            complex(ep), intent(in)    :: A(lda,*)
+            complex(ep), intent(inout) :: B(ldb,*)
+        end subroutine ztrmm_quad
+
+        subroutine zgemmtr_quad(uplo, transa, transb, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
+            import :: ep
+            character,   intent(in)    :: uplo, transa, transb
+            integer,     intent(in)    :: n, k, lda, ldb, ldc
+            complex(ep), intent(in)    :: alpha, beta
+            complex(ep), intent(in)    :: A(lda,*), B(ldb,*)
+            complex(ep), intent(inout) :: C(ldc,*)
+        end subroutine zgemmtr_quad
     end interface
 
 contains
@@ -507,6 +655,13 @@ contains
         integer :: r
         r = idamax_quad(n, x, incx)
     end function idamax
+
+    function izamax(n, x, incx) result(r)
+        integer,     intent(in) :: n, incx
+        complex(ep), intent(in) :: x(*)
+        integer :: r
+        r = izamax_quad(n, x, incx)
+    end function izamax
 
     subroutine daxpy(n, alpha, x, incx, y, incy)
         integer,  intent(in)    :: n, incx, incy
@@ -597,12 +752,18 @@ contains
         call zscal_quad(n, alpha, x, incx)
     end subroutine zscal
 
-    subroutine zdscal(n, alpha, x, incx)
-        integer,     intent(in)    :: n, incx
-        real(ep),    intent(in)    :: alpha
-        complex(ep), intent(inout) :: x(*)
-        call zdscal_quad(n, alpha, x, incx)
-    end subroutine zdscal
+    function dcabs1(z) result(r)
+        complex(ep), intent(in) :: z
+        real(ep) :: r
+        r = dcabs1_quad(z)
+    end function dcabs1
+
+    function dznrm2(n, x, incx) result(r)
+        integer,     intent(in) :: n, incx
+        complex(ep), intent(in) :: x(*)
+        real(ep) :: r
+        r = dznrm2_quad(n, x, incx)
+    end function dznrm2
 
     subroutine zcopy(n, x, incx, y, incy)
         integer,     intent(in)  :: n, incx, incy
@@ -617,19 +778,27 @@ contains
         call zswap_quad(n, x, incx, y, incy)
     end subroutine zswap
 
-    function izamax(n, x, incx) result(r)
-        integer,     intent(in) :: n, incx
-        complex(ep), intent(in) :: x(*)
-        integer :: r
-        r = izamax_quad(n, x, incx)
-    end function izamax
+    subroutine zdscal(n, alpha, x, incx)
+        integer,     intent(in)    :: n, incx
+        real(ep),    intent(in)    :: alpha
+        complex(ep), intent(inout) :: x(*)
+        call zdscal_quad(n, alpha, x, incx)
+    end subroutine zdscal
 
-    function dznrm2(n, x, incx) result(r)
-        integer,     intent(in) :: n, incx
-        complex(ep), intent(in) :: x(*)
-        real(ep) :: r
-        r = dznrm2_quad(n, x, incx)
-    end function dznrm2
+    subroutine zdrot(n, x, incx, y, incy, c, s)
+        integer,     intent(in)    :: n, incx, incy
+        complex(ep), intent(inout) :: x(*), y(*)
+        real(ep),    intent(in)    :: c, s
+        call zdrot_quad(n, x, incx, y, incy, c, s)
+    end subroutine zdrot
+
+    subroutine zrotg(a, b, c, s)
+        complex(ep), intent(inout) :: a
+        complex(ep), intent(in)    :: b
+        real(ep),    intent(out)   :: c
+        complex(ep), intent(out)   :: s
+        call zrotg_quad(a, b, c, s)
+    end subroutine zrotg
 
     subroutine dgemv(trans, m, n, alpha, A, lda, x, incx, beta, y, incy)
         character, intent(in)    :: trans
@@ -714,6 +883,38 @@ contains
         call dtrsv_quad(uplo, trans, diag, n, A, lda, x, incx)
     end subroutine dtrsv
 
+    subroutine dtbsv(uplo, trans, diag, n, k, A, lda, x, incx)
+        character, intent(in)    :: uplo, trans, diag
+        integer,   intent(in)    :: n, k, lda, incx
+        real(ep),  intent(in)    :: A(lda,*)
+        real(ep),  intent(inout) :: x(*)
+        call dtbsv_quad(uplo, trans, diag, n, k, A, lda, x, incx)
+    end subroutine dtbsv
+
+    subroutine dtpsv(uplo, trans, diag, n, ap, x, incx)
+        character, intent(in)    :: uplo, trans, diag
+        integer,   intent(in)    :: n, incx
+        real(ep),  intent(in)    :: ap(*)
+        real(ep),  intent(inout) :: x(*)
+        call dtpsv_quad(uplo, trans, diag, n, ap, x, incx)
+    end subroutine dtpsv
+
+    subroutine dspr(uplo, n, alpha, x, incx, ap)
+        character, intent(in)    :: uplo
+        integer,   intent(in)    :: n, incx
+        real(ep),  intent(in)    :: alpha, x(*)
+        real(ep),  intent(inout) :: ap(*)
+        call dspr_quad(uplo, n, alpha, x, incx, ap)
+    end subroutine dspr
+
+    subroutine dspr2(uplo, n, alpha, x, incx, y, incy, ap)
+        character, intent(in)    :: uplo
+        integer,   intent(in)    :: n, incx, incy
+        real(ep),  intent(in)    :: alpha, x(*), y(*)
+        real(ep),  intent(inout) :: ap(*)
+        call dspr2_quad(uplo, n, alpha, x, incx, y, incy, ap)
+    end subroutine dspr2
+
     subroutine dsyr(uplo, n, alpha, x, incx, A, lda)
         character, intent(in)    :: uplo
         integer,   intent(in)    :: n, incx, lda
@@ -762,6 +963,32 @@ contains
         call zgeru_quad(m, n, alpha, x, incx, y, incy, A, lda)
     end subroutine zgeru
 
+    subroutine zgbmv(trans, m, n, kl, ku, alpha, A, lda, x, incx, beta, y, incy)
+        character,   intent(in)    :: trans
+        integer,     intent(in)    :: m, n, kl, ku, lda, incx, incy
+        complex(ep), intent(in)    :: alpha, beta
+        complex(ep), intent(in)    :: A(lda,*), x(*)
+        complex(ep), intent(inout) :: y(*)
+        call zgbmv_quad(trans, m, n, kl, ku, alpha, A, lda, x, incx, beta, y, incy)
+    end subroutine zgbmv
+
+    subroutine zhbmv(uplo, n, k, alpha, A, lda, x, incx, beta, y, incy)
+        character,   intent(in)    :: uplo
+        integer,     intent(in)    :: n, k, lda, incx, incy
+        complex(ep), intent(in)    :: alpha, beta
+        complex(ep), intent(in)    :: A(lda,*), x(*)
+        complex(ep), intent(inout) :: y(*)
+        call zhbmv_quad(uplo, n, k, alpha, A, lda, x, incx, beta, y, incy)
+    end subroutine zhbmv
+
+    subroutine zhpmv(uplo, n, alpha, ap, x, incx, beta, y, incy)
+        character,   intent(in)    :: uplo
+        integer,     intent(in)    :: n, incx, incy
+        complex(ep), intent(in)    :: alpha, beta, ap(*), x(*)
+        complex(ep), intent(inout) :: y(*)
+        call zhpmv_quad(uplo, n, alpha, ap, x, incx, beta, y, incy)
+    end subroutine zhpmv
+
     subroutine zher(uplo, n, alpha, x, incx, A, lda)
         character,   intent(in)    :: uplo
         integer,     intent(in)    :: n, incx, lda
@@ -778,6 +1005,55 @@ contains
         complex(ep), intent(inout) :: A(lda,*)
         call zher2_quad(uplo, n, alpha, x, incx, y, incy, A, lda)
     end subroutine zher2
+
+    subroutine zhpr(uplo, n, alpha, x, incx, ap)
+        character,   intent(in)    :: uplo
+        integer,     intent(in)    :: n, incx
+        real(ep),    intent(in)    :: alpha
+        complex(ep), intent(in)    :: x(*)
+        complex(ep), intent(inout) :: ap(*)
+        call zhpr_quad(uplo, n, alpha, x, incx, ap)
+    end subroutine zhpr
+
+    subroutine zhpr2(uplo, n, alpha, x, incx, y, incy, ap)
+        character,   intent(in)    :: uplo
+        integer,     intent(in)    :: n, incx, incy
+        complex(ep), intent(in)    :: alpha, x(*), y(*)
+        complex(ep), intent(inout) :: ap(*)
+        call zhpr2_quad(uplo, n, alpha, x, incx, y, incy, ap)
+    end subroutine zhpr2
+
+    subroutine ztbmv(uplo, trans, diag, n, k, A, lda, x, incx)
+        character,   intent(in)    :: uplo, trans, diag
+        integer,     intent(in)    :: n, k, lda, incx
+        complex(ep), intent(in)    :: A(lda,*)
+        complex(ep), intent(inout) :: x(*)
+        call ztbmv_quad(uplo, trans, diag, n, k, A, lda, x, incx)
+    end subroutine ztbmv
+
+    subroutine ztbsv(uplo, trans, diag, n, k, A, lda, x, incx)
+        character,   intent(in)    :: uplo, trans, diag
+        integer,     intent(in)    :: n, k, lda, incx
+        complex(ep), intent(in)    :: A(lda,*)
+        complex(ep), intent(inout) :: x(*)
+        call ztbsv_quad(uplo, trans, diag, n, k, A, lda, x, incx)
+    end subroutine ztbsv
+
+    subroutine ztpmv(uplo, trans, diag, n, ap, x, incx)
+        character,   intent(in)    :: uplo, trans, diag
+        integer,     intent(in)    :: n, incx
+        complex(ep), intent(in)    :: ap(*)
+        complex(ep), intent(inout) :: x(*)
+        call ztpmv_quad(uplo, trans, diag, n, ap, x, incx)
+    end subroutine ztpmv
+
+    subroutine ztpsv(uplo, trans, diag, n, ap, x, incx)
+        character,   intent(in)    :: uplo, trans, diag
+        integer,     intent(in)    :: n, incx
+        complex(ep), intent(in)    :: ap(*)
+        complex(ep), intent(inout) :: x(*)
+        call ztpsv_quad(uplo, trans, diag, n, ap, x, incx)
+    end subroutine ztpsv
 
     subroutine ztrmv(uplo, trans, diag, n, A, lda, x, incx)
         character,   intent(in)    :: uplo, trans, diag
@@ -849,6 +1125,15 @@ contains
         call dtrsm_quad(side, uplo, transa, diag, m, n, alpha, A, lda, B, ldb)
     end subroutine dtrsm
 
+    subroutine dgemmtr(uplo, transa, transb, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
+        character, intent(in)    :: uplo, transa, transb
+        integer,   intent(in)    :: n, k, lda, ldb, ldc
+        real(ep),  intent(in)    :: alpha, beta
+        real(ep),  intent(in)    :: A(lda,*), B(ldb,*)
+        real(ep),  intent(inout) :: C(ldc,*)
+        call dgemmtr_quad(uplo, transa, transb, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
+    end subroutine dgemmtr
+
     subroutine zgemm(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
         character,   intent(in)    :: transa, transb
         integer,     intent(in)    :: m, n, k, lda, ldb, ldc
@@ -884,15 +1169,6 @@ contains
         complex(ep), intent(inout) :: B(ldb,*)
         call ztrsm_quad(side, uplo, transa, diag, m, n, alpha, A, lda, B, ldb)
     end subroutine ztrsm
-
-    subroutine ztrmm(side, uplo, transa, diag, m, n, alpha, A, lda, B, ldb)
-        character,   intent(in)    :: side, uplo, transa, diag
-        integer,     intent(in)    :: m, n, lda, ldb
-        complex(ep), intent(in)    :: alpha
-        complex(ep), intent(in)    :: A(lda,*)
-        complex(ep), intent(inout) :: B(ldb,*)
-        call ztrmm_quad(side, uplo, transa, diag, m, n, alpha, A, lda, B, ldb)
-    end subroutine ztrmm
 
     subroutine zsymm(side, uplo, m, n, alpha, A, lda, B, ldb, beta, C, ldc)
         character,   intent(in)    :: side, uplo
@@ -931,5 +1207,23 @@ contains
         call zher2k_quad(uplo, trans, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
     end subroutine zher2k
 
+    subroutine ztrmm(side, uplo, transa, diag, m, n, alpha, A, lda, B, ldb)
+        character,   intent(in)    :: side, uplo, transa, diag
+        integer,     intent(in)    :: m, n, lda, ldb
+        complex(ep), intent(in)    :: alpha
+        complex(ep), intent(in)    :: A(lda,*)
+        complex(ep), intent(inout) :: B(ldb,*)
+        call ztrmm_quad(side, uplo, transa, diag, m, n, alpha, A, lda, B, ldb)
+    end subroutine ztrmm
 
-end module pblas_ref_quad_blas
+    subroutine zgemmtr(uplo, transa, transb, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
+        character,   intent(in)    :: uplo, transa, transb
+        integer,     intent(in)    :: n, k, lda, ldb, ldc
+        complex(ep), intent(in)    :: alpha, beta
+        complex(ep), intent(in)    :: A(lda,*), B(ldb,*)
+        complex(ep), intent(inout) :: C(ldc,*)
+        call zgemmtr_quad(uplo, transa, transb, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
+    end subroutine zgemmtr
+
+
+end module ref_quad_blas

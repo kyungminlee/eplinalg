@@ -53,10 +53,28 @@ Scope guards
 """
 import re
 
-from .lex import _iter_outside_strings, _find_inline_bang
+from .lex import _iter_outside_strings, _find_inline_bang, is_continuation_line
 
 _KW_RE = re.compile(r'(write|print)\b', re.IGNORECASE)
 _IDENT_RE = re.compile(r'[A-Za-z_]\w*')
+
+
+def _oracle_empty(real_names: set[str], complex_names: set[str],
+                  real_comp: set[str], complex_comp: set[str]) -> bool:
+    """True when every name oracle is empty — the no-op signal for
+    kind-based targets (kind10/kind16 are intrinsic reals)."""
+    return not (real_names or complex_names or real_comp or complex_comp)
+
+
+def _upper_oracles(real_names: set[str], complex_names: set[str],
+                   real_comp: set[str], complex_comp: set[str],
+                   ) -> tuple[set[str], set[str], set[str], set[str]]:
+    """Uppercase the four per-call name oracles for case-insensitive
+    matching."""
+    return ({n.upper() for n in real_names},
+            {n.upper() for n in complex_names},
+            {n.upper() for n in real_comp},
+            {n.upper() for n in complex_comp})
 
 
 def _string_mask(line: str) -> list[bool]:
@@ -245,8 +263,7 @@ def narrow_multifloats_io_open(line: str, real_names: set[str],
     oracle — matched only against ``%``-qualified references (see
     :func:`_narrow_items`).
     """
-    if not real_names and not complex_names and not real_comp \
-            and not complex_comp:
+    if _oracle_empty(real_names, complex_names, real_comp, complex_comp):
         return line, False
     if not line:
         return line, False
@@ -254,10 +271,8 @@ def narrow_multifloats_io_open(line: str, real_names: set[str],
     if 'write' not in low and 'print' not in low:
         return line, False
 
-    real_up = {n.upper() for n in real_names}
-    complex_up = {n.upper() for n in complex_names}
-    real_comp = {n.upper() for n in real_comp}
-    complex_comp = {n.upper() for n in complex_comp}
+    real_up, complex_up, real_comp, complex_comp = _upper_oracles(
+        real_names, complex_names, real_comp, complex_comp)
     inside = _string_mask(line)
 
     # Statement start: skip an optional numeric label + whitespace.
@@ -335,10 +350,10 @@ def is_fixed_io_continuation(line: str) -> bool:
     """True when ``line`` is a fixed-form continuation line (a non-blank,
     non-``0`` character in column 6, columns 1–5 blank). Mirrors the
     continuation test in ``_segment_fixed_form_statements`` so a
-    cpp-split fragment is recognised the same way the segmenter split it.
+    cpp-split fragment is recognised the same way the segmenter split it
+    (in particular a tab in column 6 is NOT a continuation marker).
     """
-    return (len(line) > 5 and line[:1] != '\t' and line[:5] == '     '
-            and line[5:6] not in (' ', '0', '\t'))
+    return is_continuation_line(line, tab_marker=False)
 
 
 def narrow_io_continuation(line: str, real_names: set[str],
@@ -349,15 +364,12 @@ def narrow_io_continuation(line: str, real_names: set[str],
     continuation fragment whose parent formatted output list is still
     open. The column-6 continuation marker (index 5) is preserved; the
     output-list items begin at column 7 (index 6)."""
-    if not real_names and not complex_names and not real_comp \
-            and not complex_comp:
+    if _oracle_empty(real_names, complex_names, real_comp, complex_comp):
         return line
     if not is_fixed_io_continuation(line):
         return line
-    real_up = {n.upper() for n in real_names}
-    complex_up = {n.upper() for n in complex_names}
-    real_comp = {n.upper() for n in real_comp}
-    complex_comp = {n.upper() for n in complex_comp}
+    real_up, complex_up, real_comp, complex_comp = _upper_oracles(
+        real_names, complex_names, real_comp, complex_comp)
     inside = _string_mask(line)
     stmt_end = _find_inline_bang(line)
     return _narrow_items(line, inside, 6, stmt_end, real_up, complex_up,

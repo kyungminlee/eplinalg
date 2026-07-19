@@ -70,9 +70,17 @@ member_of() {
     awk -F: -v s="$2" '{ n=split($0,f," "); if (f[n]==s) { print $2; exit } }'
 }
 
-# link_so <soname-base> <driver> <archives...>
+# link_so <soname-base> <driver> [--allow-common] [--extra-ldflags '<flags>'] <archives...>
 link_so() {
   local base=$1 drv=$2; shift 2
+  local defcommon="-Wl,--no-define-common" extra=""
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --allow-common)  defcommon=""; shift ;;
+      --extra-ldflags) extra=$2; shift 2 ;;
+      *) break ;;
+    esac
+  done
   local so="$D/lib$base.so"
   # --no-define-common: never allocate Fortran COMMON blocks in a .so;
   # they must resolve as imports of their real definer (Intel MPI's
@@ -87,7 +95,7 @@ link_so() {
   # correction limbs in the w family at np=4; -z now suppresses it 100%).
   $drv -shared -o "$so" -Wl,-soname,"lib$base.so" -Wl,-rpath,'$ORIGIN' \
     -Wl,--whole-archive "$@" -Wl,--no-whole-archive \
-    ${DEFCOMMON--Wl,--no-define-common} -Wl,-z,now ${EXTRA:-} \
+    $defcommon -Wl,-z,now $extra \
     -Wl,--push-state,--as-needed $BUILT $MKL $TAIL_COMMON -Wl,--pop-state \
     -Wl,--no-undefined 2> "$D/err-$base.log"
   local rc=$?
@@ -124,8 +132,7 @@ link_so eppblas_common     "$CC"    "$L"/libeppblas_common-*.a
 # outside this archive — let this .so allocate it (skip --no-define-common;
 # ld's -d does NOT override an earlier --no-define-common, they are
 # independent flags and inhibit wins)
-DEFCOMMON="" \
-link_so epscalapack_common "$CC"    "$L"/libepscalapack_common-*.a
+link_so epscalapack_common "$CC" --allow-common "$L"/libepscalapack_common-*.a
 
 # ---- 3. family compute stack ------------------------------------------------
 link_so ${PAIR}blas   "$CC" "$L"/lib${PAIR}blas-*.a
@@ -178,9 +185,8 @@ comm -12 "$P/und-mu" "$P/def-eng" > "$P/eng-needed"
 } > "$P/mumps_common.map"
 echo "   $PAIR mumps_common version script: $(wc -l < "$P/def-mc") glue syms + $(wc -l < "$P/eng-needed") engine entry points exported"
 
-EXTRA="-Wl,--version-script=$P/mumps_common.map" \
-link_so mumps_common "$MPICC" "$MC" "$L"/libpord_mumps.a "$P/ptscotch.a" "$P/scotch.a" "$L"/libesmumps_mumps.a "$L"/libmetis_mumps.a
-unset EXTRA
+link_so mumps_common "$MPICC" --extra-ldflags "-Wl,--version-script=$P/mumps_common.map" \
+  "$MC" "$L"/libpord_mumps.a "$P/ptscotch.a" "$P/scotch.a" "$L"/libesmumps_mumps.a "$L"/libmetis_mumps.a
 
 # ---- 5. pair MUMPS ----------------------------------------------------------
 link_so ${PAIR}mumps "$MPICC" "$MU"

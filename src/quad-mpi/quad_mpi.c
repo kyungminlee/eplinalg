@@ -60,96 +60,47 @@ MPI_Fint q_mpi_xx_amn_f = 0;
  * invoke the op, so they are unaffected). We therefore memcpy every
  * element through 16-byte-aligned stack locals -- the compiler emits an
  * unaligned load/store for the memcpy but keeps the arithmetic on the
- * aligned automatics. */
+ * aligned automatics.
+ *
+ * EP_DEFINE_QOP_FN owns that invariant for all six callbacks: the
+ * ``combine`` statement sees each element pair only as the aligned
+ * automatics ``a`` / ``b`` and must write its result back to ``pb``
+ * through memcpy. */
+
+#define EP_DEFINE_QOP_FN(name, type, combine)                                  \
+static void name(void *in, void *inout, int *len, MPI_Datatype *dt) {          \
+    char *pa = (char *)in, *pb = (char *)inout;                                \
+    (void)dt;                                                                  \
+    for (int i = 0; i < *len; ++i, pa += sizeof(type), pb += sizeof(type)) {   \
+        type a, b;                                                             \
+        memcpy(&a, pa, sizeof a);                                              \
+        memcpy(&b, pb, sizeof b);                                              \
+        combine                                                                \
+    }                                                                          \
+}
 
 static __float128 xcabs1(xcomplex z) { return fabsq(z.re) + fabsq(z.im); }
 
-static void qq_sum_fn(void *in, void *inout, int *len, MPI_Datatype *dt) {
-    char *pa = (char *)in, *pb = (char *)inout;
-    (void)dt;
-    for (int i = 0; i < *len; ++i, pa += sizeof(qreal), pb += sizeof(qreal)) {
-        qreal a, b;
-        memcpy(&a, pa, sizeof a);
-        memcpy(&b, pb, sizeof b);
-        b = b + a;
-        memcpy(pb, &b, sizeof b);
-    }
-}
-
-static void qq_amx_fn(void *in, void *inout, int *len, MPI_Datatype *dt) {
-    char *pa = (char *)in, *pb = (char *)inout;
-    (void)dt;
-    for (int i = 0; i < *len; ++i, pa += sizeof(qreal), pb += sizeof(qreal)) {
-        qreal a, b;
-        memcpy(&a, pa, sizeof a);
-        memcpy(&b, pb, sizeof b);
-        if (fabsq(a) > fabsq(b)) memcpy(pb, &a, sizeof a);
-    }
-}
-
-static void qq_amn_fn(void *in, void *inout, int *len, MPI_Datatype *dt) {
-    char *pa = (char *)in, *pb = (char *)inout;
-    (void)dt;
-    for (int i = 0; i < *len; ++i, pa += sizeof(qreal), pb += sizeof(qreal)) {
-        qreal a, b;
-        memcpy(&a, pa, sizeof a);
-        memcpy(&b, pb, sizeof b);
-        if (fabsq(a) < fabsq(b)) memcpy(pb, &a, sizeof a);
-    }
-}
-
-static void xx_sum_fn(void *in, void *inout, int *len, MPI_Datatype *dt) {
-    char *pa = (char *)in, *pb = (char *)inout;
-    (void)dt;
-    for (int i = 0; i < *len; ++i, pa += sizeof(xcomplex), pb += sizeof(xcomplex)) {
-        xcomplex a, b;
-        memcpy(&a, pa, sizeof a);
-        memcpy(&b, pb, sizeof b);
-        b.re = b.re + a.re;
-        b.im = b.im + a.im;
-        memcpy(pb, &b, sizeof b);
-    }
-}
-
-static void xx_amx_fn(void *in, void *inout, int *len, MPI_Datatype *dt) {
-    char *pa = (char *)in, *pb = (char *)inout;
-    (void)dt;
-    for (int i = 0; i < *len; ++i, pa += sizeof(xcomplex), pb += sizeof(xcomplex)) {
-        xcomplex a, b;
-        memcpy(&a, pa, sizeof a);
-        memcpy(&b, pb, sizeof b);
-        if (xcabs1(a) > xcabs1(b)) memcpy(pb, &a, sizeof a);
-    }
-}
-
-static void xx_amn_fn(void *in, void *inout, int *len, MPI_Datatype *dt) {
-    char *pa = (char *)in, *pb = (char *)inout;
-    (void)dt;
-    for (int i = 0; i < *len; ++i, pa += sizeof(xcomplex), pb += sizeof(xcomplex)) {
-        xcomplex a, b;
-        memcpy(&a, pa, sizeof a);
-        memcpy(&b, pb, sizeof b);
-        if (xcabs1(a) < xcabs1(b)) memcpy(pb, &a, sizeof a);
-    }
-}
+EP_DEFINE_QOP_FN(qq_sum_fn, qreal,
+    { b = b + a; memcpy(pb, &b, sizeof b); })
+EP_DEFINE_QOP_FN(qq_amx_fn, qreal,
+    { if (fabsq(a) > fabsq(b)) memcpy(pb, &a, sizeof a); })
+EP_DEFINE_QOP_FN(qq_amn_fn, qreal,
+    { if (fabsq(a) < fabsq(b)) memcpy(pb, &a, sizeof a); })
+EP_DEFINE_QOP_FN(xx_sum_fn, xcomplex,
+    { b.re = b.re + a.re; b.im = b.im + a.im; memcpy(pb, &b, sizeof b); })
+EP_DEFINE_QOP_FN(xx_amx_fn, xcomplex,
+    { if (xcabs1(a) > xcabs1(b)) memcpy(pb, &a, sizeof a); })
+EP_DEFINE_QOP_FN(xx_amn_fn, xcomplex,
+    { if (xcabs1(a) < xcabs1(b)) memcpy(pb, &a, sizeof a); })
 
 /* ---- One-time registration --------------------------------------- */
 
-/* Under Intel MPI the ops are declared non-commutative even though
- * sum/abs-max/abs-min are commutative: its shm-optimized reduce for
- * commutative user-defined ops hands the callback an 8-byte-aligned
- * pointer into the shm cell payload above the short-message cutoff;
- * these ops load __float128 with aligned SSE instructions and fault on
- * it (#GP -> SIGSEGV, si_addr=0; observed with 2021.18). Non-commutative
- * ops take the sound rank-ordered path through properly aligned buffers.
- * Other MPIs are unaffected (OpenMPI 4.1.6 verified clean) and keep the
- * commutative declaration and its cheaper reduction algorithms. Intel
- * MPI's mpi.h also defines the MPICH_* macros, so key on I_MPI_* only. */
-#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
-#  define EP_MPI_OP_COMMUTE 0
-#else
-#  define EP_MPI_OP_COMMUTE 1
-#endif
+/* EP_MPI_OP_COMMUTE: under Intel MPI the ops are registered
+ * non-commutative to dodge the 2021.18 shm-reduce misaligned-buffer
+ * fault; commutative elsewhere. Rationale in the shared header
+ * (../mpiseq). */
+#include "ep_mpi_op_commute.h"
 
 void quad_mpi_init(void) {
     static int initialized = 0;

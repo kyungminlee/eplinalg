@@ -29,15 +29,6 @@ _RELEASE_YML = _REPO_ROOT / '.github' / 'workflows' / 'release.yml'
 _STOP_TOKENS = {'||', '&&', ';', '|', '&'}
 
 
-def _valid_subcommands():
-    import argparse
-    parser = build_parser()
-    for action in parser._actions:
-        if isinstance(action, argparse._SubParsersAction):
-            return set(action.choices)
-    return set()
-
-
 def _placeholder_expand(text):
     """Replace shell / GitHub-Actions interpolations with a literal token so
     the command's *structure* (subcommand + flags + positionals) can be parsed
@@ -81,7 +72,13 @@ def _extract_migrator_commands(yml_text):
     return commands
 
 
-_COMMANDS = _extract_migrator_commands(_RELEASE_YML.read_text())
+# Guard the read so a missing release.yml fails test_release_yml_is_present
+# with its intended message instead of erroring the whole module at import.
+_COMMANDS = (
+    _extract_migrator_commands(_RELEASE_YML.read_text())
+    if _RELEASE_YML.is_file()
+    else []
+)
 
 
 def test_release_yml_is_present():
@@ -99,12 +96,9 @@ def test_workflow_has_migrator_commands():
 @pytest.mark.parametrize('argv', _COMMANDS, ids=lambda a: ' '.join(a))
 def test_workflow_command_parses(argv):
     """Every workflow migrator call names a real subcommand whose parser
-    accepts the exact arguments the workflow passes."""
-    subcommand = argv[0]
-    assert subcommand in _valid_subcommands(), (
-        f'release.yml invokes unknown migrator subcommand {subcommand!r}; '
-        f'known: {sorted(_valid_subcommands())}'
-    )
+    accepts the exact arguments the workflow passes. An unknown subcommand
+    also fails here: the subparsers are required, so argparse rejects it via
+    SystemExit with its own "invalid choice" message on the captured stderr."""
     parser = build_parser()
     with contextlib.redirect_stderr(io.StringIO()) as err:
         try:

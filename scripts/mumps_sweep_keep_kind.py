@@ -79,55 +79,15 @@ def classify_pair(lo: Path, hi: Path):
     return keep_hi, keep_lo, promote_hi
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST,
-                    help=f"keep-kind manifest output "
-                         f"(default: {DEFAULT_MANIFEST.relative_to(REPO)})")
-    ap.add_argument("--no-write", action="store_true",
-                    help="report only; don't write the manifest")
-    ap.add_argument("--verbose", action="store_true")
-    args = ap.parse_args()
-
-    totals = {"pairs": 0, "keep": 0, "promote": 0}
-    per_file = []
-    manifest_lines: list[str] = []
-    paired_files: set[Path] = set()
-
-    # Pass 1: paired s/d and c/z files — rule is "DP in both sides → keep".
+def sweep_pairs(directory: Path, glob_suffix: str, totals, per_file,
+                manifest_lines, paired_files):
+    """Classify every lo/hi pair matching ``{hi_pref}{glob_suffix}`` in
+    ``directory`` — rule is "DP in both sides → keep"."""
     for lo_pref, hi_pref in PAIRS:
-        for hi_path in sorted(SRC.glob(f"{hi_pref}*.F")):
+        for hi_path in sorted(directory.glob(f"{hi_pref}{glob_suffix}")):
             lo_path = hi_path.with_name(lo_pref + hi_path.name[1:])
             if not lo_path.exists():
                 continue  # not a real arithmetic variant; handled as shared
-            paired_files.update({lo_path, hi_path})
-            hi_dp = dp_lines(hi_path)
-            if not hi_dp:
-                continue
-            keep_hi, keep_lo, promote_hi = classify_pair(lo_path, hi_path)
-            totals["pairs"] += 1
-            totals["keep"] += len(keep_hi) + len(keep_lo)
-            totals["promote"] += len(promote_hi)
-            per_file.append((hi_path.name, lo_path.name,
-                             len(keep_hi) + len(keep_lo), len(promote_hi)))
-            for ln, _ in keep_hi:
-                manifest_lines.append(
-                    f"{hi_path.relative_to(SRC.parents[2])}:{ln}")
-            for ln, _ in keep_lo:
-                manifest_lines.append(
-                    f"{lo_path.relative_to(SRC.parents[2])}:{ln}")
-
-    # Pass 1b: arithmetic-keyed headers under include/ (dmumps_struc.h
-    # and siblings). Same rule — a DP decl in the d/z half is keep-kind
-    # iff the identical decl appears in its s/c partner. Without this
-    # pass, genuinely DP-stable struct fields (MEM_SUBTREE, COST_TRAV,
-    # etc.) would be promoted by the migrator, breaking the interface
-    # to DP-only shared routines in mumps_load.F etc.
-    for lo_pref, hi_pref in PAIRS:
-        for hi_path in sorted(INCLUDE.glob(f"{hi_pref}mumps_struc.h")):
-            lo_path = hi_path.with_name(lo_pref + hi_path.name[1:])
-            if not lo_path.exists():
-                continue
             paired_files.update({lo_path, hi_path})
             if not dp_lines(hi_path):
                 continue
@@ -143,6 +103,34 @@ def main():
             for ln, _ in keep_lo:
                 manifest_lines.append(
                     f"{lo_path.relative_to(SRC.parents[2])}:{ln}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST,
+                    help=f"keep-kind manifest output "
+                         f"(default: {DEFAULT_MANIFEST.relative_to(REPO)})")
+    ap.add_argument("--no-write", action="store_true",
+                    help="report only; don't write the manifest")
+    ap.add_argument("--verbose", action="store_true")
+    args = ap.parse_args()
+
+    totals = {"pairs": 0, "keep": 0, "promote": 0}
+    per_file = []
+    manifest_lines: list[str] = []
+    paired_files: set[Path] = set()
+
+    # Pass 1: paired s/d and c/z files.
+    sweep_pairs(SRC, "*.F", totals, per_file, manifest_lines, paired_files)
+
+    # Pass 1b: arithmetic-keyed headers under include/ (dmumps_struc.h
+    # and siblings). Same rule — a DP decl in the d/z half is keep-kind
+    # iff the identical decl appears in its s/c partner. Without this
+    # pass, genuinely DP-stable struct fields (MEM_SUBTREE, COST_TRAV,
+    # etc.) would be promoted by the migrator, breaking the interface
+    # to DP-only shared routines in mumps_load.F etc.
+    sweep_pairs(INCLUDE, "mumps_struc.h", totals, per_file, manifest_lines,
+                paired_files)
 
     # Pass 2: discover shared files (for the copy_files report).
     shared_files = sorted(

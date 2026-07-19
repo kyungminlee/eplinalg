@@ -14,12 +14,12 @@
 
 program test_dmumps_basic
     use prec_kinds,            only: ep
-    use prec_report,           only: report_init, report_case, report_finalize, report_check_status
-    use compare,               only: max_rel_err_vec
+    use prec_report,           only: report_init, report_finalize, report_check_status
     use test_data_mumps,       only: gen_dense_problem, dense_to_triplet
-    use target_mumps,          only: target_name, target_eps, &
-                                     dmumps_struc, target_qmumps, &
-                                     q2t_r, t2q_r
+    use target_mumps,          only: target_name, dmumps_struc
+    use mumps_lifecycle,       only: mumps_begin, mumps_load_triplet, &
+                                     mumps_solve6, mumps_check_solution, &
+                                     mumps_end
     use mpi
     implicit none
 
@@ -29,11 +29,10 @@ program test_dmumps_basic
     integer, parameter :: ns(*) = [1, 8, 32]
     integer            :: ierr, i, n, nz, myid
     logical            :: is_host
-    real(ep), allocatable :: A(:,:), x_true(:), b(:), x_solve(:)
+    real(ep), allocatable :: A(:,:), x_true(:), b(:)
     integer,  allocatable :: irn(:), jcn(:)
     real(ep), allocatable :: A_trip(:)
     type(dmumps_struc)    :: id
-    real(ep)              :: err, tol
     character(len=48)     :: label
 
     call MPI_INIT(ierr)
@@ -58,62 +57,24 @@ program test_dmumps_basic
         end if
 
         ! Initialize MUMPS instance (collective).
-        id%COMM = MPI_COMM_WORLD
-        id%PAR  = 1
-        id%SYM  = 0
-        id%JOB  = -1
-        call target_qmumps(id)
-        ! INFOG is broadcast to all ranks by MUMPS, so this guard is
-        ! collective-consistent.
-        if (id%INFOG(1) < 0) then
-            write(*, '(a,i0)') 'JOB=-1 failed, INFOG(1)=', id%INFOG(1)
-            error stop 1
-        end if
-
-        ! Silence MUMPS diagnostic / info output.
-        id%ICNTL(1) = -1
-        id%ICNTL(2) = -1
-        id%ICNTL(3) = -1
-        id%ICNTL(4) = 0
+        call mumps_begin(id, MPI_COMM_WORLD, 0)
 
         ! Populate problem data on the host only (centralized input).
-        if (is_host) then
-            id%N    = n
-            id%NNZ  = int(nz, kind=8)
-            allocate(id%IRN(nz));    id%IRN = irn
-            allocate(id%JCN(nz));    id%JCN = jcn
-            allocate(id%A(nz));      id%A   = q2t_r(A_trip)
-            allocate(id%RHS(n));     id%RHS = q2t_r(b)
-        end if
+        if (is_host) call mumps_load_triplet(id, n, nz, irn, jcn, A_trip, b)
 
         ! Combined analysis + factorization + solve (collective).
-        id%JOB = 6
-        call target_qmumps(id)
-        if (id%INFOG(1) < 0) then
-            write(*, '(a,i0,a,i0)') 'JOB=6 failed, INFOG(1)=', &
-                id%INFOG(1), ', INFOG(2)=', id%INFOG(2)
-            error stop 1
-        end if
+        call mumps_solve6(id)
 
         ! On exit, id%RHS holds the centralized solution on the host.
         if (is_host) then
-            allocate(x_solve(n))
-            x_solve = t2q_r(id%RHS)
-
-            err = max_rel_err_vec(x_solve, x_true)
-            tol = 16.0_ep * real(n, ep)**3 * target_eps
             write(label, '(a,i0)') 'n=', n
-            call report_case(trim(label), err, tol)
-
-            deallocate(id%IRN, id%JCN, id%A, id%RHS)
-            nullify(id%IRN, id%JCN, id%A, id%RHS)  ! L-2: defensive — decouple from MUMPS_INI_DRIVER's NULLIFY contract
+            call mumps_check_solution(id, x_true, trim(label))
         end if
 
         ! Destroy MUMPS instance (collective).
-        id%JOB = -2
-        call target_qmumps(id)
+        call mumps_end(id)
 
-        if (is_host) deallocate(A, x_true, b, x_solve, irn, jcn, A_trip)
+        if (is_host) deallocate(A, x_true, b, irn, jcn, A_trip)
     end do
 
     if (is_host) call report_finalize()

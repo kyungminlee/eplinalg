@@ -8,8 +8,8 @@ program test_pdtrcon
     use ref_quad_lapack,   only: dtrcon
     use pblas_grid,        only: grid_init, grid_exit, my_rank, my_context, &
                                  my_nprow, my_npcol, my_row, my_col, &
-                                 numroc_local, descinit_local, g2l
-    use pblas_distrib,     only: gen_distrib_matrix
+                                 numroc_local, descinit_local
+    use pblas_distrib,     only: gen_distrib_matrix, scatter_matrix
     use target_scalapack,  only: target_name, target_eps, target_pdtrcon
     implicit none
 
@@ -38,16 +38,7 @@ program test_pdtrcon
             end do
             A_glob(jg, jg) = A_glob(jg, jg) + real(2 * n, ep)
         end do
-        if (size(A_loc, 1) > 0 .and. size(A_loc, 2) > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) A_loc(il, jl) = A_glob(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix(n, n, mb, nb, A_glob, A_loc)
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)
         locn_a = numroc_local(n, nb, my_col, 0, my_npcol); lld_a = max(1, locm_a)

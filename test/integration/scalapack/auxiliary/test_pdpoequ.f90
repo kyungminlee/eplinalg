@@ -6,9 +6,9 @@ program test_pdpoequ
     use ref_quad_lapack,  only: dpoequ
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
+                                numroc_local, descinit_local
     use pblas_distrib,    only: gen_distrib_matrix, gather_vector, &
-                                gather_vector_row
+                                gather_vector_row, scatter_matrix
     use target_scalapack, only: target_name, target_eps, target_pdpoequ
     implicit none
 
@@ -21,7 +21,7 @@ program test_pdpoequ
     real(ep), allocatable :: SR_loc(:), SC_loc(:), SR_got(:), SC_got(:), S_ref(:)
     real(ep) :: scond, amax, scond_ref, amax_ref, err, tol
     character(len=48) :: label
-    integer :: ig, jg, owner_r, owner_c, il, jl, k
+    integer :: k
 
     call grid_init()
     call report_init('pdpoequ', target_name, my_rank)
@@ -40,14 +40,7 @@ program test_pdpoequ
         locn_a = numroc_local(n, nb, my_col, 0, my_npcol); lld_a = max(1, locm_a)
         allocate(A_loc(max(1, locm_a), max(1, locn_a)))
         A_loc = 0.0_ep
-        do jg = 1, n
-            call g2l(jg, nb, my_npcol, owner_c, jl)
-            if (owner_c /= my_col) cycle
-            do ig = 1, n
-                call g2l(ig, mb, my_nprow, owner_r, il)
-                if (owner_r == my_row) A_loc(il, jl) = A_glob(ig, jg)
-            end do
-        end do
+        call scatter_matrix(n, n, mb, nb, A_glob, A_loc)
         call descinit_local(desca, n, n, mb, nb, 0, 0, my_context, lld_a, info)
 
         allocate(SR_loc(max(1, locm_a)), SC_loc(max(1, locn_a)))

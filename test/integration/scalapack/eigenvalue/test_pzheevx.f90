@@ -11,8 +11,8 @@ program test_pzheevx
     use ref_quad_lapack,   only: zheev
     use pblas_grid,        only: grid_init, grid_exit, my_rank, my_context, &
                                  my_nprow, my_npcol, my_row, my_col, &
-                                 numroc_local, descinit_local, g2l
-    use pblas_distrib,     only: gen_distrib_matrix_z
+                                 numroc_local, descinit_local
+    use pblas_distrib,     only: gen_distrib_matrix_z, scatter_matrix_z
     use target_scalapack,  only: target_name, target_eps, target_pzheevx
     implicit none
 
@@ -21,7 +21,6 @@ program test_pzheevx
     integer :: i, n, info, info_ref, lwork, lrwork, liwork, m_got, nz_got
     integer :: locm, locn, lld
     integer :: desca(9), descZ(9)
-    integer :: ig, jg, owner_r, owner_c, il, jl
     complex(ep), allocatable :: A_loc(:,:), A_glob(:,:), A_herm(:,:), A_ref(:,:)
     complex(ep), allocatable :: Z_loc(:,:)
     complex(ep), allocatable :: work(:), work_ref(:)
@@ -39,16 +38,7 @@ program test_pzheevx
 
         allocate(A_herm(n, n))
         A_herm = 0.5_ep * (A_glob + conjg(transpose(A_glob)))
-        if (size(A_loc, 1) > 0 .and. size(A_loc, 2) > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) A_loc(il, jl) = A_herm(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix_z(n, n, mb, nb, A_herm, A_loc)
 
         locm = numroc_local(n, mb, my_row, 0, my_nprow)
         locn = numroc_local(n, nb, my_col, 0, my_npcol); lld = max(1, locm)

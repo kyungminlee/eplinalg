@@ -17,8 +17,9 @@ program test_dmumps_infog20
     use prec_report,           only: report_init, report_case, &
                                      report_finalize, report_check_status
     use test_data_mumps,       only: gen_dense_problem, dense_to_triplet
-    use target_mumps,          only: target_name, dmumps_struc, target_qmumps, &
-                                     q2t_r
+    use target_mumps,          only: target_name, dmumps_struc
+    use mumps_lifecycle,       only: mumps_begin, mumps_load_triplet, &
+                                     mumps_solve6, mumps_end
     use mpi
     implicit none
 
@@ -38,32 +39,9 @@ program test_dmumps_infog20
     call gen_dense_problem(n, A, x_true, b, seed = 4099)
     call dense_to_triplet(A, irn, jcn, A_trip, nz)
 
-    id%COMM = MPI_COMM_WORLD
-    id%PAR  = 1
-    id%SYM  = 0
-    id%JOB  = -1
-    call target_qmumps(id)
-    if (id%INFOG(1) < 0) then
-        write(*, '(a,i0)') 'JOB=-1 failed, INFOG(1)=', id%INFOG(1)
-        error stop 1
-    end if
-    id%ICNTL(1:3) = -1
-    id%ICNTL(4)   = 0
-
-    id%N    = n
-    id%NNZ  = int(nz, kind=8)
-    allocate(id%IRN(nz));  id%IRN = irn
-    allocate(id%JCN(nz));  id%JCN = jcn
-    allocate(id%A(nz));    id%A   = q2t_r(A_trip)
-    allocate(id%RHS(n));   id%RHS = q2t_r(b)
-
-    id%JOB = 6
-    call target_qmumps(id)
-    if (id%INFOG(1) < 0) then
-        write(*, '(a,i0,a,i0)') 'JOB=6 failed, INFOG(1)=', &
-            id%INFOG(1), ', INFOG(2)=', id%INFOG(2)
-        error stop 1
-    end if
+    call mumps_begin(id, MPI_COMM_WORLD, 0)
+    call mumps_load_triplet(id, n, nz, irn, jcn, A_trip, b)
+    call mumps_solve6(id)
 
     real_words = id%INFOG(20)
 
@@ -76,10 +54,7 @@ program test_dmumps_infog20
         call report_case(trim(label), err, tol)
     end block
 
-    deallocate(id%IRN, id%JCN, id%A, id%RHS)
-    nullify(id%IRN, id%JCN, id%A, id%RHS)
-    id%JOB = -2
-    call target_qmumps(id)
+    call mumps_end(id)
 
     deallocate(A, x_true, b, irn, jcn, A_trip)
 

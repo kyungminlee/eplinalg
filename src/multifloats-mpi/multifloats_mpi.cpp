@@ -8,6 +8,7 @@
  * wrappers).
  */
 #include "multifloats_bridge.h"
+#include "mpiseq_dtype_tag.h"   /* from ../mpiseq -- libmpiseq sentinel encoding */
 
 extern "C" {
 
@@ -38,13 +39,12 @@ MPI_Op MPI_WW_AMN = MPI_OP_NULL;
  * MUMPS_COPY (DATATYPE=0 matches no branch). In a real-MPI build these
  * defaults are overwritten by multifloats_mpi_init() with the genuine
  * MPI_Type_c2f handles before first use, so the seq default is inert
- * there. The encoding mirrors MPISEQ_DTYPE_TAG in
- * src/mpiseq/mpiseq_c_stubs.c and the MUMPS_COPY cases added by
- * codegen/migrator/libseq_patch.py -- keep the three in sync. */
-#define MF_MPISEQ_DTYPE_TAG        0x10000000
-#define MF_MPISEQ_SENTINEL(bytes)  (MF_MPISEQ_DTYPE_TAG | (bytes))
-MPI_Fint mf_mpi_float64x2_f   = MF_MPISEQ_SENTINEL(16);  /* 268435472 */
-MPI_Fint mf_mpi_complex64x2_f = MF_MPISEQ_SENTINEL(32);  /* 268435488 */
+ * there. The encoding comes from mpiseq_dtype_tag.h, shared with
+ * src/mpiseq/mpiseq_c_stubs.c; the MUMPS_COPY cases added by
+ * codegen/migrator/libseq_patch.py bake the same decimals -- keep that
+ * patch in sync with the header. */
+MPI_Fint mf_mpi_float64x2_f   = MPISEQ_DTYPE_SENTINEL(16);  /* 268435472 */
+MPI_Fint mf_mpi_complex64x2_f = MPISEQ_DTYPE_SENTINEL(32);  /* 268435488 */
 MPI_Fint mf_mpi_mm_sum_f      = 0;
 MPI_Fint mf_mpi_mm_amx_f      = 0;
 MPI_Fint mf_mpi_mm_amn_f      = 0;
@@ -106,22 +106,11 @@ static void ww_amn_fn(void *in, void *inout, int *len, MPI_Datatype *) {
 
 /* ---- One-time registration -------------------------------------- */
 
-/* Under Intel MPI the ops are declared non-commutative even though
- * sum/abs-max/abs-min are commutative: its shm-optimized reduce for
- * commutative user-defined ops hands the callback an 8-byte-aligned
- * pointer into the shm cell payload above the short-message cutoff; a
- * callback whose element type wants 16-byte alignment is compiled with
- * aligned SSE loads and faults on it (#GP -> SIGSEGV, si_addr=0;
- * observed with 2021.18). Non-commutative ops take the sound
- * rank-ordered path through properly aligned buffers. Other MPIs are
- * unaffected (OpenMPI 4.1.6 verified clean) and keep the commutative
- * declaration and its cheaper reduction algorithms. Intel MPI's mpi.h
- * also defines the MPICH_* macros, so key on I_MPI_* only. */
-#if defined(I_MPI_VERSION) || defined(I_MPI_NUMVERSION)
-#  define EP_MPI_OP_COMMUTE 0
-#else
-#  define EP_MPI_OP_COMMUTE 1
-#endif
+/* EP_MPI_OP_COMMUTE: under Intel MPI the ops are registered
+ * non-commutative to dodge the 2021.18 shm-reduce misaligned-buffer
+ * fault; commutative elsewhere. Rationale in the shared header
+ * (../mpiseq). */
+#include "ep_mpi_op_commute.h"
 
 extern "C" void multifloats_mpi_init(void) {
     static int initialized = 0;

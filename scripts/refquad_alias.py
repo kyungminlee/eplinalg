@@ -323,10 +323,10 @@ def transform(text: str) -> str:
         rebuilt_block = rebuilt_block.replace(r['block_text'],
                                               r['leading'] + render_renamed_block(r),
                                               1)
-        # Note: r['leading'] is '' for all but the first routine when
-        # leading_buffer was already attached to block_text. The
-        # leading attribute is kept empty in parse_routines because we
-        # already append leading_buffer to block_text above.
+        # block_text starts with r['leading'] (the blank/comment lines
+        # preceding the routine), so the replacement must re-prepend it
+        # — otherwise those separator lines would be silently dropped
+        # from the rebuilt interface block.
 
     # Build contains section.
     contains = ['\ncontains\n\n']

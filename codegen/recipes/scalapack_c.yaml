@@ -202,13 +202,8 @@ overrides:
 # separately. See doc/archive/convergence-20260507.md §scalapack_c.
 defer_all_divergences: true
 
-# Task 44: privatize the MKL-colliding, family-independent support
-# symbols (blacs_*/Cblacs_*/BI_*, PB_C*, TOOLS/REDIST helpers, sltimer,
-# pxerbla, ...) by renaming them name -> ep_name in the migrated output.
-# eplinalg's Netlib-derived engine and MKL export identical names with
-# incompatible internal ABIs (BLACBUFF 48 vs 56 bytes); one process-wide
-# definition per name collapses the two engines and SIGSEGVs at np>=2 in
-# either link order. The manifest is shared across the whole extended
-# stack (uniform prefix keeps the commons byte-identical across
-# mw/qx/ey) and the nm audit gate reads the same file.
+# Task 44: rename the MKL-colliding, family-independent support symbols
+# name -> ep_name in the migrated output (shared manifest; the nm audit
+# gate reads the same file). Full rationale and mechanics:
+# codegen/migrator/privatize.py module docstring.
 privatize_symbols: privatize_ep_symbols.txt

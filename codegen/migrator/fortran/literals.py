@@ -7,8 +7,11 @@ Extracted verbatim from ``fortran_migrator.py``.
 import re
 
 from ..target_mode import TargetMode
-from .lex import _FORTRAN_OP_RE, _INT_CALL_RE, _NINT_CALL_RE
-from .keepkind import _KK_SENTINEL, _KK_DBLE_SENTINEL, _KK_DCMPLX_SENTINEL
+from .lex import (
+    _FORTRAN_OP_RE, _INT_CALL_RE, _NINT_CALL_RE, _STRING_SPLIT_RE,
+    split_top_level_commas,
+)
+from .keepkind import has_keepkind_marker
 
 
 def replace_literals(line: str, target_mode: TargetMode,
@@ -39,9 +42,7 @@ def replace_literals(line: str, target_mode: TargetMode,
     # matches the preserved LHS / wrapper type. The kind_suffix path
     # is unaffected because REAL(KIND=N) → REAL(8) narrowing IS legal.
     if (target_mode.literal_mode == 'constructor'
-            and (_KK_SENTINEL in line
-                 or _KK_DBLE_SENTINEL in line
-                 or _KK_DCMPLX_SENTINEL in line)):
+            and has_keepkind_marker(line)):
         return line
 
     # ``INTEGER, PARAMETER :: name = <fp_literal>`` lines exist in
@@ -84,7 +85,7 @@ def replace_literals(line: str, target_mode: TargetMode,
                 f"(limbs=[{mantissa}D{exp_rest}, 0.0_8])"
             )
 
-    parts = re.split(r"('(?:[^']|'')*'|\"(?:[^\"]|\"\")*\")", line)
+    parts = _STRING_SPLIT_RE.split(line)
     for idx in range(0, len(parts), 2):
         seg = parts[idx]
         masked = _FORTRAN_OP_RE.sub(
@@ -233,17 +234,7 @@ def _rewrite_int_kind_on_real64x2(
             out.append(line[m.start():])
             break
         inner = line[paren_open + 1:j - 1]
-        parts: list[str] = []
-        cur, d = '', 0
-        for ch in inner:
-            if ch == '(': d += 1; cur += ch
-            elif ch == ')': d -= 1; cur += ch
-            elif ch == ',' and d == 0:
-                parts.append(cur); cur = ''
-            else:
-                cur += ch
-        if cur:
-            parts.append(cur)
+        parts = split_top_level_commas(inner)
         if (len(parts) == 2
                 and re.fullmatch(r'\s*(?:KIND\s*=\s*)?\w+\s*', parts[1])):
             expr = parts[0].strip()

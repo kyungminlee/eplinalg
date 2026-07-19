@@ -6,8 +6,9 @@ program test_pzheevr
     use ref_quad_lapack,  only: zheev
     use pblas_grid,       only: grid_init, grid_exit, my_rank, my_context, &
                                 my_nprow, my_npcol, my_row, my_col, &
-                                numroc_local, descinit_local, g2l
-    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z
+                                numroc_local, descinit_local
+    use pblas_distrib,    only: gen_distrib_matrix_z, gather_matrix_z, &
+                                scatter_matrix_z
     use target_scalapack, only: target_name, target_eps, target_pzheevr
     implicit none
 
@@ -16,7 +17,6 @@ program test_pzheevr
     integer :: i, n, info, info_ref, lwork, lrwork, liwork, m, nz, j
     integer :: locm_a, locn_a, lld_a
     integer :: desca(9), descz(9)
-    integer :: ig, jg, owner_r, owner_c, il, jl
     complex(ep), allocatable :: A_loc(:,:), Z_loc(:,:), Z_glob(:,:)
     complex(ep), allocatable :: A_glob(:,:), A_herm(:,:), A_ref(:,:)
     complex(ep), allocatable :: work(:), work_ref(:)
@@ -39,16 +39,7 @@ program test_pzheevr
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)
         locn_a = numroc_local(n, nb, my_col, 0, my_npcol); lld_a = max(1, locm_a)
-        if (locm_a > 0 .and. locn_a > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) A_loc(il, jl) = A_herm(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix_z(n, n, mb, nb, A_herm, A_loc)
         call descinit_local(desca, n, n, mb, nb, 0, 0, my_context, lld_a, info)
         call descinit_local(descz, n, n, mb, nb, 0, 0, my_context, lld_a, info)
 

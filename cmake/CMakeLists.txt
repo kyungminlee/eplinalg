@@ -94,53 +94,12 @@ find_package(MPI COMPONENTS C CXX Fortran QUIET)
 # install prefix and ``find_package(<lib>)`` can pick the matching
 # variant.
 #
-# Probe mpi.h's vendor-specific version macros at configure time:
-#   Intel MPI : I_MPI_VERSION (string, e.g. "2021.18.0")
-#   OpenMPI   : OMPI_MAJOR_VERSION / OMPI_MINOR_VERSION (ints)
-#   MPICH     : MPICH_VERSION (string, e.g. "4.2.0")
-# Produces ``MPI_TAG`` like ``intelmpi-2021.18`` / ``openmpi-5.0`` /
-# ``mpich-4.2``. Empty when no MPI was found.
-set(MPI_TAG "")
-if(MPI_C_FOUND)
-    set(_mpi_inc ${MPI_C_HEADER_DIR})
-    if(TARGET MPI::MPI_C)
-        get_target_property(_iface MPI::MPI_C INTERFACE_INCLUDE_DIRECTORIES)
-        if(_iface)
-            list(APPEND _mpi_inc ${_iface})
-        endif()
-    endif()
-    list(REMOVE_DUPLICATES _mpi_inc)
-    set(_mpi_probe_c "${CMAKE_BINARY_DIR}/CMakeFiles/mpi_probe.c")
-    file(WRITE "${_mpi_probe_c}" "\
-#include <mpi.h>
-#include <stdio.h>
-int main(void) {
-#if defined(I_MPI_VERSION)
-    printf(\"intelmpi %s\\n\", I_MPI_VERSION);
-#elif defined(OMPI_MAJOR_VERSION) && defined(OMPI_MINOR_VERSION)
-    printf(\"openmpi %d.%d\\n\", OMPI_MAJOR_VERSION, OMPI_MINOR_VERSION);
-#elif defined(MPICH_VERSION)
-    printf(\"mpich %s\\n\", MPICH_VERSION);
-#else
-    printf(\"unknown ?\\n\");
-#endif
-    return 0;
-}
-")
-    try_run(_mpi_run_rc _mpi_compile_rc
-        "${CMAKE_BINARY_DIR}/CMakeFiles/mpi_probe.dir"
-        "${_mpi_probe_c}"
-        CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${_mpi_inc}"
-        RUN_OUTPUT_VARIABLE _mpi_id)
-    if(_mpi_compile_rc AND "${_mpi_run_rc}" STREQUAL "0")
-        string(STRIP "${_mpi_id}" _mpi_id)
-        # ``flavor major.minor[.patch]`` → ``flavor-major.minor``
-        if(_mpi_id MATCHES "^([a-z]+) ([0-9]+)\\.([0-9]+)")
-            set(MPI_TAG "${CMAKE_MATCH_1}-${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
-        endif()
-    endif()
-    unset(_mpi_id)
-endif()
+# The probe (mpi.h's vendor-specific version macros → ``MPI_TAG`` like
+# ``intelmpi-2021.18`` / ``openmpi-5.0`` / ``mpich-4.2``, empty when no
+# MPI was found) lives in FortranCompiler.cmake as the single source
+# shared with the consumer-side re-derivation in every generated
+# <pkg>Config.cmake — producer and consumer tags cannot drift.
+_fc_detect_mpi_tag(MPI_TAG)
 if(MPI_TAG)
     message(STATUS "MPI tag: ${MPI_TAG}")
 elseif(MPI_C_FOUND)
@@ -776,14 +735,8 @@ if(NOT BASELINE_BUILD AND TARGET ${LIB_PAIR_PREFIX}scalapack)
     set(_scalapack_c_dir ${CMAKE_CURRENT_SOURCE_DIR}/scalapack_c)
     if(EXISTS "${_scalapack_c_dir}/manifest.cmake")
         include(${_scalapack_c_dir}/manifest.cmake)
-        set(_scalapack_c_prec_src "")
-        foreach(f ${scalapack_c_PRECISION_SOURCES})
-            list(APPEND _scalapack_c_prec_src "${_scalapack_c_dir}/${f}")
-        endforeach()
-        set(_scalapack_c_common_src "")
-        foreach(f ${scalapack_c_COMMON_SOURCES})
-            list(APPEND _scalapack_c_common_src "${_scalapack_c_dir}/${f}")
-        endforeach()
+        _eplinalg_manifest_sources(scalapack_c "${_scalapack_c_dir}"
+            _scalapack_c_common_src _scalapack_c_prec_src)
         if(_scalapack_c_prec_src)
             add_library(scalapack_c_prec_obj OBJECT ${_scalapack_c_prec_src})
         endif()

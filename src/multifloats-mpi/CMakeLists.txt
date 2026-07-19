@@ -13,6 +13,14 @@ if(MPI_CXX_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/multifloats_mpi.cpp")
     target_include_directories(multifloats_mpi PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
+    # mpiseq_dtype_tag.h / ep_mpi_op_commute.h live in the sibling
+    # mpiseq dir — the one runtime dir the migrator stages for every
+    # target (src/multifloats-mpi and src/mpiseq land as runtime/
+    # siblings in the staged tree, so the relative path holds there
+    # too). PRIVATE: only multifloats_mpi.cpp reads them; the installed
+    # multifloats_bridge.h stays self-contained.
+    target_include_directories(multifloats_mpi PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../mpiseq)
     # MPI::MPI_CXX is PRIVATE so consumers (mblacs, mlapack PUBLIC
     # chain, mumps test exes) aren't forced to link libmpicxx.so.
     # Each consumer that wants the real-MPI runtime adds MPI::* on

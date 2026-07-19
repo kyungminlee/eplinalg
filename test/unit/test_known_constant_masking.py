@@ -11,7 +11,7 @@ that was actually inside the string was then mis-identified as the
 comment marker, truncating the line.
 """
 
-from migrator.fortran_migrator import replace_known_constants
+from migrator.fortran.renames import replace_known_constants
 from migrator.target_mode import load_target
 
 

@@ -6,8 +6,8 @@ program test_pztrrfs
     use ref_quad_lapack,   only: ztrrfs
     use pblas_grid,        only: grid_init, grid_exit, my_rank, my_context, &
                                  my_nprow, my_npcol, my_row, my_col, &
-                                 numroc_local, descinit_local, g2l
-    use pblas_distrib,     only: gen_distrib_matrix_z
+                                 numroc_local, descinit_local
+    use pblas_distrib,     only: gen_distrib_matrix_z, scatter_matrix_z
     use target_scalapack,  only: target_name, target_eps, target_pztrrfs
     implicit none
 
@@ -17,7 +17,7 @@ program test_pztrrfs
     integer :: i, n, info, info_ref, lwork, lrwork, j
     integer :: locm_a, locn_a, lld_a, locm_b, locn_b, lld_b
     integer :: desca(9), descb(9), descx(9)
-    integer :: ig, jg, owner_r, owner_c, il, jl
+    integer :: ig, jg
     complex(ep), allocatable :: T_loc(:,:), T_glob(:,:)
     complex(ep), allocatable :: X_loc(:,:), X_glob(:,:)
     complex(ep), allocatable :: B_loc(:,:), B_glob(:,:)
@@ -42,16 +42,7 @@ program test_pztrrfs
             end do
             T_glob(jg, jg) = T_glob(jg, jg) + cmplx(real(2 * n, ep), 0.0_ep, ep)
         end do
-        if (size(T_loc, 1) > 0 .and. size(T_loc, 2) > 0) then
-            do jg = 1, n
-                call g2l(jg, nb, my_npcol, owner_c, jl)
-                if (owner_c /= my_col) cycle
-                do ig = 1, n
-                    call g2l(ig, mb, my_nprow, owner_r, il)
-                    if (owner_r == my_row) T_loc(il, jl) = T_glob(ig, jg)
-                end do
-            end do
-        end if
+        call scatter_matrix_z(n, n, mb, nb, T_glob, T_loc)
 
         allocate(B_glob(n, nrhs))
         B_glob = matmul(T_glob, X_glob)
@@ -59,14 +50,7 @@ program test_pztrrfs
         locn_b = numroc_local(nrhs, nb, my_col, 0, my_npcol); lld_b = max(1, locm_b)
         allocate(B_loc(lld_b, max(1, locn_b)))
         B_loc = (0.0_ep, 0.0_ep)
-        do jg = 1, nrhs
-            call g2l(jg, nb, my_npcol, owner_c, jl)
-            if (owner_c /= my_col) cycle
-            do ig = 1, n
-                call g2l(ig, mb, my_nprow, owner_r, il)
-                if (owner_r == my_row) B_loc(il, jl) = B_glob(ig, jg)
-            end do
-        end do
+        call scatter_matrix_z(n, nrhs, mb, nb, B_glob, B_loc)
 
         locm_a = numroc_local(n, mb, my_row, 0, my_nprow)
         locn_a = numroc_local(n, nb, my_col, 0, my_npcol); lld_a = max(1, locm_a)
