@@ -31,6 +31,29 @@ jobs:
       - name: Run unit tests
         run: uv run pytest test/unit -q
 
+  # ── Documentation build check ────────────────────────────────────
+  # Mirrors the release workflow's docs job so a Sphinx breakage is
+  # caught on push instead of during a tagged release.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Sphinx
+        run: |
+          uv venv .venv-doc
+          VIRTUAL_ENV=$PWD/.venv-doc uv pip install -r doc/requirements.txt
+          echo "$PWD/.venv-doc/bin" >> "$GITHUB_PATH"
+
+      - name: Build HTML documentation
+        run: |
+          cmake -S . -B build-doc
+          cmake --build build-doc --target doc
+
   # ── Stage + library build, one representative slot ───────────────
   # kind10 + gfortran-15 + Intel MPI, libraries only (no test
   # harness, no ctest): the per-push signal is "the migrator stages

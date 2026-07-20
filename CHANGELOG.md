@@ -4,6 +4,16 @@ Release notes live on the [GitHub releases page](https://github.com/kyungminlee/
 this file summarizes each tagged version. The current version is in
 [VERSION](VERSION).
 
+## v0.18.0
+
+- User documentation ships with the binary release: the Sphinx HTML
+  docs are published as an `eplinalg-vX.Y.Z-docs-html.tar.gz` release
+  asset and included in the combined archive under
+  `share/doc/eplinalg/html/`. Every per-combo archive carries
+  `share/doc/eplinalg/` with the license, changelog, and a pointer
+  README.
+- CI gains a documentation build check mirroring the release docs job.
+
 ## v0.17.0
 
 - Behavior-preserving cleanup across the codebase from a 79-finding
