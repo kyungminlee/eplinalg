@@ -1,21 +1,56 @@
-# Sphinx configuration template — configured by the root CMakeLists.txt
-# (version comes from the repo-root VERSION file).
+# Sphinx configuration for the eplinalg documentation.
+#
+# This is a template: @PROJECT_VERSION@ is substituted from the repo-root
+# VERSION file by doc/build.sh to produce the generated conf.py — edit the
+# .in file, not the generated one.
+#
+# Build:  ./doc/build.sh   (see doc/README.md for the one-time venv setup)
 
-project = 'eplinalg'
-author = 'Kyungmin Lee'
-version = '@EPLINALG_VERSION@'
-release = '@EPLINALG_VERSION@'
+# -- Project information -----------------------------------------------------
+project = "eplinalg"
+author = "Kyungmin Lee"
+copyright = "2026, Kyungmin Lee"
 
-extensions = ['myst_parser']
-source_suffix = {'.md': 'markdown', '.rst': 'restructuredtext'}
-root_doc = 'index'
+# Single source of truth: the root VERSION file (see doc/build.sh).
+version = "@PROJECT_VERSION@"
+release = "@PROJECT_VERSION@"
 
-# Historical surveys and timestamped reports are kept out of the
-# rendered tree; they remain browsable in the repo.
-exclude_patterns = ['archive/**', '_build/**']
+# -- General configuration ---------------------------------------------------
+root_doc = "index"
 
-myst_heading_anchors = 3
+extensions = [
+    "myst_parser",        # Markdown (MyST) authoring
+    "sphinx_copybutton",  # copy button on code blocks
+    "sphinx_design",      # grids / cards / tabs
+]
 
-html_theme = 'alabaster'
-html_static_path = ['@CMAKE_CURRENT_SOURCE_DIR@/doc/_static']
-templates_path = ['@CMAKE_CURRENT_SOURCE_DIR@/doc/_templates']
+source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
+
+# Files and directories ignored by the builder. Historical surveys and
+# timestamped reports (archive/) stay out of the rendered tree; they remain
+# browsable in the repo. upstream-bugs/ is rendered (dev/ links into it).
+exclude_patterns = [
+    "_build",
+    ".venv",
+    "*.in",               # conf.py.in template
+    "requirements.txt",
+    "README.md",          # build instructions, not a doc page
+    "archive/**",
+]
+
+# -- MyST (Markdown) ---------------------------------------------------------
+myst_enable_extensions = [
+    "colon_fence",   # ::: fenced directives
+    "deflist",       # definition lists
+    "dollarmath",    # $...$ / $$...$$ math
+    "fieldlist",
+    "substitution",
+    "tasklist",
+]
+myst_heading_anchors = 3  # auto cross-reference anchors for h1..h3
+
+# -- HTML output -------------------------------------------------------------
+html_theme = "furo"
+html_title = "eplinalg"
+html_static_path = ["_static"]
+templates_path = ["_templates"]

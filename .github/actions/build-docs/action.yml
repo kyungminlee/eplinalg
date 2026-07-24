@@ -1,0 +1,25 @@
+# Composite action: build the Sphinx + MyST documentation into
+# doc/_build/html via the canonical ./doc/build.sh entry point.
+#
+# Shared by docs.yml (GitHub Pages publish) and ci.yml (docs build check)
+# so the build recipe cannot drift between the two. The caller must check
+# out the repository first.
+
+name: Build docs
+description: Build the Sphinx documentation into doc/_build/html
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+
+    - name: Install Sphinx toolchain
+      shell: bash
+      run: |
+        uv venv doc/.venv
+        uv pip install --python doc/.venv -r doc/requirements.txt
+
+    - name: Build docs (Sphinx -> HTML)
+      shell: bash
+      run: ./doc/build.sh
