@@ -1,2 +1,11 @@
-sphinx>=7
-myst-parser>=2
+# Sphinx documentation toolchain for eplinalg.
+# Install into a local venv with uv:
+#     uv venv doc/.venv
+#     uv pip install --python doc/.venv -r doc/requirements.txt
+# See doc/README.md.
+
+sphinx>=7.3
+myst-parser>=3.0       # Markdown (MyST) authoring
+furo>=2024.1           # HTML theme
+sphinx-copybutton>=0.5 # copy buttons on code blocks
+sphinx-design>=0.6     # grids/cards/tabs in MyST

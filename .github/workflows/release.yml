@@ -68,46 +68,6 @@ jobs:
           path: staging-${{ matrix.target }}/
           retention-days: 1
 
-  # ── Documentation (built once, shared by all archives) ───────────
-  # Sphinx HTML is rendered a single time and injected into the
-  # combined tarball by the release job, plus published as its own
-  # release asset. It is NOT rendered per build combo: Sphinx output
-  # is not byte-deterministic across runs, and the combined-tarball
-  # merge requires overlapping paths to be byte-identical.
-  docs:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Install Sphinx
-        run: |
-          uv venv .venv-doc
-          VIRTUAL_ENV=$PWD/.venv-doc uv pip install -r doc/requirements.txt
-          echo "$PWD/.venv-doc/bin" >> "$GITHUB_PATH"
-
-      - name: Build HTML documentation
-        run: |
-          cmake -S . -B build-doc
-          cmake --build build-doc --target doc
-
-      - name: Package
-        run: |
-          VERSION=$(head -n1 VERSION)
-          ARCHIVE="eplinalg-v${VERSION}-docs-html"
-          tar czf "${ARCHIVE}.tar.gz" --exclude=./.doctrees -C build-doc/doc/html .
-          echo "DOCS_ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
-
-      - name: Upload docs artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: docs-html
-          path: ${{ env.DOCS_ARCHIVE }}.tar.gz
-          retention-days: 7
-
   # ── Build matrix: target x compiler x MPI ────────────────────────
   build:
     needs: stage
@@ -268,25 +228,16 @@ jobs:
 
       # These files must stay byte-identical across every matrix combo
       # (no matrix variables): they overlap when the release job merges
-      # all per-combo tarballs into the combined archive.
-      - name: Add license and documentation pointer
+      # all per-combo tarballs into the combined archive. The Markdown
+      # user guide ships as-is; rendered HTML lives on GitHub Pages,
+      # not in the release.
+      - name: Add documentation (Markdown user guide)
         run: |
           DOCDIR=install/share/doc/eplinalg
           mkdir -p "$DOCDIR"
-          cp LICENSE CHANGELOG.md "$DOCDIR/"
-          cat > "$DOCDIR/README" <<'EOF'
-          eplinalg binary release.
-
-          Full user documentation (HTML) is available in two places:
-            - inside the combined release archive, under
-              share/doc/eplinalg/html/ (open index.html)
-            - as the eplinalg-v<version>-docs-html.tar.gz asset on the
-              GitHub release page:
-              https://github.com/kyungminlee/eplinalg/releases
-
-          Sources and issue tracker:
-              https://github.com/kyungminlee/eplinalg
-          EOF
+          cp README.md LICENSE CHANGELOG.md "$DOCDIR/"
+          (cd doc && find user -name '*.md' -print0 | tar cf - --null -T -) \
+            | tar xf - -C "$DOCDIR"
 
       - name: Package
         run: |
@@ -304,7 +255,7 @@ jobs:
 
   # ── Create GitHub Release ────────────────────────────────────────
   release:
-    needs: [build, docs]
+    needs: [build]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -313,12 +264,6 @@ jobs:
         with:
           path: artifacts/
           pattern: '*-*-*-linux-x86_64'
-
-      - name: Download documentation
-        uses: actions/download-artifact@v7
-        with:
-          name: docs-html
-          path: docs-artifact/
 
       - name: Collect tarballs
         run: |
@@ -344,15 +289,8 @@ jobs:
             echo "  extracting $(basename "$t")"
             tar -xzf "$t" -C combined
           done
-          echo "  injecting HTML documentation"
-          mkdir -p combined/share/doc/eplinalg/html
-          tar -xzf docs-artifact/*.tar.gz -C combined/share/doc/eplinalg/html
           tar -czf "release/${ARCHIVE}.tar.gz" -C combined .
           ls -lh "release/${ARCHIVE}.tar.gz"
-          # Publish the docs tarball as its own asset too. Copied only
-          # AFTER the combined archive is built so the per-combo
-          # extraction loop above never sees it.
-          cp docs-artifact/*.tar.gz release/
 
       - name: Create release
         uses: softprops/action-gh-release@v3
@@ -381,11 +319,10 @@ jobs:
 
             ### Documentation
 
-            HTML user documentation is included in the combined archive
-            under ``share/doc/eplinalg/html/`` and published separately
-            as ``eplinalg-vX.Y.Z-docs-html.tar.gz``. Every archive also
-            carries ``share/doc/eplinalg/`` with the license, changelog,
-            and a pointer to the docs.
+            Every archive carries the Markdown user guide under
+            ``share/doc/eplinalg/`` (README, LICENSE, CHANGELOG, and
+            ``user/*.md``). Rendered HTML documentation:
+            https://kyungminlee.github.io/eplinalg/
 
             ### Targets
             | Target | Description | Prefix |

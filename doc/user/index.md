@@ -8,5 +8,6 @@ Obtaining and using the extended-precision libraries.
 - [api/](api/index.md) — API reference
 
 The hand-written parallel BLAS overlay lives in the separate
-[epblas-parallel](../../../epblas-parallel/) project; the
-`<prefix>blas` archives here are the plain serial migrated BLAS.
+[epblas-parallel](https://github.com/kyungminlee/epblas-parallel)
+project; the `<prefix>blas` archives here are the plain serial
+migrated BLAS.

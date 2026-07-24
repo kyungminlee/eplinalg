@@ -301,7 +301,7 @@ Full validation coverage (including the off-CI MUMPS sweep):
 ```
 eplinalg/
 ├── VERSION              # Single source of truth for the version
-├── CMakeLists.txt       # Thin root project: version + Sphinx `doc` target
+├── CMakeLists.txt       # Thin root project: version only (docs: ./doc/build.sh)
 ├── CMakePresets.json    # Build presets (copied into every staged tree)
 ├── codegen/             # Dev-only code generation (not released)
 │   ├── migrator/            # The migration engine (Python package)

@@ -20,6 +20,13 @@ user/index
 dev/index
 ```
 
-Not in the rendered tree: [upstream-bugs/](upstream-bugs/README.md)
-(vendored-source bug catalogue) and `archive/` (historical reports) —
-browse them in the repository.
+```{toctree}
+:maxdepth: 1
+:caption: Reference
+
+changelog
+```
+
+Also in the repository: [upstream-bugs/](upstream-bugs/README.md)
+(vendored-source bug catalogue, linked from the developer guide) and
+`archive/` (historical reports, not rendered).
